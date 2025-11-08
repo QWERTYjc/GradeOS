@@ -36,18 +36,15 @@ except ImportError as e:
     API_AVAILABLE = False
     st.warning(f"⚠️ AI批改引擎未就绪：{str(e)}")
 
-# 导入LangGraph集成 - 简化版本（不包含OCR）
+# 导入LangGraph集成 - 生产级版本
 try:
-    from functions.langgraph_integration_optimized import (
-        get_simplified_langgraph_integration,
-        intelligent_correction_with_files_langgraph_simplified
-    )
-    from functions.langgraph_integration import (
-        show_langgraph_progress,
-        show_langgraph_results
+    from functions.langgraph.production_integration import (
+        show_production_grading_ui,
+        show_history_ui,
+        show_class_statistics_ui
     )
     LANGGRAPH_AVAILABLE = True
-    st.success("✅ LangGraph AI批改系统已就绪（简化版，不包含OCR）")
+    st.success("✅ 生产级 LangGraph AI批改系统已就绪")
 except ImportError as e:
     LANGGRAPH_AVAILABLE = False
     st.warning(f"⚠️ LangGraph系统未就绪：{str(e)}")
@@ -729,15 +726,31 @@ def show_grading():
 
         # 如果LangGraph可用，添加LangGraph选项
         if LANGGRAPH_AVAILABLE:
-            mode_options.append(("🧠 LangGraph智能批改", "langgraph"))
+            mode_options.append(("🎓 生产级AI批改", "production"))
+            mode_options.append(("📚 批改历史", "history"))
+            mode_options.append(("📊 班级统计", "class_stats"))
 
         mode = st.selectbox(
             "批改模式",
             mode_options,
             format_func=lambda x: x[0],
-            help="🧠 LangGraph: 基于LangGraph的智能批改系统（不包含OCR）"
+            help="🎓 生产级AI批改: 逐题批改+数据分析+持久化存储"
         )[1]
     
+    # 根据模式显示不同的UI
+    if mode == "production" and LANGGRAPH_AVAILABLE:
+        # 显示生产级批改UI
+        show_production_grading_ui()
+        return
+    elif mode == "history" and LANGGRAPH_AVAILABLE:
+        # 显示历史记录UI
+        show_history_ui()
+        return
+    elif mode == "class_stats" and LANGGRAPH_AVAILABLE:
+        # 显示班级统计UI
+        show_class_statistics_ui()
+        return
+
     # 批改按钮
     if answer_files:  # 至少需要有学生答案文件
         if st.button("🚀 开始AI批改", use_container_width=True, type="primary"):
@@ -747,9 +760,9 @@ def show_grading():
                     saved_question_files = save_files(question_files or [], st.session_state.username) if question_files else []
                     saved_answer_files = save_files(answer_files, st.session_state.username)
                     saved_marking_files = save_files(marking_files or [], st.session_state.username) if marking_files else []
-                    
+
                     # 根据模式选择批改方法
-                    if mode == "langgraph" and LANGGRAPH_AVAILABLE:
+                    if False:  # 禁用旧的 langgraph 模式
                         st.info("🧠 LangGraph智能批改系统启动中...")
 
                         # 创建进度显示容器
