@@ -4,7 +4,14 @@
 QuestionAnalyzer Agent - 分析题目特征，识别题型、难度、批改策略
 """
 
+import sys
+from pathlib import Path
 from typing import Dict, Any, List
+
+# 添加项目路径
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
+from functions.llm_client import get_llm_client
 
 
 class QuestionAnalyzerAgent:
@@ -172,9 +179,14 @@ class QuestionGraderAgent:
     def __init__(self, llm_client=None):
         """
         Args:
-            llm_client: LLM 客户端（Gemini/GPT）
+            llm_client: LLM 客户端（Gemini/GPT/OpenRouter）
         """
-        self.llm_client = llm_client
+        try:
+            self.llm_client = llm_client or get_llm_client()
+            print(f"🎯 QuestionGrader 初始化: LLM={self.llm_client.provider}")
+        except Exception as e:
+            print(f"⚠️ LLM 初始化失败，将使用简单策略: {e}")
+            self.llm_client = None
     
     def grade(self, state: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -250,34 +262,65 @@ class QuestionGraderAgent:
     def _grade_by_semantic(self, question: Dict, answer: Dict, marking_scheme: Dict) -> Dict:
         """语义理解批改（需要 LLM）"""
         if not self.llm_client:
+            print("⚠️ 无 LLM，使用关键词匹配")
             return self._grade_by_keywords(question, answer, marking_scheme)
-        
-        # 使用 LLM 进行语义分析
-        prompt = f"""
-请批改以下答案：
 
-题目：{question['text']}
-学生答案：{answer['text']}
+        try:
+            # 使用 LLM 进行语义分析
+            prompt = f"""请批改以下答案，并以 JSON 格式返回结果：
 
-请给出：
-1. 得分（0-10分）
-2. 详细反馈
-3. 错误点
-4. 改进建议
+题目：{question.get('text', '')}
+学生答案：{answer.get('text', '')}
+
+请返回 JSON 格式：
+{{
+    "score": 得分（0-10分的整数）,
+    "feedback": "详细反馈",
+    "errors": ["错误点1", "错误点2"],
+    "suggestions": ["改进建议1", "改进建议2"]
+}}
 """
-        
-        # 调用 LLM（这里需要实现）
-        # response = self.llm_client.generate(prompt)
-        
-        # 临时返回
-        return {
-            'question_id': question['id'],
-            'student_id': answer.get('student_id'),
-            'score': 7,
-            'max_score': 10,
-            'feedback': '答案基本正确，但需要更详细的说明',
-            'strategy': 'semantic'
-        }
+
+            print(f"📡 调用 LLM 批改题目 {question.get('id')}")
+
+            messages = [{"role": "user", "content": prompt}]
+            response = self.llm_client.chat(messages, temperature=0.3)
+
+            # 解析 LLM 响应
+            import json
+            import re
+
+            # 提取 JSON
+            json_match = re.search(r'\{.*\}', response, re.DOTALL)
+            if json_match:
+                result_data = json.loads(json_match.group())
+                score = result_data.get('score', 7)
+                feedback = result_data.get('feedback', '答案基本正确')
+                errors = result_data.get('errors', [])
+                suggestions = result_data.get('suggestions', [])
+            else:
+                # 如果无法解析 JSON，使用默认值
+                score = 7
+                feedback = response[:200]  # 取前200字符
+                errors = []
+                suggestions = []
+
+            print(f"✅ LLM 批改完成: 得分={score}/10")
+
+            return {
+                'question_id': question['id'],
+                'student_id': answer.get('student_id'),
+                'score': score,
+                'max_score': 10,
+                'feedback': feedback,
+                'errors': errors,
+                'suggestions': suggestions,
+                'strategy': 'semantic'
+            }
+
+        except Exception as e:
+            print(f"❌ LLM 批改失败: {e}，使用关键词匹配")
+            return self._grade_by_keywords(question, answer, marking_scheme)
     
     def _grade_by_rubric(self, question: Dict, answer: Dict, marking_scheme: Dict) -> Dict:
         """评分标准批改"""
