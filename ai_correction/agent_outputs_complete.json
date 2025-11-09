@@ -1,0 +1,1162 @@
+{
+  "test_time": "2025-11-09T13:02:10.645460",
+  "total_time": 5.294443130493164,
+  "agent_count": 3,
+  "outputs": [
+    {
+      "agent": "InputParser",
+      "elapsed": 0.0019998550415039062,
+      "result": {
+        "question_files": [
+          "test_data\\questions.txt"
+        ],
+        "answer_files": [
+          "test_data\\001_张三_answers.txt"
+        ],
+        "marking_files": [
+          "test_data\\marking_scheme.txt"
+        ],
+        "questions": [
+          {
+            "id": 1,
+            "text": "计算 2 + 3 = ?",
+            "type": "calculation",
+            "options": [],
+            "raw_text": "1. 计算 2 + 3 = ?",
+            "analysis": {
+              "difficulty": "medium",
+              "strategy": "step_by_step",
+              "keywords": [
+                "计算"
+              ],
+              "expected_answer_length": "medium"
+            }
+          },
+          {
+            "id": 2,
+            "text": "填空：中国的首都是_____。",
+            "type": "fill",
+            "options": [],
+            "raw_text": "2. 填空：中国的首都是_____。",
+            "analysis": {
+              "difficulty": "easy",
+              "strategy": "semantic",
+              "keywords": [],
+              "expected_answer_length": "short"
+            }
+          },
+          {
+            "id": 3,
+            "text": "简答题：请简述Python的主要特点。（至少3点）",
+            "type": "essay",
+            "options": [],
+            "raw_text": "3. 简答题：请简述Python的主要特点。（至少3点）",
+            "analysis": {
+              "difficulty": "medium",
+              "strategy": "rubric",
+              "keywords": [],
+              "expected_answer_length": "long"
+            }
+          },
+          {
+            "id": 4,
+            "text": "计算题：求解方程 x + 5 = 10，并写出解题步骤。",
+            "type": "calculation",
+            "options": [],
+            "raw_text": "4. 计算题：求解方程 x + 5 = 10，并写出解题步骤。",
+            "analysis": {
+              "difficulty": "medium",
+              "strategy": "step_by_step",
+              "keywords": [
+                "计算",
+                "求",
+                "解"
+              ],
+              "expected_answer_length": "medium"
+            }
+          }
+        ],
+        "answers": [
+          {
+            "question_id": 1,
+            "text": "B",
+            "student_id": "001",
+            "student_name": "张三_answers",
+            "question": {
+              "id": 1,
+              "text": "计算 2 + 3 = ?",
+              "type": "calculation",
+              "options": [],
+              "raw_text": "1. 计算 2 + 3 = ?",
+              "analysis": {
+                "difficulty": "medium",
+                "strategy": "step_by_step",
+                "keywords": [
+                  "计算"
+                ],
+                "expected_answer_length": "medium"
+              }
+            }
+          },
+          {
+            "question_id": 2,
+            "text": "北京",
+            "student_id": "001",
+            "student_name": "张三_answers",
+            "question": {
+              "id": 2,
+              "text": "填空：中国的首都是_____。",
+              "type": "fill",
+              "options": [],
+              "raw_text": "2. 填空：中国的首都是_____。",
+              "analysis": {
+                "difficulty": "easy",
+                "strategy": "semantic",
+                "keywords": [],
+                "expected_answer_length": "short"
+              }
+            }
+          },
+          {
+            "question_id": 3,
+            "text": "Python是一种高级编程语言，具有以下特点：",
+            "student_id": "001",
+            "student_name": "张三_answers",
+            "question": {
+              "id": 3,
+              "text": "简答题：请简述Python的主要特点。（至少3点）",
+              "type": "essay",
+              "options": [],
+              "raw_text": "3. 简答题：请简述Python的主要特点。（至少3点）",
+              "analysis": {
+                "difficulty": "medium",
+                "strategy": "rubric",
+                "keywords": [],
+                "expected_answer_length": "long"
+              }
+            }
+          },
+          {
+            "question_id": 4,
+            "text": "解：",
+            "student_id": "001",
+            "student_name": "张三_answers",
+            "question": {
+              "id": 4,
+              "text": "计算题：求解方程 x + 5 = 10，并写出解题步骤。",
+              "type": "calculation",
+              "options": [],
+              "raw_text": "4. 计算题：求解方程 x + 5 = 10，并写出解题步骤。",
+              "analysis": {
+                "difficulty": "medium",
+                "strategy": "step_by_step",
+                "keywords": [
+                  "计算",
+                  "求",
+                  "解"
+                ],
+                "expected_answer_length": "medium"
+              }
+            }
+          }
+        ],
+        "marking_scheme": {
+          "raw_text": "评分标准：\n\n1. 选择题 (2分)\n   - 选对得2分\n   - 选错得0分\n\n2. 填空题 (2分)\n   - 答案正确得2分\n   - 答案错误得0分\n\n3. 简答题 (3分)\n   - 提到\"高级语言\"得1分\n   - 提到\"语法简洁\"得1分\n   - 提到\"丰富的库\"得1分\n\n4. 计算题 (3分)\n   - 列出方程得1分\n   - 计算过程正确得1分\n   - 答案正确得1分\n",
+          "criteria": [
+            {
+              "id": 1,
+              "description": "选择题",
+              "points": 2
+            },
+            {
+              "id": 2,
+              "description": "填空题",
+              "points": 2
+            },
+            {
+              "id": 3,
+              "description": "简答题",
+              "points": 3
+            },
+            {
+              "id": 4,
+              "description": "计算题",
+              "points": 3
+            }
+          ]
+        },
+        "student_info": {
+          "id": "001",
+          "name": "张三_answers",
+          "class": "unknown"
+        },
+        "parse_status": "success",
+        "parse_errors": [],
+        "analysis_status": "success",
+        "grading_results": [
+          {
+            "question_id": 1,
+            "student_id": "001",
+            "score": 0,
+            "max_score": 10,
+            "matched_keywords": [],
+            "feedback": "关键词匹配度: 0.0%",
+            "strategy": "keyword_match"
+          },
+          {
+            "question_id": 2,
+            "student_id": "001",
+            "score": 0,
+            "max_score": 10,
+            "matched_keywords": [],
+            "feedback": "关键词匹配度: 0.0%",
+            "strategy": "keyword_match"
+          },
+          {
+            "question_id": 3,
+            "student_id": "001",
+            "score": 0,
+            "max_score": 10,
+            "matched_keywords": [],
+            "feedback": "关键词匹配度: 0.0%",
+            "strategy": "keyword_match"
+          },
+          {
+            "question_id": 4,
+            "student_id": "001",
+            "score": 3,
+            "max_score": 10,
+            "matched_keywords": [
+              "解"
+            ],
+            "feedback": "关键词匹配度: 33.3%",
+            "strategy": "keyword_match"
+          }
+        ],
+        "grading_status": "success",
+        "aggregated_results": {
+          "student_info": {
+            "id": "001",
+            "name": "张三_answers",
+            "class": "unknown"
+          },
+          "total_score": 3,
+          "max_score": 40,
+          "percentage": 7.5,
+          "grade": "F",
+          "question_count": 4,
+          "correct_count": 0,
+          "error_analysis": {
+            "total_errors": 4,
+            "error_rate": 1.0,
+            "error_types": {
+              "keyword_match": 4
+            },
+            "error_questions": [
+              {
+                "question_id": 1,
+                "score": 0,
+                "max_score": 10,
+                "feedback": "关键词匹配度: 0.0%"
+              },
+              {
+                "question_id": 2,
+                "score": 0,
+                "max_score": 10,
+                "feedback": "关键词匹配度: 0.0%"
+              },
+              {
+                "question_id": 3,
+                "score": 0,
+                "max_score": 10,
+                "feedback": "关键词匹配度: 0.0%"
+              },
+              {
+                "question_id": 4,
+                "score": 3,
+                "max_score": 10,
+                "feedback": "关键词匹配度: 33.3%"
+              }
+            ]
+          },
+          "knowledge_analysis": {
+            "计算": {
+              "total": 2,
+              "correct": 0,
+              "score": 3,
+              "max_score": 20,
+              "mastery_rate": 0.0,
+              "score_rate": 0.15
+            },
+            "求": {
+              "total": 1,
+              "correct": 0,
+              "score": 3,
+              "max_score": 10,
+              "mastery_rate": 0.0,
+              "score_rate": 0.3
+            },
+            "解": {
+              "total": 1,
+              "correct": 0,
+              "score": 3,
+              "max_score": 10,
+              "mastery_rate": 0.0,
+              "score_rate": 0.3
+            }
+          },
+          "summary": "\n## 📊 批改总结\n\n### 基本信息\n- 总分：3/40 分\n- 得分率：7.5%\n- 等级：F\n- 答对题数：0/4\n\n### 整体评价\n- ❌ 需要加强学习，多做练习。\n",
+          "details": [
+            {
+              "question_id": 1,
+              "student_id": "001",
+              "score": 0,
+              "max_score": 10,
+              "matched_keywords": [],
+              "feedback": "关键词匹配度: 0.0%",
+              "strategy": "keyword_match"
+            },
+            {
+              "question_id": 2,
+              "student_id": "001",
+              "score": 0,
+              "max_score": 10,
+              "matched_keywords": [],
+              "feedback": "关键词匹配度: 0.0%",
+              "strategy": "keyword_match"
+            },
+            {
+              "question_id": 3,
+              "student_id": "001",
+              "score": 0,
+              "max_score": 10,
+              "matched_keywords": [],
+              "feedback": "关键词匹配度: 0.0%",
+              "strategy": "keyword_match"
+            },
+            {
+              "question_id": 4,
+              "student_id": "001",
+              "score": 3,
+              "max_score": 10,
+              "matched_keywords": [
+                "解"
+              ],
+              "feedback": "关键词匹配度: 33.3%",
+              "strategy": "keyword_match"
+            }
+          ]
+        },
+        "statistics": {
+          "by_type": {
+            "calculation": {
+              "count": 2,
+              "total_score": 3,
+              "max_score": 20,
+              "score_rate": 0.15
+            },
+            "fill": {
+              "count": 1,
+              "total_score": 0,
+              "max_score": 10,
+              "score_rate": 0.0
+            },
+            "essay": {
+              "count": 1,
+              "total_score": 0,
+              "max_score": 10,
+              "score_rate": 0.0
+            }
+          },
+          "by_difficulty": {
+            "medium": {
+              "count": 3,
+              "total_score": 3,
+              "max_score": 30,
+              "score_rate": 0.1
+            },
+            "easy": {
+              "count": 1,
+              "total_score": 0,
+              "max_score": 10,
+              "score_rate": 0.0
+            }
+          },
+          "total_questions": 4,
+          "average_score": 0.75
+        },
+        "aggregation_status": "success"
+      }
+    },
+    {
+      "agent": "QuestionAnalyzer",
+      "elapsed": 0.0,
+      "result": {
+        "question_files": [
+          "test_data\\questions.txt"
+        ],
+        "answer_files": [
+          "test_data\\001_张三_answers.txt"
+        ],
+        "marking_files": [
+          "test_data\\marking_scheme.txt"
+        ],
+        "questions": [
+          {
+            "id": 1,
+            "text": "计算 2 + 3 = ?",
+            "type": "calculation",
+            "options": [],
+            "raw_text": "1. 计算 2 + 3 = ?",
+            "analysis": {
+              "difficulty": "medium",
+              "strategy": "step_by_step",
+              "keywords": [
+                "计算"
+              ],
+              "expected_answer_length": "medium"
+            }
+          },
+          {
+            "id": 2,
+            "text": "填空：中国的首都是_____。",
+            "type": "fill",
+            "options": [],
+            "raw_text": "2. 填空：中国的首都是_____。",
+            "analysis": {
+              "difficulty": "easy",
+              "strategy": "semantic",
+              "keywords": [],
+              "expected_answer_length": "short"
+            }
+          },
+          {
+            "id": 3,
+            "text": "简答题：请简述Python的主要特点。（至少3点）",
+            "type": "essay",
+            "options": [],
+            "raw_text": "3. 简答题：请简述Python的主要特点。（至少3点）",
+            "analysis": {
+              "difficulty": "medium",
+              "strategy": "rubric",
+              "keywords": [],
+              "expected_answer_length": "long"
+            }
+          },
+          {
+            "id": 4,
+            "text": "计算题：求解方程 x + 5 = 10，并写出解题步骤。",
+            "type": "calculation",
+            "options": [],
+            "raw_text": "4. 计算题：求解方程 x + 5 = 10，并写出解题步骤。",
+            "analysis": {
+              "difficulty": "medium",
+              "strategy": "step_by_step",
+              "keywords": [
+                "计算",
+                "求",
+                "解"
+              ],
+              "expected_answer_length": "medium"
+            }
+          }
+        ],
+        "answers": [
+          {
+            "question_id": 1,
+            "text": "B",
+            "student_id": "001",
+            "student_name": "张三_answers",
+            "question": {
+              "id": 1,
+              "text": "计算 2 + 3 = ?",
+              "type": "calculation",
+              "options": [],
+              "raw_text": "1. 计算 2 + 3 = ?",
+              "analysis": {
+                "difficulty": "medium",
+                "strategy": "step_by_step",
+                "keywords": [
+                  "计算"
+                ],
+                "expected_answer_length": "medium"
+              }
+            }
+          },
+          {
+            "question_id": 2,
+            "text": "北京",
+            "student_id": "001",
+            "student_name": "张三_answers",
+            "question": {
+              "id": 2,
+              "text": "填空：中国的首都是_____。",
+              "type": "fill",
+              "options": [],
+              "raw_text": "2. 填空：中国的首都是_____。",
+              "analysis": {
+                "difficulty": "easy",
+                "strategy": "semantic",
+                "keywords": [],
+                "expected_answer_length": "short"
+              }
+            }
+          },
+          {
+            "question_id": 3,
+            "text": "Python是一种高级编程语言，具有以下特点：",
+            "student_id": "001",
+            "student_name": "张三_answers",
+            "question": {
+              "id": 3,
+              "text": "简答题：请简述Python的主要特点。（至少3点）",
+              "type": "essay",
+              "options": [],
+              "raw_text": "3. 简答题：请简述Python的主要特点。（至少3点）",
+              "analysis": {
+                "difficulty": "medium",
+                "strategy": "rubric",
+                "keywords": [],
+                "expected_answer_length": "long"
+              }
+            }
+          },
+          {
+            "question_id": 4,
+            "text": "解：",
+            "student_id": "001",
+            "student_name": "张三_answers",
+            "question": {
+              "id": 4,
+              "text": "计算题：求解方程 x + 5 = 10，并写出解题步骤。",
+              "type": "calculation",
+              "options": [],
+              "raw_text": "4. 计算题：求解方程 x + 5 = 10，并写出解题步骤。",
+              "analysis": {
+                "difficulty": "medium",
+                "strategy": "step_by_step",
+                "keywords": [
+                  "计算",
+                  "求",
+                  "解"
+                ],
+                "expected_answer_length": "medium"
+              }
+            }
+          }
+        ],
+        "marking_scheme": {
+          "raw_text": "评分标准：\n\n1. 选择题 (2分)\n   - 选对得2分\n   - 选错得0分\n\n2. 填空题 (2分)\n   - 答案正确得2分\n   - 答案错误得0分\n\n3. 简答题 (3分)\n   - 提到\"高级语言\"得1分\n   - 提到\"语法简洁\"得1分\n   - 提到\"丰富的库\"得1分\n\n4. 计算题 (3分)\n   - 列出方程得1分\n   - 计算过程正确得1分\n   - 答案正确得1分\n",
+          "criteria": [
+            {
+              "id": 1,
+              "description": "选择题",
+              "points": 2
+            },
+            {
+              "id": 2,
+              "description": "填空题",
+              "points": 2
+            },
+            {
+              "id": 3,
+              "description": "简答题",
+              "points": 3
+            },
+            {
+              "id": 4,
+              "description": "计算题",
+              "points": 3
+            }
+          ]
+        },
+        "student_info": {
+          "id": "001",
+          "name": "张三_answers",
+          "class": "unknown"
+        },
+        "parse_status": "success",
+        "parse_errors": [],
+        "analysis_status": "success",
+        "grading_results": [
+          {
+            "question_id": 1,
+            "student_id": "001",
+            "score": 0,
+            "max_score": 10,
+            "matched_keywords": [],
+            "feedback": "关键词匹配度: 0.0%",
+            "strategy": "keyword_match"
+          },
+          {
+            "question_id": 2,
+            "student_id": "001",
+            "score": 0,
+            "max_score": 10,
+            "matched_keywords": [],
+            "feedback": "关键词匹配度: 0.0%",
+            "strategy": "keyword_match"
+          },
+          {
+            "question_id": 3,
+            "student_id": "001",
+            "score": 0,
+            "max_score": 10,
+            "matched_keywords": [],
+            "feedback": "关键词匹配度: 0.0%",
+            "strategy": "keyword_match"
+          },
+          {
+            "question_id": 4,
+            "student_id": "001",
+            "score": 3,
+            "max_score": 10,
+            "matched_keywords": [
+              "解"
+            ],
+            "feedback": "关键词匹配度: 33.3%",
+            "strategy": "keyword_match"
+          }
+        ],
+        "grading_status": "success",
+        "aggregated_results": {
+          "student_info": {
+            "id": "001",
+            "name": "张三_answers",
+            "class": "unknown"
+          },
+          "total_score": 3,
+          "max_score": 40,
+          "percentage": 7.5,
+          "grade": "F",
+          "question_count": 4,
+          "correct_count": 0,
+          "error_analysis": {
+            "total_errors": 4,
+            "error_rate": 1.0,
+            "error_types": {
+              "keyword_match": 4
+            },
+            "error_questions": [
+              {
+                "question_id": 1,
+                "score": 0,
+                "max_score": 10,
+                "feedback": "关键词匹配度: 0.0%"
+              },
+              {
+                "question_id": 2,
+                "score": 0,
+                "max_score": 10,
+                "feedback": "关键词匹配度: 0.0%"
+              },
+              {
+                "question_id": 3,
+                "score": 0,
+                "max_score": 10,
+                "feedback": "关键词匹配度: 0.0%"
+              },
+              {
+                "question_id": 4,
+                "score": 3,
+                "max_score": 10,
+                "feedback": "关键词匹配度: 33.3%"
+              }
+            ]
+          },
+          "knowledge_analysis": {
+            "计算": {
+              "total": 2,
+              "correct": 0,
+              "score": 3,
+              "max_score": 20,
+              "mastery_rate": 0.0,
+              "score_rate": 0.15
+            },
+            "求": {
+              "total": 1,
+              "correct": 0,
+              "score": 3,
+              "max_score": 10,
+              "mastery_rate": 0.0,
+              "score_rate": 0.3
+            },
+            "解": {
+              "total": 1,
+              "correct": 0,
+              "score": 3,
+              "max_score": 10,
+              "mastery_rate": 0.0,
+              "score_rate": 0.3
+            }
+          },
+          "summary": "\n## 📊 批改总结\n\n### 基本信息\n- 总分：3/40 分\n- 得分率：7.5%\n- 等级：F\n- 答对题数：0/4\n\n### 整体评价\n- ❌ 需要加强学习，多做练习。\n",
+          "details": [
+            {
+              "question_id": 1,
+              "student_id": "001",
+              "score": 0,
+              "max_score": 10,
+              "matched_keywords": [],
+              "feedback": "关键词匹配度: 0.0%",
+              "strategy": "keyword_match"
+            },
+            {
+              "question_id": 2,
+              "student_id": "001",
+              "score": 0,
+              "max_score": 10,
+              "matched_keywords": [],
+              "feedback": "关键词匹配度: 0.0%",
+              "strategy": "keyword_match"
+            },
+            {
+              "question_id": 3,
+              "student_id": "001",
+              "score": 0,
+              "max_score": 10,
+              "matched_keywords": [],
+              "feedback": "关键词匹配度: 0.0%",
+              "strategy": "keyword_match"
+            },
+            {
+              "question_id": 4,
+              "student_id": "001",
+              "score": 3,
+              "max_score": 10,
+              "matched_keywords": [
+                "解"
+              ],
+              "feedback": "关键词匹配度: 33.3%",
+              "strategy": "keyword_match"
+            }
+          ]
+        },
+        "statistics": {
+          "by_type": {
+            "calculation": {
+              "count": 2,
+              "total_score": 3,
+              "max_score": 20,
+              "score_rate": 0.15
+            },
+            "fill": {
+              "count": 1,
+              "total_score": 0,
+              "max_score": 10,
+              "score_rate": 0.0
+            },
+            "essay": {
+              "count": 1,
+              "total_score": 0,
+              "max_score": 10,
+              "score_rate": 0.0
+            }
+          },
+          "by_difficulty": {
+            "medium": {
+              "count": 3,
+              "total_score": 3,
+              "max_score": 30,
+              "score_rate": 0.1
+            },
+            "easy": {
+              "count": 1,
+              "total_score": 0,
+              "max_score": 10,
+              "score_rate": 0.0
+            }
+          },
+          "total_questions": 4,
+          "average_score": 0.75
+        },
+        "aggregation_status": "success"
+      }
+    },
+    {
+      "agent": "QuestionGrader",
+      "elapsed": 5.29244327545166,
+      "result": {
+        "question_files": [
+          "test_data\\questions.txt"
+        ],
+        "answer_files": [
+          "test_data\\001_张三_answers.txt"
+        ],
+        "marking_files": [
+          "test_data\\marking_scheme.txt"
+        ],
+        "questions": [
+          {
+            "id": 1,
+            "text": "计算 2 + 3 = ?",
+            "type": "calculation",
+            "options": [],
+            "raw_text": "1. 计算 2 + 3 = ?",
+            "analysis": {
+              "difficulty": "medium",
+              "strategy": "step_by_step",
+              "keywords": [
+                "计算"
+              ],
+              "expected_answer_length": "medium"
+            }
+          },
+          {
+            "id": 2,
+            "text": "填空：中国的首都是_____。",
+            "type": "fill",
+            "options": [],
+            "raw_text": "2. 填空：中国的首都是_____。",
+            "analysis": {
+              "difficulty": "easy",
+              "strategy": "semantic",
+              "keywords": [],
+              "expected_answer_length": "short"
+            }
+          },
+          {
+            "id": 3,
+            "text": "简答题：请简述Python的主要特点。（至少3点）",
+            "type": "essay",
+            "options": [],
+            "raw_text": "3. 简答题：请简述Python的主要特点。（至少3点）",
+            "analysis": {
+              "difficulty": "medium",
+              "strategy": "rubric",
+              "keywords": [],
+              "expected_answer_length": "long"
+            }
+          },
+          {
+            "id": 4,
+            "text": "计算题：求解方程 x + 5 = 10，并写出解题步骤。",
+            "type": "calculation",
+            "options": [],
+            "raw_text": "4. 计算题：求解方程 x + 5 = 10，并写出解题步骤。",
+            "analysis": {
+              "difficulty": "medium",
+              "strategy": "step_by_step",
+              "keywords": [
+                "计算",
+                "求",
+                "解"
+              ],
+              "expected_answer_length": "medium"
+            }
+          }
+        ],
+        "answers": [
+          {
+            "question_id": 1,
+            "text": "B",
+            "student_id": "001",
+            "student_name": "张三_answers",
+            "question": {
+              "id": 1,
+              "text": "计算 2 + 3 = ?",
+              "type": "calculation",
+              "options": [],
+              "raw_text": "1. 计算 2 + 3 = ?",
+              "analysis": {
+                "difficulty": "medium",
+                "strategy": "step_by_step",
+                "keywords": [
+                  "计算"
+                ],
+                "expected_answer_length": "medium"
+              }
+            }
+          },
+          {
+            "question_id": 2,
+            "text": "北京",
+            "student_id": "001",
+            "student_name": "张三_answers",
+            "question": {
+              "id": 2,
+              "text": "填空：中国的首都是_____。",
+              "type": "fill",
+              "options": [],
+              "raw_text": "2. 填空：中国的首都是_____。",
+              "analysis": {
+                "difficulty": "easy",
+                "strategy": "semantic",
+                "keywords": [],
+                "expected_answer_length": "short"
+              }
+            }
+          },
+          {
+            "question_id": 3,
+            "text": "Python是一种高级编程语言，具有以下特点：",
+            "student_id": "001",
+            "student_name": "张三_answers",
+            "question": {
+              "id": 3,
+              "text": "简答题：请简述Python的主要特点。（至少3点）",
+              "type": "essay",
+              "options": [],
+              "raw_text": "3. 简答题：请简述Python的主要特点。（至少3点）",
+              "analysis": {
+                "difficulty": "medium",
+                "strategy": "rubric",
+                "keywords": [],
+                "expected_answer_length": "long"
+              }
+            }
+          },
+          {
+            "question_id": 4,
+            "text": "解：",
+            "student_id": "001",
+            "student_name": "张三_answers",
+            "question": {
+              "id": 4,
+              "text": "计算题：求解方程 x + 5 = 10，并写出解题步骤。",
+              "type": "calculation",
+              "options": [],
+              "raw_text": "4. 计算题：求解方程 x + 5 = 10，并写出解题步骤。",
+              "analysis": {
+                "difficulty": "medium",
+                "strategy": "step_by_step",
+                "keywords": [
+                  "计算",
+                  "求",
+                  "解"
+                ],
+                "expected_answer_length": "medium"
+              }
+            }
+          }
+        ],
+        "marking_scheme": {
+          "raw_text": "评分标准：\n\n1. 选择题 (2分)\n   - 选对得2分\n   - 选错得0分\n\n2. 填空题 (2分)\n   - 答案正确得2分\n   - 答案错误得0分\n\n3. 简答题 (3分)\n   - 提到\"高级语言\"得1分\n   - 提到\"语法简洁\"得1分\n   - 提到\"丰富的库\"得1分\n\n4. 计算题 (3分)\n   - 列出方程得1分\n   - 计算过程正确得1分\n   - 答案正确得1分\n",
+          "criteria": [
+            {
+              "id": 1,
+              "description": "选择题",
+              "points": 2
+            },
+            {
+              "id": 2,
+              "description": "填空题",
+              "points": 2
+            },
+            {
+              "id": 3,
+              "description": "简答题",
+              "points": 3
+            },
+            {
+              "id": 4,
+              "description": "计算题",
+              "points": 3
+            }
+          ]
+        },
+        "student_info": {
+          "id": "001",
+          "name": "张三_answers",
+          "class": "unknown"
+        },
+        "parse_status": "success",
+        "parse_errors": [],
+        "analysis_status": "success",
+        "grading_results": [
+          {
+            "question_id": 1,
+            "student_id": "001",
+            "score": 0,
+            "max_score": 10,
+            "matched_keywords": [],
+            "feedback": "关键词匹配度: 0.0%",
+            "strategy": "keyword_match"
+          },
+          {
+            "question_id": 2,
+            "student_id": "001",
+            "score": 0,
+            "max_score": 10,
+            "matched_keywords": [],
+            "feedback": "关键词匹配度: 0.0%",
+            "strategy": "keyword_match"
+          },
+          {
+            "question_id": 3,
+            "student_id": "001",
+            "score": 0,
+            "max_score": 10,
+            "matched_keywords": [],
+            "feedback": "关键词匹配度: 0.0%",
+            "strategy": "keyword_match"
+          },
+          {
+            "question_id": 4,
+            "student_id": "001",
+            "score": 3,
+            "max_score": 10,
+            "matched_keywords": [
+              "解"
+            ],
+            "feedback": "关键词匹配度: 33.3%",
+            "strategy": "keyword_match"
+          }
+        ],
+        "grading_status": "success",
+        "aggregated_results": {
+          "student_info": {
+            "id": "001",
+            "name": "张三_answers",
+            "class": "unknown"
+          },
+          "total_score": 3,
+          "max_score": 40,
+          "percentage": 7.5,
+          "grade": "F",
+          "question_count": 4,
+          "correct_count": 0,
+          "error_analysis": {
+            "total_errors": 4,
+            "error_rate": 1.0,
+            "error_types": {
+              "keyword_match": 4
+            },
+            "error_questions": [
+              {
+                "question_id": 1,
+                "score": 0,
+                "max_score": 10,
+                "feedback": "关键词匹配度: 0.0%"
+              },
+              {
+                "question_id": 2,
+                "score": 0,
+                "max_score": 10,
+                "feedback": "关键词匹配度: 0.0%"
+              },
+              {
+                "question_id": 3,
+                "score": 0,
+                "max_score": 10,
+                "feedback": "关键词匹配度: 0.0%"
+              },
+              {
+                "question_id": 4,
+                "score": 3,
+                "max_score": 10,
+                "feedback": "关键词匹配度: 33.3%"
+              }
+            ]
+          },
+          "knowledge_analysis": {
+            "计算": {
+              "total": 2,
+              "correct": 0,
+              "score": 3,
+              "max_score": 20,
+              "mastery_rate": 0.0,
+              "score_rate": 0.15
+            },
+            "求": {
+              "total": 1,
+              "correct": 0,
+              "score": 3,
+              "max_score": 10,
+              "mastery_rate": 0.0,
+              "score_rate": 0.3
+            },
+            "解": {
+              "total": 1,
+              "correct": 0,
+              "score": 3,
+              "max_score": 10,
+              "mastery_rate": 0.0,
+              "score_rate": 0.3
+            }
+          },
+          "summary": "\n## 📊 批改总结\n\n### 基本信息\n- 总分：3/40 分\n- 得分率：7.5%\n- 等级：F\n- 答对题数：0/4\n\n### 整体评价\n- ❌ 需要加强学习，多做练习。\n",
+          "details": [
+            {
+              "question_id": 1,
+              "student_id": "001",
+              "score": 0,
+              "max_score": 10,
+              "matched_keywords": [],
+              "feedback": "关键词匹配度: 0.0%",
+              "strategy": "keyword_match"
+            },
+            {
+              "question_id": 2,
+              "student_id": "001",
+              "score": 0,
+              "max_score": 10,
+              "matched_keywords": [],
+              "feedback": "关键词匹配度: 0.0%",
+              "strategy": "keyword_match"
+            },
+            {
+              "question_id": 3,
+              "student_id": "001",
+              "score": 0,
+              "max_score": 10,
+              "matched_keywords": [],
+              "feedback": "关键词匹配度: 0.0%",
+              "strategy": "keyword_match"
+            },
+            {
+              "question_id": 4,
+              "student_id": "001",
+              "score": 3,
+              "max_score": 10,
+              "matched_keywords": [
+                "解"
+              ],
+              "feedback": "关键词匹配度: 33.3%",
+              "strategy": "keyword_match"
+            }
+          ]
+        },
+        "statistics": {
+          "by_type": {
+            "calculation": {
+              "count": 2,
+              "total_score": 3,
+              "max_score": 20,
+              "score_rate": 0.15
+            },
+            "fill": {
+              "count": 1,
+              "total_score": 0,
+              "max_score": 10,
+              "score_rate": 0.0
+            },
+            "essay": {
+              "count": 1,
+              "total_score": 0,
+              "max_score": 10,
+              "score_rate": 0.0
+            }
+          },
+          "by_difficulty": {
+            "medium": {
+              "count": 3,
+              "total_score": 3,
+              "max_score": 30,
+              "score_rate": 0.1
+            },
+            "easy": {
+              "count": 1,
+              "total_score": 0,
+              "max_score": 10,
+              "score_rate": 0.0
+            }
+          },
+          "total_questions": 4,
+          "average_score": 0.75
+        },
+        "aggregation_status": "success"
+      }
+    }
+  ]
+}

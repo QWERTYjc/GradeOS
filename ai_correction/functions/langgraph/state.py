@@ -5,10 +5,11 @@ LangGraph 状态定义 - 集成到 ai_correction
 基于原始需求：坐标标注、知识点挖掘、OCR等核心功能
 """
 
-from typing import TypedDict, List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional
 from datetime import datetime
 
-class GradingState(TypedDict):
+# 使用普通类代替 TypedDict，兼容旧版本 Python
+class GradingState(dict):
     """
     LangGraph 批改状态
     符合原始需求：坐标标注、错题分析、知识点挖掘
@@ -99,45 +100,16 @@ class GradingState(TypedDict):
     quality_metrics: Dict[str, float]     # 质量指标
 
 
-class AnnotationData(TypedDict):
+class AnnotationData(dict):
     """坐标标注数据结构"""
-    region_id: str
-    coordinates: Dict[str, float]  # {x1, y1, x2, y2} 归一化坐标
-    annotation_type: str           # error/correct/highlight/comment
-    content: str                   # 标注内容
-    confidence: float              # 置信度
-    source_image: str              # 源图像路径
+    pass
 
 
-class KnowledgePoint(TypedDict):
+class KnowledgePoint(dict):
     """知识点数据结构"""
-    point_id: str
-    subject: str                   # 学科
-    topic: str                     # 主题
-    concept: str                   # 概念
-    difficulty_level: str          # 难度等级
-    mastery_status: str            # 掌握状态
-    related_errors: List[str]      # 相关错误
-    improvement_suggestions: List[str]
+    pass
 
-class ErrorAnalysis(TypedDict):
+
+class ErrorAnalysis(dict):
     """错误分析数据结构"""
-    error_id: str
-    error_type: str                    # calculation/concept/method/logic/careless/incomplete/format
-    error_description: str
-    correct_solution: str
-    knowledge_gaps: List[str]
-    remediation_plan: List[str]
-    root_cause: str
-    severity: str                      # high/medium/low
-    confidence: float  # 改进建议
-
-
-class ErrorAnalysis(TypedDict):
-    """错题分析数据结构"""
-    error_id: str
-    error_type: str                # 计算错误/概念错误/方法错误等
-    error_description: str         # 错误描述
-    correct_solution: str          # 正确解法
-    knowledge_gaps: List[str]      # 知识缺陷
-    remediation_plan: List[str]    # 补救计划
+    pass
