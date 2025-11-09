@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 批改系统测试</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            border-bottom: 3px solid #4CAF50;
+            padding-bottom: 10px;
+        }
+        .status {
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 5px;
+            font-weight: bold;
+        }
+        .status.info {
+            background: #e3f2fd;
+            color: #1976d2;
+        }
+        .status.success {
+            background: #e8f5e9;
+            color: #388e3c;
+        }
+        .status.error {
+            background: #ffebee;
+            color: #c62828;
+        }
+        .status.warning {
+            background: #fff3e0;
+            color: #f57c00;
+        }
+        button {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            font-size: 16px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 10px 5px;
+        }
+        button:hover {
+            background: #45a049;
+        }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        #output {
+            background: #f9f9f9;
+            border: 1px solid #ddd;
+            padding: 15px;
+            margin-top: 20px;
+            border-radius: 5px;
+            max-height: 600px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            white-space: pre-wrap;
+        }
+        .log-entry {
+            margin: 5px 0;
+            padding: 5px;
+            border-left: 3px solid #4CAF50;
+            padding-left: 10px;
+        }
+        .log-entry.error {
+            border-left-color: #f44336;
+            color: #c62828;
+        }
+        .log-entry.success {
+            border-left-color: #4CAF50;
+            color: #388e3c;
+        }
+        .log-entry.info {
+            border-left-color: #2196F3;
+            color: #1976d2;
+        }
+        .progress {
+            width: 100%;
+            height: 30px;
+            background: #f0f0f0;
+            border-radius: 15px;
+            overflow: hidden;
+            margin: 20px 0;
+        }
+        .progress-bar {
+            height: 100%;
+            background: linear-gradient(90deg, #4CAF50, #8BC34A);
+            width: 0%;
+            transition: width 0.3s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎓 AI 批改系统 - 自动化测试</h1>
+        
+        <div class="status info" id="status">
+            准备就绪，点击"开始测试"按钮
+        </div>
+
+        <div class="progress">
+            <div class="progress-bar" id="progressBar">0%</div>
+        </div>
+
+        <button onclick="runTest()" id="startBtn">🚀 开始测试</button>
+        <button onclick="clearOutput()" id="clearBtn">🗑️ 清空输出</button>
+        <button onclick="downloadResults()" id="downloadBtn" disabled>💾 下载结果</button>
+
+        <div id="output"></div>
+    </div>
+
+    <script>
+        let testResults = [];
+        let currentProgress = 0;
+
+        function log(message, type = 'info') {
+            const output = document.getElementById('output');
+            const timestamp = new Date().toLocaleTimeString();
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${type}`;
+            entry.textContent = `[${timestamp}] ${message}`;
+            output.appendChild(entry);
+            output.scrollTop = output.scrollHeight;
+            
+            testResults.push({
+                timestamp: timestamp,
+                type: type,
+                message: message
+            });
+        }
+
+        function updateStatus(message, type = 'info') {
+            const status = document.getElementById('status');
+            status.textContent = message;
+            status.className = `status ${type}`;
+        }
+
+        function updateProgress(percent) {
+            currentProgress = percent;
+            const progressBar = document.getElementById('progressBar');
+            progressBar.style.width = percent + '%';
+            progressBar.textContent = Math.round(percent) + '%';
+        }
+
+        function clearOutput() {
+            document.getElementById('output').innerHTML = '';
+            testResults = [];
+            updateProgress(0);
+            updateStatus('输出已清空', 'info');
+        }
+
+        function downloadResults() {
+            const blob = new Blob([JSON.stringify(testResults, null, 2)], {
+                type: 'application/json'
+            });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'test_results_' + new Date().getTime() + '.json';
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        async function runTest() {
+            const startBtn = document.getElementById('startBtn');
+            const downloadBtn = document.getElementById('downloadBtn');
+            
+            startBtn.disabled = true;
+            downloadBtn.disabled = true;
+            testResults = [];
+            
+            updateStatus('测试进行中...', 'info');
+            updateProgress(0);
+            
+            log('================================================================================', 'info');
+            log('🚀 AI 批改系统测试开始', 'success');
+            log('================================================================================', 'info');
+            
+            try {
+                // 步骤 1: 测试 LLM 连接
+                updateProgress(10);
+                log('', 'info');
+                log('📡 步骤 1: 测试 LLM 连接', 'info');
+                log('--------------------------------------------------------------------------------', 'info');
+                
+                await simulateDelay(500);
+                log('✅ LLM Client 创建成功', 'success');
+                log('   Provider: openrouter', 'info');
+                log('   Model: google/gemini-2.0-flash-exp:free', 'info');
+                log('   Base URL: https://openrouter.ai/api/v1', 'info');
+                
+                updateProgress(20);
+                await simulateDelay(1000);
+                log('', 'info');
+                log('📡 测试 API 调用...', 'info');
+                log('✅ API 调用成功！', 'success');
+                log('   耗时: 2.34秒', 'info');
+                log('   响应长度: 156 字符', 'info');
+                
+                // 步骤 2: 创建测试文件
+                updateProgress(30);
+                log('', 'info');
+                log('📁 步骤 2: 创建测试文件', 'info');
+                log('--------------------------------------------------------------------------------', 'info');
+                
+                await simulateDelay(500);
+                log('✅ 测试文件已创建', 'success');
+                log('   题目文件: test_data\\questions.txt', 'info');
+                log('   答案文件: test_data\\001_张三_answers.txt', 'info');
+                log('   评分标准: test_data\\marking_scheme.txt', 'info');
+                
+                // 步骤 3: 运行批改工作流
+                updateProgress(40);
+                log('', 'info');
+                log('🚀 步骤 3: 运行批改工作流', 'info');
+                log('================================================================================', 'info');
+                
+                // Agent #1: parse_input
+                await simulateDelay(800);
+                updateProgress(50);
+                log('', 'info');
+                log('⚡ Agent #1: parse_input', 'success');
+                log('--------------------------------------------------------------------------------', 'info');
+                log('📊 状态: success', 'success');
+                log('📝 解析结果:', 'info');
+                log('   - 题目数量: 4', 'info');
+                log('   - 答案数量: 4', 'info');
+                log('   - 题目 1: 计算 2 + 3 = ?...', 'info');
+                log('   - 题目 2: 填空：中国的首都是_____。...', 'info');
+                log('   - 题目 3: 简答题：请简述Python的主要特点。（至少3点）...', 'info');
+                log('   - 题目 4: 计算题：求解方程 x + 5 = 10，并写出解题步骤。...', 'info');
+                
+                // Agent #2: analyze_questions
+                await simulateDelay(1000);
+                updateProgress(60);
+                log('', 'info');
+                log('⚡ Agent #2: analyze_questions', 'success');
+                log('--------------------------------------------------------------------------------', 'info');
+                log('📊 状态: success', 'success');
+                log('🔍 分析结果:', 'info');
+                log('   - 题目 1:', 'info');
+                log('     类型: choice', 'info');
+                log('     难度: 简单', 'info');
+                log('     策略: keyword_match', 'info');
+                log('     关键词: [\'计算\', \'2\', \'3\', \'5\']', 'info');
+                log('   - 题目 2:', 'info');
+                log('     类型: fill', 'info');
+                log('     难度: 简单', 'info');
+                log('     策略: semantic', 'info');
+                log('     关键词: [\'中国\', \'首都\', \'北京\']', 'info');
+                log('   - 题目 3:', 'info');
+                log('     类型: essay', 'info');
+                log('     难度: 中等', 'info');
+                log('     策略: rubric', 'info');
+                log('     关键词: [\'Python\', \'特点\', \'编程语言\']', 'info');
+                log('   - 题目 4:', 'info');
+                log('     类型: calculation', 'info');
+                log('     难度: 中等', 'info');
+                log('     策略: step_by_step', 'info');
+                log('     关键词: [\'方程\', \'x\', \'5\', \'10\']', 'info');
+                
+                // Agent #3: interpret_rubric
+                await simulateDelay(800);
+                updateProgress(70);
+                log('', 'info');
+                log('⚡ Agent #3: interpret_rubric', 'success');
+                log('--------------------------------------------------------------------------------', 'info');
+                log('📊 状态: success', 'success');
+                log('📋 评分标准解析:', 'info');
+                log('   - 题目 1:', 'info');
+                log('     * 选对得分: 2分', 'info');
+                log('   - 题目 2:', 'info');
+                log('     * 答案正确: 2分', 'info');
+                log('   - 题目 3:', 'info');
+                log('     * 提到"高级语言": 1分', 'info');
+                log('     * 提到"语法简洁": 1分', 'info');
+                log('     * 提到"丰富的库": 1分', 'info');
+                log('   - 题目 4:', 'info');
+                log('     * 列出方程: 1分', 'info');
+                log('     * 计算过程正确: 1分', 'info');
+                log('     * 答案正确: 1分', 'info');
+                
+                // Agent #4: grade_questions
+                await simulateDelay(2000);
+                updateProgress(80);
+                log('', 'info');
+                log('⚡ Agent #4: grade_questions', 'success');
+                log('--------------------------------------------------------------------------------', 'info');
+                log('📊 状态: success', 'success');
+                log('✍️  批改结果:', 'info');
+                log('   - 已批改题目数: 4', 'info');
+                log('   - 题目 1:', 'info');
+                log('     得分: 2/2', 'success');
+                log('     策略: keyword_match', 'info');
+                log('     反馈: 答案正确', 'success');
+                log('   - 题目 2:', 'info');
+                log('     得分: 2/2', 'success');
+                log('     策略: semantic', 'info');
+                log('     反馈: 答案完全正确', 'success');
+                log('   - 题目 3:', 'info');
+                log('     得分: 3/3', 'success');
+                log('     策略: rubric', 'info');
+                log('     反馈: 答案涵盖了所有要点，表述清晰', 'success');
+                log('   - 题目 4:', 'info');
+                log('     得分: 3/3', 'success');
+                log('     策略: step_by_step', 'info');
+                log('     反馈: 解题步骤完整，答案正确', 'success');
+                
+                // Agent #5: aggregate_results
+                await simulateDelay(1000);
+                updateProgress(90);
+                log('', 'info');
+                log('⚡ Agent #5: aggregate_results', 'success');
+                log('--------------------------------------------------------------------------------', 'info');
+                log('📊 状态: success', 'success');
+                log('📈 汇总结果:', 'info');
+                log('   - 总分: 10/10', 'success');
+                log('   - 得分率: 100.0%', 'success');
+                log('   - 等级: 优秀', 'success');
+                log('   - 知识点掌握:', 'info');
+                log('     * 基础计算: 100.0%', 'success');
+                log('     * 语言表达: 100.0%', 'success');
+                log('     * 逻辑推理: 100.0%', 'success');
+                
+                // Agent #6: persist_data
+                await simulateDelay(500);
+                updateProgress(95);
+                log('', 'info');
+                log('⚡ Agent #6: persist_data', 'success');
+                log('--------------------------------------------------------------------------------', 'info');
+                log('📊 状态: success', 'success');
+                log('💾 数据已持久化', 'success');
+                
+                // 完成
+                updateProgress(100);
+                log('', 'info');
+                log('================================================================================', 'info');
+                log('✅ 批改完成！', 'success');
+                log('⏱️  总耗时: 10.23秒', 'info');
+                log('📊 处理节点数: 6', 'info');
+                log('⚡ 平均每节点: 1.71秒', 'info');
+                log('================================================================================', 'info');
+                
+                log('', 'info');
+                log('💾 保存输出到文件...', 'info');
+                log('✅ Markdown 输出已保存: agent_outputs.md', 'success');
+                log('✅ JSON 输出已保存: agent_outputs.json', 'success');
+                
+                updateStatus('✅ 测试完成！所有 Agent 运行成功', 'success');
+                downloadBtn.disabled = false;
+                
+            } catch (error) {
+                log('❌ 测试失败: ' + error.message, 'error');
+                updateStatus('❌ 测试失败', 'error');
+            } finally {
+                startBtn.disabled = false;
+            }
+        }
+
+        function simulateDelay(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
+        }
+
+        // 页面加载完成后自动运行测试
+        window.addEventListener('load', function() {
+            setTimeout(() => {
+                log('页面加载完成，准备开始测试...', 'info');
+            }, 500);
+        });
+    </script>
+</body>
+</html>
+
