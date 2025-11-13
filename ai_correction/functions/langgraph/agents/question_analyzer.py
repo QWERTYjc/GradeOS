@@ -260,23 +260,62 @@ class QuestionGraderAgent:
         }
     
     def _grade_by_semantic(self, question: Dict, answer: Dict, marking_scheme: Dict) -> Dict:
-        """语义理解批改（需要 LLM）"""
+        """语义理解批改（使用细分评分点）"""
         if not self.llm_client:
             print("⚠️ 无 LLM，使用关键词匹配")
             return self._grade_by_keywords(question, answer, marking_scheme)
 
         try:
-            # 使用 LLM 进行语义分析
-            prompt = f"""请批改以下答案，并以 JSON 格式返回结果：
+            # 获取细分评分点
+            scoring_points = marking_scheme.get('criteria', {}).get('scoring_points', [])
+            total_score = marking_scheme.get('criteria', {}).get('total_score', 10)
 
-题目：{question.get('text', '')}
-学生答案：{answer.get('text', '')}
+            # 如果没有细分评分点，使用简单批改
+            if not scoring_points:
+                return self._grade_simple_semantic(question, answer, total_score)
 
-请返回 JSON 格式：
+            # 格式化评分点
+            scoring_points_text = self._format_scoring_points(scoring_points)
+
+            # 构建详细的批改提示词
+            prompt = f"""你是一个专业的老师，正在批改学生的作业。请严格按照评分标准逐点评分。
+
+【题目】
+{question.get('text', '')}
+
+【学生答案】
+{answer.get('text', '')}
+
+【评分标准】（总分：{total_score}分）
+{scoring_points_text}
+
+【批改要求】
+1. **逐点评分**：对每个评分点单独评分，不要跳过任何评分点
+2. **严格对照**：严格对照评分标准，检查学生答案是否满足每个评分点的要求
+3. **详细分析**：对每个评分点，说明学生是否达到要求，为什么得分或扣分
+4. **精准评分**：每个评分点的得分必须在 0 到该评分点满分之间
+5. **总分计算**：总分 = 所有评分点得分之和
+
+【输出格式】
+请以 JSON 格式返回：
 {{
-    "score": 得分（0-10分的整数）,
-    "feedback": "详细反馈",
-    "errors": ["错误点1", "错误点2"],
+    "total_score": 总分（所有评分点得分之和）,
+    "max_score": {total_score},
+    "scoring_details": [
+        {{
+            "point_id": 评分点ID,
+            "point_name": "评分点名称",
+            "max_score": 该评分点满分,
+            "score": 该评分点得分,
+            "is_correct": true/false,
+            "analysis": "详细分析：学生答案中是否包含该评分点要求的内容",
+            "evidence": "学生答案中的相关内容（引用原文）",
+            "reason": "得分/扣分原因"
+        }}
+    ],
+    "overall_feedback": "总体评价",
+    "strengths": ["优点1", "优点2"],
+    "weaknesses": ["不足1", "不足2"],
     "suggestions": ["改进建议1", "改进建议2"]
 }}
 """
@@ -294,24 +333,97 @@ class QuestionGraderAgent:
             json_match = re.search(r'\{.*\}', response, re.DOTALL)
             if json_match:
                 result_data = json.loads(json_match.group())
-                score = result_data.get('score', 7)
+
+                # 提取数据
+                total_score_result = result_data.get('total_score', 0)
+                max_score_result = result_data.get('max_score', total_score)
+                scoring_details = result_data.get('scoring_details', [])
+                overall_feedback = result_data.get('overall_feedback', '')
+                strengths = result_data.get('strengths', [])
+                weaknesses = result_data.get('weaknesses', [])
+                suggestions = result_data.get('suggestions', [])
+
+                # 构建错误列表
+                errors = []
+                for detail in scoring_details:
+                    if not detail.get('is_correct', False):
+                        errors.append(f"{detail.get('point_name', '')}: {detail.get('reason', '')}")
+
+                print(f"✅ LLM 批改完成: 得分={total_score_result}/{max_score_result}")
+
+                return {
+                    'question_id': question['id'],
+                    'student_id': answer.get('student_id'),
+                    'score': total_score_result,
+                    'max_score': max_score_result,
+                    'feedback': overall_feedback,
+                    'scoring_details': scoring_details,
+                    'errors': errors,
+                    'strengths': strengths,
+                    'weaknesses': weaknesses,
+                    'suggestions': suggestions,
+                    'strategy': 'semantic'
+                }
+            else:
+                # 如果无法解析 JSON，使用简单批改
+                print("⚠️ 无法解析 JSON，使用简单批改")
+                return self._grade_simple_semantic(question, answer, total_score)
+
+        except Exception as e:
+            print(f"❌ LLM 批改失败: {e}，使用关键词匹配")
+            return self._grade_by_keywords(question, answer, marking_scheme)
+
+    def _format_scoring_points(self, scoring_points: List[Dict]) -> str:
+        """格式化评分点为文本"""
+        lines = []
+        for point in scoring_points:
+            line = f"{point['id']}. {point['description']} ({point['score']}分)"
+            if point.get('keywords'):
+                line += f"\n   关键词：{', '.join(point['keywords'])}"
+            lines.append(line)
+        return '\n'.join(lines)
+
+    def _grade_simple_semantic(self, question: Dict, answer: Dict, max_score: int) -> Dict:
+        """简单语义批改（无细分评分点）"""
+        try:
+            prompt = f"""请批改以下答案，并以 JSON 格式返回结果：
+
+题目：{question.get('text', '')}
+学生答案：{answer.get('text', '')}
+
+请返回 JSON 格式：
+{{
+    "score": 得分（0-{max_score}分的整数）,
+    "feedback": "详细反馈",
+    "errors": ["错误点1", "错误点2"],
+    "suggestions": ["改进建议1", "改进建议2"]
+}}
+"""
+
+            messages = [{"role": "user", "content": prompt}]
+            response = self.llm_client.chat(messages, temperature=0.3)
+
+            import json
+            import re
+
+            json_match = re.search(r'\{.*\}', response, re.DOTALL)
+            if json_match:
+                result_data = json.loads(json_match.group())
+                score = result_data.get('score', 0)
                 feedback = result_data.get('feedback', '答案基本正确')
                 errors = result_data.get('errors', [])
                 suggestions = result_data.get('suggestions', [])
             else:
-                # 如果无法解析 JSON，使用默认值
-                score = 7
-                feedback = response[:200]  # 取前200字符
+                score = 0
+                feedback = response[:200]
                 errors = []
                 suggestions = []
-
-            print(f"✅ LLM 批改完成: 得分={score}/10")
 
             return {
                 'question_id': question['id'],
                 'student_id': answer.get('student_id'),
                 'score': score,
-                'max_score': 10,
+                'max_score': max_score,
                 'feedback': feedback,
                 'errors': errors,
                 'suggestions': suggestions,
@@ -319,8 +431,8 @@ class QuestionGraderAgent:
             }
 
         except Exception as e:
-            print(f"❌ LLM 批改失败: {e}，使用关键词匹配")
-            return self._grade_by_keywords(question, answer, marking_scheme)
+            print(f"❌ 简单批改失败: {e}")
+            return self._grade_by_keywords(question, answer, {})
     
     def _grade_by_rubric(self, question: Dict, answer: Dict, marking_scheme: Dict) -> Dict:
         """评分标准批改"""

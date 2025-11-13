@@ -31,11 +31,11 @@ if not DATABASE_URL and DATABASE_TYPE == 'mysql':
 # LLM 配置
 LLM_PROVIDER = os.getenv('LLM_PROVIDER', 'openrouter')  # gemini, openai, openrouter
 LLM_API_KEY = os.getenv('LLM_API_KEY', '')
-LLM_MODEL = os.getenv('LLM_MODEL', 'google/gemini-2.0-flash-exp:free')
+LLM_MODEL = os.getenv('LLM_MODEL', 'google/gemini-2.5-flash-lite')
 
 # Gemini 配置
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', LLM_API_KEY)
-GEMINI_MODEL = os.getenv('GEMINI_MODEL', 'gemini-pro')
+GEMINI_MODEL = os.getenv('GEMINI_MODEL', 'gemini-2.0-flash-exp')
 
 # OpenAI 配置
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', LLM_API_KEY)
@@ -44,7 +44,7 @@ OPENAI_MODEL = os.getenv('OPENAI_MODEL', 'gpt-4')
 # OpenRouter 配置
 OPENROUTER_API_KEY = os.getenv('OPENROUTER_API_KEY', LLM_API_KEY)
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-OPENROUTER_MODEL = os.getenv('OPENROUTER_MODEL', 'google/gemini-2.0-flash-exp:free')
+OPENROUTER_MODEL = os.getenv('OPENROUTER_MODEL', 'google/gemini-2.5-flash-lite')
 
 # 文件上传配置
 UPLOAD_DIR = BASE_DIR / 'uploads'

@@ -71,7 +71,27 @@
 
 ---
 
+#### 4.1 **langgraph_correction_system_design.md** 🧠
+- LangGraph 流程拓扑与状态管理
+- 8 个 Agent 的提示词模板与职责
+- 三种可选的批改系统模式（精准/极速/自适应）
+- 4 周实施计划与集成要点
+
+**适合人群**：Prompt 工程师、架构师、项目经理
+
+---
+
+#### 4.2 **PROMPT_CHANGELOG.md** 🗒️
+- 统一记录 Prompt 版本、影响范围、监控指标与回滚策略
+- 提供模板示例，方便团队快速补充新的 LangGraph Prompt 变更
+- 支持与 `langgraph_correction_system_design.md`、`agent_design_details.md` 联动追踪
+
+**适合人群**：Prompt 工程师、上线审批人、质量负责人
+
+---
+
 #### 5. **production_implementation_plan.md** 📅
+- LangGraph 8 Agent 升级快照（新增 4 周节奏 + 验收门槛）
 - 5周开发计划
 - 4个开发阶段
   - Phase 1: 核心功能实现（第1-2周）

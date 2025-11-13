@@ -83,32 +83,50 @@ class RubricInterpreter:
         """解析评分标准文件"""
         rubric_data = {
             'source_files': marking_files,
-            'total_score': 100,
-            'criteria': {},
+            'total_score': 0,
+            'criteria': {
+                'scoring_points': [],
+                'total_score': 0,
+                'raw_text': ''
+            },
             'detailed_rubric': '',
             'parsed_sections': []
         }
-        
+
         for file_path in marking_files:
             try:
                 file_data = await self._parse_single_rubric_file(file_path)
-                
+
                 # 合并解析结果
                 if file_data:
                     rubric_data['detailed_rubric'] += file_data.get('content', '') + '\n'
                     rubric_data['parsed_sections'].extend(file_data.get('sections', []))
-                    
-                    # 合并评分标准
-                    if 'criteria' in file_data:
-                        rubric_data['criteria'].update(file_data['criteria'])
-                        
+
+                    # 合并评分标准（新版本：合并 scoring_points）
+                    if 'criteria' in file_data and isinstance(file_data['criteria'], dict):
+                        criteria = file_data['criteria']
+
+                        # 合并 scoring_points
+                        if 'scoring_points' in criteria:
+                            rubric_data['criteria']['scoring_points'].extend(criteria['scoring_points'])
+
+                        # 累加 total_score
+                        if 'total_score' in criteria:
+                            rubric_data['criteria']['total_score'] += criteria['total_score']
+                            rubric_data['total_score'] += criteria['total_score']
+
+                        # 合并 raw_text
+                        if 'raw_text' in criteria:
+                            rubric_data['criteria']['raw_text'] += criteria['raw_text'] + '\n'
+
             except Exception as e:
                 logger.warning(f"解析评分标准文件失败: {file_path} - {e}")
-        
+
         # 如果没有解析到有效的评分标准，使用默认标准
-        if not rubric_data['criteria']:
-            rubric_data['criteria'] = self.default_criteria
-        
+        if not rubric_data['criteria']['scoring_points']:
+            rubric_data['criteria'] = self._create_default_criteria()
+            rubric_data['total_score'] = rubric_data['criteria']['total_score']
+
         return rubric_data
     
     async def _parse_single_rubric_file(self, file_path: str) -> Dict[str, Any]:
@@ -230,46 +248,99 @@ class RubricInterpreter:
         return any(header_patterns)
     
     def _extract_criteria_from_text(self, text: str) -> Dict[str, Any]:
-        """从文本中提取评分标准"""
-        criteria = {}
-        
-        # 查找分数分配
+        """从文本中提取评分标准（细分评分点）"""
         import re
-        score_patterns = [
-            r'(\w+)[：:]\s*(\d+)\s*分',
-            r'(\w+)\s*\((\d+)分\)',
-            r'(\d+)分[：:]\s*(\w+)',
-        ]
-        
-        total_found_score = 0
-        for pattern in score_patterns:
-            matches = re.findall(pattern, text)
-            for match in matches:
-                if len(match) == 2:
-                    try:
-                        if match[1].isdigit():
-                            name, score = match[0], int(match[1])
-                        else:
-                            score, name = int(match[0]), match[1]
-                        
-                        criteria[name] = {
-                            'weight': score / 100.0,  # 假设总分100
-                            'description': name,
-                            'max_score': score
-                        }
-                        total_found_score += score
-                    except ValueError:
-                        continue
-        
-        # 如果没有找到明确的分数分配，使用默认标准
-        if not criteria or total_found_score == 0:
-            criteria = self.default_criteria.copy()
-        else:
-            # 标准化权重
-            for criterion in criteria.values():
-                criterion['weight'] = criterion.get('max_score', 0) / total_found_score
-        
+
+        criteria = {
+            'scoring_points': [],  # 细分评分点列表
+            'total_score': 0,
+            'raw_text': text
+        }
+
+        # 模式1: "- 评分点描述 (X分)" 或 "- 评分点描述 (X分)"
+        pattern1 = r'-\s*(.+?)\s*\((\d+)分\)'
+        matches1 = re.findall(pattern1, text)
+
+        # 模式2: "- 评分点描述：X分" 或 "- 评分点描述: X分"
+        pattern2 = r'-\s*(.+?)[：:]\s*(\d+)\s*分'
+        matches2 = re.findall(pattern2, text)
+
+        # 模式3: "X. 评分点描述 (Y分)"
+        pattern3 = r'\d+\.\s*(.+?)\s*\((\d+)分\)'
+        matches3 = re.findall(pattern3, text)
+
+        # 合并所有匹配
+        all_matches = matches1 + matches2 + matches3
+
+        point_id = 1
+        for description, score_str in all_matches:
+            try:
+                score = int(score_str)
+
+                # 提取关键词（简单实现：提取中文词组和英文单词）
+                keywords = self._extract_keywords_from_description(description)
+
+                scoring_point = {
+                    'id': point_id,
+                    'name': description.strip()[:50],  # 取前50字符作为名称
+                    'description': description.strip(),
+                    'score': score,
+                    'keywords': keywords,
+                    'criteria': description.strip()
+                }
+
+                criteria['scoring_points'].append(scoring_point)
+                criteria['total_score'] += score
+                point_id += 1
+
+            except ValueError:
+                continue
+
+        # 如果没有找到任何评分点，使用默认标准
+        if not criteria['scoring_points']:
+            criteria = self._create_default_criteria()
+
         return criteria
+
+    def _extract_keywords_from_description(self, description: str) -> List[str]:
+        """从评分点描述中提取关键词"""
+        import re
+
+        keywords = []
+
+        # 提取数学公式（包含 =, +, -, *, /, ^, √ 等符号的部分）
+        formula_pattern = r'[a-zA-Z0-9\+\-\*/\^√=\(\)²³±]+(?:\s*[=\+\-\*/]\s*[a-zA-Z0-9\+\-\*/\^√=\(\)²³±]+)+'
+        formulas = re.findall(formula_pattern, description)
+        keywords.extend([f.strip() for f in formulas if len(f.strip()) > 2])
+
+        # 提取关键术语（中文词组）
+        chinese_terms = ['余弦定理', '正弦定理', '勾股定理', '三角恒等式', '面积公式',
+                        '推导', '计算', '化简', '证明', '求解']
+        for term in chinese_terms:
+            if term in description:
+                keywords.append(term)
+
+        # 去重
+        keywords = list(set(keywords))
+
+        return keywords
+
+    def _create_default_criteria(self) -> Dict[str, Any]:
+        """创建默认评分标准"""
+        return {
+            'scoring_points': [
+                {
+                    'id': 1,
+                    'name': '答案准确性',
+                    'description': '答案是否正确',
+                    'score': 10,
+                    'keywords': [],
+                    'criteria': '答案完全正确'
+                }
+            ],
+            'total_score': 10,
+            'raw_text': '默认评分标准'
+        }
     
     async def _generate_default_rubric(self, state: GradingState) -> Dict[str, Any]:
         """生成默认评分标准"""

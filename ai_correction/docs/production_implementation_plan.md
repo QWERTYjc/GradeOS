@@ -1,5 +1,14 @@
 # 生产级 LangGraph AI 批改系统 - 实施计划
 
+## 0. LangGraph 8 Agent 升级快照
+- **依赖设计**：本计划与 `langgraph_correction_system_design.md` 的 8 Agent 拓扑保持一致，所有任务需同步更新 `PROMPT_CHANGELOG.md`。
+- **周度节奏**：
+  1. 第 1 周聚焦 Intake/Context/Rubric 三节点与测试夹具。
+  2. 第 2 周实现 Evaluation Coordinator + Question Grader Pool，并完成并行压测。
+  3. 第 3 周补齐 Feedback/QA/Report，打通数据库/前端 Demo。
+  4. 第 4 周完成性能/容错压测与上线评审材料。
+- **验收门槛**：每周结束前需输出周报模板（状态/风险/指标），并由 LangGraph Owner 及 Prompt Reviewer 双签确认，确保“设计-实现-监控”闭环。
+
 ## 📅 开发阶段规划
 
 ### Phase 1: 核心功能实现（第1-2周）

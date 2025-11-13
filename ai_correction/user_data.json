@@ -601,6 +601,48 @@
         },
         "result": "【注意：以下内容已从结构化格式转换为纯文本】\n\n```json\n\n  基本信息: 科目: 数学\n题目类型: 解答题\n总分: 14\n得分: 0\n得分率: 0\n  \n学生答题过程: 步骤编号: 1\n学生原始过程: 已知 a + b = 6\na > 0\nb > 0. 求 √a² + 16 + √b² + 16 最小值\n该步骤满分: 0\n该步骤得分: 0\n正确性: 错误\n扣分点: 学生解答了与题目无关的问题，题目要求解的是三角形ABC的tan C值和边长b，而学生的解答与此无关。\n    \n步骤编号: 2\n学生原始过程: 如图，求 √a² + 16 + √b² + 16 最小值。则求 xz + yz 的最小值\n该步骤满分: 0\n该步骤得分: 0\n正确性: 错误\n扣分点: 学生未能正确解读题目，将题目要求的三角形问题转化为几何图形问题，完全偏离了题目的核心要求。\n    \n步骤编号: 3\n学生原始过程: 如图，xyz是xyz的反转，yz = yz\nxz = xz。xz + zy 最小值为 xz + zy' / yz + 2x\n该步骤满分: 0\n该步骤得分: 0\n正确性: 错误\n扣分点: 与题目无关，学生将问题复杂化，引入了与题目无关的几何变换，未能解决题目要求的数学问题。\n    \n  \n标准答案对比: 正确解法: （1）利用已知条件 A = π/4 和 b² - a² = c²/2，结合正弦定理和余弦定理，可以求得 tan C 的值。通过计算得出 tan C = 2 ± √3。\\n（2）利用三角形面积公式和已知条件，通过求解方程得出 b 的值为 5。\n关键差异: 学生完全未涉及三角形ABC的解题过程，而是错误地解答了一个与题目无关的几何问题。\n  \n总结: 主要优点: 无\n主要问题: 学生未能理解题目的要求，解答了与题目无关的问题，完全偏离了题目的核心要求。\n改进建议: 学生需要加强对题目的理解和分析能力，确保解答过程与题目要求相符，避免解答与题目无关的问题。\n  \n\n```",
         "files_count": 2
+      },
+      {
+        "timestamp": "2025-11-09 17:57:07",
+        "files": [
+          "[题目]ac3b89c4dbad4a58b11a5565adfcc031.jpeg",
+          "[答案]fee58e639eef42b68791a965912fefad.jpeg"
+        ],
+        "settings": {
+          "strictness": "中等",
+          "language": "zh",
+          "mode": "efficient"
+        },
+        "result": "API调用失败: Error code: 403 - {'code': 30001, 'message': 'Sorry, your account balance is insufficient', 'data': None}",
+        "files_count": 2
+      },
+      {
+        "timestamp": "2025-11-09 18:26:25",
+        "files": [
+          "[题目]ac3b89c4dbad4a58b11a5565adfcc031.jpeg",
+          "[答案]fee58e639eef42b68791a965912fefad.jpeg"
+        ],
+        "settings": {
+          "strictness": "中等",
+          "language": "zh",
+          "mode": "efficient"
+        },
+        "result": "API调用失败: Error code: 403 - {'code': 30001, 'message': 'Sorry, your account balance is insufficient', 'data': None}",
+        "files_count": 2
+      },
+      {
+        "timestamp": "2025-11-09 18:30:56",
+        "files": [
+          "[题目]ac3b89c4dbad4a58b11a5565adfcc031.jpeg",
+          "[答案]fee58e639eef42b68791a965912fefad.jpeg"
+        ],
+        "settings": {
+          "strictness": "中等",
+          "language": "zh",
+          "mode": "efficient"
+        },
+        "result": "API调用失败: Error code: 403 - {'code': 30001, 'message': 'Sorry, your account balance is insufficient', 'data': None}",
+        "files_count": 2
       }
     ]
   }

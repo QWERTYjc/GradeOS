@@ -12,9 +12,11 @@ from pathlib import Path
 
 class InputParserAgent:
     """输入解析 Agent"""
-    
-    def __init__(self):
-        self.supported_formats = ['.txt', '.md', '.json', '.csv']
+
+    def __init__(self, llm_client=None):
+        self.supported_formats = ['.txt', '.md', '.json', '.csv', '.pdf', '.docx', '.doc',
+                                 '.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp']
+        self.llm_client = llm_client
         
     def parse(self, state: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -102,24 +104,38 @@ class InputParserAgent:
             return {}
     
     def _read_file(self, file_path: str) -> str:
-        """读取文件内容"""
+        """读取文件内容（支持图片、PDF、Word等格式）"""
+        from ...file_processor import process_file, extract_text_from_image_with_llm
+
         path = Path(file_path)
-        
+
         if not path.exists():
             raise FileNotFoundError(f"文件不存在: {file_path}")
-            
+
         if path.suffix not in self.supported_formats:
             raise ValueError(f"不支持的文件格式: {path.suffix}")
-            
-        with open(path, 'r', encoding='utf-8') as f:
-            return f.read()
+
+        # 处理文件
+        file_data = process_file(file_path)
+
+        # 如果是图片，使用 LLM 提取文字
+        if file_data['type'] == 'image':
+            if self.llm_client:
+                print(f"📸 正在从图片中提取文字: {path.name}")
+                return extract_text_from_image_with_llm(file_data['content'], self.llm_client)
+            else:
+                return f"[图片文件: {path.name}，需要 LLM 支持才能提取文字]"
+
+        # 其他格式直接返回文本内容
+        return file_data['content']
     
     def _extract_questions_from_text(self, text: str) -> List[Dict]:
         """从文本中提取题目"""
         questions = []
-        
-        # 支持多种题号格式：1. / (1) / 1) / 第1题
+
+        # 支持多种题号格式：1. / (1) / 1) / 第1题 / 题目1
         patterns = [
+            r'题目(\d+)[：:]\s*(.+?)(?=\n题目\d+[：:]|$)',  # 题目1：题目
             r'(\d+)\.\s*(.+?)(?=\n\d+\.|$)',  # 1. 题目
             r'\((\d+)\)\s*(.+?)(?=\n\(\d+\)|$)',  # (1) 题目
             r'(\d+)\)\s*(.+?)(?=\n\d+\)|$)',  # 1) 题目
@@ -154,12 +170,13 @@ class InputParserAgent:
     def _extract_answers_from_text(self, text: str, file_path: str) -> List[Dict]:
         """从文本中提取答案"""
         answers = []
-        
+
         # 提取学生信息
         student_id, student_name = self._extract_student_from_filename(file_path)
-        
+
         # 提取答案
         patterns = [
+            r'题目(\d+)答案[：:]\s*(.+?)(?=\n题目\d+答案[：:]|$)',  # 题目1答案：答案
             r'(\d+)\.\s*(.+?)(?=\n\d+\.|$)',
             r'\((\d+)\)\s*(.+?)(?=\n\(\d+\)|$)',
             r'(\d+)\)\s*(.+?)(?=\n\d+\)|$)',
