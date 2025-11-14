@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 Scoring Agent - AI智能评分
-集成现有的 calling_api.py，提供智能评分功能
+使用 LangGraph 系统的智能评分功能
 """
 
 import os
@@ -11,17 +11,8 @@ import json
 from typing import Dict, List, Any
 from datetime import datetime
 
-# 导入现有的 API 调用功能
-import sys
-sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-from api_correcting.calling_api import (
-    intelligent_correction_with_files,
-    correction_single_group,
-    correction_with_marking_scheme,
-    correction_without_marking_scheme
-)
-
 from ..state import GradingState
+from ...llm_client import get_llm_client
 
 logger = logging.getLogger(__name__)
 
@@ -100,41 +91,136 @@ class ScoringAgent:
         strictness_level: str,
         language: str
     ) -> str:
-        """执行评分"""
+        """执行评分 - 使用LLM直接评分"""
         try:
-            # 使用现有的智能批改功能
-            result = intelligent_correction_with_files(
-                question_files=question_files,
-                answer_files=answer_files,
-                marking_scheme_files=marking_files,
-                strictness_level=strictness_level,
-                language=language,
-                mode=mode
+            # 获取LLM客户端
+            llm_client = get_llm_client()
+            
+            # 读取文件内容
+            file_contents = self._read_file_contents(question_files, answer_files, marking_files)
+            
+            # 构建评分提示词
+            prompt = self._build_scoring_prompt(
+                file_contents, strictness_level, language
             )
-            return result
+            
+            # 构建消息
+            messages = [
+                {"role": "system", "content": "你是一位资深教育专家，擅长批改学生答案。使用标准Unicode数学符号，禁用LaTeX格式。"},
+                {"role": "user", "content": prompt}
+            ]
+            
+            # 调用LLM进行评分
+            logger.info(f"调用LLM进行评分，文件数量: 题目{len(question_files)}, 答案{len(answer_files)}, 标准{len(marking_files)}")
+            response = llm_client.chat(messages, temperature=0.7, max_tokens=4096)
+            
+            logger.info(f"LLM评分完成，响应长度: {len(response)}")
+            return response
             
         except Exception as e:
-            logger.warning(f"智能批改失败，尝试备选方案: {e}")
-            
-            # 备选方案：根据是否有评分标准选择不同的方法
-            if marking_files:
-                # 有评分标准，使用标准批改
-                marking_scheme = self._load_marking_scheme(marking_files[0])
-                result = correction_with_marking_scheme(
-                    marking_scheme,
-                    *answer_files,
-                    strictness_level=strictness_level,
-                    language=language
-                )
-            else:
-                # 无评分标准，自动生成并批改
-                result = correction_without_marking_scheme(
-                    *answer_files,
-                    strictness_level=strictness_level,
-                    language=language
-                )
-            
-            return result
+            logger.error(f"LLM评分失败: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return self._create_fallback_scoring_result()
+    
+    def _read_file_contents(self, question_files, answer_files, marking_files):
+        """读取文件内容"""
+        contents = {
+            'questions': [],
+            'answers': [],
+            'marking_schemes': []
+        }
+        
+        # 读取题目
+        for f in question_files:
+            try:
+                with open(f, 'r', encoding='utf-8') as file:
+                    contents['questions'].append(file.read())
+            except Exception as e:
+                logger.warning(f"读取题目文件失败 {f}: {e}")
+        
+        # 读取答案
+        for f in answer_files:
+            try:
+                with open(f, 'r', encoding='utf-8') as file:
+                    contents['answers'].append(file.read())
+            except Exception as e:
+                logger.warning(f"读取答案文件失败 {f}: {e}")
+        
+        # 读取评分标准
+        for f in marking_files:
+            try:
+                with open(f, 'r', encoding='utf-8') as file:
+                    contents['marking_schemes'].append(file.read())
+            except Exception as e:
+                logger.warning(f"读取评分标准失败 {f}: {e}")
+        
+        return contents
+    
+    def _build_scoring_prompt(self, file_contents, strictness_level, language):
+        """构建评分提示词"""
+        
+        # 严格程度描述
+        strictness_desc = {
+            '宽松': '请温和地批改，对小错误给予适当宽容',
+            '中等': '请公正地批改，关注主要概念和步骤',
+            '严格': '请严格批改，对任何错误都要指出并合理扣分'
+        }.get(strictness_level, '请公正地批改')
+        
+        prompt = f"""请对以下学生答案进行批改评分。
+
+【评分要求】
+- 严格程度：{strictness_desc}
+- 输出语言：{'中文' if language == 'zh' else '英文'}
+- 使用标准Unicode数学符号，禁用LaTeX格式
+
+"""
+        
+        # 添加题目内容
+        if file_contents['questions']:
+            prompt += "【题目】\n"
+            for i, q in enumerate(file_contents['questions'], 1):
+                prompt += f"题目{i}：\n{q}\n\n"
+        
+        # 添加学生答案
+        if file_contents['answers']:
+            prompt += "【学生答案】\n"
+            for i, a in enumerate(file_contents['answers'], 1):
+                prompt += f"答案{i}：\n{a}\n\n"
+        
+        # 添加评分标准
+        if file_contents['marking_schemes']:
+            prompt += "【评分标准】\n"
+            for i, m in enumerate(file_contents['marking_schemes'], 1):
+                prompt += f"标准{i}：\n{m}\n\n"
+        else:
+            prompt += "【评分标准】\n请根据题目要求和学生答案自行制定合理的评分标准。\n\n"
+        
+        prompt += """【输出要求】
+请以JSON格式输出批改结果，包含以下字段：
+{
+  "score": 得分(数字),
+  "total": 总分(数字),
+  "grade": "等级(A/B/C/D/F)",
+  "feedback": ["反馈列表"],
+  "errors": ["错误列表"],
+  "strengths": ["优点列表"],
+  "suggestions": ["改进建议列表"]
+}
+"""
+        
+        return prompt
+    
+    def _create_fallback_scoring_result(self):
+        """创建备选评分结果"""
+        return json.dumps({
+            "score": 0,
+            "grade": "F",
+            "feedback": ["评分系统暂时不可用"],
+            "errors": ["LLM调用失败"],
+            "strengths": [],
+            "suggestions": ["请稍后重试"]
+        })
     
     def _load_marking_scheme(self, marking_file: str) -> str:
         """加载评分标准"""

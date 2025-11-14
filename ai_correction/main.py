@@ -26,30 +26,25 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# 导入API函数
-try:
-    from functions.api_correcting.calling_api import (
-        correction_single_group,
-        generate_marking_scheme,
-        correction_with_marking_scheme,
-        correction_without_marking_scheme
-    )
-    API_AVAILABLE = True
-    st.success("✅ AI批改引擎已就绪")
-except ImportError as e:
-    API_AVAILABLE = False
-    st.warning(f"⚠️ AI批改引擎未就绪：{str(e)}")
+# 旧版API已废弃,使用LangGraph系统
+API_AVAILABLE = False
 
-# 导入LangGraph集成 - 生产级版本
+# 导入LangGraph集成 - 使用新的多模态工作流
 try:
-    from functions.langgraph.production_integration import (
-        show_production_grading_ui,
-        show_history_ui,
-        show_class_statistics_ui
+    from functions.langgraph.simple_ui_helper import (
+        show_langgraph_placeholder,
+        show_simple_history,
+        show_simple_statistics
     )
+    from functions.langgraph_integration import LangGraphIntegration
+    # ✨ 使用新的多模态协作工作流
+    from functions.langgraph.workflow_multimodal import run_multimodal_grading, get_multimodal_workflow
     LANGGRAPH_AVAILABLE = True
-    st.success("✅ 生产级 LangGraph AI批改系统已就绪")
+    st.success("✅ 多模态AI批改系统已就绪 (深度协作架构)")
 except ImportError as e:
+    show_langgraph_placeholder = None  # 设置为None避免未绑定变量警告
+    show_simple_history = None
+    show_simple_statistics = None
     LANGGRAPH_AVAILABLE = False
     st.warning(f"⚠️ LangGraph系统未就绪：{str(e)}")
 
@@ -59,74 +54,11 @@ try:
     from functions.correction_service import get_correction_service
     PROGRESS_AVAILABLE = True
 except ImportError as e:
+    show_progress_page = None  # 设置为None避免未绑定变量警告
+    show_progress_modal = None
+    get_correction_service = None
     PROGRESS_AVAILABLE = False
     st.warning(f"⚠️ 进度模块未就绪：{str(e)}")
-    
-    # 演示函数
-    def correction_single_group(*files, **kwargs):
-        return """# 📋 详细批改结果 (演示模式)
-
-## 基本信息
-- 科目：数学
-- 得分：8/10 分
-- 等级：B+
-
-## 详细分析
-### ✅ 优点
-- 解题思路清晰正确
-- 基础概念掌握扎实
-- 步骤表述较为规范
-
-### ❌ 问题
-- 第3步计算有小错误
-- 最终答案格式需要改进
-
-### 💡 改进建议
-1. 仔细检查计算过程
-2. 注意答案的规范性
-3. 可尝试多种解题方法
-
-**注意：当前为演示模式，请配置API获得真实结果。**"""
-
-    def generate_marking_scheme(*files, **kwargs):
-        return """📋 **自动生成评分标准** (演示模式)
-
-## 题目分析
-- 科目：数学
-- 类型：解答题
-- 难度：中等
-- 总分：10分
-
-## 评分细则
-1. **理解题意** (2分)
-   - 正确理解题目要求：2分
-   - 部分理解：1分
-   - 未理解：0分
-
-2. **解题思路** (3分)
-   - 方法正确且优秀：3分
-   - 方法基本正确：2分
-   - 方法有缺陷：1分
-   - 方法错误：0分
-
-3. **计算过程** (3分)
-   - 计算准确无误：3分
-   - 有少量计算错误：2分
-   - 有较多计算错误：1分
-   - 计算错误严重：0分
-
-4. **答案格式** (2分)
-   - 格式规范完整：2分
-   - 格式基本规范：1分
-   - 格式不规范：0分
-
-*演示标准，请配置API*"""
-
-    def correction_with_marking_scheme(scheme, *files, **kwargs):
-        return correction_single_group(*files, **kwargs)
-
-    def correction_without_marking_scheme(*files, **kwargs):
-        return correction_single_group(*files, **kwargs)
 
 # 导入图片处理库
 try:
@@ -135,7 +67,21 @@ try:
     from io import BytesIO
     PREVIEW_AVAILABLE = True
 except ImportError:
+    Image = None  # 设置为None避免未绑定变量警告
     PREVIEW_AVAILABLE = False
+
+# 支持的8个Agent阶段
+AGENT_STAGES = [
+    {"name": "编排协调", "progress": 5},
+    {"name": "多模态输入", "progress": 10},
+    {"name": "并行理解", "progress": 25},
+    {"name": "学生识别", "progress": 35},
+    {"name": "批次规划", "progress": 40},
+    {"name": "生成压缩包", "progress": 50},
+    {"name": "批改作业", "progress": 75},
+    {"name": "结果聚合", "progress": 90},
+    {"name": "完成", "progress": 100}
+]
 
 # 常量设置
 DATA_FILE = Path("user_data.json")
@@ -419,7 +365,7 @@ def preview_file(file_path, file_name):
     try:
         file_type = get_file_type(file_name)
         
-        if file_type == 'image' and PREVIEW_AVAILABLE:
+        if file_type == 'image' and PREVIEW_AVAILABLE and Image is not None:
             try:
                 image = Image.open(file_path)
                 st.image(image, caption=file_name, use_column_width=True)
@@ -656,9 +602,36 @@ def show_grading():
         st.rerun()
         return
 
-    # 直接显示生产级批改UI
+    # ✨ 使用新的多模态协作工作流
     if LANGGRAPH_AVAILABLE:
-        show_production_grading_ui()
+        st.markdown('<h2 class="main-title">📝 AI智能批改</h2>', unsafe_allow_html=True)
+        st.info("🎉 正在使用深度协作多模态架构 - 8个Agent协同工作")
+        
+        # 显示架构亮点
+        with st.expander("💡 架构特性", expanded=False):
+            st.markdown("""
+            **深度协作机制**:
+            - ✅ 无OCR依赖，直接使用LLM Vision能力
+            - ✅ 基于学生的批次管理
+            - ✅ Token优化：一次理解，多次使用
+            - ✅ 并行处理，提升效率
+            
+            **8个Agent协作流程**:
+            1. 🎭 OrchestratorAgent - 编排协调
+            2. 📁 MultiModalInputAgent - 多模态输入
+            3. 🔄 并行理解 (Question/Answer/Rubric)
+            4. 👥 StudentDetectionAgent - 学生识别
+            5. 📋 BatchPlanningAgent - 批次规划
+            6. 📊 RubricMasterAgent - 生成压缩评分包
+            7. ✍️ GradingWorkerAgent - 批改作业
+            8. 📊 ResultAggregatorAgent - 结果聚合
+            """)
+        
+        # 使用 LangGraph 多模态工作流进行批改
+        if show_langgraph_placeholder is not None:
+            show_langgraph_placeholder()
+        else:
+            st.error("❌ LangGraph占位符未加载")
     else:
         st.error("❌ 生产级批改系统未就绪，请检查系统配置")
         return
@@ -866,9 +839,10 @@ def show_result():
             # 显示LangGraph增强结果
             st.markdown("#### 🧠 LangGraph智能分析")
 
-            # 显示LangGraph特殊结果
-            if LANGGRAPH_AVAILABLE:
-                show_langgraph_results(st.session_state.langgraph_result)
+            # 显示LangGraph特殊结果（功能待实现）
+            # if LANGGRAPH_AVAILABLE:
+            #     show_langgraph_results(st.session_state.langgraph_result)
+            st.info("📊 LangGraph结构化结果展示功能即将推出")
 
             # 显示传统文本结果
             with st.expander("📄 查看详细文本结果", expanded=False):
@@ -1098,7 +1072,7 @@ def main():
     elif st.session_state.page == "grading":
         show_grading()
     elif st.session_state.page == "progress":
-        if PROGRESS_AVAILABLE:
+        if PROGRESS_AVAILABLE and show_progress_page is not None:
             show_progress_page()
         else:
             st.error("❌ 进度模块不可用")

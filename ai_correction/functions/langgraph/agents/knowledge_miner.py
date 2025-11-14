@@ -13,12 +13,8 @@ from typing import Dict, List, Any, Set
 from datetime import datetime
 import re
 
-# 导入现有的 API 调用功能
-import sys
-sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-from api_correcting.calling_api import call_api
-
 from ..state import GradingState, KnowledgePoint, ErrorAnalysis
+from ...llm_client import get_llm_client
 
 logger = logging.getLogger(__name__)
 
@@ -449,11 +445,19 @@ class KnowledgeMiner:
         }
     
     async def _call_ai_for_analysis(self, prompt: str) -> str:
-        """调用AI进行分析"""
+        """调用AI进行分析 - 使用LLM客户端"""
         try:
-            # 使用现有的API调用功能
-            response = call_api(prompt, language="zh")
-            return response
+            llm_client = get_llm_client()
+            response = llm_client.chat.completions.create(
+                model="Qwen/Qwen2.5-VL-72B-Instruct",
+                messages=[
+                    {"role": "system", "content": "你是一位资深教育专家，擅长分析学生的学习情况。"},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=2048,
+                temperature=0.7
+            )
+            return response.choices[0].message.content
         except Exception as e:
             logger.warning(f"AI分析调用失败: {e}")
             return "{}"  # 返回空JSON
