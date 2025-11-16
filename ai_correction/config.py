@@ -80,3 +80,79 @@ FIREBASE_CONFIG = {
     'appId': os.getenv('FIREBASE_APP_ID', '')
 }
 
+# ============ 图片优化配置 ============
+
+# Textin API 配置
+TEXTIN_APP_ID = os.getenv('TEXTIN_APP_ID', '')
+TEXTIN_SECRET_CODE = os.getenv('TEXTIN_SECRET_CODE', '')
+TEXTIN_API_URL = os.getenv(
+    'TEXTIN_API_URL',
+    'https://api.textin.com/ai/service/v1/crop_enhance_image'
+)
+
+# 图片优化功能开关
+ENABLE_IMAGE_OPTIMIZATION = os.getenv('ENABLE_IMAGE_OPT', 'false').lower() == 'true'
+OPTIMIZATION_MODE = os.getenv('OPT_MODE', 'smart')  # smart, fast, deep, crop_only
+AUTO_OPTIMIZE = os.getenv('OPT_AUTO_OPTIMIZE', 'false').lower() == 'true'
+KEEP_ORIGINAL = os.getenv('OPT_KEEP_ORIGINAL', 'true').lower() == 'true'
+
+# 图片优化参数
+IMAGE_OPTIMIZATION_CONFIG = {
+    'enabled': ENABLE_IMAGE_OPTIMIZATION,
+    'mode': OPTIMIZATION_MODE,
+    'api': {
+        'timeout': 30,
+        'retry': 2,
+        'max_concurrent': 3
+    },
+    'quality': {
+        'min_score': 60,
+        'blur_threshold': 100,
+        'size_min': 500
+    },
+    'storage': {
+        'output_dir': str(BASE_DIR / 'temp' / 'uploads' / 'optimized'),
+        'original_dir': str(BASE_DIR / 'temp' / 'uploads' / 'original'),
+        'backup_dir': str(BASE_DIR / 'user_uploads' / 'backup')
+    },
+    'presets': {
+        'smart': {
+            'enhance_mode': 2,  # 增强并锐化
+            'crop_image': 1,
+            'dewarp_image': 1,
+            'deblur_image': 1,
+            'correct_direction': 1,
+            'jpeg_quality': 85
+        },
+        'fast': {
+            'enhance_mode': 1,  # 增亮
+            'crop_image': 1,
+            'dewarp_image': 1,
+            'deblur_image': 0,
+            'correct_direction': 0,
+            'jpeg_quality': 85
+        },
+        'deep': {
+            'enhance_mode': 5,  # 去阴影增强
+            'crop_image': 1,
+            'dewarp_image': 1,
+            'deblur_image': 1,
+            'correct_direction': 1,
+            'jpeg_quality': 90
+        },
+        'crop_only': {
+            'enhance_mode': -1,  # 禁用增强
+            'crop_image': 1,
+            'dewarp_image': 0,
+            'deblur_image': 0,
+            'correct_direction': 0,
+            'jpeg_quality': 85
+        }
+    }
+}
+
+# 创建图片优化目录
+for dir_key in ['output_dir', 'original_dir', 'backup_dir']:
+    dir_path = Path(IMAGE_OPTIMIZATION_CONFIG['storage'][dir_key])
+    dir_path.mkdir(parents=True, exist_ok=True)
+

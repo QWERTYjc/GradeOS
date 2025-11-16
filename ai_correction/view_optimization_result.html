@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>图片优化效果对比</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Microsoft YaHei', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 20px;
+            min-height: 100vh;
+        }
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            padding: 30px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        h1 {
+            text-align: center;
+            color: #667eea;
+            margin-bottom: 10px;
+            font-size: 2.5em;
+        }
+        .subtitle {
+            text-align: center;
+            color: #666;
+            margin-bottom: 30px;
+        }
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        .stat-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+        }
+        .stat-value {
+            font-size: 2em;
+            font-weight: bold;
+            margin: 10px 0;
+        }
+        .stat-label {
+            font-size: 0.9em;
+            opacity: 0.9;
+        }
+        .comparison {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 20px;
+            margin-top: 30px;
+        }
+        .image-card {
+            background: #f5f5f5;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        .image-header {
+            background: #667eea;
+            color: white;
+            padding: 15px;
+            font-weight: bold;
+            text-align: center;
+        }
+        .image-content {
+            padding: 15px;
+        }
+        .image-content img {
+            width: 100%;
+            border-radius: 5px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .image-info {
+            margin-top: 15px;
+            padding: 10px;
+            background: white;
+            border-radius: 5px;
+            font-size: 0.9em;
+        }
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 5px 0;
+            border-bottom: 1px solid #eee;
+        }
+        .info-row:last-child {
+            border-bottom: none;
+        }
+        .badge {
+            display: inline-block;
+            padding: 3px 10px;
+            border-radius: 12px;
+            font-size: 0.8em;
+            font-weight: bold;
+        }
+        .badge-success {
+            background: #4CAF50;
+            color: white;
+        }
+        .badge-info {
+            background: #2196F3;
+            color: white;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎨 图片优化效果对比</h1>
+        <p class="subtitle">AI批改系统 - 图片自动清晰化功能测试报告</p>
+        
+        <div class="stats">
+            <div class="stat-card">
+                <div class="stat-label">测试状态</div>
+                <div class="stat-value">✅ 成功</div>
+                <div class="stat-label">3/3 测试通过</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">质量检测</div>
+                <div class="stat-value">95/100</div>
+                <div class="stat-label">清晰度优秀</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">优化模式</div>
+                <div class="stat-value">2种</div>
+                <div class="stat-label">智能/快速模式</div>
+            </div>
+        </div>
+
+        <div class="comparison">
+            <div class="image-card">
+                <div class="image-header">📷 原始图片</div>
+                <div class="image-content">
+                    <img src="temp/uploads/test_homework.jpg" alt="原图">
+                    <div class="image-info">
+                        <div class="info-row">
+                            <span>尺寸:</span>
+                            <span><strong>850 x 668</strong></span>
+                        </div>
+                        <div class="info-row">
+                            <span>文件大小:</span>
+                            <span><strong>35.2 KB</strong></span>
+                        </div>
+                        <div class="info-row">
+                            <span>状态:</span>
+                            <span><span class="badge badge-info">未处理</span></span>
+                        </div>
+                        <div class="info-row">
+                            <span>质量评分:</span>
+                            <span><strong>95/100</strong></span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="image-card">
+                <div class="image-header">✨ 智能模式优化</div>
+                <div class="image-content">
+                    <img src="temp/uploads/optimized/test_homework_optimized_20251116_154333.jpg" alt="智能模式">
+                    <div class="image-info">
+                        <div class="info-row">
+                            <span>尺寸:</span>
+                            <span><strong>2213 x 1895</strong></span>
+                        </div>
+                        <div class="info-row">
+                            <span>文件大小:</span>
+                            <span><strong>151.1 KB</strong></span>
+                        </div>
+                        <div class="info-row">
+                            <span>状态:</span>
+                            <span><span class="badge badge-success">已优化</span></span>
+                        </div>
+                        <div class="info-row">
+                            <span>处理方式:</span>
+                            <span>切边+矫正+增强+锐化</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="image-card">
+                <div class="image-header">⚡ 快速模式优化</div>
+                <div class="image-content">
+                    <img src="temp/uploads/optimized/test_homework_optimized_20251116_154334.jpg" alt="快速模式">
+                    <div class="image-info">
+                        <div class="info-row">
+                            <span>尺寸:</span>
+                            <span><strong>696 x 596</strong></span>
+                        </div>
+                        <div class="info-row">
+                            <span>文件大小:</span>
+                            <span><strong>24.8 KB</strong></span>
+                        </div>
+                        <div class="info-row">
+                            <span>状态:</span>
+                            <span><span class="badge badge-success">已优化</span></span>
+                        </div>
+                        <div class="info-row">
+                            <span>处理方式:</span>
+                            <span>切边+矫正+增亮</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div style="margin-top: 30px; padding: 20px; background: #f0f7ff; border-radius: 10px;">
+            <h3 style="color: #667eea; margin-bottom: 15px;">📋 测试总结</h3>
+            <ul style="line-height: 2; color: #333;">
+                <li>✅ <strong>API连接测试</strong>: 成功连接Textin API</li>
+                <li>✅ <strong>质量检测测试</strong>: 成功检测图片质量(95/100分)</li>
+                <li>✅ <strong>图片优化测试</strong>: 成功使用智能模式和快速模式优化图片</li>
+                <li>📊 <strong>优化效果</strong>: 
+                    <ul style="margin-left: 30px; margin-top: 10px;">
+                        <li>智能模式：提升分辨率，增强清晰度(2213x1895)</li>
+                        <li>快速模式：快速处理，适度优化(696x596)</li>
+                    </ul>
+                </li>
+            </ul>
+        </div>
+    </div>
+</body>
+</html>
