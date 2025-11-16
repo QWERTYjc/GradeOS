@@ -46,7 +46,7 @@ def create_test_image():
     img = img.rotate(5, expand=True, fillcolor='lightgray')
     
     # 保存图片
-    output_path = "temp/uploads/test_homework.jpg"
+    output_path = "uploads/test_homework.jpg"
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     img.save(output_path, quality=75)
     print(f"✅ 测试图片已生成: {output_path}")

@@ -4,18 +4,18 @@ import sys
 from pathlib import Path
 import json
 
-project_root = Path(__file__).parent
+project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 from dotenv import load_dotenv
-load_dotenv('.env.local')
+load_dotenv(project_root / '.env.local')
 
 from functions.image_optimization.textin_client import TextinClient
 from functions.image_optimization.models import APIParameters
 
 def debug_api_response():
     """调试API响应格式"""
-    test_image = "temp/uploads/test_homework.jpg"
+    test_image = "uploads/test_homework.jpg"
     
     if not os.path.exists(test_image):
         print(f"❌ 测试图片不存在: {test_image}")
