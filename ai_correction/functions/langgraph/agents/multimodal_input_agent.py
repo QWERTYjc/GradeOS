@@ -51,9 +51,9 @@ class MultiModalInputAgent:
                 try:
                     mm_file = process_multimodal_file(file_path, prefer_vision=False)
                     question_mm_files.append(mm_file)
-                    logger.info(f"✅ 题目文件处理成功: {file_path}")
+                    logger.info(f"题目文件处理成功: {file_path}")
                 except Exception as e:
-                    logger.error(f"❌ 题目文件处理失败: {file_path}, 错误: {e}")
+                    logger.error(f"题目文件处理失败: {file_path}, 错误: {e}")
                     state['errors'].append({
                         'step': 'multimodal_input',
                         'file': file_path,
@@ -67,9 +67,9 @@ class MultiModalInputAgent:
                 try:
                     mm_file = process_multimodal_file(file_path, prefer_vision=False)
                     answer_mm_files.append(mm_file)
-                    logger.info(f"✅ 答案文件处理成功: {file_path}")
+                    logger.info(f"答案文件处理成功: {file_path}")
                 except Exception as e:
-                    logger.error(f"❌ 答案文件处理失败: {file_path}, 错误: {e}")
+                    logger.error(f"答案文件处理失败: {file_path}, 错误: {e}")
                     state['errors'].append({
                         'step': 'multimodal_input',
                         'file': file_path,
@@ -83,9 +83,9 @@ class MultiModalInputAgent:
                 try:
                     mm_file = process_multimodal_file(file_path, prefer_vision=False)
                     marking_mm_files.append(mm_file)
-                    logger.info(f"✅ 评分标准文件处理成功: {file_path}")
+                    logger.info(f"评分标准文件处理成功: {file_path}")
                 except Exception as e:
-                    logger.error(f"❌ 评分标准文件处理失败: {file_path}, 错误: {e}")
+                    logger.error(f"评分标准文件处理失败: {file_path}, 错误: {e}")
                     state['errors'].append({
                         'step': 'multimodal_input',
                         'file': file_path,
@@ -106,7 +106,7 @@ class MultiModalInputAgent:
                 'marking_files_count': len(marking_mm_files)
             }
             
-            logger.info(f"✅ {self.name} 处理完成")
+            logger.info(f"{self.name} 处理完成")
             logger.info(f"   题目文件: {len(question_mm_files)}, 答案文件: {len(answer_mm_files)}, 评分标准: {len(marking_mm_files)}")
             
             return state

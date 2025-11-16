@@ -36,7 +36,7 @@ class OrchestratorAgent:
         Returns:
             更新后的状态
         """
-        logger.info(f"🎭 [{self.agent_name}] 开始任务编排...")
+        logger.info(f"[{self.agent_name}] 开始任务编排...")
         
         try:
             state['current_step'] = "任务编排"
@@ -66,7 +66,7 @@ class OrchestratorAgent:
             
             state['progress_percentage'] = 10.0
             
-            logger.info(f"✅ [{self.agent_name}] 任务编排完成")
+            logger.info(f"[{self.agent_name}] 任务编排完成")
             
             return state
             

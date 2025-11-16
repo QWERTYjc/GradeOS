@@ -11,8 +11,12 @@ import hashlib
 import os
 from datetime import datetime
 from pathlib import Path
+from typing import Dict, Any
 import time
 import re
+import logging
+
+logger = logging.getLogger(__name__)
 
 # 加载环境变量
 from dotenv import load_dotenv
@@ -40,13 +44,13 @@ try:
     # ✨ 使用新的多模态协作工作流
     from functions.langgraph.workflow_multimodal import run_multimodal_grading, get_multimodal_workflow
     LANGGRAPH_AVAILABLE = True
-    st.success("✅ 多模态AI批改系统已就绪 (深度协作架构)")
+    st.success("多模态AI批改系统已就绪 (深度协作架构)")
 except ImportError as e:
     show_langgraph_placeholder = None  # 设置为None避免未绑定变量警告
     show_simple_history = None
     show_simple_statistics = None
     LANGGRAPH_AVAILABLE = False
-    st.warning(f"⚠️ LangGraph系统未就绪：{str(e)}")
+    st.warning(f"LangGraph系统未就绪：{str(e)}")
 
 # 导入进度相关模块
 try:
@@ -58,7 +62,7 @@ except ImportError as e:
     show_progress_modal = None
     get_correction_service = None
     PROGRESS_AVAILABLE = False
-    st.warning(f"⚠️ 进度模块未就绪：{str(e)}")
+    st.warning(f"进度模块未就绪：{str(e)}")
 
 # 导入图片处理库
 try:
@@ -604,37 +608,728 @@ def show_grading():
 
     # ✨ 使用新的多模态协作工作流
     if LANGGRAPH_AVAILABLE:
-        st.markdown('<h2 class="main-title">📝 AI智能批改</h2>', unsafe_allow_html=True)
-        st.info("🎉 正在使用深度协作多模态架构 - 8个Agent协同工作")
+        st.markdown('<h2 class="main-title">AI智能批改</h2>', unsafe_allow_html=True)
+        st.info("正在使用深度协作多模态架构 - 8个Agent协同工作")
+        
+        # 固定文件路径
+        current_dir = Path(__file__).parent
+        answer_pdf = current_dir / "学生作答.pdf"
+        marking_pdf = current_dir / "批改标准.pdf"
+        
+        # 检查文件是否存在
+        if not answer_pdf.exists():
+            st.error(f"找不到学生作答文件: {answer_pdf}")
+            st.info("请确保文件存在于项目根目录")
+            return
+        
+        if not marking_pdf.exists():
+            st.error(f"找不到批改标准文件: {marking_pdf}")
+            st.info("请确保文件存在于项目根目录")
+            return
+        
+        # 显示文件信息
+        col1, col2 = st.columns(2)
+        with col1:
+            st.success(f"学生作答文件: {answer_pdf.name}")
+        with col2:
+            st.success(f"批改标准文件: {marking_pdf.name}")
+        
+        # 批改按钮
+        col_btn1, col_btn2 = st.columns([1, 1])
+        with col_btn1:
+            if st.button("开始批改", type="primary", use_container_width=True):
+                # 清除之前的结果
+                if 'grading_result' in st.session_state:
+                    del st.session_state.grading_result
+                if 'just_completed_grading' in st.session_state:
+                    del st.session_state.just_completed_grading
+                run_grading_in_streamlit(str(answer_pdf), str(marking_pdf))
+
+        with col_btn2:
+            if st.button("📊 加载测试数据", use_container_width=True):
+                # 加载测试数据用于验证显示功能
+                test_result = {
+                    'total_score': 15.5,
+                    'status': 'completed',
+                    'grade_level': 'B',
+                    'criteria_evaluations': [
+                        # Q1 的评分点
+                        {
+                            'criterion_id': 'Q1_C1',
+                            'score_earned': 2.0,
+                            'max_score': 2.0,
+                            'satisfaction_level': '完全满足',
+                            'student_work': '学生正确使用了余弦定理公式 cosA = (b²+c²-a²)/(2bc)',
+                            'justification': '学生完全正确地应用了余弦定理，公式使用正确，计算过程清晰',
+                            'matched_criterion': '正确使用余弦定理',
+                            'feedback': '非常好！继续保持',
+                            'evidence': ['cosA = (b²+c²-a²)/(2bc)', '计算结果正确']
+                        },
+                        {
+                            'criterion_id': 'Q1_C2',
+                            'score_earned': 1.5,
+                            'max_score': 2.0,
+                            'satisfaction_level': '部分满足',
+                            'student_work': '学生计算了 cos(π/2) 的值，但结果有误',
+                            'justification': '学生理解了特殊角的概念，但计算结果不正确',
+                            'matched_criterion': '计算特殊角的三角函数值',
+                            'feedback': '需要复习特殊角的三角函数值，cos(π/2) = 0',
+                            'evidence': ['cos(π/2) 计算错误']
+                        },
+                        # Q2 的评分点
+                        {
+                            'criterion_id': 'Q2_C1',
+                            'score_earned': 3.0,
+                            'max_score': 3.0,
+                            'satisfaction_level': '完全满足',
+                            'student_work': '学生正确证明了三角形全等',
+                            'justification': '证明过程完整，逻辑清晰，符合评分标准',
+                            'matched_criterion': '证明三角形全等',
+                            'feedback': '证明过程非常完整，逻辑严密',
+                            'evidence': ['使用了SAS全等定理', '证明步骤完整']
+                        },
+                        {
+                            'criterion_id': 'Q2_C2',
+                            'score_earned': 2.0,
+                            'max_score': 3.0,
+                            'satisfaction_level': '部分满足',
+                            'student_work': '学生计算了角度，但过程不够详细',
+                            'justification': '结果正确，但缺少详细的推导过程',
+                            'matched_criterion': '计算角度',
+                            'feedback': '建议在计算过程中写出更详细的步骤',
+                            'evidence': ['最终答案正确', '缺少中间步骤']
+                        },
+                        # Q3 的评分点
+                        {
+                            'criterion_id': 'Q3_C1',
+                            'score_earned': 4.0,
+                            'max_score': 4.0,
+                            'satisfaction_level': '完全满足',
+                            'student_work': '学生正确化简了代数分数',
+                            'justification': '化简过程完全正确，符合所有评分标准',
+                            'matched_criterion': '化简代数分数',
+                            'feedback': '化简过程非常规范，值得表扬',
+                            'evidence': ['指数运算正确', '最终结果正确']
+                        },
+                        {
+                            'criterion_id': 'Q3_C2',
+                            'score_earned': 3.0,
+                            'max_score': 4.0,
+                            'satisfaction_level': '部分满足',
+                            'student_work': '学生进行了因式分解，但有一处小错误',
+                            'justification': '整体思路正确，但在因式分解的最后一步出现了符号错误',
+                            'matched_criterion': '因式分解',
+                            'feedback': '注意检查符号，特别是在提取公因式时',
+                            'evidence': ['因式分解思路正确', '符号错误扣1分']
+                        }
+                    ],
+                    'detailed_feedback': [
+                        {'content': '总体表现良好，基础知识掌握扎实'},
+                        {'content': '在特殊角的三角函数值方面需要加强'},
+                        {'content': '证明题的逻辑性很好，继续保持'},
+                        {'content': '建议在计算过程中写出更详细的步骤'}
+                    ],
+                    'student_reports': [
+                        {
+                            'student_id': '20210001',
+                            'student_name': '张三',
+                            'total_score': 15.5,
+                            'evaluations': []  # 将在下面填充
+                        }
+                    ]
+                }
+
+                # 将 criteria_evaluations 复制到 student_reports 中
+                test_result['student_reports'][0]['evaluations'] = test_result['criteria_evaluations']
+
+                # 保存到 session_state
+                st.session_state.grading_result = test_result
+                st.session_state.just_completed_grading = False  # 设置为 False，这样下面会显示结果
+                st.success("✅ 测试数据已加载！")
+        
+        # 如果已有批改结果，显示结果（在按钮下方显示，避免重复）
+        # 注意：结果会在run_grading_in_streamlit中显示，这里不需要重复显示
+        # 但如果页面刷新，这里可以恢复显示
+        if 'grading_result' in st.session_state and st.session_state.grading_result:
+            # 检查是否刚刚完成批改（避免重复显示）
+            if not st.session_state.get('just_completed_grading', False):
+                display_grading_result(st.session_state.grading_result)
         
         # 显示架构亮点
-        with st.expander("💡 架构特性", expanded=False):
+        with st.expander("架构特性", expanded=False):
             st.markdown("""
             **深度协作机制**:
-            - ✅ 无OCR依赖，直接使用LLM Vision能力
-            - ✅ 基于学生的批次管理
-            - ✅ Token优化：一次理解，多次使用
-            - ✅ 并行处理，提升效率
+            - 无OCR依赖，直接使用LLM Vision能力
+            - 基于学生的批次管理
+            - Token优化：一次理解，多次使用
+            - 并行处理，提升效率
             
             **8个Agent协作流程**:
-            1. 🎭 OrchestratorAgent - 编排协调
-            2. 📁 MultiModalInputAgent - 多模态输入
-            3. 🔄 并行理解 (Question/Answer/Rubric)
-            4. 👥 StudentDetectionAgent - 学生识别
-            5. 📋 BatchPlanningAgent - 批次规划
-            6. 📊 RubricMasterAgent - 生成压缩评分包
-            7. ✍️ GradingWorkerAgent - 批改作业
-            8. 📊 ResultAggregatorAgent - 结果聚合
+            1. OrchestratorAgent - 编排协调
+            2. MultiModalInputAgent - 多模态输入
+            3. 并行理解 (Question/Answer/Rubric)
+            4. StudentDetectionAgent - 学生识别
+            5. BatchPlanningAgent - 批次规划
+            6. RubricMasterAgent - 生成压缩评分包
+            7. GradingWorkerAgent - 批改作业
+            8. ResultAggregatorAgent - 结果聚合
             """)
-        
-        # 使用 LangGraph 多模态工作流进行批改
-        if show_langgraph_placeholder is not None:
-            show_langgraph_placeholder()
-        else:
-            st.error("❌ LangGraph占位符未加载")
     else:
-        st.error("❌ 生产级批改系统未就绪，请检查系统配置")
+        st.error("生产级批改系统未就绪，请检查系统配置")
         return
+
+
+def run_grading_in_streamlit(answer_pdf: str, marking_pdf: str):
+    """在Streamlit中运行批改流程，支持实时日志和进度显示"""
+    import asyncio
+    from functions.langgraph.workflow_multimodal import run_multimodal_grading
+    from functions.langgraph.streamlit_logger import setup_streamlit_logger, get_streamlit_logs
+    from datetime import datetime
+    import time
+
+    # 创建状态显示区域
+    status_placeholder = st.empty()
+
+    # 创建日志显示区域
+    log_container = st.container()
+    with log_container:
+        st.markdown("### 📋 批改日志")
+        log_code_area = st.empty()
+        log_code_area.code("等待批改开始...", language='text')
+
+    # 添加调试信息
+    st.write("🔍 调试：日志区域已创建")
+
+    # 设置日志处理器（简化版本，避免阻塞）
+    try:
+        st.write("🔍 调试：正在设置日志处理器...")
+        # 暂时跳过日志处理器设置和logger调用，避免阻塞
+        # log_handler = setup_streamlit_logger(log_container=None)
+        # logger.info("开始批改流程（日志处理器已跳过）")
+        st.write("🔍 调试：日志处理器设置已跳过，继续执行...")
+    except Exception as e:
+        # logger.error(f"设置日志处理器失败: {e}")
+        st.error(f"⚠️ 日志处理器设置失败: {e}")
+        st.write(f"🔍 调试：日志处理器设置失败 - {e}")
+
+    # 进度回调函数（虽然由于asyncio.run()阻塞无法实时更新，但仍然记录日志）
+    def progress_callback(state_dict, node_name):
+        """进度回调函数 - 记录进度信息到日志"""
+        try:
+            progress = state_dict.get('progress_percentage', 0)
+            current_step = state_dict.get('current_step', '处理中...')
+            # logger.info(f"[进度 {progress:.1f}%] {current_step} (Agent: {node_name})")
+            pass  # 暂时跳过logger调用
+        except Exception as e:
+            # logger.warning(f"进度回调失败: {e}")
+            pass
+
+    try:
+        # 步骤1: 准备文件路径
+        st.write("🔍 调试：开始准备文件路径...")
+        # logger.info(f"开始批改流程，学生作答文件: {answer_pdf}, 批改标准文件: {marking_pdf}")
+
+        # 检查文件是否存在（支持Path对象和字符串）
+        answer_path = Path(answer_pdf) if isinstance(answer_pdf, str) else answer_pdf
+        marking_path = Path(marking_pdf) if isinstance(marking_pdf, str) else marking_pdf
+
+        st.write(f"🔍 调试：检查文件 - 学生作答: {answer_path}, 批改标准: {marking_path}")
+
+        if not answer_path.exists():
+            raise FileNotFoundError(f"学生作答文件不存在: {answer_path}")
+        if not marking_path.exists():
+            raise FileNotFoundError(f"批改标准文件不存在: {marking_path}")
+
+        # 转换为字符串路径
+        answer_pdf = str(answer_path)
+        marking_pdf = str(marking_path)
+
+        # logger.info("✅ 文件检查通过")
+        st.write("🔍 调试：文件检查通过，准备启动批改工作流...")
+
+        # 步骤2: 运行批改工作流
+        st.write("🔍 调试：准备执行批改工作流...")
+
+        # 直接执行批改，不使用 st.status()（避免可能的阻塞）
+        try:
+            st.write("🔍 调试：开始调用 asyncio.run()...")
+
+            # 执行批改（注意：这会阻塞UI，但Streamlit的限制无法避免）
+            # 设置超时时间（30分钟）
+            try:
+                result = asyncio.run(
+                    asyncio.wait_for(
+                        run_multimodal_grading(
+                            task_id=f"streamlit_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+                            user_id=st.session_state.get('user_id', 'streamlit_user'),
+                            question_files=[],  # 题目文件（如果有）
+                            answer_files=[answer_pdf],
+                            marking_files=[marking_pdf],
+                            strictness_level="中等",
+                            language="zh",
+                            progress_callback=progress_callback
+                        ),
+                        timeout=1800  # 30分钟超时
+                    )
+                )
+            except asyncio.TimeoutError:
+                raise TimeoutError("⏱️ 批改超时（超过30分钟），请检查文件大小或网络连接")
+
+            st.write(f"🔍 调试：批改完成！状态: {result.get('status', 'unknown')}")
+
+            if result is None:
+                raise Exception("❌ 批改流程返回None，可能执行失败")
+
+            # 验证结果完整性
+            if not result.get('criteria_evaluations'):
+                st.warning("⚠️ 批改结果中没有评估项，可能存在问题")
+
+            st.success("✅ 批改完成！")
+
+        except TimeoutError as timeout_err:
+            error_msg = str(timeout_err)
+            st.error(error_msg)
+            # 显示已捕获的日志
+            logs = get_streamlit_logs()
+            if logs:
+                recent_logs = logs[-200:]
+                log_text = "\n".join([
+                    f"[{log['timestamp']}] [{log['level']:7s}] {log['message']}"
+                    for log in recent_logs
+                ])
+                log_code_area.code(f"批改超时\n\n已捕获的日志:\n{log_text}", language='text')
+            return
+        except Exception as workflow_error:
+            error_msg = f"批改工作流执行失败: {str(workflow_error)}"
+            st.error(error_msg)
+            # 显示错误信息和已捕获的日志
+            logs = get_streamlit_logs()
+            if logs:
+                recent_logs = logs[-200:]
+                log_text = "\n".join([
+                    f"[{log['timestamp']}] [{log['level']:7s}] {log['message']}"
+                    for log in recent_logs
+                ])
+                log_code_area.code(f"错误: {error_msg}\n\n已捕获的日志:\n{log_text}", language='text')
+            else:
+                log_code_area.code(f"错误: {error_msg}\n\n未捕获到日志", language='text')
+            raise
+
+        # 显示完整日志
+        logs = get_streamlit_logs()
+        if logs:
+            # 显示所有日志（最多500条）
+            recent_logs = logs[-500:] if len(logs) > 500 else logs
+            log_text = "\n".join([
+                f"[{log['timestamp']}] [{log['level']:7s}] {log['message']}"
+                for log in recent_logs
+            ])
+            log_code_area.code(log_text, language='text')
+            # logger.info(f"📊 已显示 {len(recent_logs)} 条日志（共 {len(logs)} 条）")
+            st.write(f"🔍 调试：已显示 {len(recent_logs)} 条日志（共 {len(logs)} 条）")
+        else:
+            log_code_area.code("⚠️ 未捕获到日志", language='text')
+            # logger.warning("⚠️ 未捕获到任何日志")
+            st.write("🔍 调试：未捕获到任何日志")
+
+        # 保存结果到session_state
+        st.session_state.grading_result = result
+        st.session_state.just_completed_grading = True
+
+        # 显示成功消息
+        st.success("✅ 批改完成！结果已显示在下方。")
+
+        # 显示结果
+        display_grading_result(result)
+
+    except Exception as e:
+        # 记录错误
+        # logger.error(f"❌ 批改过程异常: {e}", exc_info=True)
+
+        # 确保错误信息可以正确编码
+        try:
+            error_msg = str(e).encode('utf-8', errors='replace').decode('utf-8')
+        except Exception:
+            error_msg = f"批改失败: {type(e).__name__}"
+
+        st.error(f"❌ 批改失败: {error_msg}")
+
+        # 显示错误详情
+        import traceback
+        error_traceback = traceback.format_exc()
+        # logger.error(f"错误堆栈:\n{error_traceback}")
+        st.write(f"🔍 调试：错误堆栈:\n{error_traceback}")
+
+        with st.expander("🔍 错误详情", expanded=True):
+            st.code(error_traceback)
+
+        # 显示已捕获的日志
+        logs = get_streamlit_logs()
+        if logs:
+            recent_logs = logs[-200:]
+            log_text = "\n".join([
+                f"[{log['timestamp']}] [{log['level']:7s}] {log['message']}"
+                for log in recent_logs
+            ])
+            log_code_area.code(f"错误: {error_msg}\n\n已捕获的日志:\n{log_text}", language='text')
+        else:
+            log_code_area.code(f"错误: {error_msg}\n\n⚠️ 未捕获到日志", language='text')
+            st.warning("⚠️ 未捕获到任何日志，可能日志处理器未正常工作")
+
+
+def display_by_student(result: Dict):
+    """按学生分组显示批改结果"""
+    criteria_evaluations = result.get('criteria_evaluations', [])
+
+    if not criteria_evaluations:
+        st.warning("暂无详细批改数据")
+        return
+
+    st.markdown("### 👥 按学生分组显示")
+
+    # 提取学生信息（从 student_reports 或 criteria_evaluations 中）
+    student_reports = result.get('student_reports', [])
+
+    if student_reports:
+        # 如果有 student_reports，使用它
+        for student_report in student_reports:
+            student_id = student_report.get('student_id', 'unknown')
+            student_name = student_report.get('student_name', '未知学生')
+            total_score = student_report.get('total_score', 0)
+
+            # 获取该学生的所有评估
+            student_evals = student_report.get('evaluations', [])
+
+            # 按题目分组
+            questions = {}
+            for eval_item in student_evals:
+                criterion_id = eval_item.get('criterion_id', '')
+                question_id = criterion_id.split('_')[0] if '_' in criterion_id else 'UNKNOWN'
+                if question_id not in questions:
+                    questions[question_id] = []
+                questions[question_id].append(eval_item)
+
+            # 显示学生信息
+            with st.expander(f"👤 {student_name} ({student_id}) - 总分: {total_score}分", expanded=True):
+                # 按题目显示
+                sorted_questions = sorted(questions.items(), key=lambda x: x[0])
+
+                for question_id, evals in sorted_questions:
+                    # 计算该题得分
+                    question_score = sum(e.get('score_earned', 0) for e in evals)
+                    question_max_score = sum(e.get('max_score', 0) for e in evals)
+
+                    # 使用可折叠的题目容器（支持缩放）
+                    with st.expander(f"📝 {question_id} - {question_score}/{question_max_score}分", expanded=False):
+                        # 显示该题的所有得分点
+                        for i, eval_item in enumerate(evals, 1):
+                            display_evaluation_item(eval_item, i)
+
+                    st.markdown("---")
+    else:
+        # 如果没有 student_reports，尝试从 criteria_evaluations 中提取学生信息
+        st.info("💡 当前批改结果中没有明确的学生分组信息，显示所有评分点")
+
+        # 按题目分组显示（作为单个学生处理）
+        questions = {}
+        for eval_item in criteria_evaluations:
+            criterion_id = eval_item.get('criterion_id', '')
+            question_id = criterion_id.split('_')[0] if '_' in criterion_id else 'UNKNOWN'
+            if question_id not in questions:
+                questions[question_id] = []
+            questions[question_id].append(eval_item)
+
+        # 计算总分
+        total_score = sum(e.get('score_earned', 0) for e in criteria_evaluations)
+        max_score = sum(e.get('max_score', 0) for e in criteria_evaluations)
+
+        with st.expander(f"👤 学生批改结果 - 总分: {total_score}/{max_score}分", expanded=True):
+            sorted_questions = sorted(questions.items(), key=lambda x: x[0])
+
+            for question_id, evals in sorted_questions:
+                # 计算该题得分
+                question_score = sum(e.get('score_earned', 0) for e in evals)
+                question_max_score = sum(e.get('max_score', 0) for e in evals)
+
+                st.markdown(f"#### 📝 {question_id} - {question_score}/{question_max_score}分")
+
+                # 显示该题的所有得分点
+                for i, eval_item in enumerate(evals, 1):
+                    display_evaluation_item(eval_item, i)
+
+                st.markdown("---")
+
+
+def display_by_question(result: Dict):
+    """按题目分组显示批改结果"""
+    criteria_evaluations = result.get('criteria_evaluations', [])
+
+    if not criteria_evaluations:
+        st.warning("暂无详细批改数据")
+        return
+
+    st.markdown("### 📚 按题目分组显示")
+
+    # 按题目分组
+    questions = {}
+    for eval_item in criteria_evaluations:
+        criterion_id = eval_item.get('criterion_id', '')
+        question_id = criterion_id.split('_')[0] if '_' in criterion_id else 'UNKNOWN'
+        if question_id not in questions:
+            questions[question_id] = []
+        questions[question_id].append(eval_item)
+
+    # 按题目顺序显示
+    sorted_questions = sorted(questions.items(), key=lambda x: x[0])
+
+    for question_id, evals in sorted_questions:
+        # 计算该题统计信息
+        question_score = sum(e.get('score_earned', 0) for e in evals)
+        question_max_score = sum(e.get('max_score', 0) for e in evals)
+        score_rate = (question_score / question_max_score * 100) if question_max_score > 0 else 0
+
+        # 使用可折叠的题目容器（支持缩放），默认折叠
+        with st.expander(f"📝 {question_id} - 共 {len(evals)} 个评分点 - 得分: {question_score}/{question_max_score}分 ({score_rate:.1f}%)", expanded=False):
+            # 显示该题的所有得分点
+            for i, eval_item in enumerate(evals, 1):
+                display_evaluation_item(eval_item, i)
+
+            # 显示该题统计信息
+            st.markdown("---")
+            st.markdown("#### 📊 该题统计")
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("总得分", f"{question_score:.1f}")
+            with col2:
+                st.metric("满分", f"{question_max_score:.1f}")
+            with col3:
+                st.metric("得分率", f"{score_rate:.1f}%")
+            with col4:
+                st.metric("评分点数", len(evals))
+
+
+def display_evaluation_item(eval_item: Dict, index: int):
+    """显示单个评分点的详细信息"""
+    criterion_id = eval_item.get('criterion_id', 'N/A')
+    score_earned = eval_item.get('score_earned', 0)
+    max_score = eval_item.get('max_score', 0)
+    satisfaction = eval_item.get('satisfaction_level', 'N/A')
+    student_work = eval_item.get('student_work', '')
+    justification = eval_item.get('justification', '')
+    matched_criterion = eval_item.get('matched_criterion', '')
+    feedback = eval_item.get('feedback', '')
+    evidence = eval_item.get('evidence', [])
+
+    # 根据满足程度选择颜色
+    if satisfaction == '完全满足':
+        satisfaction_color = '🟢'
+    elif satisfaction == '部分满足':
+        satisfaction_color = '🟡'
+    else:
+        satisfaction_color = '🔴'
+
+    st.markdown(f"**{satisfaction_color} 评分点 {index}: {criterion_id}** - {score_earned}/{max_score}分 ({satisfaction})")
+
+    # 使用列布局显示详细信息
+    col1, col2 = st.columns([1, 1])
+
+    with col1:
+        # 学生作答情况
+        if student_work:
+            st.markdown("**✍️ 学生作答**:")
+            st.text_area(f"学生作答_{index}", student_work, height=100, key=f"student_work_{criterion_id}_{index}", disabled=True, label_visibility="collapsed")
+
+        # 符合评分标准的哪一项
+        if matched_criterion:
+            st.markdown(f"**✅ 符合标准**: {matched_criterion}")
+
+    with col2:
+        # 评分理由
+        st.markdown("**📝 评分理由**:")
+        st.text_area(f"评分理由_{index}", justification, height=100, key=f"justification_{criterion_id}_{index}", disabled=True, label_visibility="collapsed")
+
+        # 反馈意见
+        if feedback and feedback != "无":
+            st.markdown("**💬 反馈意见**:")
+            st.info(feedback)
+
+    # 证据（具体步骤和结果）
+    if evidence:
+        st.markdown("**🔍 证据（具体步骤和结果）**:")
+        for ev in evidence:
+            st.write(f"- {ev}")
+
+    st.markdown("---")
+
+
+def display_grading_result(result: Dict):
+    """显示批改结果（支持两种显示模式）"""
+    if not result:
+        st.warning("批改结果为空，无法显示")
+        return
+
+    st.markdown("---")
+    st.markdown("## 📊 批改结果")
+
+    # 总体信息
+    col1, col2, col3, col4, col5 = st.columns(5)
+    with col1:
+        st.metric("总分", f"{result.get('total_score', 0)}")
+    with col2:
+        st.metric("状态", result.get('status', 'N/A'))
+    with col3:
+        st.metric("等级", result.get('grade_level', 'N/A'))
+    with col4:
+        criteria_count = len(result.get('criteria_evaluations', []))
+        st.metric("评分点数量", criteria_count)
+    with col5:
+        # 统计题目覆盖
+        evals = result.get('criteria_evaluations', [])
+        questions = set()
+        for eval_item in evals:
+            criterion_id = eval_item.get('criterion_id', '')
+            if '_' in criterion_id:
+                qid = criterion_id.split('_')[0]
+                questions.add(qid)
+        st.metric("题目数量", len(questions))
+
+    # 显示模式切换
+    st.markdown("---")
+    display_mode = st.radio(
+        "📋 选择显示模式",
+        options=["按学生分组", "按题目分组"],
+        horizontal=True,
+        help="选择不同的显示方式来查看批改结果"
+    )
+
+    # 根据选择的模式显示结果
+    if display_mode == "按学生分组":
+        display_by_student(result)
+    else:
+        display_by_question(result)
+    
+    # 批改标准解析结果
+    if 'rubric_parsing_result' in result and result['rubric_parsing_result']:
+        st.markdown("### 批改标准解析结果")
+        rubric_result = result['rubric_parsing_result']
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.write(f"**标准ID**: {rubric_result.get('rubric_id', 'N/A')}")
+        with col2:
+            st.write(f"**总分**: {rubric_result.get('total_points', 0)} 分")
+        with col3:
+            criteria_count = rubric_result.get('criteria_count', len(rubric_result.get('criteria', [])))
+            st.write(f"**评分点数量**: {criteria_count}")
+        
+        # 统计题目覆盖
+        criteria = rubric_result.get('criteria', [])
+        if criteria:
+            rubric_questions = set()
+            for criterion in criteria:
+                qid = criterion.get('question_id', '')
+                if not qid and '_' in criterion.get('criterion_id', ''):
+                    qid = criterion.get('criterion_id', '').split('_')[0]
+                if qid:
+                    rubric_questions.add(qid)
+            if rubric_questions:
+                st.write(f"**覆盖题目**: {len(rubric_questions)} 道题 - {', '.join(sorted(rubric_questions))}")
+        
+        # 评分点详情
+        criteria = rubric_result.get('criteria', [])
+        if criteria:
+            with st.expander(f"查看所有评分点详情 ({len(criteria)}个)", expanded=False):
+                for i, criterion in enumerate(criteria, 1):
+                    st.markdown(f"#### 评分点 {i}: {criterion.get('criterion_id', 'N/A')}")
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.write(f"**题目编号**: {criterion.get('question_id', 'N/A')}")
+                        st.write(f"**分值**: {criterion.get('points', 0)} 分")
+                        st.write(f"**评估方法**: {criterion.get('evaluation_method', 'N/A')}")
+                    with col2:
+                        if criterion.get('detailed_requirements'):
+                            st.write(f"**详细要求**: {criterion.get('detailed_requirements')}")
+                        if criterion.get('standard_answer'):
+                            st.write(f"**标准答案**: {criterion.get('standard_answer')}")
+                    
+                    # 得分条件
+                    scoring_criteria = criterion.get('scoring_criteria', {})
+                    if scoring_criteria:
+                        st.write("**得分条件**:")
+                        if scoring_criteria.get('full_credit'):
+                            st.write(f"- 满分: {scoring_criteria.get('full_credit')}")
+                        if scoring_criteria.get('partial_credit'):
+                            st.write(f"- 部分分: {scoring_criteria.get('partial_credit')}")
+                        if scoring_criteria.get('no_credit'):
+                            st.write(f"- 不得分: {scoring_criteria.get('no_credit')}")
+                    
+                    # 另类解法
+                    if criterion.get('alternative_methods'):
+                        st.write("**另类解法**:")
+                        for method in criterion.get('alternative_methods', []):
+                            st.write(f"- {method}")
+                    
+                    # 常见错误
+                    if criterion.get('common_mistakes'):
+                        st.write("**常见错误**:")
+                        for mistake in criterion.get('common_mistakes', []):
+                            st.write(f"- {mistake}")
+                    
+                    st.markdown("---")
+    
+    # Agent协作过程
+    st.markdown("---")
+    if 'agent_collaboration' in result:
+        with st.expander("🤖 Agent协作过程", expanded=False):
+            collab = result['agent_collaboration']
+
+            col1, col2 = st.columns(2)
+            with col1:
+                st.write("**RubricInterpreterAgent**:")
+                rubric_info = collab.get('rubric_interpreter', {})
+                st.write(f"- 状态: {rubric_info.get('status', 'N/A')}")
+                st.write(f"- 提取评分点数量: {rubric_info.get('criteria_extracted', 0)}")
+                st.write(f"- 总分: {rubric_info.get('total_points', 0)} 分")
+
+            with col2:
+                st.write("**GradingWorkerAgent**:")
+                grading_info = collab.get('grading_worker', {})
+                st.write(f"- 状态: {grading_info.get('status', 'N/A')}")
+                st.write(f"- 批改学生数量: {grading_info.get('students_graded', 0)}")
+                st.write(f"- 评估数量: {grading_info.get('evaluations_count', 0)}")
+    
+    # 总体反馈
+    if result.get('detailed_feedback'):
+        st.markdown("### 💬 总体反馈")
+        feedback_list = result.get('detailed_feedback', [])
+        for i, feedback in enumerate(feedback_list, 1):
+            if isinstance(feedback, dict):
+                st.write(f"{i}. {feedback.get('content', str(feedback))}")
+            else:
+                st.write(f"{i}. {feedback}")
+    
+    # 错误和警告
+    errors = result.get('errors', [])
+    warnings = result.get('warnings', [])
+    
+    if errors or warnings:
+        st.markdown("### ⚠️ 错误和警告")
+        
+        if errors:
+            st.error("**错误**:")
+            for i, error in enumerate(errors, 1):
+                if isinstance(error, dict):
+                    st.write(f"{i}. [{error.get('step', 'unknown')}] {error.get('error', str(error))}")
+                else:
+                    st.write(f"{i}. {error}")
+        
+        if warnings:
+            st.warning("**警告**:")
+            for i, warning in enumerate(warnings, 1):
+                if isinstance(warning, dict):
+                    st.write(f"{i}. [{warning.get('step', 'unknown')}] {warning.get('warning', str(warning))}")
+                else:
+                    st.write(f"{i}. {warning}")
 
 
 # 批改结果展示页面 - 左右对照布局

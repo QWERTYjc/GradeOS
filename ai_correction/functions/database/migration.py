@@ -17,7 +17,7 @@ sys.path.insert(0, str(project_root))
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import create_engine
-from functions.database.models import Base
+from .models import Base
 import logging
 
 logger = logging.getLogger(__name__)

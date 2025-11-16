@@ -148,26 +148,36 @@ class RubricUnderstanding(TypedDict):
     strictness_guidance: Optional[str] # 严格程度指导（可选）
 
 
-class GradingCriterion(TypedDict):
-    """单个评分标准"""
+class GradingCriterion(TypedDict, total=False):
+    """单个评分标准（详细版）"""
     criterion_id: str                 # 评分点唯一标识
-    description: str                  # 评分点描述
+    question_id: Optional[str]       # 题目编号（如Q1, Q2等）
+    description: str                 # 评分点描述
+    detailed_requirements: Optional[str]  # 详细要求（具体说明需要什么才能得分）
     points: float                     # 分值
-    evaluation_method: str            # 评估方法（exact_match/semantic/calculation等）
+    standard_answer: Optional[str]    # 标准答案或标准步骤（如果有）
+    evaluation_method: str            # 评估方法（exact_match/semantic/calculation/step_check等）
+    scoring_criteria: Optional[Dict[str, str]]  # 得分条件（full_credit/partial_credit/no_credit）
+    alternative_methods: Optional[List[str]]  # 另类解法列表
     keywords: Optional[List[str]]     # 关键词（可选）
     required_elements: Optional[List[str]]  # 必需元素（可选）
+    common_mistakes: Optional[List[str]]  # 常见错误列表（可选）
 
 
 # ==================== 评估结果模型 ====================
 
-class CriteriaEvaluation(TypedDict):
-    """单个评分点的评估结果"""
+class CriteriaEvaluation(TypedDict, total=False):
+    """单个评分点的评估结果（详细版）"""
     criterion_id: str                 # 对应的评分点ID
-    is_met: bool                      # 是否满足
-    satisfaction_level: Literal['完全满足', '部分满足', '不满足']
+    max_score: float                  # 满分
     score_earned: float               # 实际得分
-    justification: str                # 评分理由
-    evidence: List[str]               # 证据列表（从答案中提取的关键部分）
+    is_met: bool                      # 是否满足
+    satisfaction_level: Literal['完全满足', '部分满足', '未满足']  # 满足程度
+    student_work: Optional[str]        # 学生的作答情况详细描述（包括公式、步骤、计算过程、中间结果、最终答案）
+    justification: str                # 评分理由（详细说明为什么给这个分数，包括学生答案与标准答案的对比）
+    matched_criterion: Optional[str]   # 符合评分标准的哪一项（如：'正确应用指数运算法则，得到a^10'）
+    feedback: Optional[str]           # 具体反馈意见（针对该评分点的具体建议）
+    evidence: List[str]               # 证据列表（从答案中提取的关键部分，包括具体计算式、中间结果、最终答案）
     suggestions: Optional[List[str]]  # 改进建议（可选）
 
 

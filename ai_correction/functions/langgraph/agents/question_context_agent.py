@@ -24,15 +24,15 @@ class QuestionContextAgent:
         logger.info(f"📖 [{self.agent_name}] 开始提取题目上下文...")
         
         try:
-            state['current_step'] = "题目上下文提取"
-            state['progress_percentage'] = 35.0
-            
             # 获取题目理解结果
             question_understanding = state.get('question_understanding')
             
             if not question_understanding:
-                logger.warning("未找到题目理解结果，跳过")
-                return state
+                logger.warning("未找到题目理解结果，使用默认理解")
+                question_understanding = {
+                    'questions': [],
+                    'summary': '默认题目理解'
+                }
             
             batches_info = state.get('batches_info', [])
             
@@ -50,26 +50,27 @@ class QuestionContextAgent:
                 
                 question_context_packages[batch_id] = context_package
             
-            state['question_context_packages'] = question_context_packages
-            
             logger.info(f"   为 {len(batches_info)} 个批次生成上下文包")
-            logger.info(f"✅ [{self.agent_name}] 题目上下文提取完成")
+            logger.info(f"[{self.agent_name}] 题目上下文提取完成")
             
-            return state
+            # 只返回需要更新的字段，避免并发更新冲突
+            # 注意：不返回progress_percentage和current_step，因为并行节点会冲突
+            return {
+                'question_context_packages': question_context_packages
+            }
             
         except Exception as e:
             error_msg = f"[{self.agent_name}] 执行失败: {str(e)}"
             logger.error(error_msg)
             
-            if 'errors' not in state:
-                state['errors'] = []
-            state['errors'].append({
-                'agent': self.agent_name,
-                'error': error_msg,
-                'timestamp': str(datetime.now())
-            })
-            
-            return state
+            return {
+                'errors': [{
+                    'agent': self.agent_name,
+                    'error': error_msg,
+                    'timestamp': str(datetime.now())
+                }],
+                'question_context_packages': {}
+            }
     
     def _generate_context_package(
         self,

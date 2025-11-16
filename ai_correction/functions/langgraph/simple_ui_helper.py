@@ -9,7 +9,7 @@ import streamlit as st
 
 def show_langgraph_placeholder():
     """显示LangGraph批改占位界面 - 支持多模态协作架构"""
-    st.markdown("### 🤖 深度协作多模态AI批改系统")
+    st.markdown("### 深度协作多模态AI批改系统")
     
     st.success("""
     ✅ **系统已就绪** - 最新的深度协作架构

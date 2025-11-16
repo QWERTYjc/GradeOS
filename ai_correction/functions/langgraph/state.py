@@ -11,8 +11,9 @@ LangGraph 状态定义 - 基于Orchestrator-Worker模式
 - 新增基于标准的评估结果字段
 """
 
-from typing import TypedDict, List, Dict, Any, Optional
+from typing import TypedDict, List, Dict, Any, Optional, Annotated
 from datetime import datetime
+import operator
 
 # 导入多模态数据模型
 try:
@@ -42,6 +43,11 @@ except ImportError:
     RubricPackage = Dict[str, Any]
     QuestionContextPackage = Dict[str, Any]
 
+# Reducer函数：用于处理并发更新，返回最后一个非None值
+def _set_last_value(left: Optional[Dict[str, Any]], right: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Reducer函数：返回最后一个非None值"""
+    return right if right is not None else left
+
 class GradingState(TypedDict):
     """
     LangGraph 批改状态模型
@@ -55,6 +61,7 @@ class GradingState(TypedDict):
     """
     
     # ==================== 基础任务信息 ====================
+    # 注意：这些字段在并行节点中不应被更新，只应在初始化时设置
     task_id: str
     user_id: str
     assignment_id: str  # 作业标识
@@ -94,32 +101,36 @@ class GradingState(TypedDict):
     scoring_criteria: List[Dict]          # 评分细则（保留兼容性）
     
     # ==================== 🆕 理解结果（新增）====================
-    question_understanding: Optional[Dict[str, Any]]  # 题目理解结果
-    answer_understanding: Optional[Dict[str, Any]]    # 答案理解结果
-    rubric_understanding: Optional[Dict[str, Any]]    # 评分标准理解结果
+    # 使用Annotated处理并发更新：并行节点会更新这些字段
+    # 注意：每个节点只更新自己的键，但LangGraph要求明确声明并发更新
+    question_understanding: Annotated[Optional[Dict[str, Any]], _set_last_value]  # 题目理解结果
+    answer_understanding: Annotated[Optional[Dict[str, Any]], _set_last_value]    # 答案理解结果
+    rubric_understanding: Annotated[Optional[Dict[str, Any]], _set_last_value]    # 评分标准理解结果
+    rubric_parsing_result: Optional[Dict[str, Any]]   # 批改标准解析结果（用于输出）
+    agent_collaboration: Optional[Dict[str, Any]]     # Agent协作过程信息（用于输出）
     
     # ==================== 题目识别与批次规划 ====================
     questions: List[Dict[str, Any]]       # 题目信息列表(含题号、分值、区域、tokens)
     batches: List[Dict[str, Any]]         # 批次划分方案
     
     # ==================== AI 评分结果 ====================
-    evaluations: List[Dict[str, Any]]     # 各题评分结果列表
+    evaluations: Annotated[List[Dict[str, Any]], operator.add]  # 各题评分结果列表（支持并行批次累加）
     scoring_results: Dict[str, Any]       # 评分结果（保留兼容性）
-    detailed_feedback: List[Dict]         # 详细反馈（保留兼容性）
-    
+    detailed_feedback: Annotated[List[Dict], operator.add]  # 详细反馈（保留兼容性，支持并行累加）
+
     # ==================== 🆕 基于标准的评估结果（新增）====================
-    criteria_evaluations: List[Dict[str, Any]]  # 基于评分标准的评估结果列表
-    
+    criteria_evaluations: Annotated[List[Dict[str, Any]], operator.add]  # 基于评分标准的评估结果列表（支持并行累加）
+
     # ==================== 🎯 坐标标注（核心功能） ====================
-    annotations: List[Dict[str, Any]]     # 标注坐标列表(含页码、bbox、提示)
-    coordinate_annotations: List[Dict]    # 坐标标注数据（保留兼容性）
-    error_regions: List[Dict]             # 错误区域坐标（保留兼容性）
-    cropped_regions: List[Dict]           # 裁剪区域数据（保留兼容性）
+    annotations: Annotated[List[Dict[str, Any]], operator.add]  # 标注坐标列表（支持并行累加）
+    coordinate_annotations: Annotated[List[Dict], operator.add]  # 坐标标注数据（保留兼容性，支持并行累加）
+    error_regions: Annotated[List[Dict], operator.add]  # 错误区域坐标（保留兼容性，支持并行累加）
+    cropped_regions: Annotated[List[Dict], operator.add]  # 裁剪区域数据（保留兼容性，支持并行累加）
     
     # ==================== 🧠 知识点挖掘（核心功能） ====================
-    knowledge_points: List[Dict]          # 知识点分析
+    knowledge_points: Annotated[List[Dict], operator.add]  # 知识点分析（支持并行累加）
     error_analysis: Dict[str, Any]        # 错题分析
-    learning_suggestions: List[str]       # 学习建议
+    learning_suggestions: Annotated[List[str], operator.add]  # 学习建议（支持并行累加）
     difficulty_assessment: Dict[str, Any] # 难度评估
 
     # ==================== 专业模式扩展字段 ====================
@@ -135,12 +146,12 @@ class GradingState(TypedDict):
     visualization_data: Dict[str, Any]    # 可视化数据（保留兼容性）
     
     # ==================== 🆕 深度协作相关字段（新增）====================
-    students_info: List[Any]              # 学生信息列表 (StudentInfo[])
-    batches_info: List[Any]               # 批次规划信息 (BatchInfo[])
+    students_info: Annotated[List[Any], operator.add]  # 学生信息列表（支持并行累加）
+    batches_info: Annotated[List[Any], operator.add]   # 批次规划信息（支持并行累加）
     batch_rubric_packages: Dict[str, Any] # 批次专属评分包 {batch_id: RubricPackage}
     question_context_packages: Dict[str, Any]  # 批次专属题目上下文 {batch_id: QuestionContextPackage}
-    grading_results: List[Dict[str, Any]]  # 所有批改结果
-    student_reports: List[Dict[str, Any]]  # 学生报告
+    grading_results: Annotated[List[Dict[str, Any]], operator.add]  # 所有批改结果（支持并行累加）
+    student_reports: Annotated[List[Dict[str, Any]], operator.add]  # 学生报告（支持并行累加）
     class_analysis: Dict[str, Any]         # 班级分析报告
     
     # ==================== 处理状态 ====================
@@ -150,13 +161,13 @@ class GradingState(TypedDict):
     completed_at: str                     # 完成时间
     
     # ==================== 错误和步骤记录 ====================
-    errors: List[Dict[str, Any]]          # 错误记录
+    errors: Annotated[List[Dict[str, Any]], operator.add]  # 错误记录（支持多个节点累加）
     step_results: Dict[str, Any]          # 步骤结果
     
     # ==================== 最终结果 ====================
     final_score: float                    # 最终得分
     grade_level: str                      # 等级评定(A/B/C/D/F)
-    warnings: List[str]                   # 警告信息
+    warnings: Annotated[List[str], operator.add]  # 警告信息（支持多个节点累加）
     
     # ==================== 元数据 ====================
     processing_time: float                # 处理时间(秒)

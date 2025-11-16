@@ -255,7 +255,7 @@ def format_agent_outputs(agent_outputs: List[Dict]) -> str:
     """
     lines = []
     
-    lines.append("## 🤖 Agent 执行记录")
+    lines.append("## Agent 执行记录")
     lines.append("")
     
     for i, output in enumerate(agent_outputs, 1):

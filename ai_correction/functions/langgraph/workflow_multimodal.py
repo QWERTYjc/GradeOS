@@ -64,7 +64,7 @@ class MultiModalGradingWorkflow:
     
     def _build_workflow(self):
         """构建工作流图"""
-        logger.info("🔧 构建深度协作多模态批改工作流...")
+        logger.info("构建深度协作多模态批改工作流...")
         
         # 创建状态图
         workflow = StateGraph(GradingState)
@@ -127,9 +127,9 @@ class MultiModalGradingWorkflow:
         # 编译图
         self.graph = workflow.compile(checkpointer=self.checkpointer)
         
-        logger.info("✅ 深度协作多模态批改工作流构建完成")
+        logger.info("深度协作多模态批改工作流构建完成")
     
-    async def execute(self, initial_state: GradingState) -> GradingState:
+    async def execute(self, initial_state: GradingState, progress_callback=None) -> GradingState:
         """
         执行工作流
         
@@ -139,7 +139,10 @@ class MultiModalGradingWorkflow:
         Returns:
             最终状态（包含批改结果）
         """
-        logger.info(f"🚀 开始执行多模态批改工作流，任务ID: {initial_state.get('task_id', 'unknown')}")
+        logger.info(f"开始执行多模态批改工作流，任务ID: {initial_state.get('task_id', 'unknown')}")
+        logger.info(f"文件信息 - 题目文件: {len(initial_state.get('question_files', []))}, "
+                   f"答案文件: {len(initial_state.get('answer_files', []))}, "
+                   f"批改标准文件: {len(initial_state.get('marking_files', []))}")
         
         try:
             # 初始化必要字段
@@ -188,7 +191,26 @@ class MultiModalGradingWorkflow:
                     final_state = state
                     # 获取当前节点名称
                     current_node = list(state.keys())[0] if state else "unknown"
-                    logger.info(f"📍 当前节点: {current_node}")
+                    logger.info(f"[当前节点] {current_node}")
+                    
+                    # 记录节点执行的详细信息
+                    state_value = list(state.values())[0] if isinstance(state, dict) and state else state
+                    if isinstance(state_value, dict):
+                        progress = state_value.get('progress_percentage', 0)
+                        current_step = state_value.get('current_step', '处理中...')
+                        logger.info(f"   步骤: {current_step}, 进度: {progress:.1f}%")
+                    
+                    # 调用进度回调
+                    if progress_callback:
+                        try:
+                            # 获取实际的状态值
+                            state_value = list(state.values())[0] if isinstance(state, dict) and state else state
+                            if isinstance(state_value, dict):
+                                # 确保进度回调被调用
+                                progress_callback(state_value, current_node)
+                                logger.debug(f"进度回调已调用: {current_node}, 进度: {state_value.get('progress_percentage', 0)}%")
+                        except Exception as e:
+                            logger.warning(f"进度回调失败: {e}", exc_info=True)
             
             # 标记完成
             if final_state:
@@ -198,7 +220,7 @@ class MultiModalGradingWorkflow:
                 final_result['completed_at'] = str(datetime.now())
                 final_result['progress_percentage'] = 100.0
                 
-                logger.info(f"✅ 工作流执行完成，总分: {final_result.get('total_score', 0)}")
+                logger.info(f"工作流执行完成，总分: {final_result.get('total_score', 0)}")
                 return final_result
             else:
                 raise Exception("工作流执行失败，未返回最终状态")
@@ -226,7 +248,7 @@ class MultiModalGradingWorkflow:
         Returns:
             更新后的状态
         """
-        logger.info("🎯 最终化批改结果...")
+        logger.info("最终化批改结果...")
         
         try:
             state['current_step'] = "最终化结果"
@@ -234,14 +256,223 @@ class MultiModalGradingWorkflow:
             state['completion_status'] = "completed"
             state['completed_at'] = str(datetime.now())
             
+            # 提取批改结果到最终输出格式
+            student_reports = state.get('student_reports', [])
+            if student_reports:
+                # 取第一个学生的报告（单学生批改）
+                first_report = student_reports[0]
+                state['detailed_feedback'] = first_report.get('detailed_feedback', '')
+                state['criteria_evaluations'] = first_report.get('evaluations', [])
+                state['grade_level'] = first_report.get('grade_level', '')
+                state['total_score'] = first_report.get('total_score', state.get('total_score', 0))
+                
+                # 如果detailed_feedback是字符串，转换为列表
+                if isinstance(state['detailed_feedback'], str):
+                    state['detailed_feedback'] = [state['detailed_feedback']] if state['detailed_feedback'] else []
+            else:
+                # 如果没有学生报告，尝试从grading_results直接提取
+                logger.warning("没有学生报告，尝试从grading_results直接提取评估结果")
+                grading_results = state.get('grading_results', [])
+                if grading_results:
+                    # 合并所有批次的评估结果
+                    all_evaluations = []
+                    total_score = 0
+                    for result in grading_results:
+                        evaluations = result.get('evaluations', [])
+                        all_evaluations.extend(evaluations)
+                        total_score += result.get('total_score', 0)
+                    
+                    if all_evaluations:
+                        state['criteria_evaluations'] = all_evaluations
+                        state['total_score'] = total_score / len(grading_results) if grading_results else 0
+                        logger.info(f"从grading_results提取了 {len(all_evaluations)} 个评估结果")
+                    else:
+                        logger.warning("grading_results中没有评估结果")
+                else:
+                    logger.warning("grading_results为空，无法提取评估结果")
+            
+            # 添加批改标准解析结果到最终输出
+            rubric_understanding = state.get('rubric_understanding')
+            criteria_evaluations = state.get('criteria_evaluations', [])
+            
+            # 如果rubric_understanding存在且不为None，使用它
+            # 否则，从criteria_evaluations中提取信息
+            if rubric_understanding is not None:
+                criteria_count = len(rubric_understanding.get('criteria', []))
+                # 如果只有1个默认评分点，尝试从criteria_evaluations中提取
+                if criteria_count == 1 and rubric_understanding.get('criteria', [{}])[0].get('points', 0) == 100.0:
+                    # 从criteria_evaluations中提取评分点信息
+                    if criteria_evaluations:
+                        # 按题目分组
+                        questions = {}
+                        for eval_item in criteria_evaluations:
+                            criterion_id = eval_item.get('criterion_id', '')
+                            question_id = criterion_id.split('_')[0] if '_' in criterion_id else 'UNKNOWN'
+                            if question_id not in questions:
+                                questions[question_id] = []
+                            questions[question_id].append(eval_item)
+                        
+                        # 构建评分点列表
+                        extracted_criteria = []
+                        total_points = 0.0
+                        for question_id, evals in sorted(questions.items()):
+                            for eval_item in evals:
+                                criterion_id = eval_item.get('criterion_id', '')
+                                max_score = eval_item.get('max_score', 0)
+                                total_points += max_score
+                                
+                                # 从批改结果中提取更详细的信息
+                                criterion_dict = {
+                                    'criterion_id': criterion_id,
+                                    'question_id': question_id,
+                                    'description': eval_item.get('matched_criterion', '')[:100] if eval_item.get('matched_criterion') else (eval_item.get('justification', '')[:100] if eval_item.get('justification') else '已评估'),
+                                    'points': max_score,
+                                    'evaluation_method': 'semantic',
+                                    'keywords': None,
+                                    'required_elements': None,
+                                    'detailed_requirements': eval_item.get('justification', '')[:200] if eval_item.get('justification') else None,
+                                    'standard_answer': None,  # 无法从批改结果中提取标准答案
+                                    'scoring_criteria': {
+                                        'full_credit': f'得{max_score}分：{eval_item.get("matched_criterion", "符合评分标准")}',
+                                        'partial_credit': f'得部分分：部分符合评分标准',
+                                        'no_credit': '不得分：不符合评分标准'
+                                    } if eval_item.get('matched_criterion') else None,
+                                    'alternative_methods': None,  # 无法从批改结果中提取另类解法
+                                    'common_mistakes': None
+                                }
+                                # 移除None值
+                                criterion_dict = {k: v for k, v in criterion_dict.items() if v is not None}
+                                extracted_criteria.append(criterion_dict)
+                        
+                        if extracted_criteria:
+                            state['rubric_parsing_result'] = {
+                                'rubric_id': f"EXTRACTED_FROM_EVALUATIONS",
+                                'total_points': total_points,
+                                'criteria_count': len(extracted_criteria),
+                                'criteria': extracted_criteria,
+                                'grading_rules': {},
+                                'strictness_guidance': '从批改结果中提取'
+                            }
+                            logger.info(f"   从批改结果中提取了 {len(extracted_criteria)} 个评分点")
+                        else:
+                            # 使用默认的
+                            state['rubric_parsing_result'] = {
+                                'rubric_id': rubric_understanding.get('rubric_id', 'N/A'),
+                                'total_points': rubric_understanding.get('total_points', 0),
+                                'criteria_count': criteria_count,
+                                'criteria': [
+                                    {
+                                        'criterion_id': c.get('criterion_id', 'N/A'),
+                                        'description': c.get('description', 'N/A'),
+                                        'points': c.get('points', 0),
+                                        'evaluation_method': c.get('evaluation_method', 'N/A'),
+                                        'keywords': c.get('keywords', []),
+                                        'required_elements': c.get('required_elements', [])
+                                    }
+                                    for c in rubric_understanding.get('criteria', [])
+                                ],
+                                'grading_rules': rubric_understanding.get('grading_rules', {}),
+                                'strictness_guidance': rubric_understanding.get('strictness_guidance')
+                            }
+                else:
+                    # 使用rubric_understanding
+                    state['rubric_parsing_result'] = {
+                        'rubric_id': rubric_understanding.get('rubric_id', 'N/A'),
+                        'total_points': rubric_understanding.get('total_points', 0),
+                        'criteria_count': criteria_count,
+                        'criteria': [
+                            {
+                                'criterion_id': c.get('criterion_id', 'N/A'),
+                                'question_id': c.get('question_id', ''),
+                                'description': c.get('description', 'N/A'),
+                                'detailed_requirements': c.get('detailed_requirements', ''),
+                                'points': c.get('points', 0),
+                                'standard_answer': c.get('standard_answer', ''),
+                                'evaluation_method': c.get('evaluation_method', 'N/A'),
+                                'scoring_criteria': c.get('scoring_criteria', {}),
+                                'alternative_methods': c.get('alternative_methods', []),
+                                'keywords': c.get('keywords', []),
+                                'required_elements': c.get('required_elements', []),
+                                'common_mistakes': c.get('common_mistakes', [])
+                            }
+                            for c in rubric_understanding.get('criteria', [])
+                        ],
+                        'grading_rules': rubric_understanding.get('grading_rules', {}),
+                        'strictness_guidance': rubric_understanding.get('strictness_guidance')
+                    }
+                logger.info(f"   批改标准解析结果已添加到输出")
+            else:
+                # 如果没有rubric_understanding，从criteria_evaluations中提取
+                if criteria_evaluations:
+                    questions = {}
+                    for eval_item in criteria_evaluations:
+                        criterion_id = eval_item.get('criterion_id', '')
+                        question_id = criterion_id.split('_')[0] if '_' in criterion_id else 'UNKNOWN'
+                        if question_id not in questions:
+                            questions[question_id] = []
+                        questions[question_id].append(eval_item)
+                    
+                    extracted_criteria = []
+                    total_points = 0.0
+                    for question_id, evals in sorted(questions.items()):
+                        for eval_item in evals:
+                            criterion_id = eval_item.get('criterion_id', '')
+                            max_score = eval_item.get('max_score', 0)
+                            total_points += max_score
+                            
+                            extracted_criteria.append({
+                                'criterion_id': criterion_id,
+                                'description': eval_item.get('justification', '')[:100] if eval_item.get('justification') else '已评估',
+                                'points': max_score,
+                                'evaluation_method': 'semantic',
+                                'keywords': None,
+                                'required_elements': None,
+                                'question_id': question_id
+                            })
+                    
+                    if extracted_criteria:
+                        state['rubric_parsing_result'] = {
+                            'rubric_id': f"EXTRACTED_FROM_EVALUATIONS",
+                            'total_points': total_points,
+                            'criteria_count': len(extracted_criteria),
+                            'criteria': extracted_criteria,
+                            'grading_rules': {},
+                            'strictness_guidance': '从批改结果中提取'
+                        }
+                        logger.info(f"   从批改结果中提取了 {len(extracted_criteria)} 个评分点")
+            
+            # 添加Agent协作过程信息
+            state['agent_collaboration'] = {
+                'rubric_interpreter': {
+                    'status': 'completed',
+                    'criteria_extracted': len(state.get('rubric_parsing_result', {}).get('criteria', [])) if 'rubric_parsing_result' in state else (len(rubric_understanding.get('criteria', [])) if rubric_understanding else 0),
+                    'total_points': state.get('rubric_parsing_result', {}).get('total_points', 0) if 'rubric_parsing_result' in state else (rubric_understanding.get('total_points', 0) if rubric_understanding else 0)
+                },
+                'question_understanding': {
+                    'status': 'completed' if state.get('question_understanding') else 'pending'
+                },
+                'answer_understanding': {
+                    'status': 'completed' if state.get('answer_understanding') else 'pending'
+                },
+                'grading_worker': {
+                    'status': 'completed',
+                    'students_graded': len(student_reports),
+                    'evaluations_count': len(criteria_evaluations)
+                }
+            }
+            
+            logger.info(f"   Agent协作信息已添加到输出")
+            
             # 生成摘要
             summary = state.get('summary', {})
             total_score = state.get('total_score', 0)
             
-            logger.info(f"✅ 批改完成")
+            logger.info(f"批改完成")
             logger.info(f"   总分: {total_score}")
             logger.info(f"   学生数: {summary.get('total_students', 0)}")
             logger.info(f"   平均分: {summary.get('average_score', 0):.1f}")
+            logger.info(f"   详细反馈数量: {len(state.get('detailed_feedback', []))}")
+            logger.info(f"   评分点数量: {len(state.get('criteria_evaluations', []))}")
             
             return state
             
@@ -273,7 +504,8 @@ async def run_multimodal_grading(
     answer_files: list,
     marking_files: list,
     strictness_level: str = "中等",
-    language: str = "zh"
+    language: str = "zh",
+    progress_callback=None
 ) -> Dict[str, Any]:
     """
     运行多模态批改工作流（便捷函数）
@@ -358,16 +590,67 @@ async def run_multimodal_grading(
     
     # 获取工作流实例并执行
     workflow = get_multimodal_workflow()
-    final_state = await workflow.execute(initial_state)
+    final_state = await workflow.execute(initial_state, progress_callback=progress_callback)
     
-    # 返回结果
-    return {
+    # 返回结果（包含所有重要字段）
+    result = {
         'task_id': final_state.get('task_id'),
         'status': final_state.get('completion_status'),
         'total_score': final_state.get('total_score'),
         'grade_level': final_state.get('grade_level'),
         'detailed_feedback': final_state.get('detailed_feedback'),
-        'criteria_evaluations': final_state.get('criteria_evaluations'),
-        'errors': final_state.get('errors'),
-        'warnings': final_state.get('warnings')
+        'criteria_evaluations': final_state.get('criteria_evaluations', []),
+        'errors': final_state.get('errors', []),
+        'warnings': final_state.get('warnings', [])
     }
+    
+    # 添加批改标准解析结果（必须包含）
+    if 'rubric_parsing_result' in final_state and final_state['rubric_parsing_result']:
+        result['rubric_parsing_result'] = final_state['rubric_parsing_result']
+        logger.info(f"已添加rubric_parsing_result到结果")
+    else:
+        logger.warning("final_state中没有rubric_parsing_result，尝试从rubric_understanding构建")
+        # 如果rubric_parsing_result不存在，尝试从rubric_understanding构建
+        rubric_understanding = final_state.get('rubric_understanding')
+        if rubric_understanding:
+            result['rubric_parsing_result'] = {
+                'rubric_id': rubric_understanding.get('rubric_id', 'unknown'),
+                'total_points': rubric_understanding.get('total_points', 0),
+                'criteria_count': len(rubric_understanding.get('criteria', [])),
+                'criteria': rubric_understanding.get('criteria', [])
+            }
+            logger.info(f"从rubric_understanding构建了rubric_parsing_result，包含 {len(rubric_understanding.get('criteria', []))} 个评分点")
+    
+    # 添加Agent协作过程信息（必须包含）
+    if 'agent_collaboration' in final_state:
+        result['agent_collaboration'] = final_state['agent_collaboration']
+        logger.info(f"已添加agent_collaboration到结果")
+    else:
+        logger.warning("final_state中没有agent_collaboration")
+    
+    # 调试：打印final_state的键
+    logger.info(f"final_state包含的键: {list(final_state.keys())[:20]}...")
+    
+    # 添加批改标准理解（原始数据）
+    if 'rubric_understanding' in final_state and final_state.get('rubric_understanding'):
+        rubric_understanding = final_state['rubric_understanding']
+        # 转换为可序列化的格式
+        if isinstance(rubric_understanding, dict):
+            result['rubric_understanding'] = {
+                'rubric_id': rubric_understanding.get('rubric_id'),
+                'total_points': rubric_understanding.get('total_points'),
+                'criteria_count': len(rubric_understanding.get('criteria', [])),
+                'criteria': [
+                    {
+                        'criterion_id': c.get('criterion_id'),
+                        'description': c.get('description'),
+                        'points': c.get('points'),
+                        'evaluation_method': c.get('evaluation_method'),
+                        'keywords': c.get('keywords'),
+                        'required_elements': c.get('required_elements')
+                    }
+                    for c in rubric_understanding.get('criteria', [])
+                ]
+            }
+    
+    return result

@@ -7,6 +7,25 @@
 import os
 from pathlib import Path
 
+# 加载.env文件
+try:
+    from dotenv import load_dotenv
+    # 优先加载项目根目录的.env文件
+    env_file = Path(__file__).parent / '.env'
+    if env_file.exists():
+        load_dotenv(env_file)
+    else:
+        # 如果不存在，尝试加载父目录的.env文件
+        parent_env = Path(__file__).parent.parent / '.env'
+        if parent_env.exists():
+            load_dotenv(parent_env)
+        else:
+            # 最后尝试加载当前目录的.env
+            load_dotenv()
+except ImportError:
+    # 如果没有安装python-dotenv，跳过
+    pass
+
 # 项目根目录
 BASE_DIR = Path(__file__).parent
 

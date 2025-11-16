@@ -129,7 +129,19 @@ ANSWER_UNDERSTANDING_VISION_PROMPT = """你是一位资深教育专家，擅长�
 RUBRIC_INTERPRETATION_PROMPT = """你是一位资深教育专家，擅长解析和理解评分标准。
 
 【任务】
-请仔细解析以下评分标准，提取每个评分点的具体要求和分值。
+请仔细解析以下评分标准，提取每个评分点的具体要求和分值。**极其重要：必须解析所有题目，不能遗漏任何一道题！**
+
+**关键要求（必须严格遵守）：**
+1. **必须识别所有题目编号**：仔细检查评分标准文本，找出所有题目编号（如Q1, Q2, Q3, ..., Q17, Q18, Q19等）
+   - 如果评分标准包含19道题，必须全部识别并解析
+   - 题目编号格式可能是：Q1, Q2, 题目1, 题目2, Question 1, Question 2, 1., 2. 等
+   - **每个评分点的question_id字段必须填写正确的题目编号（如"Q1", "Q2"等），不能填写"UNKNOWN"或空值**
+2. **必须提取每道题的所有评分点**，包括主要得分点和步骤得分点
+3. 详细说明每个得分点的要求、标准答案、得分条件
+4. 识别是否存在多种解法
+5. **确保不遗漏任何评分点，特别是前面的题目（Q1-Q16）**
+6. 如果评分标准很长，请仔细阅读完整内容，不要只解析后面的题目
+7. **criterion_id格式**：必须使用"题目编号_评分点编号"格式，如"Q1_C1", "Q2_C1", "Q17_C1"等
 
 【评分标准】
 {rubric_content}
@@ -141,27 +153,121 @@ RUBRIC_INTERPRETATION_PROMPT = """你是一位资深教育专家，擅长解析�
   "total_points": 总分（数字）,
   "criteria": [
     {{
-      "criterion_id": "C1",
-      "description": "评分点描述",
+      "criterion_id": "C1" 或 "Q1_C1"（如果是第1题的评分点）,
+      "question_id": "Q1"（题目编号，必填）,
+      "description": "评分点描述（详细说明评分要求）",
+      "detailed_requirements": "详细要求（具体说明需要什么才能得分）",
       "points": 分值（数字）,
+      "standard_answer": "标准答案或标准步骤（如果有）",
       "evaluation_method": "评估方法（exact_match/semantic/calculation/step_check等）",
+      "scoring_criteria": {{
+        "full_credit": "满分条件（什么情况下得满分）",
+        "partial_credit": "部分分条件（什么情况下得部分分）",
+        "no_credit": "不得分条件（什么情况下不得分）"
+      }},
+      "alternative_methods": ["另类解法1", "另类解法2", ...],
       "keywords": ["关键词1", "关键词2", ...],
-      "required_elements": ["必需元素1", "必需元素2", ...]
+      "required_elements": ["必需元素1", "必需元素2", ...],
+      "common_mistakes": ["常见错误1", "常见错误2", ...]
     }},
     ...
   ],
   "grading_rules": {{
     "partial_credit": "是否允许部分分（yes/no）",
-    "deduction_rules": ["扣分规则1", "扣分规则2", ...]
+    "deduction_rules": ["扣分规则1", "扣分规则2", ...],
+    "step_scoring": "是否按步骤给分（yes/no）"
   }},
   "strictness_guidance": "严格程度指导"
 }}
 
 【注意事项】
-1. 准确提取每个评分点的分值
-2. 识别评分点的具体要求和评估方法
-3. 提取关键词和必需元素，便于后续评分
-4. 确保所有评分点的分值之和等于总分
+1. **重要**：必须提取所有题目和所有评分点，包括主要得分点和步骤得分点
+2. **详细要求**：每个评分点都要说明：
+   - 具体要考察什么知识点或能力
+   - 标准答案是什么（如果有）
+   - 得满分需要满足什么条件
+   - 得部分分需要满足什么条件
+   - 是否接受其他解法
+3. **另类解法**：如果标准中提到或者根据题目性质可以推断出存在多种解法，请列出
+4. **常见错误**：如果标准中提到或可以预见的常见错误，请列出
+5. 如果评分标准包含多道题，每道题的评分点都要单独列出
+6. 准确提取每个评分点的分值
+7. 确保所有评分点的分值之和等于总分
+
+【示例】
+如果评分标准是：
+题目1（10分）：计算 (a²)³ × a⁴ ÷ a⁵
+- 正确应用指数运算法则（5分）：a⁶ × a⁴ = a¹⁰
+- 正确化简最终答案（3分）：a¹⁰ ÷ a⁵ = a⁵
+- 答案格式规范（2分）：使用正指数表示
+
+应该输出：
+{{
+  "rubric_id": "R1",
+  "total_points": 10,
+  "criteria": [
+    {{
+      "criterion_id": "Q1_C1",
+      "question_id": "Q1",
+      "description": "正确应用指数运算法则",
+      "detailed_requirements": "需要正确应用幂的乘方法则 (a^m)^n = a^(m×n) 和同底数幂相乘法则 a^m × a^n = a^(m+n)，得到 a⁶ × a⁴ = a¹⁰",
+      "points": 5,
+      "standard_answer": "a⁶ × a⁴ = a¹⁰",
+      "evaluation_method": "step_check",
+      "scoring_criteria": {{
+        "full_credit": "正确计算出 a⁶ × a⁴ = a¹⁰，过程清晰",
+        "partial_credit": "应用了法则但计算有误，或只完成了部分步骤（2-4分）",
+        "no_credit": "未应用正确法则或完全错误"
+      }},
+      "alternative_methods": ["可以先计算 a⁴ ÷ a⁵ = a⁻¹，再计算 a⁶ × a⁻¹ = a⁵"],
+      "keywords": ["指数运算", "幂的乘方", "同底数幂相乘"],
+      "required_elements": ["a⁶", "a¹⁰"],
+      "common_mistakes": ["将 (a²)³ 计算为 a⁵", "忘记应用同底数幂相乘法则"]
+    }},
+    {{
+      "criterion_id": "Q1_C2",
+      "question_id": "Q1",
+      "description": "正确化简最终答案",
+      "detailed_requirements": "在得到 a¹⁰ 后，需要继续除以 a⁵，应用同底数幂相除法则 a^m ÷ a^n = a^(m-n)，得到 a⁵",
+      "points": 3,
+      "standard_answer": "a⁵",
+      "evaluation_method": "exact_match",
+      "scoring_criteria": {{
+        "full_credit": "最终答案为 a⁵，且过程正确",
+        "partial_credit": "答案形式不同但等价（如 a^10/a^5）（1-2分）",
+        "no_credit": "答案错误"
+      }},
+      "alternative_methods": [],
+      "keywords": ["同底数幂相除", "化简"],
+      "required_elements": ["a⁵"],
+      "common_mistakes": ["计算为 a¹⁵ (错误地用乘法)", "保留分数形式未化简"]
+    }},
+    {{
+      "criterion_id": "Q1_C3",
+      "question_id": "Q1",
+      "description": "答案格式规范",
+      "detailed_requirements": "最终答案必须使用正指数表示，不能含有负指数或分数形式的指数",
+      "points": 2,
+      "standard_answer": "a⁵（正指数形式）",
+      "evaluation_method": "format_check",
+      "scoring_criteria": {{
+        "full_credit": "答案使用正指数表示，格式规范",
+        "partial_credit": "答案正确但格式不规范（如写成 a^5.0）（1分）",
+        "no_credit": "使用负指数或分数形式"
+      }},
+      "alternative_methods": [],
+      "keywords": ["正指数", "格式规范"],
+      "required_elements": ["正指数"],
+      "common_mistakes": ["写成 1/a⁻⁵", "写成 a^(10-5)"]
+    }}
+  ],
+  "grading_rules": {{
+    "partial_credit": "yes",
+    "deduction_rules": ["格式错误扣1-2分", "计算错误按步骤扣分"],
+    "step_scoring": "yes"
+  }},
+  "strictness_guidance": "按步骤给分，注重过程和结果的正确性"
+}}
 """
 
 # ==================== 基于标准的批改 Prompt（核心）====================

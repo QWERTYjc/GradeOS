@@ -13,21 +13,25 @@ from datetime import datetime
 from ..state import GradingState
 from ..multimodal_models import AnswerUnderstanding
 from ..prompts.multimodal_prompts import format_answer_understanding_prompt
-from ...llm_client import get_llm_client
+from ...llm_client import get_llm_client, LLMClient
 
 logger = logging.getLogger(__name__)
 
 
 class AnswerUnderstandingAgent:
     """答案理解Agent - 支持多模态输入"""
-    
+
     def __init__(self):
         self.name = "AnswerUnderstandingAgent"
-        self.llm_client = get_llm_client()
+        # 使用 Gemini 2.5 Flash 作为轻量级模型，处理答案理解任务
+        self.llm_client = LLMClient(
+            provider='openrouter',
+            model='google/gemini-2.5-flash-lite'
+        )
     
     async def __call__(self, state: GradingState) -> GradingState:
         """执行答案理解"""
-        logger.info(f"🔄 {self.name} 开始处理...")
+        logger.info(f"{self.name} 开始处理...")
         
         try:
             state['current_step'] = "答案理解"
@@ -47,35 +51,42 @@ class AnswerUnderstandingAgent:
             logger.info(f"处理答案文件，模态类型: {modality_type}")
             
             # 根据模态类型选择处理方式
+            # PDF现在直接使用Vision API处理，不提取文本
             if modality_type == 'text':
                 understanding = await self._understand_text_answer(content['text'])
             elif modality_type == 'image':
                 understanding = await self._understand_image_answer(content)
             elif modality_type == 'pdf_text':
+                # PDF文本格式（已废弃，现在PDF都使用Vision API）
                 understanding = await self._understand_text_answer(content['text'])
             elif modality_type == 'pdf_image':
-                if content['pages']:
+                # PDF图片格式：使用Vision API处理所有页面
+                if content.get('pages'):
+                    # 处理第一页（或所有页面）
                     understanding = await self._understand_image_answer(content['pages'][0])
                 else:
+                    # 如果没有页面，使用默认理解
                     understanding = self._default_understanding()
             else:
                 understanding = self._default_understanding()
             
-            # 更新状态
-            state['answer_understanding'] = understanding
-            state['progress_percentage'] = 40.0
-            
-            logger.info(f"✅ {self.name} 处理完成")
-            return state
+            # 只返回需要更新的字段，避免并发更新冲突
+            # 注意：不返回progress_percentage和current_step，因为并行节点会冲突
+            logger.info(f"{self.name} 处理完成")
+            return {
+                'answer_understanding': understanding
+            }
             
         except Exception as e:
             logger.error(f"{self.name} 失败: {e}")
-            state['errors'].append({
-                'step': 'answer_understanding',
-                'error': str(e),
-                'timestamp': str(datetime.now())
-            })
-            return state
+            return {
+                'errors': [{
+                    'step': 'answer_understanding',
+                    'error': str(e),
+                    'timestamp': str(datetime.now())
+                }],
+                'answer_understanding': self._default_understanding()
+            }
     
     async def _understand_text_answer(self, answer_text: str) -> AnswerUnderstanding:
         """理解文本答案"""

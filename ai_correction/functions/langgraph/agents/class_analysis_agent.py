@@ -20,7 +20,7 @@ class ClassAnalysisAgent:
     
     async def __call__(self, state: Dict[str, Any]) -> Dict[str, Any]:
         """执行班级分析"""
-        logger.info(f"🏫 [{self.agent_name}] 开始班级分析...")
+        logger.info(f"[{self.agent_name}] 开始班级分析...")
         
         try:
             # 检查是否启用班级分析
@@ -57,7 +57,7 @@ class ClassAnalysisAgent:
             
             logger.info(f"   班级人数: {class_analysis['total_students']}")
             logger.info(f"   平均分: {avg_score:.1f}")
-            logger.info(f"✅ [{self.agent_name}] 班级分析完成")
+            logger.info(f"[{self.agent_name}] 班级分析完成")
             
             return state
             

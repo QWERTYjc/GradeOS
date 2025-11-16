@@ -6,7 +6,7 @@
 import streamlit as st
 import time
 from datetime import datetime
-from functions.correction_service import (
+from .correction_service import (
     get_correction_service, TaskStatus, CorrectionPhase
 )
 
