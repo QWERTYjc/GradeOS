@@ -212,7 +212,7 @@ class ImageOptimizer:
             image_binary: 图片二进制数据
             
         Returns:
-            保存后的文件路径
+            保存后的文件路径（规范化为正斜杠）
         """
         # 生成文件名
         basename = os.path.basename(original_path)
@@ -226,8 +226,11 @@ class ImageOptimizer:
         with open(output_path, 'wb') as f:
             f.write(image_binary)
         
-        logger.debug(f"优化图片已保存: {output_path}")
-        return output_path
+        # 规范化路径（统一使用正斜杠，避免跨平台问题）
+        normalized_path = output_path.replace('\\', '/')
+        
+        logger.debug(f"优化图片已保存: {normalized_path}")
+        return normalized_path
     
     def check_api_status(self) -> bool:
         """

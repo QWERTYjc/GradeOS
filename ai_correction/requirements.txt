@@ -28,9 +28,9 @@ psycopg2-binary>=2.9.0  # PostgreSQL
 pymysql>=1.1.0  # MySQL
 alembic>=1.13.0  # 数据库迁移
 
-# Google AI
-google-generativeai>=0.3.0
+# Google Gemini 3 Pro SDK (官方 SDK)
+google-genai>=0.2.0
 
-# 图像处理依赖
-numpy>=1.24.0
-opencv-python>=4.8.0
+# 图像处理依赖（已移除，不再需要）
+# numpy>=1.24.0
+# opencv-python>=4.8.0

@@ -125,7 +125,7 @@ def setup_streamlit_logger(log_container=None):
     
     # 创建新的处理器
     _streamlit_handler = StreamlitLogHandler(log_container)
-    _streamlit_handler.setLevel(logging.INFO)
+    _streamlit_handler.setLevel(logging.DEBUG)  # 改为 DEBUG 以捕获所有日志
     
     # 设置格式
     formatter = logging.Formatter(
@@ -136,20 +136,33 @@ def setup_streamlit_logger(log_container=None):
     
     # 添加到根logger和所有子logger
     root_logger = logging.getLogger()
+    
+    # 移除旧的处理器，避免重复
+    for handler in root_logger.handlers[:]:
+        if isinstance(handler, StreamlitLogHandler):
+            root_logger.removeHandler(handler)
+    
     root_logger.addHandler(_streamlit_handler)
-    root_logger.setLevel(logging.INFO)
+    root_logger.setLevel(logging.DEBUG)  # 改为 DEBUG
     
     # 确保所有相关模块的logger也使用这个处理器
     module_loggers = [
         'ai_correction.functions.langgraph',
         'ai_correction.functions.langgraph.agents',
         'ai_correction.functions.langgraph.workflow_multimodal',
+        'ai_correction.functions.llm_client',
     ]
     for module_name in module_loggers:
         module_logger = logging.getLogger(module_name)
+        
+        # 移除旧的处理器
+        for handler in module_logger.handlers[:]:
+            if isinstance(handler, StreamlitLogHandler):
+                module_logger.removeHandler(handler)
+        
         module_logger.addHandler(_streamlit_handler)
-        module_logger.setLevel(logging.INFO)
-        module_logger.propagate = False  # 避免重复输出
+        module_logger.setLevel(logging.DEBUG)  # 改为 DEBUG
+        module_logger.propagate = True  # 改为 True，让日志向上传播
     
     return _streamlit_handler
 

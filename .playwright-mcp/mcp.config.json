@@ -1,0 +1,35 @@
+{
+  "browser": {
+    "browserName": "chromium",
+    "userDataDir": "./data/profile",
+    "launchOptions": {
+      "headless": true
+    },
+    "contextOptions": {
+      "viewport": {
+        "width": 1400,
+        "height": 900
+      },
+      "ignoreHTTPSErrors": true
+    }
+  },
+  "capabilities": [
+    "core",
+    "pdf",
+    "vision"
+  ],
+  "sharedBrowserContext": true,
+  "outputDir": "./data/output",
+  "saveSession": true,
+  "saveTrace": true,
+  "saveVideo": {
+    "width": 1280,
+    "height": 720
+  },
+  "timeouts": {
+    "action": 8000,
+    "navigation": 90000
+  },
+  "testIdAttribute": "data-testid",
+  "imageResponses": "allow"
+}

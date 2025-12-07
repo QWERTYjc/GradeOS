@@ -505,11 +505,15 @@ async def run_multimodal_grading(
     marking_files: list,
     strictness_level: str = "中等",
     language: str = "zh",
-    progress_callback=None
+    target_questions: list | None = None,
+    scope_description: str | None = "",
+    scope_warnings: list | None = None,
+    progress_callback=None,
+    streaming_callback=None
 ) -> Dict[str, Any]:
     """
     运行多模态批改工作流（便捷函数）
-    
+
     Args:
         task_id: 任务ID
         user_id: 用户ID
@@ -518,7 +522,9 @@ async def run_multimodal_grading(
         marking_files: 评分标准文件路径列表
         strictness_level: 严格程度
         language: 语言
-        
+        progress_callback: 进度回调函数
+        streaming_callback: 流式内容回调函数
+
     Returns:
         批改结果字典
     """
@@ -535,6 +541,10 @@ async def run_multimodal_grading(
         strictness_level=strictness_level,
         language=language,
         mode="efficient",
+        target_questions=target_questions or [],
+        scope_description=scope_description or "",
+        scope_warnings=scope_warnings or [],
+        streaming_callback=streaming_callback,  # 添加流式回调
         # 初始化必要字段
         mm_tokens=[],
         student_info={},
@@ -578,6 +588,9 @@ async def run_multimodal_grading(
         processing_time=0.0,
         model_versions={},
         quality_metrics={},
+        student_alias_map={},
+        graded_questions=[],
+        skipped_questions=[]
         # 多模态字段
         question_multimodal_files=[],
         answer_multimodal_files=[],
@@ -601,7 +614,9 @@ async def run_multimodal_grading(
         'detailed_feedback': final_state.get('detailed_feedback'),
         'criteria_evaluations': final_state.get('criteria_evaluations', []),
         'errors': final_state.get('errors', []),
-        'warnings': final_state.get('warnings', [])
+        'warnings': final_state.get('warnings', []),
+        'student_reports': final_state.get('student_reports', []),
+        'step_results': final_state.get('step_results', {})
     }
     
     # 添加批改标准解析结果（必须包含）

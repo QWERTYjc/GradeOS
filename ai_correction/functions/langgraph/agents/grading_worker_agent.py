@@ -8,10 +8,11 @@ GradingWorkerAgent - 批改工作Agent
 
 import logging
 import json
+import os
 from typing import Dict, Any, List
 from datetime import datetime
 
-from ...llm_client import get_llm_client, LLMClient
+from ...llm_client import LLMClient
 
 logger = logging.getLogger(__name__)
 
@@ -21,13 +22,16 @@ class GradingWorkerAgent:
 
     def __init__(self, llm_client=None):
         self.agent_name = "GradingWorkerAgent"
-        # 使用 Gemini 2.5 Pro 作为批改模型，提供强大的多模态能力和复杂推理
-        # 启用 high reasoning_effort 以获得最佳的批改质量
+        # 使用 Gemini 3 Pro 原生 API，支持真正的多模态批改
         self.llm_client = llm_client or LLMClient(
-            provider='openrouter',
-            model='google/gemini-2.5-pro-exp-03-25'
+            provider='gemini',
+            model='gemini-3-pro-preview'
         )
-        self.reasoning_effort = "high"  # 启用高强度思考模式
+        try:
+            self.llm_timeout = int(os.getenv("GRADING_LLM_TIMEOUT", os.getenv("LLM_REQUEST_TIMEOUT", "120")))
+        except Exception:
+            self.llm_timeout = 120
+        self.reasoning_effort = None
     
     async def __call__(self, state: Dict[str, Any]) -> Dict[str, Any]:
         """执行批改工作"""
@@ -36,6 +40,7 @@ class GradingWorkerAgent:
         try:
             state['current_step'] = "批改作业"
             state['progress_percentage'] = 50.0
+            state.setdefault('step_results', {})
             
             # 获取批次信息
             batches_info = state.get('batches_info', [])
@@ -262,15 +267,15 @@ class GradingWorkerAgent:
                 'processing_time_ms': 0
             }
         
-        # 获取答案文件信息（用于Vision API）
+        # 获取答案文件信息（用于 Gemini 3 Pro 原生多模态）
         answer_file = None
         if state:
             answer_files = state.get('answer_multimodal_files', [])
             if answer_files:
                 answer_file = answer_files[0]
-        
-        # 构建批改提示词（支持Vision API）
-        prompt_text, vision_content = self._build_grading_prompt(
+
+        # 构建批改提示词（Gemini 3 Pro 原生版本）
+        prompt_text, answer_file_path = self._build_grading_prompt(
             answer_text or answer_summary,
             question_context,
             compressed_criteria,
@@ -278,58 +283,90 @@ class GradingWorkerAgent:
             total_points,
             answer_file
         )
-        
-        # 调用LLM进行批改
-        try:
-            # 构建消息，如果有多模态内容则添加
-            user_content = [{"type": "text", "text": prompt_text}]
-            if vision_content:
-                user_content.extend(vision_content)
-            
-            messages = [
-                {"role": "system", "content": "你是一位资深教育专家，擅长根据评分标准批改学生答案。请严格按照评分标准进行评分，给出详细的评价和反馈。"},
-                {"role": "user", "content": user_content if vision_content else prompt_text}
-            ]
-            
-            logger.info(f"调用LLM批改学生 {student_name} 的答案...")
-            if vision_content:
-                logger.info(f"使用Vision API处理PDF，共{len(vision_content)}页")
-            # 不限制 max_tokens，让模型输出完整的批改详情
-            # 包括详细的学生作答、评分理由、证据等
-            # 使用 high reasoning_effort 以获得最佳的批改质量
-            num_criteria = len(compressed_criteria)
-            logger.info(f"评分点数量: {num_criteria}，不限制 max_tokens 以确保完整输出")
-            response = self.llm_client.chat(messages, temperature=0.2, reasoning_effort=self.reasoning_effort)
-            logger.info(f"LLM批改响应长度: {len(response)} 字符")
-            
-            # 解析LLM响应
-            evaluations = self._parse_grading_response(response, compressed_criteria)
-            
-        except Exception as e:
-            logger.error(f"LLM批改失败: {e}，使用简化评分")
-            # 降级到简化评分
+
+        # 修复：默认值应该是 "false"，确保启用真实的 LLM 批改
+        force_simple = os.getenv("SKIP_LLM_GRADING", "false").lower() == "true" or not getattr(self.llm_client, "api_key", None)
+        logger.info(f"🔍 批改模式检查: SKIP_LLM_GRADING={os.getenv('SKIP_LLM_GRADING', 'false')}, force_simple={force_simple}, has_api_key={bool(getattr(self.llm_client, 'api_key', None))}")
+
+        evaluations: List[Dict[str, Any]] = []
+        if force_simple:
+            logger.info("跳过 LLM 批改，使用简单规则")
             evaluations = self._simple_grading(compressed_criteria, quick_checks)
-        
-        # 如果指定了question_ids，只保留这些题目的评估结果
+        else:
+            try:
+                # 构建消息（简单文本格式）
+                messages = [
+                    {
+                        "role": "user",
+                        "content": prompt_text
+                    }
+                ]
+
+                logger.info(f"📝 调用 Gemini 3 Pro 批改 {student_name} 的答案...")
+                if answer_file_path:
+                    logger.info(f"📄 包含 PDF 文件: {answer_file_path}")
+
+                num_criteria = len(compressed_criteria)
+                logger.info(f"评分点数量: {num_criteria}")
+
+                # 检查是否启用流式传输
+                use_streaming = os.getenv("USE_STREAMING", "true").lower() == "true"
+
+                if use_streaming:
+                    logger.info("🌊 Streaming thoughts for UI; final result将通过非流式获取")
+                    response = self._grade_with_streaming(
+                        messages,
+                        answer_file_path,
+                        student_name,
+                        state
+                    )
+                else:
+                    response = self._grade_non_streaming(messages, answer_file_path, student_name)
+
+                # 解析 LLM 响应
+                logger.info("📊 开始解析 LLM 响应...")
+                evaluations = self._parse_grading_response(response, compressed_criteria)
+                logger.info(f"✅ 成功解析 {len(evaluations)} 个评分点")
+
+            except Exception as e:
+                logger.error(f"❌ LLM 批改失败: {e}")
+                logger.exception("详细错误信息:")
+                # 回退到简单批改
+                logger.warning("⚠️ 回退到简单批改模式")
+                evaluations = self._simple_grading(compressed_criteria, quick_checks)
+
+        # 根据 question_ids 过滤评分结果（只返回当前批次的题目）
         if question_ids:
-            filtered_evaluations = []
-            for eval_item in evaluations:
-                criterion_id = eval_item.get('criterion_id', '')
-                # 检查是否属于指定的题目
-                belongs_to_batch = False
-                for qid in question_ids:
-                    if criterion_id.startswith(qid + '_') or criterion_id == qid:
-                        belongs_to_batch = True
-                        break
-                
-                if belongs_to_batch:
-                    filtered_evaluations.append(eval_item)
-            
+            if "UNKNOWN" in question_ids:
+                filtered_evaluations = evaluations
+            else:
+                filtered_evaluations = []
+                for eval_item in evaluations:
+                    criterion_id = eval_item.get('criterion_id', '')
+                    belongs_to_batch = False
+                    for qid in question_ids:
+                        if criterion_id.startswith(qid + "_") or criterion_id == qid:
+                            belongs_to_batch = True
+                            break
+                    if belongs_to_batch:
+                        filtered_evaluations.append(eval_item)
             evaluations = filtered_evaluations
-            logger.info(f"过滤后保留 {len(evaluations)} 个评估项（题目: {question_ids}）")
+            logger.info(f"🔍 过滤后保留 {len(evaluations)} 个评分点（题目范围: {question_ids}）")
         
         # 计算总分
         total_score = sum(e.get('score_earned', 0) for e in evaluations)
+
+        # 记录LLM调用轨迹
+        trace = dict(self.llm_client.last_call or {})
+        trace.update({
+            'summary': f"{student_name or student_id} - {len(evaluations)} 条评估，得分 {total_score}",
+            'student_id': student_id,
+            'student_name': student_name,
+            'question_ids': question_ids,
+            'evaluation_count': len(evaluations),
+            'score': total_score
+        })
+        self._record_llm_trace(state, trace)
         
         return {
             'student_id': student_id,
@@ -339,7 +376,88 @@ class GradingWorkerAgent:
             'processing_time_ms': 1000,
             'question_ids': question_ids  # 记录处理的题目
         }
-    
+
+    def _grade_with_streaming(
+        self,
+        messages: List[Dict],
+        answer_file_path: str,
+        student_name: str,
+        state: Dict
+    ) -> str:
+        """
+        Stream thoughts for UI, then fetch final result without streaming
+        """
+        callback = state.get('streaming_callback') if state else None
+        if callable(callback):
+            self._stream_thoughts_preview(
+                messages,
+                answer_file_path,
+                student_name,
+                callback
+            )
+        else:
+            logger.info("Streaming preview skipped: streaming_callback is missing or not callable")
+
+        return self._grade_non_streaming(messages, answer_file_path, student_name)
+
+    def _stream_thoughts_preview(
+        self,
+        messages: List[Dict],
+        answer_file_path: str,
+        student_name: str,
+        callback
+    ) -> None:
+        """Stream only thought content for real-time display"""
+        thought_buffer = ""
+        text_preview = ""
+        try:
+            stream = self.llm_client.chat(
+                messages,
+                temperature=0.2,
+                files=[answer_file_path] if answer_file_path else None,
+                thinking_level="high",
+                stream=True,
+                include_thoughts=True,
+                timeout=self.llm_timeout
+            )
+
+            for chunk in stream:
+                chunk_type = chunk.get("type", "text")
+                chunk_content = chunk.get("content", "")
+
+                if chunk_type == "thought":
+                    thought_buffer += chunk_content
+                    callback({
+                        "type": "thought",
+                        "content": chunk_content,
+                        "student": student_name
+                    })
+                    logger.debug(f"[thought] {chunk_content[:50]}...")
+                elif chunk_type == "text":
+                    text_preview += chunk_content
+
+            logger.info(f"Streaming preview finished: thoughts {len(thought_buffer)} chars, text preview {len(text_preview)} chars")
+        except Exception as e:
+            logger.error(f"Streaming preview failed: {e}", exc_info=True)
+
+    def _grade_non_streaming(
+        self,
+        messages: List[Dict],
+        answer_file_path: str,
+        student_name: str
+    ) -> str:
+        """Fetch full grading result without streaming to ease JSON parsing"""
+        response = self.llm_client.chat(
+            messages,
+            temperature=0.2,
+            files=[answer_file_path] if answer_file_path else None,
+            thinking_level="high",
+            stream=False,
+            timeout=self.llm_timeout
+        )
+        logger.info(f"LLM non-stream response length: {len(response)}")
+        return response
+
     def _build_grading_prompt(
         self,
         answer_text: str,
@@ -348,12 +466,12 @@ class GradingWorkerAgent:
         decision_trees: Dict,
         total_points: float,
         answer_file: Dict[str, Any] = None
-    ) -> tuple[str, List[Dict]]:
+    ) -> tuple[str, str | None]:
         """
-        构建批改提示词
-        
+        构建批改提示词 - Gemini 3 Pro 原生版本
+
         Returns:
-            (prompt_text, vision_content): 提示词文本和Vision API内容列表
+            (prompt_text, answer_file_path): 提示词文本和答案文件路径（如果有）
         """
         
         criteria_text = "\n".join([
@@ -361,40 +479,24 @@ class GradingWorkerAgent:
             for i, c in enumerate(compressed_criteria)
         ])
         
-        vision_content = []
+        answer_file_path = None
 
-        # 如果答案文件是PDF格式，直接添加PDF文件（不转换为图片）
+        # 如果答案文件是PDF格式，直接传递文件路径（Gemini 3 Pro 原生处理）
         if answer_file:
             modality_type = answer_file.get('modality_type', '')
             file_path = answer_file.get('file_path', '')
 
-            if modality_type == 'pdf_image' and file_path:
-                # 直接读取PDF文件并转换为base64
-                try:
-                    import base64
-                    with open(file_path, 'rb') as f:
-                        pdf_bytes = f.read()
-                    pdf_base64 = base64.b64encode(pdf_bytes).decode('utf-8')
+            if modality_type in ['pdf_image', 'pdf'] and file_path:
+                answer_file_path = file_path
+                logger.info(f"📄 将直接传递 PDF 文件给 Gemini 3 Pro: {file_path}")
 
-                    # 添加PDF到多模态内容
-                    vision_content.append({
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:application/pdf;base64,{pdf_base64}"
-                        }
-                    })
-                    logger.info(f"添加PDF文件到多模态输入: {file_path}")
-                except Exception as e:
-                    logger.error(f"读取PDF文件失败: {file_path}, 错误: {e}")
-                    # 返回空vision_content，让LLM使用文本模式
-        
         prompt_text = f"""根据评分标准批改学生答案。
 
 【题目上下文】
 {question_context}
 
 【学生答案】
-{"（答案在图片中）" if vision_content else answer_text}
+{"（答案在 PDF 文件中，请直接查看）" if answer_file_path else answer_text}
 
 【评分标准】
 {criteria_text}
@@ -443,8 +545,8 @@ class GradingWorkerAgent:
 
 禁止：概括性描述、合并评分点、含糊理由
 正确：详细描述、逐项评估、识别方法"""
-        
-        return prompt_text, vision_content
+
+        return prompt_text, answer_file_path
     
     def _parse_grading_response(self, response: str, compressed_criteria: List[Dict]) -> List[Dict]:
         """解析LLM批改响应"""
@@ -803,6 +905,17 @@ class GradingWorkerAgent:
         # 最后使用简化评分
         logger.warning("所有解析方法失败，使用简化评分作为备选")
         return self._simple_grading(compressed_criteria, {})
+    
+    def _record_llm_trace(self, state: Dict[str, Any], trace: Dict[str, Any]):
+        """记录LLM调用详情供前端展示"""
+        try:
+            if 'step_results' not in state:
+                state['step_results'] = {}
+            agent_entry = state['step_results'].setdefault(self.agent_name, {'llm_calls': []})
+            agent_entry.setdefault('llm_calls', [])
+            agent_entry['llm_calls'].append(trace)
+        except Exception as err:
+            logger.warning(f"{self.agent_name} 记录LLM轨迹失败: {err}")
     
     def _filter_toc_content(self, text: str) -> str:
         """过滤掉目录页内容"""

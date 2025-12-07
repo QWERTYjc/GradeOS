@@ -62,7 +62,7 @@ OPENAI_MODEL = os.getenv('OPENAI_MODEL', 'gpt-4')
 
 # OpenRouter 配置
 OPENROUTER_API_KEY = os.getenv('OPENROUTER_API_KEY', LLM_API_KEY)
-OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+OPENROUTER_BASE_URL = os.getenv('OPENROUTER_BASE_URL', 'https://openrouter.ai/api/v1')
 OPENROUTER_MODEL = os.getenv('OPENROUTER_MODEL', 'google/gemini-2.5-flash-lite')
 
 # 文件上传配置

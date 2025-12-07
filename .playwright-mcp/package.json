@@ -1,0 +1,14 @@
+{
+  "name": "aiguru-playwright-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Playwright MCP server for browser automation across GitHub, Railway, Firebase Auth, and deployed apps.",
+  "type": "module",
+  "scripts": {
+    "mcp": "set PLAYWRIGHT_BROWSERS_PATH=./browsers&& mcp-server-playwright --config ./mcp.config.json",
+    "mcp:headful": "set PLAYWRIGHT_BROWSERS_PATH=./browsers&& mcp-server-playwright --config ./mcp.config.json --headful"
+  },
+  "dependencies": {
+    "@playwright/mcp": "^0.0.48"
+  }
+}

@@ -18,7 +18,7 @@ class MultiModalFile(TypedDict):
     支持类型：文本、图片、PDF、Word文档
     """
     file_path: str                    # 原始文件路径
-    modality_type: Literal['text', 'image', 'pdf_text', 'pdf_image', 'document']
+    modality_type: Literal['text', 'image', 'pdf', 'pdf_text', 'pdf_image', 'document']
     content_representation: Any       # 内容表示（根据模态不同而不同）
     metadata: Dict[str, Any]          # 元数据（文件大小、格式、编码等）
 
@@ -88,25 +88,13 @@ class TextContent(TypedDict):
 
 
 class ImageContent(TypedDict):
-    """图片内容表示（用于Vision API）"""
-    base64_data: str                  # base64编码的图片数据
-    mime_type: str                    # MIME类型（image/jpeg, image/png等）
-    width: Optional[int]              # 图片宽度（可选）
-    height: Optional[int]             # 图片高度（可选）
+    """Image content as-is (direct multimodal input, no OCR or vision pipeline)"""
+    base64_data: str                  # base64-encoded image data
+    mime_type: str                    # MIME type (image/jpeg, image/png, etc.)
+    width: Optional[int]              # image width (optional)
+    height: Optional[int]             # image height (optional)
 
 
-class PDFTextContent(TypedDict):
-    """PDF文本内容表示（纯文本PDF）"""
-    text: str                         # 提取的文本内容
-    page_count: int                   # 页数
-    extraction_method: str            # 提取方法（PyPDF2等）
-
-
-class PDFImageContent(TypedDict):
-    """PDF图片内容表示（扫描版PDF或用户偏好使用Vision）"""
-    pages: List[ImageContent]         # 每页转换为图片
-    page_count: int                   # 页数
-    conversion_method: str            # 转换方法
 
 
 class DocumentContent(TypedDict):

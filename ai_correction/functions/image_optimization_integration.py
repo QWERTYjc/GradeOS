@@ -132,6 +132,9 @@ class ImageOptimizationIntegration:
                 # 根据设置决定使用哪个文件
                 if settings.auto_optimize and result.success and result.optimized_path:
                     final_image_paths.append(result.optimized_path)
+                    
+                    # 显示优化效果对比
+                    _show_optimization_comparison(result, idx + 1)
                 else:
                     # 需要用户确认
                     if result.success and result.optimized_path:
@@ -218,3 +221,63 @@ def process_uploaded_images(uploaded_files, file_paths):
 def show_optimization_info():
     """显示优化信息"""
     ImageOptimizationIntegration.show_optimization_status()
+
+
+def _show_optimization_comparison(result, file_index: int):
+    """
+    显示单个文件的优化对比
+    
+    Args:
+        result: OptimizationResult 对象
+        file_index: 文件序号
+    """
+    from PIL import Image
+    import os
+    
+    if not result.success or not result.optimized_path:
+        return
+    
+    st.markdown(f"**✅ 已优化 {file_index} 张图片**")
+    
+    # 创建对比视图
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.caption("📷 原图")
+        try:
+            if os.path.exists(result.original_path):
+                original_img = Image.open(result.original_path)
+                st.image(original_img, use_container_width=True)
+        except Exception as e:
+            st.error(f"无法加载原图: {e}")
+    
+    with col2:
+        st.caption("✨ 增强后")
+        try:
+            if os.path.exists(result.optimized_path):
+                optimized_img = Image.open(result.optimized_path)
+                st.image(optimized_img, use_container_width=True)
+        except Exception as e:
+            st.error(f"无法加载优化图: {e}")
+    
+    # 显示优化指标
+    if result.metadata:
+        metrics_cols = st.columns(3)
+        
+        with metrics_cols[0]:
+            if result.metadata.origin_width and result.metadata.cropped_width:
+                st.caption(f"📐 尺寸: {result.metadata.origin_width}×{result.metadata.origin_height} → {result.metadata.cropped_width}×{result.metadata.cropped_height}")
+        
+        with metrics_cols[1]:
+            if result.metadata.duration:
+                st.caption(f"⏱️ 耗时: {result.metadata.duration:.0f}ms")
+        
+        with metrics_cols[2]:
+            if result.metadata.quality_scores:
+                improvement = result.metadata.quality_scores.get('improvement', 0)
+                if improvement > 0:
+                    st.caption(f"📈 质量提升: +{improvement:.1f}分")
+                else:
+                    st.caption(f"📊 质量: {result.metadata.quality_scores.get('after', 0):.1f}分")
+    
+    st.markdown("---")

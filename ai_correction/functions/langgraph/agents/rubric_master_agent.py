@@ -42,13 +42,12 @@ class RubricMasterAgent:
                 logger.warning("未找到批次信息，创建默认批次")
                 batches_info = [{'batch_id': 'default_batch', 'question_ids': []}]
             
-            # 为每个批次生成压缩版评分包
             batch_rubric_packages = {}
             
             for batch in batches_info:
                 batch_id = batch.get('batch_id', 'default_batch')
                 
-                # 生成批次专属评分包
+                # ?????????
                 rubric_package = self._generate_batch_rubric_package(
                     batch_id,
                     rubric_understanding,
@@ -57,8 +56,9 @@ class RubricMasterAgent:
                 
                 batch_rubric_packages[batch_id] = rubric_package
             
-            logger.info(f"   为 {len(batches_info)} 个批次生成评分包")
-            logger.info(f"[{self.agent_name}] 评分标准理解完成")
+            logger.info(f"   ? {len(batches_info)} ????????")
+            logger.info(f"[{self.agent_name}] ????????")
+
             
             # 只返回需要更新的字段，避免并发更新冲突
             # 注意：不返回progress_percentage和current_step，因为并行节点会冲突
@@ -96,6 +96,15 @@ class RubricMasterAgent:
         如果批次有question_ids，只包含这些题目的评分点
         """
         all_criteria = rubric_understanding.get('criteria', [])
+        if not all_criteria:
+            logger.warning("评分标准为空，使用默认评分点确保流程可继续")
+            all_criteria = [{
+                'criterion_id': 'C1',
+                'question_id': 'UNKNOWN',
+                'description': rubric_understanding.get('summary', '默认评分点'),
+                'points': rubric_understanding.get('total_score', 100.0) or 100.0,
+                'evaluation_method': 'semantic'
+            }]
         
         # 如果批次指定了question_ids，只包含这些题目的评分点
         question_ids = batch_info.get('question_ids', [])
@@ -109,6 +118,9 @@ class RubricMasterAgent:
                     criterion_id = criterion.get('criterion_id', '')
                     if '_' in criterion_id:
                         criterion_question_id = criterion_id.split('_')[0]
+                    else:
+                        # 保留未知题目，避免直接丢弃评分点
+                        criterion_question_id = 'UNKNOWN'
                 
                 if criterion_question_id in question_ids:
                     criteria.append(criterion)

@@ -7,6 +7,7 @@ QuestionUnderstandingAgent - 题目理解Agent
 
 import logging
 import json
+import os
 from typing import Dict, Any
 from datetime import datetime
 
@@ -23,10 +24,10 @@ class QuestionUnderstandingAgent:
 
     def __init__(self):
         self.name = "QuestionUnderstandingAgent"
-        # 使用 Gemini 2.5 Flash 作为轻量级模型，处理题目理解任务
+        # 使用 Gemini 原生 API
         self.llm_client = LLMClient(
-            provider='openrouter',
-            model='google/gemini-2.5-flash-lite'
+            provider='gemini',
+            model='gemini-2.0-flash-exp'
         )
     
     async def __call__(self, state: GradingState) -> GradingState:
@@ -56,6 +57,8 @@ class QuestionUnderstandingAgent:
                 understanding = await self._understand_text_question(content['text'])
             elif modality_type == 'image':
                 understanding = await self._understand_image_question(content)
+            elif modality_type == 'pdf':
+                understanding = await self._understand_pdf_question(question_file.get('file_path') or content.get('file_path'))
             elif modality_type == 'pdf_text':
                 # PDF文本格式（已废弃，现在PDF都使用Vision API）
                 understanding = await self._understand_text_question(content['text'])
@@ -103,32 +106,55 @@ class QuestionUnderstandingAgent:
             return self._create_simple_understanding(question_text, "text")
     
     async def _understand_image_question(self, image_content: Dict[str, Any]) -> QuestionUnderstanding:
-        """理解图片题目（使用Vision API）"""
-        prompt = format_question_understanding_prompt("", is_vision=True)
+        """理解图片题目（使用 Gemini 原生多模态 API）"""
+        # 获取文件路径
+        file_path = image_content.get('file_path')
+        if not file_path:
+            logger.warning("图片题目缺少文件路径，使用默认理解")
+            return self._default_understanding()
         
-        # 构建Vision消息
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": prompt},
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:{image_content['mime_type']};base64,{image_content['base64_data']}"
-                        }
-                    }
-                ]
-            }
-        ]
+        logger.info(f"🖼️  使用 Gemini 解析图片题目: {file_path}")
+        prompt = format_question_understanding_prompt("", is_vision=True)
+        messages = [{"role": "user", "content": prompt}]
         
         try:
-            response = self.llm_client.chat(messages, temperature=0.3, max_tokens=2000)
-            return self._parse_understanding(response, "", "vision")
+            response = self.llm_client.chat(
+                messages,
+                temperature=0.3,
+                max_tokens=2000,
+                files=[file_path],  # 直接传文件路径
+                thinking_level="medium",
+                timeout=self._get_llm_timeout()
+            )
+            return self._parse_understanding(response, "", "vision_image")
         except Exception as e:
-            logger.error(f"Vision API调用失败: {e}")
+            logger.error(f"❌ Gemini 解析图片题目失败: {e}")
             return self._default_understanding()
     
+    async def _understand_pdf_question(self, pdf_path: str | None) -> QuestionUnderstanding:
+        """使用 Gemini 原生多模态理解 PDF 题目"""
+        if not pdf_path:
+            logger.warning("PDF 题目缺少文件路径，使用默认理解")
+            return self._default_understanding()
+        
+        logger.info(f"📄 使用 Gemini 解析 PDF 题目: {pdf_path}")
+        prompt = format_question_understanding_prompt("", is_vision=True)
+        messages = [{"role": "user", "content": prompt}]
+        
+        try:
+            response = self.llm_client.chat(
+                messages,
+                temperature=0.2,
+                max_tokens=2000,
+                files=[pdf_path],
+                thinking_level="high",
+                timeout=self._get_llm_timeout()
+            )
+            return self._parse_understanding(response, "", "vision_pdf")
+        except Exception as e:
+            logger.error(f"Gemini 解析 PDF 题目失败: {e}")
+            return self._default_understanding()
+
     def _parse_understanding(self, response: str, question_text: str, modality: str) -> QuestionUnderstanding:
         """解析LLM响应"""
         try:
@@ -158,6 +184,13 @@ class QuestionUnderstandingAgent:
             context={},
             modality_source=modality
         )
+    
+    def _get_llm_timeout(self) -> int:
+        """获取LLM请求超时（秒）"""
+        try:
+            return int(os.getenv("QUESTION_LLM_TIMEOUT", os.getenv("LLM_REQUEST_TIMEOUT", "90")))
+        except Exception:
+            return 90
     
     def _default_understanding(self) -> QuestionUnderstanding:
         """默认理解结果"""

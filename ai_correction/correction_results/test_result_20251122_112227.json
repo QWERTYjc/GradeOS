@@ -1,0 +1,164 @@
+{
+  "task_id": "test_20251122_112227",
+  "status": "completed",
+  "total_score": 80.0,
+  "grade_level": "B",
+  "detailed_feedback": [
+    "- C1: 部分满足 (80.0分)"
+  ],
+  "criteria_evaluations": [
+    {
+      "criterion_id": "C1",
+      "score_earned": 80.0,
+      "max_score": 100.0,
+      "is_met": true,
+      "satisfaction_level": "部分满足",
+      "justification": "基于快速检查: 检查描述内容",
+      "feedback": "请查看详细批改结果",
+      "evidence": [
+        "答案已检查"
+      ],
+      "student_work": "检查描述内容",
+      "matched_criterion": "答案完整性和正确性"
+    }
+  ],
+  "errors": [],
+  "warnings": [],
+  "student_reports": [
+    {
+      "student_id": "Student_001",
+      "student_name": "学生1",
+      "total_score": 80.0,
+      "grade_level": "B",
+      "evaluations": [
+        {
+          "criterion_id": "C1",
+          "score_earned": 80.0,
+          "max_score": 100.0,
+          "is_met": true,
+          "satisfaction_level": "部分满足",
+          "justification": "基于快速检查: 检查描述内容",
+          "feedback": "请查看详细批改结果",
+          "evidence": [
+            "答案已检查"
+          ],
+          "student_work": "检查描述内容",
+          "matched_criterion": "答案完整性和正确性"
+        }
+      ],
+      "detailed_feedback": "- C1: 部分满足 (80.0分)",
+      "strengths": [
+        "C1: 基于快速检查: 检查描述内容"
+      ],
+      "improvements": []
+    },
+    {
+      "student_id": "Student_001",
+      "student_name": "学生1",
+      "total_score": 80.0,
+      "grade_level": "B",
+      "evaluations": [
+        {
+          "criterion_id": "C1",
+          "score_earned": 80.0,
+          "max_score": 100.0,
+          "is_met": true,
+          "satisfaction_level": "部分满足",
+          "justification": "基于快速检查: 检查描述内容",
+          "feedback": "请查看详细批改结果",
+          "evidence": [
+            "答案已检查"
+          ],
+          "student_work": "检查描述内容",
+          "matched_criterion": "答案完整性和正确性"
+        }
+      ],
+      "detailed_feedback": "- C1: 部分满足 (80.0分)",
+      "strengths": [
+        "C1: 基于快速检查: 检查描述内容"
+      ],
+      "improvements": []
+    }
+  ],
+  "step_results": {
+    "multimodal_input": {
+      "question_files_count": 0,
+      "answer_files_count": 1,
+      "marking_files_count": 1
+    },
+    "RubricInterpreterAgent": {
+      "summary": "Vision API ??PDF?? 1 ????",
+      "criteria_count": 1,
+      "total_points": 100.0
+    },
+    "GradingWorkerAgent": {
+      "llm_calls": [
+        {
+          "summary": "学生1 - 1 条评估，得分 80.0",
+          "student_id": "Student_001",
+          "student_name": "学生1",
+          "question_ids": [
+            "UNKNOWN"
+          ],
+          "evaluation_count": 1,
+          "score": 80.0
+        }
+      ]
+    }
+  },
+  "rubric_parsing_result": {
+    "rubric_id": "EXTRACTED_FROM_EVALUATIONS",
+    "total_points": 100.0,
+    "criteria_count": 1,
+    "criteria": [
+      {
+        "criterion_id": "C1",
+        "question_id": "UNKNOWN",
+        "description": "答案完整性和正确性",
+        "points": 100.0,
+        "evaluation_method": "semantic",
+        "detailed_requirements": "基于快速检查: 检查描述内容",
+        "scoring_criteria": {
+          "full_credit": "得100.0分：答案完整性和正确性",
+          "partial_credit": "得部分分：部分符合评分标准",
+          "no_credit": "不得分：不符合评分标准"
+        }
+      }
+    ],
+    "grading_rules": {},
+    "strictness_guidance": "从批改结果中提取"
+  },
+  "agent_collaboration": {
+    "rubric_interpreter": {
+      "status": "completed",
+      "criteria_extracted": 1,
+      "total_points": 100.0
+    },
+    "question_understanding": {
+      "status": "pending"
+    },
+    "answer_understanding": {
+      "status": "completed"
+    },
+    "grading_worker": {
+      "status": "completed",
+      "students_graded": 2,
+      "evaluations_count": 1
+    }
+  },
+  "rubric_understanding": {
+    "rubric_id": "R_DEFAULT",
+    "total_points": 100.0,
+    "criteria_count": 1,
+    "criteria": [
+      {
+        "criterion_id": "C1",
+        "description": "答案完整性和正确性",
+        "points": 100.0,
+        "evaluation_method": "semantic",
+        "keywords": null,
+        "required_elements": null
+      }
+    ]
+  }
+}

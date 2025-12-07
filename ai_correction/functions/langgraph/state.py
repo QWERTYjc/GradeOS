@@ -82,6 +82,9 @@ class GradingState(TypedDict):
     strictness_level: str      # 严格程度:宽松/中等/严格
     language: str              # 语言:zh/en
     mode: str                  # 批改模式:efficient(高效)/professional(专业)
+    target_questions: List[str]  # 需要重点批改的题号（空表示整卷）
+    scope_description: str       # 题号范围描述
+    scope_warnings: List[str]    # 范围解析警告
     
     # ==================== 多模态提取结果（核心） ====================
     mm_tokens: List[Dict[str, Any]]       # 多模态模型返回的带坐标token列表
@@ -153,13 +156,17 @@ class GradingState(TypedDict):
     grading_results: Annotated[List[Dict[str, Any]], operator.add]  # 所有批改结果（支持并行累加）
     student_reports: Annotated[List[Dict[str, Any]], operator.add]  # 学生报告（支持并行累加）
     class_analysis: Dict[str, Any]         # 班级分析报告
+    student_alias_map: Dict[str, str]      # 未命名学生的别名映射
+    graded_questions: List[str]            # 实际批改的题目
+    skipped_questions: List[str]           # 因范围限制被跳过的题目
     
     # ==================== 处理状态 ====================
     current_step: str                     # 当前步骤
     progress_percentage: float            # 进度百分比(0-100)
     completion_status: str                # 完成状态:in_progress/completed/failed
     completed_at: str                     # 完成时间
-    
+    streaming_callback: Any               # 流式传输回调函数（用于实时显示 AI 思考过程）
+
     # ==================== 错误和步骤记录 ====================
     errors: Annotated[List[Dict[str, Any]], operator.add]  # 错误记录（支持多个节点累加）
     step_results: Dict[str, Any]          # 步骤结果
