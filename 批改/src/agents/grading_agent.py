@@ -1,16 +1,11 @@
 """批改智能体 - LangGraph 图定义"""
 
-from typing import Literal, Optional
+from typing import Literal, Optional, Callable
 from langgraph.graph import StateGraph, END
-
-try:
-    from langgraph.checkpoint.postgres import PostgresSaver
-except ImportError:
-    # PostgresSaver 是可选的，如果未安装则设为 None
-    PostgresSaver = None
 
 from ..models.state import GradingState
 from ..services.gemini_reasoning import GeminiReasoningClient
+from ..utils.enhanced_checkpointer import EnhancedPostgresCheckpointer
 from .nodes import (
     vision_extraction_node,
     rubric_mapping_node,
@@ -20,22 +15,31 @@ from .nodes import (
 
 
 class GradingAgent:
-    """批改智能体，使用 LangGraph 实现循环推理"""
+    """
+    批改智能体，使用 LangGraph 实现循环推理
+    
+    集成增强型检查点器，支持增量存储、压缩和 Temporal 心跳。
+    
+    验证：需求 1.2, 9.1
+    """
     
     def __init__(
         self,
         reasoning_client: GeminiReasoningClient,
-        checkpointer: Optional[any] = None
+        checkpointer: Optional[EnhancedPostgresCheckpointer] = None,
+        heartbeat_callback: Optional[Callable[[str, float], None]] = None
     ):
         """
         初始化批改智能体
         
         Args:
             reasoning_client: Gemini 推理客户端
-            checkpointer: PostgreSQL 检查点保存器（可选）
+            checkpointer: 增强型 PostgreSQL 检查点保存器（可选）
+            heartbeat_callback: Temporal Activity 心跳回调（可选）
         """
         self.reasoning_client = reasoning_client
         self.checkpointer = checkpointer
+        self.heartbeat_callback = heartbeat_callback
         self.graph = self._build_graph()
     
     def _build_graph(self) -> StateGraph:

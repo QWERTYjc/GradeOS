@@ -7,6 +7,7 @@ requires-python = ">=3.11"
 dependencies = [
     "temporalio>=1.5.0",
     "langgraph>=0.2.0",
+    "langgraph-checkpoint-postgres>=3.0.0",
     "langchain-google-genai>=1.0.0",
     "fastapi>=0.110.0",
     "pydantic>=2.6.0",
@@ -18,6 +19,8 @@ dependencies = [
     "python-multipart>=0.0.9",
     "alembic>=1.13.0",
     "pillow>=10.2.0",
+    "pymupdf>=1.26.7",
+    "google-generativeai>=0.8.5",
 ]
 
 [project.optional-dependencies]

@@ -13,13 +13,13 @@ from ..utils.coordinates import normalize_coordinates
 class LayoutAnalysisService:
     """布局分析服务，使用 Gemini 2.5 Flash Lite 识别试卷中的题目边界"""
     
-    def __init__(self, api_key: str, model_name: str = "gemini-2.0-flash-exp"):
+    def __init__(self, api_key: str, model_name: str = "gemini-2.5-flash-lite"):
         """
         初始化布局分析服务
         
         Args:
             api_key: Google AI API 密钥
-            model_name: 使用的模型名称，默认为 gemini-2.0-flash-exp
+            model_name: 使用的模型名称，默认为 gemini-2.5-flash-lite（高吞吐、低成本）
         """
         self.llm = ChatGoogleGenerativeAI(
             model=model_name,

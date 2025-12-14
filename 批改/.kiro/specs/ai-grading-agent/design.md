@@ -2,18 +2,20 @@
 
 ## 概述
 
-本设计文档详述一套生产级纯视觉 AI 批改系统的技术架构。系统采用 Temporal 作为分布式工作流编排引擎，LangGraph 作为题内智能体推理框架，Gemini 系列模型作为视觉理解核心。整体架构遵循事件驱动微服务模式，通过异步消息传递和工作流编排实现组件解耦。
+本设计文档详述一套生产级纯视觉 AI 批改系统的技术架构。系统采用 Temporal 作为分布式工作流编排引擎，LangGraph 作为动态派生智能体框架，Gemini 系列模型作为视觉理解核心。核心创新在于 SupervisorAgent 动态派生架构，根据题型从 Agent Pool 中选择专业批改智能体（ObjectiveAgent、StepwiseAgent、EssayAgent 等），实现多学科、多题型的精准评分。
 
 ### 核心设计原则
 
 1. **纯视觉优先（Vision-Native）**：完全摒弃 OCR，直接利用 VLM 进行端到端语义理解
-2. **持久化执行（Durable Execution）**：通过 Temporal 保证长周期任务的持久化执行
-3. **智能体推理（Agentic Reasoning）**：通过 LangGraph 实现循环推理和自我反思
-4. **水平扩展（Horizontal Scalability）**：无状态 Worker 设计，支持 KEDA 自动扩缩容
+2. **动态派生（Dynamic Spawning）**：SupervisorAgent 根据题型动态调度专业批改智能体
+3. **持久化执行（Durable Execution）**：通过 Temporal 保证长周期任务的持久化执行
+4. **插件化扩展（Plugin Architecture）**：批改智能体通过标准接口注册，支持热插拔
+5. **证据链追溯（Evidence Chain）**：每个得分点提供完整的证据链，支持审计和申诉
+6. **水平扩展（Horizontal Scalability）**：无状态 Worker 设计，支持 KEDA 自动扩缩容
 
 ## 架构设计
 
-系统采用三层架构：接入层、编排层、认知计算层。
+系统采用四层架构：接入层、编排层、认知计算层（含动态派生智能体）、数据存储层。
 
 ```mermaid
 graph TB
@@ -33,6 +35,19 @@ graph TB
     subgraph "认知计算层 (Cognitive Layer)"
         CW[认知 Worker 池]
         LG[LangGraph 运行时]
+        
+        subgraph "动态派生智能体 (Dynamic Spawning)"
+            SA[SupervisorAgent<br/>总控调度]
+            subgraph "Agent Pool"
+                OA[ObjectiveAgent<br/>选择题/判断题]
+                SWA[StepwiseAgent<br/>计算题]
+                EA[EssayAgent<br/>作文/简答题]
+                LA[LabDesignAgent<br/>实验设计题]
+                PA[PluginAgents<br/>扩展插件]
+            end
+            RA[ResultAggregator<br/>结果聚合]
+        end
+        
         GM1[Gemini 2.5 Flash Lite<br/>布局分析]
         GM2[Gemini 3.0 Pro<br/>深度推理]
     end
@@ -50,6 +65,17 @@ graph TB
     OW --> TQ2
     TQ2 --> CW
     CW --> LG
+    LG --> SA
+    SA --> OA
+    SA --> SWA
+    SA --> EA
+    SA --> LA
+    SA --> PA
+    OA --> RA
+    SWA --> RA
+    EA --> RA
+    LA --> RA
+    PA --> RA
     LG --> GM1
     LG --> GM2
     CW --> PG
@@ -201,19 +227,45 @@ class LayoutAnalysisServiceInterface:
 ```
 
 
-### 3. 批改智能体 (Grading Agent - LangGraph)
+### 3. 动态派生智能体架构 (Dynamic Spawning Agent Architecture)
 
-核心智能体，执行多步推理批改。
+核心智能体架构，由 SupervisorAgent 动态调度专业批改智能体。
 
 ```python
-from typing import TypedDict, List, Optional
+from typing import TypedDict, List, Optional, Literal
 from langgraph.graph import StateGraph
+from enum import Enum
+from abc import ABC, abstractmethod
+
+class QuestionType(str, Enum):
+    OBJECTIVE = "objective"      # 选择题/判断题
+    STEPWISE = "stepwise"        # 计算题
+    ESSAY = "essay"              # 作文/简答题
+    LAB_DESIGN = "lab_design"    # 实验设计题
+    UNKNOWN = "unknown"          # 未知题型
+
+class ContextPack(TypedDict):
+    """传递给批改智能体的上下文包"""
+    question_image: str          # Base64 编码图像
+    question_type: QuestionType  # 题型
+    rubric: str                  # 评分细则
+    max_score: float             # 满分
+    standard_answer: Optional[str]  # 标准答案（如有）
+    terminology: List[str]       # 相关术语列表
+    previous_result: Optional[dict]  # 前序智能体输出（二次评估时）
+
+class EvidenceItem(TypedDict):
+    """证据链条目"""
+    scoring_point: str           # 评分点描述
+    image_region: List[int]      # 边界框 [ymin, xmin, ymax, xmax]
+    text_description: str        # 文本描述
+    reasoning: str               # 评分理由
+    rubric_reference: str        # 引用的评分条目
+    points_awarded: float        # 得分
 
 class GradingState(TypedDict):
-    # 静态输入
-    question_image: str  # Base64
-    rubric: str
-    standard_answer: Optional[str]
+    # 上下文包
+    context_pack: ContextPack
     
     # 动态推理数据
     vision_analysis: str
@@ -221,6 +273,7 @@ class GradingState(TypedDict):
     initial_score: float
     reasoning_trace: List[str]
     critique_feedback: Optional[str]
+    evidence_chain: List[EvidenceItem]  # 证据链
     
     # 最终输出
     final_score: float
@@ -228,30 +281,122 @@ class GradingState(TypedDict):
     confidence: float
     visual_annotations: List[dict]
     student_feedback: str
+    agent_type: str              # 使用的智能体类型
     
     # 控制标志
     revision_count: int
     is_finalized: bool
+    needs_secondary_review: bool  # 是否需要二次评估
 
-class GradingAgentInterface:
-    def build_graph(self) -> StateGraph:
-        """构建 LangGraph 图结构"""
+class BaseGradingAgent(ABC):
+    """批改智能体基类 - 插件接口"""
+    
+    @property
+    @abstractmethod
+    def agent_type(self) -> str:
+        """智能体类型标识"""
         pass
     
-    async def vision_extraction(self, state: GradingState) -> dict:
-        """视觉提取节点：描述学生解题步骤"""
+    @property
+    @abstractmethod
+    def supported_question_types(self) -> List[QuestionType]:
+        """支持的题型列表"""
         pass
     
-    async def rubric_mapping(self, state: GradingState) -> dict:
-        """评分映射节点：逐条核对评分点"""
+    @abstractmethod
+    async def grade(self, context_pack: ContextPack) -> GradingState:
+        """执行批改，返回批改结果"""
+        pass
+
+class SupervisorAgentInterface:
+    """总控调度智能体"""
+    
+    def analyze_question_type(self, image_data: bytes) -> QuestionType:
+        """分析题型"""
         pass
     
-    async def critique(self, state: GradingState) -> dict:
-        """自我反思节点：审查评分逻辑"""
+    def select_agent(self, question_type: QuestionType) -> BaseGradingAgent:
+        """从 Agent Pool 选择合适的智能体"""
         pass
     
-    async def finalize(self, state: GradingState) -> dict:
-        """最终化节点：格式化输出"""
+    def build_context_pack(
+        self, 
+        question_image: str,
+        question_type: QuestionType,
+        rubric: str,
+        max_score: float,
+        standard_answer: Optional[str] = None,
+        terminology: List[str] = None,
+        previous_result: Optional[dict] = None
+    ) -> ContextPack:
+        """构建上下文包"""
+        pass
+    
+    async def spawn_and_grade(self, context_pack: ContextPack) -> GradingState:
+        """派生智能体并执行批改"""
+        pass
+    
+    async def secondary_review(
+        self, 
+        context_pack: ContextPack, 
+        initial_result: GradingState
+    ) -> GradingState:
+        """二次评估（置信度低时触发）"""
+        pass
+
+class ObjectiveAgentInterface(BaseGradingAgent):
+    """选择题/判断题批改智能体"""
+    agent_type = "objective"
+    supported_question_types = [QuestionType.OBJECTIVE]
+    
+    async def grade(self, context_pack: ContextPack) -> GradingState:
+        """依据标准答案进行精确比对"""
+        pass
+
+class StepwiseAgentInterface(BaseGradingAgent):
+    """计算题批改智能体"""
+    agent_type = "stepwise"
+    supported_question_types = [QuestionType.STEPWISE]
+    
+    async def grade(self, context_pack: ContextPack) -> GradingState:
+        """将解题过程拆解为步骤并逐步给分"""
+        pass
+    
+    def extract_steps(self, vision_analysis: str) -> List[dict]:
+        """提取解题步骤"""
+        pass
+
+class EssayAgentInterface(BaseGradingAgent):
+    """作文/简答题批改智能体"""
+    agent_type = "essay"
+    supported_question_types = [QuestionType.ESSAY]
+    
+    async def grade(self, context_pack: ContextPack) -> GradingState:
+        """依据内容、结构、语言等维度评分"""
+        pass
+
+class LabDesignAgentInterface(BaseGradingAgent):
+    """实验设计题批改智能体"""
+    agent_type = "lab_design"
+    supported_question_types = [QuestionType.LAB_DESIGN]
+    
+    async def grade(self, context_pack: ContextPack) -> GradingState:
+        """评估实验方案的完整性和科学性"""
+        pass
+
+class AgentPoolInterface:
+    """智能体池管理"""
+    
+    def register_agent(self, agent: BaseGradingAgent) -> None:
+        """注册批改智能体插件"""
+        pass
+    
+    def get_agent(self, question_type: QuestionType) -> BaseGradingAgent:
+        """获取指定题型的智能体"""
+        pass
+    
+    def list_agents(self) -> List[str]:
+        """列出所有已注册的智能体"""
         pass
 ```
 
@@ -382,14 +527,26 @@ CREATE TABLE grading_results (
     max_score DECIMAL(5, 2),
     confidence_score DECIMAL(3, 2),
     
+    -- 题型和智能体信息
+    question_type VARCHAR(20),  -- objective, stepwise, essay, lab_design
+    agent_type VARCHAR(50),     -- 使用的智能体类型
+    
     -- 视觉标注 (用于前端高亮)
     visual_annotations JSONB,
     
+    -- 证据链 (每个得分点的完整证据)
+    evidence_chain JSONB,
+    -- 结构: [{scoring_point, image_region, text_description, reasoning, rubric_reference, points_awarded}]
+    
     -- AI 推理全链路
     agent_trace JSONB,
+    -- 结构: {vision_analysis, reasoning_trace, critique_feedback, revision_count}
     
     -- 学生反馈
     student_feedback JSONB,
+    
+    -- 二次评估标记
+    had_secondary_review BOOLEAN DEFAULT FALSE,
     
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW(),
@@ -398,7 +555,10 @@ CREATE TABLE grading_results (
 );
 
 CREATE INDEX idx_grading_results_confidence ON grading_results(confidence_score);
+CREATE INDEX idx_grading_results_question_type ON grading_results(question_type);
+CREATE INDEX idx_grading_results_agent_type ON grading_results(agent_type);
 CREATE INDEX idx_grading_results_feedback ON grading_results USING GIN (student_feedback);
+CREATE INDEX idx_grading_results_evidence ON grading_results USING GIN (evidence_chain);
 
 -- 评分细则表
 CREATE TABLE rubrics (
@@ -481,19 +641,72 @@ TTL: 1 小时
 **验证：需求 2.3**
 
 ### 属性 2：智能体执行完整性
-*对于任意*有效的题目图像和评分细则输入，当批改智能体完成执行时，输出状态应当包含：
+*对于任意*有效的 Context Pack 输入，当批改智能体完成执行时，输出状态应当包含：
 - 非空的 `vision_analysis` 字符串
 - 包含每个评分点条目的 `rubric_mapping` 列表
 - 介于 0 和 `max_score` 之间的 `final_score`
 - 介于 0.0 和 1.0 之间的 `confidence`
 - 非空的 `reasoning_trace` 列表
+- 非空的 `evidence_chain` 列表
+- 有效的 `agent_type` 字符串
 
-**验证：需求 3.1, 3.2, 3.3, 3.6**
+**验证：需求 3.3, 3.4, 3.5, 3.9**
 
 ### 属性 3：智能体修正循环终止
 *对于任意* `critique_feedback` 非空的智能体执行，当且仅当 `revision_count < 3` 时，智能体应当循环回到评分节点。当 `revision_count >= 3` 时，无论反馈如何，智能体应当继续到最终化节点。
 
-**验证：需求 3.5**
+**验证：需求 3.7**
+
+### 属性 18：SupervisorAgent 题型分类一致性
+*对于任意*题目图像，SupervisorAgent 的题型分析应当返回有效的 QuestionType 枚举值，且多次分析同一图像应当返回相同的题型。
+
+**验证：需求 3.1**
+
+### 属性 19：Context Pack 结构完整性
+*对于任意* SupervisorAgent 构建的 Context Pack，应当包含所有必需字段：
+- 非空的 `question_image`
+- 有效的 `question_type`
+- 非空的 `rubric`
+- 正数的 `max_score`
+
+**验证：需求 3.2**
+
+### 属性 20：二次评估触发条件
+*对于任意*批改结果，当 `confidence < 0.75` 时，SupervisorAgent 应当触发二次评估。当 `confidence >= 0.75` 时，不应触发二次评估。
+
+**验证：需求 3.8**
+
+### 属性 21：智能体类型与题型匹配
+*对于任意*批改请求，SupervisorAgent 选择的智能体类型应当与题型匹配：
+- OBJECTIVE → ObjectiveAgent
+- STEPWISE → StepwiseAgent
+- ESSAY → EssayAgent
+- LAB_DESIGN → LabDesignAgent
+
+**验证：需求 11.1, 11.2, 11.3, 11.4**
+
+### 属性 22：证据链完整性
+*对于任意*批改结果中的证据链条目，应当包含所有必需字段：
+- 非空的 `scoring_point`
+- 有效的 `image_region`（4 个非负整数）
+- 非空的 `text_description`
+- 非空的 `reasoning`
+- 非空的 `rubric_reference`
+- 非负的 `points_awarded`
+
+**验证：需求 7.3**
+
+### 属性 23：结果元数据完整性
+*对于任意*批改智能体返回的结果，应当包含：
+- 有效的 `question_type` 标识
+- 有效的 `agent_type` 标识
+
+**验证：需求 11.6**
+
+### 属性 24：StepwiseAgent 步骤分数一致性
+*对于任意* StepwiseAgent 的批改结果，各步骤得分之和应当等于 `final_score`。
+
+**验证：需求 11.2**
 
 ### 属性 4：状态转换时检查点持久化
 *对于任意*智能体执行期间的 LangGraph 状态转换，在下一个节点执行之前，应当将带有正确 `thread_id` 的检查点记录持久化到数据库。
@@ -683,6 +896,7 @@ settings.register_profile(
 
 ```python
 from hypothesis import given, strategies as st
+from src.models.enums import QuestionType
 
 # 属性 1：坐标归一化
 @given(
@@ -702,6 +916,56 @@ def test_coordinate_normalization_bounds(ymin, xmin, ymax, xmax, width, height):
     assert 0 <= result.xmin <= width
     assert 0 <= result.ymax <= height
     assert 0 <= result.xmax <= width
+
+# 属性 19：Context Pack 结构完整性
+@given(
+    question_type=st.sampled_from(list(QuestionType)),
+    rubric=st.text(min_size=1),
+    max_score=st.floats(min_value=0.1, max_value=100.0)
+)
+def test_context_pack_completeness(question_type, rubric, max_score):
+    """
+    **功能: ai-grading-agent, 属性 19: Context Pack 结构完整性**
+    """
+    context_pack = build_context_pack(
+        question_image="base64_image_data",
+        question_type=question_type,
+        rubric=rubric,
+        max_score=max_score
+    )
+    assert context_pack["question_image"]
+    assert context_pack["question_type"] in QuestionType
+    assert context_pack["rubric"]
+    assert context_pack["max_score"] > 0
+
+# 属性 22：证据链完整性
+@given(
+    scoring_point=st.text(min_size=1),
+    ymin=st.integers(0, 1000),
+    xmin=st.integers(0, 1000),
+    ymax=st.integers(0, 1000),
+    xmax=st.integers(0, 1000),
+    points=st.floats(min_value=0, max_value=10)
+)
+def test_evidence_chain_completeness(scoring_point, ymin, xmin, ymax, xmax, points):
+    """
+    **功能: ai-grading-agent, 属性 22: 证据链完整性**
+    """
+    evidence = EvidenceItem(
+        scoring_point=scoring_point,
+        image_region=[ymin, xmin, ymax, xmax],
+        text_description="description",
+        reasoning="reasoning",
+        rubric_reference="rubric ref",
+        points_awarded=points
+    )
+    assert evidence["scoring_point"]
+    assert len(evidence["image_region"]) == 4
+    assert all(x >= 0 for x in evidence["image_region"])
+    assert evidence["text_description"]
+    assert evidence["reasoning"]
+    assert evidence["rubric_reference"]
+    assert evidence["points_awarded"] >= 0
 ```
 
 #### 3. 集成测试

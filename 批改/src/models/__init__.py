@@ -1,6 +1,6 @@
 """数据模型包"""
 
-from .enums import FileType, SubmissionStatus, ReviewAction
+from .enums import FileType, SubmissionStatus, ReviewAction, QuestionType
 from .submission import (
     SubmissionRequest,
     SubmissionResponse,
@@ -8,7 +8,13 @@ from .submission import (
 )
 from .region import BoundingBox, QuestionRegion, SegmentationResult
 from .grading import GradingResult, RubricMappingItem, ExamPaperResult
-from .state import GradingState, WorkflowInput, QuestionGradingInput
+from .state import (
+    GradingState,
+    WorkflowInput,
+    QuestionGradingInput,
+    ContextPack,
+    EvidenceItem,
+)
 from .rubric import (
     ScoringPoint,
     Rubric,
@@ -22,6 +28,7 @@ __all__ = [
     "FileType",
     "SubmissionStatus",
     "ReviewAction",
+    "QuestionType",
     # 提交
     "SubmissionRequest",
     "SubmissionResponse",
@@ -38,6 +45,8 @@ __all__ = [
     "GradingState",
     "WorkflowInput",
     "QuestionGradingInput",
+    "ContextPack",
+    "EvidenceItem",
     # 评分细则
     "ScoringPoint",
     "Rubric",

@@ -1,0 +1,347 @@
+# Prometheus 指标定义文档
+# 本文档定义了架构深度融合优化后需要收集的所有指标
+# 需求：5.5
+
+---
+# ========================================
+# 连接池指标 (需求 8.1, 8.2)
+# ========================================
+
+# pool_connections_active
+# 类型: Gauge
+# 标签: pool_type (postgresql/redis), instance
+# 描述: 当前活跃连接数
+
+# pool_connections_max
+# 类型: Gauge
+# 标签: pool_type, instance
+# 描述: 最大连接数限制
+
+# pool_connections_idle
+# 类型: Gauge
+# 标签: pool_type, instance
+# 描述: 当前空闲连接数
+
+# pool_connection_timeout_total
+# 类型: Counter
+# 标签: pool_type, instance
+# 描述: 连接获取超时次数
+
+# pool_connection_wait_time_seconds
+# 类型: Histogram
+# 标签: pool_type, instance
+# 描述: 等待获取连接的时间分布
+
+# pool_connection_lifetime_seconds
+# 类型: Histogram
+# 标签: pool_type, instance
+# 描述: 连接生命周期时间分布
+
+---
+# ========================================
+# 缓存指标 (需求 3.1, 3.2, 3.5)
+# ========================================
+
+# cache_requests_total
+# 类型: Counter
+# 标签: cache_layer (redis/postgresql), operation (get/set/delete), instance
+# 描述: 缓存请求总数
+
+# cache_hits_total
+# 类型: Counter
+# 标签: cache_layer, instance
+# 描述: 缓存命中总数
+
+# cache_misses_total
+# 类型: Counter
+# 标签: cache_layer, instance
+# 描述: 缓存未命中总数
+
+# cache_fallback_active
+# 类型: Gauge
+# 标签: instance
+# 描述: 缓存降级状态 (0=正常, 1=降级)
+
+# cache_memory_usage_bytes
+# 类型: Gauge
+# 标签: instance
+# 描述: 缓存内存使用量
+
+# cache_memory_limit_bytes
+# 类型: Gauge
+# 标签: instance
+# 描述: 缓存内存限制
+
+# cache_evictions_total
+# 类型: Counter
+# 标签: instance
+# 描述: 缓存淘汰总数
+
+# cache_operation_duration_seconds
+# 类型: Histogram
+# 标签: operation, cache_layer, instance
+# 描述: 缓存操作耗时分布
+
+# cache_pubsub_messages_total
+# 类型: Counter
+# 标签: channel, instance
+# 描述: Pub/Sub 消息总数
+
+# cache_invalidation_total
+# 类型: Counter
+# 标签: pattern, instance
+# 描述: 缓存失效总数
+
+---
+# ========================================
+# 分布式追踪指标 (需求 5.1, 5.2, 5.3, 5.4, 5.5)
+# ========================================
+
+# trace_span_duration_ms
+# 类型: Histogram
+# 标签: span_kind (api/temporal_workflow/temporal_activity/langgraph_node/database/cache), status, instance
+# 描述: 追踪跨度持续时间分布
+
+# trace_spans_created_total
+# 类型: Counter
+# 标签: span_kind, instance
+# 描述: 创建的跨度总数
+
+# trace_spans_completed_total
+# 类型: Counter
+# 标签: span_kind, status, instance
+# 描述: 完成的跨度总数
+
+# trace_alert_triggered_total
+# 类型: Counter
+# 标签: alert_type, instance
+# 描述: 触发的性能告警总数
+
+---
+# ========================================
+# 分布式事务指标 (需求 4.1, 4.2, 4.5)
+# ========================================
+
+# saga_transactions_total
+# 类型: Counter
+# 标签: saga_type, instance
+# 描述: Saga 事务总数
+
+# saga_transactions_completed_total
+# 类型: Counter
+# 标签: saga_type, status (success/failed), instance
+# 描述: 完成的 Saga 事务总数
+
+# saga_transactions_failed_total
+# 类型: Counter
+# 标签: saga_type, instance
+# 描述: 失败的 Saga 事务总数
+
+# saga_compensations_total
+# 类型: Counter
+# 标签: saga_type, instance
+# 描述: 执行的补偿操作总数
+
+# saga_manual_intervention_required
+# 类型: Gauge
+# 标签: instance
+# 描述: 需要人工干预的事务数
+
+# saga_execution_duration_seconds
+# 类型: Histogram
+# 标签: saga_type, status, instance
+# 描述: Saga 执行时间分布
+
+# saga_step_duration_seconds
+# 类型: Histogram
+# 标签: saga_type, step_name, instance
+# 描述: Saga 步骤执行时间分布
+
+---
+# ========================================
+# 检查点指标 (需求 9.1, 9.3, 9.4)
+# ========================================
+
+# checkpoint_saves_total
+# 类型: Counter
+# 标签: instance
+# 描述: 检查点保存总数
+
+# checkpoint_save_failures_total
+# 类型: Counter
+# 标签: instance
+# 描述: 检查点保存失败总数
+
+# checkpoint_save_retries_total
+# 类型: Counter
+# 标签: instance
+# 描述: 检查点保存重试总数
+
+# checkpoint_data_size_bytes
+# 类型: Histogram
+# 标签: is_compressed, is_delta, instance
+# 描述: 检查点数据大小分布
+
+# checkpoint_original_size_bytes
+# 类型: Histogram
+# 标签: instance
+# 描述: 检查点原始大小分布
+
+# checkpoint_compressed_size_bytes
+# 类型: Histogram
+# 标签: instance
+# 描述: 检查点压缩后大小分布
+
+# checkpoint_compression_ratio
+# 类型: Histogram
+# 标签: instance
+# 描述: 检查点压缩比分布
+
+# checkpoint_save_duration_seconds
+# 类型: Histogram
+# 标签: instance
+# 描述: 检查点保存耗时分布
+
+# checkpoint_load_duration_seconds
+# 类型: Histogram
+# 标签: instance
+# 描述: 检查点加载耗时分布
+
+---
+# ========================================
+# 工作流指标 (需求 10.1, 10.2, 10.3, 10.4)
+# ========================================
+
+# workflow_execution_duration_seconds
+# 类型: Histogram
+# 标签: workflow_type, status, instance
+# 描述: 工作流执行时间分布
+
+# workflow_progress_updates_total
+# 类型: Counter
+# 标签: workflow_type, instance
+# 描述: 工作流进度更新总数
+
+# workflow_external_events_received_total
+# 类型: Counter
+# 标签: event_type, instance
+# 描述: 接收的外部事件总数
+
+# workflow_child_concurrent_count
+# 类型: Gauge
+# 标签: parent_workflow_id, instance
+# 描述: 当前并发子工作流数量
+
+# workflow_child_concurrent_limit
+# 类型: Gauge
+# 标签: instance
+# 描述: 子工作流并发限制
+
+# distributed_lock_acquisitions_total
+# 类型: Counter
+# 标签: resource_type, instance
+# 描述: 分布式锁获取总数
+
+# distributed_lock_failures_total
+# 类型: Counter
+# 标签: resource_type, reason, instance
+# 描述: 分布式锁获取失败总数
+
+# distributed_lock_wait_time_seconds
+# 类型: Histogram
+# 标签: resource_type, instance
+# 描述: 等待获取锁的时间分布
+
+# distributed_lock_hold_time_seconds
+# 类型: Histogram
+# 标签: resource_type, instance
+# 描述: 持有锁的时间分布
+
+---
+# ========================================
+# API 指标 (需求 7.1, 7.2, 7.3, 7.4, 7.5)
+# ========================================
+
+# http_requests_total
+# 类型: Counter
+# 标签: method, path, status, instance
+# 描述: HTTP 请求总数
+
+# http_request_duration_seconds
+# 类型: Histogram
+# 标签: method, path, instance
+# 描述: HTTP 请求耗时分布
+
+# websocket_connections_active
+# 类型: Gauge
+# 标签: instance
+# 描述: 当前活跃 WebSocket 连接数
+
+# websocket_messages_sent_total
+# 类型: Counter
+# 标签: instance
+# 描述: WebSocket 发送消息总数
+
+# api_slow_queries_total
+# 类型: Counter
+# 标签: endpoint, instance
+# 描述: 慢查询总数
+
+# api_rate_limit_exceeded_total
+# 类型: Counter
+# 标签: endpoint, instance
+# 描述: 触发限流总数
+
+# api_pagination_requests_total
+# 类型: Counter
+# 标签: endpoint, instance
+# 描述: 分页查询请求总数
+
+# api_field_selection_requests_total
+# 类型: Counter
+# 标签: endpoint, instance
+# 描述: 字段选择查询请求总数
+
+---
+# ========================================
+# 系统健康指标
+# ========================================
+
+# health_check_status
+# 类型: Gauge
+# 标签: component (api/worker/database/redis), instance
+# 描述: 健康检查状态 (1=健康, 0=不健康)
+
+# health_check_duration_seconds
+# 类型: Histogram
+# 标签: component, instance
+# 描述: 健康检查耗时分布
+
+---
+# 指标导出配置示例
+
+# Python 代码示例 (使用 prometheus_client):
+# 
+# from prometheus_client import Counter, Histogram, Gauge
+# 
+# # 连接池指标
+# pool_connections_active = Gauge(
+#     'pool_connections_active',
+#     'Active connections in pool',
+#     ['pool_type', 'instance']
+# )
+# 
+# # 缓存指标
+# cache_requests_total = Counter(
+#     'cache_requests_total',
+#     'Total cache requests',
+#     ['cache_layer', 'operation', 'instance']
+# )
+# 
+# # 追踪指标
+# trace_span_duration_ms = Histogram(
+#     'trace_span_duration_ms',
+#     'Trace span duration in milliseconds',
+#     ['span_kind', 'status', 'instance'],
+#     buckets=[10, 50, 100, 250, 500, 1000, 2500, 5000, 10000]
+# )

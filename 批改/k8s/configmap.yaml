@@ -1,0 +1,192 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grading-config
+  namespace: grading-system
+data:
+  # Temporal Configuration
+  TEMPORAL_HOST: "temporal-frontend.temporal:7233"
+  TEMPORAL_NAMESPACE: "default"
+  
+  # Database Configuration
+  DATABASE_HOST: "postgres-service.grading-system.svc.cluster.local"
+  DATABASE_PORT: "5432"
+  DATABASE_NAME: "grading_system"
+  
+  # Redis Configuration
+  REDIS_HOST: "redis-service.grading-system.svc.cluster.local"
+  REDIS_PORT: "6379"
+  
+  # S3 Configuration
+  S3_REGION: "us-east-1"
+  S3_BUCKET: "grading-submissions"
+  
+  # API Configuration
+  API_HOST: "0.0.0.0"
+  API_PORT: "8000"
+  
+  # Rate Limiting
+  RATE_LIMIT_REQUESTS: "100"
+  RATE_LIMIT_WINDOW_SECONDS: "60"
+  
+  # Cache Configuration
+  CACHE_TTL_DAYS: "30"
+  CACHE_CONFIDENCE_THRESHOLD: "0.9"
+  
+  # Worker Configuration
+  WORKER_CONCURRENCY: "10"
+  WORKER_MAX_CONCURRENT_ACTIVITIES: "5"
+  
+  # Logging
+  LOG_LEVEL: "INFO"
+  LOG_FORMAT: "json"
+  
+  # ========================================
+  # 统一连接池配置 (需求 8.1)
+  # ========================================
+  
+  # PostgreSQL 连接池
+  PG_POOL_MIN_SIZE: "5"
+  PG_POOL_MAX_SIZE: "20"
+  PG_POOL_CONNECTION_TIMEOUT: "5.0"
+  PG_POOL_IDLE_TIMEOUT: "300.0"
+  PG_POOL_MAX_LIFETIME: "3600.0"
+  
+  # Redis 连接池
+  REDIS_POOL_MAX_CONNECTIONS: "50"
+  REDIS_POOL_CONNECTION_TIMEOUT: "5.0"
+  REDIS_POOL_SOCKET_KEEPALIVE: "true"
+  REDIS_POOL_HEALTH_CHECK_INTERVAL: "30.0"
+  
+  # 连接池健康检查
+  POOL_HEALTH_CHECK_ENABLED: "true"
+  POOL_HEALTH_CHECK_INTERVAL: "60"
+  
+  # ========================================
+  # 多层缓存配置 (需求 3.1, 3.2, 3.5)
+  # ========================================
+  
+  # 缓存策略
+  CACHE_STRATEGY: "write_through"
+  CACHE_HOT_DATA_TTL: "3600"
+  CACHE_WORKFLOW_STATE_TTL: "86400"
+  CACHE_RUBRIC_HASH_TTL: "604800"
+  
+  # 缓存降级
+  CACHE_FALLBACK_ENABLED: "true"
+  CACHE_FALLBACK_TIMEOUT: "2.0"
+  
+  # Pub/Sub 配置
+  CACHE_PUBSUB_CHANNEL: "cache_invalidation"
+  WORKFLOW_EVENTS_CHANNEL: "workflow_events"
+  STATE_CHANGES_CHANNEL: "state_changes"
+  
+  # 缓存预热
+  CACHE_WARMUP_ENABLED: "true"
+  CACHE_WARMUP_DAYS: "7"
+  CACHE_WARMUP_CONFIDENCE_THRESHOLD: "0.9"
+  CACHE_WARMUP_BATCH_SIZE: "100"
+  
+  # 缓存淘汰
+  CACHE_MEMORY_THRESHOLD: "0.8"
+  CACHE_LRU_ENABLED: "true"
+  
+  # ========================================
+  # 分布式追踪配置 (需求 5.1, 5.2, 5.3, 5.4, 5.5)
+  # ========================================
+  
+  # 追踪开关
+  TRACING_ENABLED: "true"
+  TRACING_SAMPLE_RATE: "1.0"
+  
+  # 性能告警阈值
+  TRACING_ALERT_THRESHOLD_MS: "500"
+  TRACING_SLOW_QUERY_THRESHOLD_MS: "500"
+  
+  # 追踪存储
+  TRACING_RETENTION_DAYS: "30"
+  TRACING_BATCH_SIZE: "100"
+  
+  # ========================================
+  # 分布式事务配置 (需求 4.1, 4.2, 4.5)
+  # ========================================
+  
+  # Saga 配置
+  SAGA_ENABLED: "true"
+  SAGA_MAX_RETRIES: "3"
+  SAGA_RETRY_DELAY_MS: "1000"
+  SAGA_TIMEOUT_SECONDS: "300"
+  
+  # 事务日志
+  SAGA_LOG_ENABLED: "true"
+  SAGA_LOG_RETENTION_DAYS: "90"
+  
+  # ========================================
+  # LangGraph 检查点优化配置 (需求 9.1, 9.3, 9.4)
+  # ========================================
+  
+  # 检查点压缩
+  CHECKPOINT_COMPRESSION_ENABLED: "true"
+  CHECKPOINT_COMPRESSION_THRESHOLD_BYTES: "1048576"
+  
+  # 检查点增量存储
+  CHECKPOINT_DELTA_ENABLED: "true"
+  CHECKPOINT_DELTA_THRESHOLD: "0.3"
+  
+  # 检查点重试
+  CHECKPOINT_MAX_RETRIES: "3"
+  CHECKPOINT_RETRY_DELAY_MS: "500"
+  
+  # 检查点归档
+  CHECKPOINT_ARCHIVE_ENABLED: "true"
+  CHECKPOINT_ARCHIVE_DAYS: "30"
+  
+  # ========================================
+  # 增强型工作流配置 (需求 10.1, 10.2, 10.3, 10.4)
+  # ========================================
+  
+  # 分布式锁
+  DISTRIBUTED_LOCK_ENABLED: "true"
+  DISTRIBUTED_LOCK_TIMEOUT_SECONDS: "30"
+  DISTRIBUTED_LOCK_RETRY_DELAY_MS: "100"
+  
+  # 并发控制
+  WORKFLOW_MAX_CONCURRENT_CHILDREN: "10"
+  WORKFLOW_CHILD_TIMEOUT_SECONDS: "3600"
+  
+  # 进度查询
+  WORKFLOW_PROGRESS_UPDATE_INTERVAL: "10"
+  
+  # ========================================
+  # API 增强配置 (需求 7.1, 7.2, 7.3, 7.4, 7.5)
+  # ========================================
+  
+  # WebSocket
+  WEBSOCKET_ENABLED: "true"
+  WEBSOCKET_PING_INTERVAL: "30"
+  WEBSOCKET_PING_TIMEOUT: "10"
+  
+  # 分页查询
+  API_DEFAULT_PAGE_SIZE: "20"
+  API_MAX_PAGE_SIZE: "100"
+  
+  # 字段选择
+  API_FIELD_SELECTION_ENABLED: "true"
+  
+  # 慢查询监控
+  API_SLOW_QUERY_THRESHOLD_MS: "500"
+  API_SLOW_QUERY_LOG_ENABLED: "true"
+  
+  # ========================================
+  # 监控与告警配置
+  # ========================================
+  
+  # Prometheus 指标
+  METRICS_ENABLED: "true"
+  METRICS_PORT: "9090"
+  METRICS_PATH: "/metrics"
+  
+  # 健康检查
+  HEALTH_CHECK_ENABLED: "true"
+  HEALTH_CHECK_PATH: "/health"
+  HEALTH_CHECK_TIMEOUT: "5"

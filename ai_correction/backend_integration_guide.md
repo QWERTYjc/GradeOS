@@ -59,3 +59,4 @@ python -c "from functions.image_optimization_integration import optimize_images;
 (注：需确保 `test_image.jpg` 存在)
 
 
+

@@ -12,13 +12,13 @@ from ..models.grading import RubricMappingItem
 class GeminiReasoningClient:
     """Gemini 深度推理客户端，用于批改智能体的各个推理节点"""
     
-    def __init__(self, api_key: str, model_name: str = "gemini-2.0-flash-exp"):
+    def __init__(self, api_key: str, model_name: str = "gemini-3-pro-preview"):
         """
         初始化 Gemini 推理客户端
         
         Args:
             api_key: Google AI API 密钥
-            model_name: 使用的模型名称，默认为 gemini-2.0-flash-exp
+            model_name: 使用的模型名称，默认为 gemini-3-pro-preview（最新深度推理能力）
         """
         self.llm = ChatGoogleGenerativeAI(
             model=model_name,
@@ -27,6 +27,27 @@ class GeminiReasoningClient:
         )
         self.model_name = model_name
         self.temperature = 0.2  # 低温度以保持一致性
+    
+    def _extract_text_from_response(self, content: Any) -> str:
+        """
+        从响应中提取文本内容
+        
+        Args:
+            content: 响应内容（可能是字符串或列表）
+            
+        Returns:
+            str: 提取的文本
+        """
+        if isinstance(content, list):
+            # Gemini 3.0 返回列表格式
+            text_parts = []
+            for item in content:
+                if isinstance(item, dict):
+                    text_parts.append(item.get('text', ''))
+                else:
+                    text_parts.append(str(item))
+            return '\n'.join(text_parts)
+        return str(content)
         
     async def vision_extraction(
         self,
@@ -75,7 +96,8 @@ class GeminiReasoningClient:
         # 调用 LLM
         response = await self.llm.ainvoke([message])
         
-        return response.content
+        # 提取文本内容
+        return self._extract_text_from_response(response.content)
     
     async def rubric_mapping(
         self,
@@ -130,8 +152,9 @@ class GeminiReasoningClient:
         # 调用 LLM
         response = await self.llm.ainvoke([HumanMessage(content=prompt)])
         
-        # 解析响应
-        result_text = response.content
+        # 提取文本内容
+        result_text = self._extract_text_from_response(response.content)
+        
         # 尝试从响应中提取 JSON
         if "```json" in result_text:
             json_start = result_text.find("```json") + 7
@@ -197,8 +220,9 @@ class GeminiReasoningClient:
         # 调用 LLM
         response = await self.llm.ainvoke([HumanMessage(content=prompt)])
         
-        # 解析响应
-        result_text = response.content
+        # 提取文本内容
+        result_text = self._extract_text_from_response(response.content)
+        
         # 尝试从响应中提取 JSON
         if "```json" in result_text:
             json_start = result_text.find("```json") + 7

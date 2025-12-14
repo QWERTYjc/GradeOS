@@ -62,9 +62,15 @@ class SubmissionRepository:
     async def update_status(
         self,
         submission_id: str,
-        status: SubmissionStatus
+        status: str | SubmissionStatus
     ) -> bool:
         """更新提交状态"""
+        # 如果是枚举类型，转换为字符串
+        if isinstance(status, SubmissionStatus):
+            status_value = status.value
+        else:
+            status_value = status
+        
         query = """
             UPDATE submissions
             SET status = %(status)s, updated_at = NOW()
@@ -77,7 +83,7 @@ class SubmissionRepository:
                     query,
                     {
                         "submission_id": UUID(submission_id),
-                        "status": status.value
+                        "status": status_value
                     }
                 )
                 return cur.rowcount > 0

@@ -24,3 +24,15 @@ class ReviewAction(str, Enum):
     APPROVE = "APPROVE"
     OVERRIDE = "OVERRIDE"
     REJECT = "REJECT"
+
+
+class QuestionType(str, Enum):
+    """题目类型枚举
+    
+    用于 SupervisorAgent 分析题型并选择合适的批改智能体
+    """
+    OBJECTIVE = "objective"      # 选择题/判断题
+    STEPWISE = "stepwise"        # 计算题（数学、物理等）
+    ESSAY = "essay"              # 作文/简答题
+    LAB_DESIGN = "lab_design"    # 实验设计题
+    UNKNOWN = "unknown"          # 未知题型（需要人工审核）
