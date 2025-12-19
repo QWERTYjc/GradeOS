@@ -67,7 +67,7 @@ class RubricParserService:
     2. 嵌入格式：题目上直接标注答案的格式
     """
     
-    def __init__(self, api_key: str, model_name: str = "gemini-2.5-flash"):
+    def __init__(self, api_key: str, model_name: str = "gemini-2.5-flash-lite"):
         self.llm = ChatGoogleGenerativeAI(
             model=model_name,
             google_api_key=api_key,
@@ -91,65 +91,108 @@ class RubricParserService:
         """
         logger.info(f"开始解析批改标准，共 {len(rubric_images)} 页")
         
+        # 分批处理：每批最多 4 页，避免请求过大
+        MAX_PAGES_PER_BATCH = 4
+        all_questions = []
+        general_notes = ""
+        rubric_format = "standard"
+        
+        for batch_start in range(0, len(rubric_images), MAX_PAGES_PER_BATCH):
+            batch_end = min(batch_start + MAX_PAGES_PER_BATCH, len(rubric_images))
+            batch_images = rubric_images[batch_start:batch_end]
+            batch_num = batch_start // MAX_PAGES_PER_BATCH + 1
+            total_batches = (len(rubric_images) + MAX_PAGES_PER_BATCH - 1) // MAX_PAGES_PER_BATCH
+            
+            logger.info(f"解析第 {batch_num}/{total_batches} 批（第 {batch_start+1}-{batch_end} 页）")
+            
+            batch_result = await self._parse_rubric_batch(
+                batch_images, 
+                expected_total_score,
+                batch_num,
+                total_batches
+            )
+            
+            all_questions.extend(batch_result.questions)
+            if batch_result.general_notes:
+                general_notes = batch_result.general_notes
+            if batch_result.rubric_format != "standard":
+                rubric_format = batch_result.rubric_format
+        
+        # 合并结果
+        parsed = ParsedRubric(
+            total_questions=len(all_questions),
+            total_score=sum(q.max_score for q in all_questions),
+            questions=all_questions,
+            general_notes=general_notes,
+            rubric_format=rubric_format
+        )
+        
+        # 验证总分
+        if abs(parsed.total_score - expected_total_score) > 1:
+            logger.warning(
+                f"总分不匹配: 预期 {expected_total_score}, "
+                f"实际 {parsed.total_score}"
+            )
+        
+        logger.info(
+            f"批改标准解析完成: "
+            f"{parsed.total_questions} 题, "
+            f"总分 {parsed.total_score}"
+        )
+        
+        return parsed
+    
+    async def _parse_rubric_batch(
+        self,
+        rubric_images: List[bytes],
+        expected_total_score: float,
+        batch_num: int,
+        total_batches: int
+    ) -> ParsedRubric:
+        """解析单批评分标准页面"""
         # 将图像转为 base64
         images_b64 = [base64.b64encode(img).decode('utf-8') for img in rubric_images]
         
-        prompt = f"""你是一位专业的阅卷标准分析专家。请仔细分析这份批改标准/答案文档。
+        batch_info = f"（第 {batch_num}/{total_batches} 批）" if total_batches > 1 else ""
+        
+        prompt = f"""你是一位专业的阅卷标准分析专家。请仔细分析这些批改标准/答案页面{batch_info}。
 
 ## 任务
-1. 识别所有题目（预期总分为 {expected_total_score} 分）
+1. 识别这些页面中的所有题目
 2. 提取每道题的分值和得分点
 3. 识别另类解法（如果有）
-4. 判断文档格式（独立答案 vs 题目上标注答案）
 
 ## 分析要求
 - 每道题必须明确分值
 - 得分点要具体，说明给分条件
 - 另类解法单独列出，不计入主要得分点
-- 如果是"题目+答案"混合格式，也要能识别
+- 只提取这些页面中出现的题目
 
 ## 输出格式（JSON）
 ```json
 {{
     "rubric_format": "standard 或 embedded",
-    "total_questions": 19,
-    "total_score": {expected_total_score},
-    "general_notes": "通用批改说明",
+    "general_notes": "通用批改说明（如果有）",
     "questions": [
         {{
             "question_id": "1",
             "max_score": 5,
-            "question_text": "题目内容（如果可见）",
-            "standard_answer": "标准答案",
+            "question_text": "题目内容（简短描述）",
+            "standard_answer": "标准答案（简短）",
             "scoring_points": [
-                {{
-                    "description": "正确列出方程",
-                    "score": 2,
-                    "is_required": true
-                }},
-                {{
-                    "description": "正确求解",
-                    "score": 3,
-                    "is_required": true
-                }}
+                {{"description": "正确列出方程", "score": 2, "is_required": true}},
+                {{"description": "正确求解", "score": 3, "is_required": true}}
             ],
-            "alternative_solutions": [
-                {{
-                    "description": "使用图解法",
-                    "scoring_criteria": "图形正确且标注清晰可得满分",
-                    "note": "此为另类解法"
-                }}
-            ],
-            "grading_notes": "注意检查单位"
+            "alternative_solutions": [],
+            "grading_notes": ""
         }}
     ]
 }}
 ```
 
 ## 重要提醒
-- 确保所有题目的分值之和等于 {expected_total_score}
-- 另类解法的分值不要重复计算到 max_score 中
-- 如果某题有多个小题（如 a, b, c），分别列出得分点"""
+- 只提取当前页面中的题目，不要猜测其他页面的内容
+- 另类解法的分值不要重复计算到 max_score 中"""
 
         # 构建消息
         content = [{"type": "text", "text": prompt}]
@@ -162,20 +205,84 @@ class RubricParserService:
         message = HumanMessage(content=content)
         
         try:
-            response = await self.llm.ainvoke([message])
+            # 添加重试机制处理 503 错误
+            max_retries = 3
+            retry_delay = 5  # 秒
+            last_error = None
+            
+            for attempt in range(max_retries):
+                try:
+                    response = await self.llm.ainvoke([message])
+                    break
+                except Exception as e:
+                    last_error = e
+                    error_str = str(e)
+                    if "503" in error_str or "overloaded" in error_str.lower():
+                        if attempt < max_retries - 1:
+                            logger.warning(f"Gemini API 过载，{retry_delay}秒后重试 ({attempt + 1}/{max_retries})")
+                            import asyncio
+                            await asyncio.sleep(retry_delay)
+                            retry_delay *= 2  # 指数退避
+                            continue
+                    raise
+            else:
+                raise last_error
             result_text = response.content
             
+            # 检查响应是否为空
+            if not result_text or not result_text.strip():
+                logger.warning(f"Gemini 返回空响应，使用空结果")
+                return ParsedRubric(
+                    total_questions=0,
+                    total_score=0,
+                    questions=[],
+                    general_notes="",
+                    rubric_format="standard"
+                )
+            
+            logger.debug(f"Gemini 原始响应: {result_text[:500]}...")
+            
             # 提取 JSON
+            json_text = result_text
             if "```json" in result_text:
                 json_start = result_text.find("```json") + 7
                 json_end = result_text.find("```", json_start)
-                result_text = result_text[json_start:json_end].strip()
+                if json_end > json_start:
+                    json_text = result_text[json_start:json_end].strip()
             elif "```" in result_text:
                 json_start = result_text.find("```") + 3
                 json_end = result_text.find("```", json_start)
-                result_text = result_text[json_start:json_end].strip()
+                if json_end > json_start:
+                    json_text = result_text[json_start:json_end].strip()
             
-            data = json.loads(result_text)
+            # 尝试找到 JSON 对象
+            if not json_text.startswith("{"):
+                # 尝试找到第一个 { 
+                brace_start = json_text.find("{")
+                if brace_start >= 0:
+                    json_text = json_text[brace_start:]
+            
+            if not json_text or not json_text.strip().startswith("{"):
+                logger.warning(f"无法从响应中提取 JSON: {result_text[:200]}...")
+                return ParsedRubric(
+                    total_questions=0,
+                    total_score=0,
+                    questions=[],
+                    general_notes="",
+                    rubric_format="standard"
+                )
+            
+            try:
+                data = json.loads(json_text)
+            except json.JSONDecodeError as e:
+                logger.warning(f"JSON 解析失败: {e}, 原文: {json_text[:200]}...")
+                return ParsedRubric(
+                    total_questions=0,
+                    total_score=0,
+                    questions=[],
+                    general_notes="",
+                    rubric_format="standard"
+                )
             
             # 解析结果
             questions = []
@@ -208,29 +315,22 @@ class RubricParserService:
                     grading_notes=q.get("grading_notes", "")
                 ))
             
-            parsed = ParsedRubric(
-                total_questions=int(data.get("total_questions", len(questions))),
-                total_score=float(data.get("total_score", expected_total_score)),
+            # 返回批次结果
+            batch_result = ParsedRubric(
+                total_questions=len(questions),
+                total_score=sum(q.max_score for q in questions),
                 questions=questions,
                 general_notes=data.get("general_notes", ""),
                 rubric_format=data.get("rubric_format", "standard")
             )
             
-            # 验证总分
-            actual_total = sum(q.max_score for q in questions)
-            if abs(actual_total - expected_total_score) > 1:
-                logger.warning(
-                    f"总分不匹配: 预期 {expected_total_score}, "
-                    f"实际 {actual_total}"
-                )
-            
             logger.info(
-                f"批改标准解析完成: "
-                f"{parsed.total_questions} 题, "
-                f"总分 {parsed.total_score}"
+                f"批次解析完成: "
+                f"{len(questions)} 题, "
+                f"分值 {batch_result.total_score}"
             )
             
-            return parsed
+            return batch_result
             
         except Exception as e:
             logger.error(f"批改标准解析失败: {str(e)}")

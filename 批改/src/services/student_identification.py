@@ -71,7 +71,7 @@ class StudentIdentificationService:
     2. 如果失败，通过题目顺序循环检测推断学生边界
     """
     
-    def __init__(self, api_key: str, model_name: str = "gemini-2.5-flash"):
+    def __init__(self, api_key: str, model_name: str = "gemini-2.5-flash-lite"):
         self.llm = ChatGoogleGenerativeAI(
             model=model_name,
             google_api_key=api_key,
@@ -135,7 +135,28 @@ class StudentIdentificationService:
         )
         
         try:
-            response = await self.llm.ainvoke([message])
+            # 添加重试机制处理 503 错误
+            max_retries = 3
+            retry_delay = 5
+            last_error = None
+            
+            for attempt in range(max_retries):
+                try:
+                    response = await self.llm.ainvoke([message])
+                    break
+                except Exception as e:
+                    last_error = e
+                    error_str = str(e)
+                    if "503" in error_str or "overloaded" in error_str.lower():
+                        if attempt < max_retries - 1:
+                            logger.warning(f"Gemini API 过载，{retry_delay}秒后重试 ({attempt + 1}/{max_retries})")
+                            await asyncio.sleep(retry_delay)
+                            retry_delay *= 2
+                            continue
+                    raise
+            else:
+                raise last_error
+            
             result_text = response.content
             
             # 提取 JSON

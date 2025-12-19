@@ -66,11 +66,12 @@ class StrictGradingService:
     4. 输出详细的评分解释
     """
     
-    def __init__(self, api_key: str, model_name: str = "gemini-2.5-flash"):
+    def __init__(self, api_key: str, model_name: str = "gemini-2.5-flash-lite"):
         self.llm = ChatGoogleGenerativeAI(
             model=model_name,
             google_api_key=api_key,
-            temperature=0.1
+            temperature=0.1,
+            streaming=True  # 启用流式传输
         )
     
     async def grade_student(
@@ -166,8 +167,37 @@ class StrictGradingService:
         message = HumanMessage(content=content)
         
         try:
-            response = await self.llm.ainvoke([message])
-            result_text = response.content
+            # 使用流式 API 避免超时
+            logger.info(f"开始流式批改 {student_name}...")
+            result_text = ""
+            
+            max_retries = 3
+            retry_delay = 5
+            last_error = None
+            
+            for attempt in range(max_retries):
+                try:
+                    # 使用 astream 进行流式调用
+                    async for chunk in self.llm.astream([message]):
+                        if hasattr(chunk, 'content'):
+                            result_text += chunk.content
+                    break
+                except Exception as e:
+                    last_error = e
+                    error_str = str(e)
+                    if "503" in error_str or "overloaded" in error_str.lower() or "disconnected" in error_str.lower():
+                        if attempt < max_retries - 1:
+                            logger.warning(f"Gemini API 错误，{retry_delay}秒后重试 ({attempt + 1}/{max_retries}): {error_str[:100]}")
+                            import asyncio
+                            await asyncio.sleep(retry_delay)
+                            retry_delay *= 2
+                            result_text = ""  # 重置结果
+                            continue
+                    raise
+            else:
+                raise last_error
+            
+            logger.info(f"{student_name} 批改响应接收完成，长度: {len(result_text)}")
             
             # 提取 JSON
             if "```json" in result_text:

@@ -4,6 +4,10 @@ import logging
 from contextlib import asynccontextmanager
 from typing import Optional
 
+# 加载环境变量（必须在其他导入之前）
+from dotenv import load_dotenv
+load_dotenv()
+
 from fastapi import FastAPI, Request, WebSocket, HTTPException, status
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -335,7 +339,7 @@ if __name__ == "__main__":
     uvicorn.run(
         "src.api.main:app",
         host="0.0.0.0",
-        port=8000,
+        port=8001,
         reload=True,
         log_level="info"
     )

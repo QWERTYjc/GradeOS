@@ -134,10 +134,7 @@ async def run_real_grading_workflow(
         
         # 初始化评分标准解析服务
         rubric_parser = RubricParserService(api_key=api_key)
-        parsed_rubric = await asyncio.to_thread(
-            rubric_parser.parse_rubric, 
-            rubric_images
-        )
+        parsed_rubric = await rubric_parser.parse_rubric(rubric_images)
         rubric_context = rubric_parser.format_rubric_context(parsed_rubric)
         
         await broadcast_progress(batch_id, {
@@ -149,10 +146,7 @@ async def run_real_grading_workflow(
         
         # 初始化学生识别服务
         student_service = StudentIdentificationService(api_key=api_key)
-        segmentation_result = await asyncio.to_thread(
-            student_service.segment_batch_document,
-            answer_images
-        )
+        segmentation_result = await student_service.segment_batch_document(answer_images)
         
         # 按学生分组页面
         student_groups = student_service.group_pages_by_student(segmentation_result)
@@ -167,9 +161,22 @@ async def run_real_grading_workflow(
         
         # 创建并行 Agent
         grading_agents = []
-        for i, (student_info, page_indices) in enumerate(student_groups):
+        for i, (student_key, page_indices) in enumerate(student_groups.items()):
             agent_id = f"grading_agent_{i}"
-            student_name = student_info.name or student_info.student_id or f"学生 {i+1}"
+            student_name = student_key
+            
+            # 从 segmentation_result 中找到对应的 student_info
+            student_info = None
+            for mapping in segmentation_result.page_mappings:
+                mapping_key = (
+                    mapping.student_info.student_id or 
+                    mapping.student_info.name or 
+                    f"unknown_{mapping.page_index}"
+                )
+                if mapping_key == student_key:
+                    student_info = mapping.student_info
+                    break
+            
             grading_agents.append({
                 "id": agent_id,
                 "label": student_name,
@@ -224,12 +231,11 @@ async def run_real_grading_workflow(
             
             try:
                 # 调用真实批改服务
-                result = await asyncio.to_thread(
-                    grading_service.grade_student,
-                    student_pages,
-                    parsed_rubric,
-                    rubric_context,
-                    student_name
+                result = await grading_service.grade_student(
+                    student_pages=student_pages,
+                    rubric=parsed_rubric,
+                    rubric_context=rubric_context,
+                    student_name=student_name
                 )
                 
                 # 进度更新 2
