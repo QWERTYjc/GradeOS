@@ -1,4 +1,4 @@
-"""布局分析服务 - 使用 Gemini 2.5 Flash Lite 进行页面分割"""
+"""布局分析服务 - 使用 Gemini 进行页面分割"""
 
 import base64
 import json
@@ -8,19 +8,22 @@ from langchain_core.messages import HumanMessage
 
 from ..models.region import BoundingBox, QuestionRegion, SegmentationResult
 from ..utils.coordinates import normalize_coordinates
+from ..config.models import get_lite_model
 
 
 class LayoutAnalysisService:
-    """布局分析服务，使用 Gemini 2.5 Flash Lite 识别试卷中的题目边界"""
+    """布局分析服务，使用 Gemini 识别试卷中的题目边界"""
     
-    def __init__(self, api_key: str, model_name: str = "gemini-2.5-flash-lite"):
+    def __init__(self, api_key: str, model_name: Optional[str] = None):
         """
         初始化布局分析服务
         
         Args:
             api_key: Google AI API 密钥
-            model_name: 使用的模型名称，默认为 gemini-2.5-flash-lite（高吞吐、低成本）
+            model_name: 使用的模型名称，默认使用全局配置
         """
+        if model_name is None:
+            model_name = get_lite_model()
         self.llm = ChatGoogleGenerativeAI(
             model=model_name,
             google_api_key=api_key,
@@ -85,8 +88,19 @@ class LayoutAnalysisService:
         # 调用 LLM
         response = await self.llm.ainvoke([message])
         
-        # 解析响应
+        # 解析响应 - 处理 response.content 可能是列表的情况
         result_text = response.content
+        if isinstance(result_text, list):
+            text_parts = []
+            for item in result_text:
+                if isinstance(item, str):
+                    text_parts.append(item)
+                elif isinstance(item, dict) and "text" in item:
+                    text_parts.append(item["text"])
+            result_text = "".join(text_parts)
+        elif not isinstance(result_text, str):
+            result_text = str(result_text) if result_text else ""
+        
         # 尝试从响应中提取 JSON
         if "```json" in result_text:
             # 提取 JSON 代码块

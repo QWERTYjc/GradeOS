@@ -44,11 +44,24 @@ async def lifespan(app: FastAPI):
     # 启动时初始化
     logger.info("初始化应用...")
     
-    # 直接进入离线模式 - 跳过所有数据库和 Redis 初始化
-    # 这样可以让前端测试正常工作
-    logger.info("启动离线模式 (Offline Mode) - 跳过数据库和 Redis 初始化")
-    redis_client = None
-    pool_manager = None
+    # 初始化统一连接池
+    try:
+        pool_manager = await UnifiedPoolManager.get_instance()
+        await pool_manager.initialize()
+        logger.info("统一连接池已初始化")
+        
+        # 获取 Redis 客户端
+        redis_client = pool_manager.get_redis_client()
+        
+        # 初始化全局数据库实例
+        await init_db_pool(use_unified_pool=True)
+        logger.info("全局数据库实例已初始化")
+    except Exception as e:
+        logger.error(f"初始化失败: {e}")
+        # 如果初始化失败，回退到离线模式
+        logger.warning("回退到离线模式")
+        redis_client = None
+        pool_manager = None
     
     # 初始化追踪服务
     if pool_manager:

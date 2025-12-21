@@ -68,26 +68,32 @@ class PoolConfig:
     @classmethod
     def from_env(cls) -> "PoolConfig":
         """从环境变量创建配置"""
-        pg_host = os.getenv("DB_HOST", "localhost")
-        pg_port = os.getenv("DB_PORT", "5432")
-        pg_database = os.getenv("DB_NAME", "ai_grading")
-        pg_user = os.getenv("DB_USER", "postgres")
-        pg_password = os.getenv("DB_PASSWORD", "postgres")
+        # 优先使用 DATABASE_URL，否则从分离的环境变量构建
+        pg_dsn = os.getenv("DATABASE_URL", "")
+        if not pg_dsn:
+            pg_host = os.getenv("DB_HOST", "localhost")
+            pg_port = os.getenv("DB_PORT", "5432")
+            pg_database = os.getenv("DB_NAME", "ai_grading")
+            pg_user = os.getenv("DB_USER", "postgres")
+            pg_password = os.getenv("DB_PASSWORD", "postgres")
+            
+            pg_dsn = (
+                f"postgresql://{pg_user}:{pg_password}@"
+                f"{pg_host}:{pg_port}/{pg_database}"
+            )
         
-        pg_dsn = (
-            f"postgresql://{pg_user}:{pg_password}@"
-            f"{pg_host}:{pg_port}/{pg_database}"
-        )
-        
-        redis_host = os.getenv("REDIS_HOST", "localhost")
-        redis_port = os.getenv("REDIS_PORT", "6379")
-        redis_password = os.getenv("REDIS_PASSWORD", "")
-        redis_db = os.getenv("REDIS_DB", "0")
-        
-        if redis_password:
-            redis_url = f"redis://:{redis_password}@{redis_host}:{redis_port}/{redis_db}"
-        else:
-            redis_url = f"redis://{redis_host}:{redis_port}/{redis_db}"
+        # 优先使用 REDIS_URL，否则从分离的环境变量构建
+        redis_url = os.getenv("REDIS_URL", "")
+        if not redis_url:
+            redis_host = os.getenv("REDIS_HOST", "localhost")
+            redis_port = os.getenv("REDIS_PORT", "6379")
+            redis_password = os.getenv("REDIS_PASSWORD", "")
+            redis_db = os.getenv("REDIS_DB", "0")
+            
+            if redis_password:
+                redis_url = f"redis://:{redis_password}@{redis_host}:{redis_port}/{redis_db}"
+            else:
+                redis_url = f"redis://{redis_host}:{redis_port}/{redis_db}"
         
         return cls(
             pg_dsn=pg_dsn,
@@ -100,6 +106,7 @@ class PoolConfig:
             redis_connection_timeout=float(os.getenv("REDIS_CONNECTION_TIMEOUT", "5.0")),
             shutdown_timeout=float(os.getenv("POOL_SHUTDOWN_TIMEOUT", "30.0")),
         )
+
 
 
 

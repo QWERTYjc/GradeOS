@@ -51,7 +51,7 @@ async def main():
     print("\n🔍 步骤 2: 初始化服务...")
     service = StudentIdentificationService(
         api_key=api_key,
-        model_name="gemini-2.5-flash"
+        model_name="gemini-3.0-flash"
     )
     
     # 执行批量识别

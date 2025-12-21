@@ -5,18 +5,19 @@ FROM python:3.11-slim
 WORKDIR /app
 
 # 安装系统依赖（PDF 处理需要 poppler-utils）
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
     poppler-utils \
+    libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # 安装 uv 包管理器
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 # 复制依赖文件
-COPY pyproject.toml uv.lock ./
+COPY pyproject.toml uv.lock README.md ./
 
 # 安装 Python 依赖
-RUN uv sync --frozen --no-dev
+RUN uv sync --no-dev --no-install-project
 
 # 复制应用代码
 COPY src/ ./src/
@@ -34,9 +35,9 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
 
 # 启动脚本（根据 WORKER_TYPE 环境变量选择 worker）
 CMD if [ "$WORKER_TYPE" = "orchestration" ]; then \
-        uv run python -m src.workers.orchestration_worker; \
+    uv run python -m src.workers.orchestration_worker; \
     elif [ "$WORKER_TYPE" = "cognitive" ]; then \
-        uv run python -m src.workers.cognitive_worker; \
+    uv run python -m src.workers.cognitive_worker; \
     else \
-        echo "Invalid WORKER_TYPE: $WORKER_TYPE" && exit 1; \
+    echo "Invalid WORKER_TYPE: $WORKER_TYPE" && exit 1; \
     fi

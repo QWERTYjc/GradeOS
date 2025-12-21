@@ -14,6 +14,7 @@ from src.models.enums import QuestionType
 from src.models.state import ContextPack, GradingState
 from src.agents.base import BaseGradingAgent
 from src.agents.pool import AgentPool, AgentNotFoundError
+from src.config.models import get_lite_model
 
 
 logger = logging.getLogger(__name__)
@@ -37,16 +38,18 @@ class SupervisorAgent:
     def __init__(
         self,
         api_key: str,
-        model_name: str = "gemini-2.5-flash-lite-preview-06-17",
+        model_name: Optional[str] = None,
         agent_pool: Optional[AgentPool] = None
     ):
         """初始化 SupervisorAgent
         
         Args:
             api_key: Google AI API 密钥
-            model_name: 用于题型分析的模型名称
+            model_name: 用于题型分析的模型名称，默认使用全局配置
             agent_pool: 智能体池实例，如果不提供则使用全局单例
         """
+        if model_name is None:
+            model_name = get_lite_model()
         self.llm = ChatGoogleGenerativeAI(
             model=model_name,
             google_api_key=api_key,

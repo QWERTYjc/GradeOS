@@ -10,8 +10,34 @@
 
 ## AI 模型
 
-- **Gemini 2.5 Flash Lite**：页面布局分析与题目分割（高吞吐、低成本）
-- **Gemini 3.0 Pro**：深度推理与评分（Agentic 能力）
+- **Gemini 2.5 Flash** (`gemini-2.5-flash`)：默认使用的稳定版模型，用于页面布局分析、题目分割、深度推理与评分
+
+### 可用模型
+
+| 模型名称 | 模型 ID | 说明 |
+|---------|---------|------|
+| Gemini 3 Flash Preview | `gemini-3-flash-preview` | 最新预览版，增强能力 |
+| Gemini 2.5 Flash | `gemini-2.5-flash` | 稳定版，推荐生产环境 |
+| Gemini 2.5 Flash Preview | `gemini-2.5-flash-preview-09-2025` | 预览版，早期访问新功能 |
+| Gemini 2.5 Flash Lite | `gemini-2.5-flash-lite` | 轻量级，适合简单任务 |
+| Gemini 2.0 Flash | `gemini-2.0-flash` | 旧版本，仍可使用 |
+
+### 模型配置
+
+模型配置集中在 `src/config/models.py`，支持通过环境变量覆盖：
+
+- `GEMINI_MODEL`: 默认模型（用于批改、评分标准解析等）
+- `GEMINI_LITE_MODEL`: 轻量模型（用于学生识别、布局分析等）
+- `GEMINI_CACHE_MODEL`: 缓存模型（用于 Context Caching）
+
+切换模型示例：
+```bash
+# 使用 Gemini 3 Flash Preview
+export GEMINI_MODEL=gemini-3-flash-preview
+
+# 使用 Gemini 2.5 Flash（默认）
+export GEMINI_MODEL=gemini-2.5-flash
+```
 
 ## 数据存储
 

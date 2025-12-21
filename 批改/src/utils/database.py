@@ -22,21 +22,37 @@ class DatabaseConfig:
     """数据库配置"""
     
     def __init__(self):
-        self.host = os.getenv("DB_HOST", "localhost")
-        self.port = int(os.getenv("DB_PORT", "5432"))
-        self.database = os.getenv("DB_NAME", "ai_grading")
-        self.user = os.getenv("DB_USER", "postgres")
-        self.password = os.getenv("DB_PASSWORD", "postgres")
+        # 优先使用 DATABASE_URL，否则从分离的环境变量构建
+        database_url = os.getenv("DATABASE_URL", "")
+        if database_url:
+            self._connection_string = database_url
+            # 从 URL 解析出 host 等信息用于日志
+            self.host = "from-database-url"
+            self.port = 5432
+            self.database = "from-database-url"
+            self.user = "from-database-url"
+            self.password = "***"
+        else:
+            self.host = os.getenv("DB_HOST", "localhost")
+            self.port = int(os.getenv("DB_PORT", "5432"))
+            self.database = os.getenv("DB_NAME", "ai_grading")
+            self.user = os.getenv("DB_USER", "postgres")
+            self.password = os.getenv("DB_PASSWORD", "postgres")
+            self._connection_string = None
+        
         self.min_size = int(os.getenv("DB_POOL_MIN_SIZE", "2"))
         self.max_size = int(os.getenv("DB_POOL_MAX_SIZE", "10"))
     
     @property
     def connection_string(self) -> str:
         """获取连接字符串"""
+        if self._connection_string:
+            return self._connection_string
         return (
             f"postgresql://{self.user}:{self.password}@"
             f"{self.host}:{self.port}/{self.database}"
         )
+
 
 
 class Database:

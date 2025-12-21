@@ -1,6 +1,11 @@
 """批量批改工作流 - 支持多学生合卷处理
 
 处理一份包含多个学生作业的文档，自动识别学生身份并分发到各自的批改工作流。
+
+集成自我成长组件：
+- StreamingService: 实时推送批改进度
+- BatchProcessor: 固定分批并行处理
+- StudentBoundaryDetector: 批改后学生分割
 """
 
 import logging
@@ -13,6 +18,8 @@ from temporalio.common import RetryPolicy
 from src.models.grading import ExamPaperResult
 from src.activities.identify_students import identify_students_activity
 from src.workflows.exam_paper import ExamPaperWorkflow
+from src.services.streaming import StreamingService, StreamEvent, EventType
+from src.services.student_boundary_detector import StudentBoundaryDetector
 
 
 logger = logging.getLogger(__name__)
@@ -33,18 +40,24 @@ class BatchGradingWorkflow:
     
     处理"多学生合卷"场景：
     1. 学生识别：扫描所有页面，识别学生信息区
-    2. 页面分组：将页面按学生归属分组
-    3. 并行批改：为每个学生启动独立的 ExamPaperWorkflow
-    4. 结果聚合：汇总所有学生的批改结果
+    2. 固定分批：按 10 张图片一批进行分批处理
+    3. 并行批改：LangGraph 并行执行批次内所有页面
+    4. 学生分割：基于批改结果智能判断学生边界
+    5. 结果聚合：汇总所有学生的批改结果
+    6. 流式推送：实时推送批改进度和结果
     
     适用场景：
     - 教师扫描整班试卷为一个 PDF
     - 批量上传多份作业图片
+    
+    验证：需求 1.1, 2.1, 3.1
     """
     
     def __init__(self):
         self._progress: Dict[str, Any] = {}
         self._student_results: Dict[str, ExamPaperResult] = {}
+        self._streaming_service: Optional[StreamingService] = None
+        self._boundary_detector: Optional[StudentBoundaryDetector] = None
     
     @workflow.query
     def get_progress(self) -> Dict[str, Any]:

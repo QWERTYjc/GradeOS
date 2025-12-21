@@ -45,7 +45,7 @@ htmlcov/
 .gitignore
 
 # Documentation
-*.md
+# *.md (Removed to allow README.md)
 docs/
 
 # Kubernetes

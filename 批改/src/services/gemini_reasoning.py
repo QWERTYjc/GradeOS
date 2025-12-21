@@ -1,4 +1,4 @@
-"""Gemini 深度推理客户端 - 使用 Gemini 3.0 Pro 进行批改推理"""
+"""Gemini 深度推理客户端 - 使用 Gemini 进行批改推理"""
 
 import base64
 import json
@@ -7,19 +7,22 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage
 
 from ..models.grading import RubricMappingItem
+from ..config.models import get_default_model
 
 
 class GeminiReasoningClient:
     """Gemini 深度推理客户端，用于批改智能体的各个推理节点"""
     
-    def __init__(self, api_key: str, model_name: str = "gemini-3-pro-preview"):
+    def __init__(self, api_key: str, model_name: Optional[str] = None):
         """
         初始化 Gemini 推理客户端
         
         Args:
             api_key: Google AI API 密钥
-            model_name: 使用的模型名称，默认为 gemini-3-pro-preview（最新深度推理能力）
+            model_name: 使用的模型名称，默认使用全局配置
         """
+        if model_name is None:
+            model_name = get_default_model()
         self.llm = ChatGoogleGenerativeAI(
             model=model_name,
             google_api_key=api_key,

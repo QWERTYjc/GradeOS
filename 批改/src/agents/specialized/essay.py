@@ -13,6 +13,7 @@ from langchain_core.messages import HumanMessage
 from src.models.enums import QuestionType
 from src.models.state import ContextPack, GradingState, EvidenceItem
 from src.agents.base import BaseGradingAgent
+from src.config.models import get_default_model
 
 
 logger = logging.getLogger(__name__)
@@ -42,14 +43,16 @@ class EssayAgent(BaseGradingAgent):
     def __init__(
         self,
         api_key: str,
-        model_name: str = "gemini-2.5-flash-lite-preview-06-17"
+        model_name: Optional[str] = None
     ):
         """初始化 EssayAgent
         
         Args:
             api_key: Google AI API 密钥
-            model_name: 使用的模型名称
+            model_name: 使用的模型名称，默认使用全局配置
         """
+        if model_name is None:
+            model_name = get_default_model()
         self.llm = ChatGoogleGenerativeAI(
             model=model_name,
             google_api_key=api_key,

@@ -12,7 +12,7 @@ from temporalio.common import RetryPolicy
 
 from src.models.grading import GradingResult
 from src.models.state import QuestionGradingInput
-from src.activities.grade import grade_question_activity
+# from src.activities.grade import grade_question_activity
 
 
 logger = logging.getLogger(__name__)
@@ -61,7 +61,7 @@ class QuestionGradingChildWorkflow:
         try:
             # 执行批改 Activity，配置重试策略
             result = await workflow.execute_activity(
-                grade_question_activity,
+                "grade_question_activity",
                 input_data["submission_id"],
                 input_data["question_id"],
                 input_data["image_b64"],

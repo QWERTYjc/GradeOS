@@ -1,16 +1,62 @@
 'use client';
 
-import React from 'react';
-import { useConsoleStore, StudentResult } from '@/store/consoleStore';
+import React, { useState } from 'react';
+import { useConsoleStore, StudentResult, QuestionResult } from '@/store/consoleStore';
 import clsx from 'clsx';
-import { Trophy, TrendingUp, Users, Award, ArrowLeft } from 'lucide-react';
+import { Trophy, TrendingUp, Users, Award, ArrowLeft, ChevronDown, ChevronUp, CheckCircle, XCircle, Download } from 'lucide-react';
 
 interface ResultCardProps {
     result: StudentResult;
     rank: number;
+    onExpand: () => void;
+    isExpanded: boolean;
 }
 
-const ResultCard: React.FC<ResultCardProps> = ({ result, rank }) => {
+const QuestionDetail: React.FC<{ question: QuestionResult }> = ({ question }) => {
+    const percentage = question.maxScore > 0 ? (question.score / question.maxScore) * 100 : 0;
+    
+    return (
+        <div className="border-l-2 border-gray-200 pl-3 py-2">
+            <div className="flex items-center justify-between">
+                <span className="font-medium text-gray-700">第 {question.questionId} 题</span>
+                <span className={clsx(
+                    'text-sm font-semibold',
+                    percentage >= 60 ? 'text-green-600' : 'text-red-600'
+                )}>
+                    {question.score} / {question.maxScore}
+                </span>
+            </div>
+            {question.feedback && (
+                <p className="text-xs text-gray-500 mt-1">{question.feedback}</p>
+            )}
+            {question.scoringPoints && question.scoringPoints.length > 0 && (
+                <div className="mt-2 space-y-1">
+                    {question.scoringPoints.map((sp, idx) => (
+                        <div key={idx} className="flex items-start gap-2 text-xs">
+                            {sp.isCorrect ? (
+                                <CheckCircle className="w-3 h-3 text-green-500 mt-0.5 flex-shrink-0" />
+                            ) : (
+                                <XCircle className="w-3 h-3 text-red-500 mt-0.5 flex-shrink-0" />
+                            )}
+                            <div className="flex-1">
+                                <span className={clsx(
+                                    sp.isCorrect ? 'text-green-700' : 'text-red-700'
+                                )}>
+                                    [{sp.score}/{sp.maxScore}] {sp.description}
+                                </span>
+                                {sp.explanation && (
+                                    <p className="text-gray-500 mt-0.5">{sp.explanation}</p>
+                                )}
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            )}
+        </div>
+    );
+};
+
+const ResultCard: React.FC<ResultCardProps> = ({ result, rank, onExpand, isExpanded }) => {
     const percentage = (result.score / result.maxScore) * 100;
 
     let gradeColor = 'from-gray-400 to-gray-500';
@@ -37,7 +83,7 @@ const ResultCard: React.FC<ResultCardProps> = ({ result, rank }) => {
 
     return (
         <div className={clsx(
-            'rounded-2xl p-6 transition-all duration-300 hover:shadow-lg hover:scale-[1.02]',
+            'rounded-2xl p-6 transition-all duration-300 hover:shadow-lg',
             gradeBg
         )}>
             <div className="flex items-start justify-between mb-4">
@@ -62,6 +108,18 @@ const ResultCard: React.FC<ResultCardProps> = ({ result, rank }) => {
                         </span>
                     </div>
                 </div>
+                {result.questionResults && result.questionResults.length > 0 && (
+                    <button
+                        onClick={onExpand}
+                        className="p-1 hover:bg-white/50 rounded-lg transition-colors"
+                    >
+                        {isExpanded ? (
+                            <ChevronUp className="w-5 h-5 text-gray-500" />
+                        ) : (
+                            <ChevronDown className="w-5 h-5 text-gray-500" />
+                        )}
+                    </button>
+                )}
             </div>
 
             {/* Score Display */}
@@ -83,12 +141,23 @@ const ResultCard: React.FC<ResultCardProps> = ({ result, rank }) => {
                 />
             </div>
             <p className="text-right text-xs text-gray-500 mt-1">{percentage.toFixed(1)}%</p>
+
+            {/* Expanded Question Details */}
+            {isExpanded && result.questionResults && (
+                <div className="mt-4 pt-4 border-t border-gray-200 space-y-3 max-h-[300px] overflow-y-auto">
+                    <h4 className="text-sm font-semibold text-gray-600">各题详情</h4>
+                    {result.questionResults.map((q, idx) => (
+                        <QuestionDetail key={idx} question={q} />
+                    ))}
+                </div>
+            )}
         </div>
     );
 };
 
 export const ResultsView: React.FC = () => {
     const { finalResults, setCurrentTab, workflowNodes } = useConsoleStore();
+    const [expandedStudent, setExpandedStudent] = useState<string | null>(null);
 
     // 从 workflowNodes 中获取所有 Agent 的详细结果（如果 finalResults 为空）
     const gradingNode = workflowNodes.find(n => n.id === 'grading');
@@ -100,7 +169,8 @@ export const ResultsView: React.FC = () => {
         : agentResults.map(agent => ({
             studentName: agent.label,
             score: agent.output?.score || 0,
-            maxScore: agent.output?.maxScore || 100
+            maxScore: agent.output?.maxScore || 100,
+            questionResults: agent.output?.questionResults
         }));
 
     // 按分数排序
@@ -114,6 +184,29 @@ export const ResultsView: React.FC = () => {
     const maxScore = sortedResults.length > 0 ? sortedResults[0].maxScore : 100;
     const highestScore = sortedResults.length > 0 ? sortedResults[0].score : 0;
     const passCount = sortedResults.filter(r => (r.score / r.maxScore) >= 0.6).length;
+
+    // 导出为 CSV
+    const handleExportCSV = () => {
+        const headers = ['排名', '学生', '得分', '满分', '得分率', '等级'];
+        const rows = sortedResults.map((r, idx) => {
+            const percentage = (r.score / r.maxScore) * 100;
+            let grade = '待提升';
+            if (percentage >= 85) grade = '优秀';
+            else if (percentage >= 70) grade = '良好';
+            else if (percentage >= 60) grade = '及格';
+            else grade = '不及格';
+            return [idx + 1, r.studentName, r.score, r.maxScore, `${percentage.toFixed(1)}%`, grade];
+        });
+        
+        const csvContent = [headers, ...rows].map(row => row.join(',')).join('\n');
+        const blob = new Blob(['\ufeff' + csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `批改结果_${new Date().toLocaleDateString()}.csv`;
+        link.click();
+        URL.revokeObjectURL(url);
+    };
 
     if (results.length === 0) {
         return (
@@ -139,13 +232,22 @@ export const ResultsView: React.FC = () => {
                     <Trophy className="w-6 h-6 text-yellow-500" />
                     批改结果
                 </h2>
-                <button
-                    onClick={() => setCurrentTab('process')}
-                    className="text-sm text-gray-500 hover:text-blue-600 flex items-center gap-1 transition-colors"
-                >
-                    <ArrowLeft className="w-4 h-4" />
-                    返回批改过程
-                </button>
+                <div className="flex items-center gap-3">
+                    <button
+                        onClick={handleExportCSV}
+                        className="text-sm text-gray-600 hover:text-green-600 flex items-center gap-1 transition-colors bg-gray-100 hover:bg-green-50 px-3 py-1.5 rounded-lg"
+                    >
+                        <Download className="w-4 h-4" />
+                        导出 CSV
+                    </button>
+                    <button
+                        onClick={() => setCurrentTab('process')}
+                        className="text-sm text-gray-500 hover:text-blue-600 flex items-center gap-1 transition-colors"
+                    >
+                        <ArrowLeft className="w-4 h-4" />
+                        返回批改过程
+                    </button>
+                </div>
             </div>
 
             {/* Statistics Cards */}
@@ -181,6 +283,10 @@ export const ResultsView: React.FC = () => {
                         key={result.studentName}
                         result={result}
                         rank={index + 1}
+                        isExpanded={expandedStudent === result.studentName}
+                        onExpand={() => setExpandedStudent(
+                            expandedStudent === result.studentName ? null : result.studentName
+                        )}
                     />
                 ))}
             </div>

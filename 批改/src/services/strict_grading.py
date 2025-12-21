@@ -16,6 +16,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage
 
 from src.services.rubric_parser import ParsedRubric, QuestionRubric
+from src.config.models import get_default_model
 
 
 logger = logging.getLogger(__name__)
@@ -66,7 +67,9 @@ class StrictGradingService:
     4. 输出详细的评分解释
     """
     
-    def __init__(self, api_key: str, model_name: str = "gemini-2.5-flash-lite"):
+    def __init__(self, api_key: str, model_name: Optional[str] = None):
+        if model_name is None:
+            model_name = get_default_model()
         self.llm = ChatGoogleGenerativeAI(
             model=model_name,
             google_api_key=api_key,
@@ -180,7 +183,16 @@ class StrictGradingService:
                     # 使用 astream 进行流式调用
                     async for chunk in self.llm.astream([message]):
                         if hasattr(chunk, 'content'):
-                            result_text += chunk.content
+                            content = chunk.content
+                            # 处理 content 可能是列表的情况
+                            if isinstance(content, list):
+                                for item in content:
+                                    if isinstance(item, str):
+                                        result_text += item
+                                    elif isinstance(item, dict) and "text" in item:
+                                        result_text += item["text"]
+                            elif isinstance(content, str):
+                                result_text += content
                     break
                 except Exception as e:
                     last_error = e
@@ -234,26 +246,52 @@ class StrictGradingService:
             
             # 解析结果
             question_results = []
-            for q in data.get("questions", []):
-                scoring_point_results = [
-                    ScoringPointResult(
-                        description=sp.get("description", ""),
-                        max_score=float(sp.get("max_score", 0)),
-                        awarded_score=float(sp.get("awarded_score", 0)),
-                        is_correct=sp.get("is_correct", False),
-                        explanation=sp.get("explanation", "")
+            questions_data = data.get("questions", [])
+            
+            # 确保 questions_data 是列表
+            if not isinstance(questions_data, list):
+                logger.warning(f"questions 不是列表类型: {type(questions_data)}")
+                questions_data = []
+            
+            for q in questions_data:
+                # 确保 q 是字典
+                if not isinstance(q, dict):
+                    logger.warning(f"题目数据不是字典类型: {type(q)}")
+                    continue
+                
+                # 解析得分点结果
+                scoring_point_results = []
+                sp_data = q.get("scoring_point_results", [])
+                
+                # 确保 sp_data 是列表
+                if not isinstance(sp_data, list):
+                    logger.warning(f"scoring_point_results 不是列表类型: {type(sp_data)}")
+                    sp_data = []
+                
+                for sp in sp_data:
+                    # 确保 sp 是字典
+                    if not isinstance(sp, dict):
+                        logger.warning(f"得分点数据不是字典类型: {type(sp)}")
+                        continue
+                    
+                    scoring_point_results.append(
+                        ScoringPointResult(
+                            description=str(sp.get("description", "")),
+                            max_score=float(sp.get("max_score", 0)),
+                            awarded_score=float(sp.get("awarded_score", 0)),
+                            is_correct=bool(sp.get("is_correct", False)),
+                            explanation=str(sp.get("explanation", ""))
+                        )
                     )
-                    for sp in q.get("scoring_point_results", [])
-                ]
                 
                 question_results.append(QuestionGradingResult(
                     question_id=str(q.get("question_id", "")),
                     max_score=float(q.get("max_score", 0)),
                     awarded_score=float(q.get("awarded_score", 0)),
                     scoring_point_results=scoring_point_results,
-                    used_alternative_solution=q.get("used_alternative_solution", False),
-                    alternative_solution_note=q.get("alternative_solution_note", ""),
-                    overall_feedback=q.get("overall_feedback", ""),
+                    used_alternative_solution=bool(q.get("used_alternative_solution", False)),
+                    alternative_solution_note=str(q.get("alternative_solution_note", "")),
+                    overall_feedback=str(q.get("overall_feedback", "")),
                     confidence=float(q.get("confidence", 0.9))
                 ))
             

@@ -23,6 +23,7 @@ from src.services.strict_grading import (
     QuestionGradingResult,
     StudentGradingResult
 )
+from src.config.models import get_cache_model
 
 
 logger = logging.getLogger(__name__)
@@ -53,7 +54,7 @@ class CachedGradingService:
     def __init__(
         self,
         api_key: str,
-        model_name: str = "gemini-2.5-flash",
+        model_name: Optional[str] = None,
         cache_ttl_hours: int = 1
     ):
         """
@@ -65,11 +66,12 @@ class CachedGradingService:
             cache_ttl_hours: 缓存有效期（小时）
             
         支持的模型:
-            - gemini-2.5-flash (推荐)
+            - gemini-2.0-flash (推荐)
+            - gemini-2.5-flash
             - gemini-2.5-pro
-            - gemini-2.0-flash
-            - gemini-exp-1206
         """
+        if model_name is None:
+            model_name = get_cache_model()
         genai.configure(api_key=api_key)
         self.model_name = f"models/{model_name}"
         self.cache_ttl_hours = cache_ttl_hours
@@ -281,38 +283,62 @@ class CachedGradingService:
         
         # 解析题目结果
         question_results = []
-        for q_data in data.get("questions", []):
+        questions_data = data.get("questions", [])
+        
+        # 确保 questions_data 是列表
+        if not isinstance(questions_data, list):
+            logger.warning(f"questions 不是列表类型: {type(questions_data)}")
+            questions_data = []
+        
+        for q_data in questions_data:
+            # 确保 q_data 是字典
+            if not isinstance(q_data, dict):
+                logger.warning(f"题目数据不是字典类型: {type(q_data)}")
+                continue
+            
             # 解析得分点结果
             scoring_point_results = []
-            for sp_data in q_data.get("scoring_point_results", []):
+            sp_list = q_data.get("scoring_point_results", [])
+            
+            # 确保 sp_list 是列表
+            if not isinstance(sp_list, list):
+                logger.warning(f"scoring_point_results 不是列表类型: {type(sp_list)}")
+                sp_list = []
+            
+            for sp_data in sp_list:
+                # 确保 sp_data 是字典
+                if not isinstance(sp_data, dict):
+                    logger.warning(f"得分点数据不是字典类型: {type(sp_data)}")
+                    continue
+                
                 scoring_point_results.append(
                     ScoringPointResult(
-                        description=sp_data.get("description", ""),
-                        max_score=sp_data.get("max_score", 0),
-                        awarded_score=sp_data.get("awarded_score", 0),
-                        is_correct=sp_data.get("is_correct", False),
-                        explanation=sp_data.get("explanation", "")
+                        description=str(sp_data.get("description", "")),
+                        max_score=float(sp_data.get("max_score", 0)),
+                        awarded_score=float(sp_data.get("awarded_score", 0)),
+                        is_correct=bool(sp_data.get("is_correct", False)),
+                        explanation=str(sp_data.get("explanation", ""))
                     )
                 )
             
             question_results.append(
                 QuestionGradingResult(
-                    question_id=q_data.get("question_id", ""),
-                    max_score=q_data.get("max_score", 0),
-                    awarded_score=q_data.get("awarded_score", 0),
+                    question_id=str(q_data.get("question_id", "")),
+                    max_score=float(q_data.get("max_score", 0)),
+                    awarded_score=float(q_data.get("awarded_score", 0)),
                     scoring_point_results=scoring_point_results,
-                    used_alternative_solution=q_data.get("used_alternative_solution", False),
-                    alternative_solution_note=q_data.get("alternative_solution_note", ""),
-                    overall_feedback=q_data.get("overall_feedback", ""),
-                    confidence=q_data.get("confidence", 0.9)
+                    used_alternative_solution=bool(q_data.get("used_alternative_solution", False)),
+                    alternative_solution_note=str(q_data.get("alternative_solution_note", "")),
+                    overall_feedback=str(q_data.get("overall_feedback", "")),
+                    confidence=float(q_data.get("confidence", 0.9))
                 )
             )
         
         return StudentGradingResult(
             student_id=student_name,
             student_name=student_name,
-            total_score=data.get("total_score", 0),
-            max_total_score=data.get("max_total_score", rubric.total_score),
+            total_score=float(data.get("total_score", 0)),
+            max_total_score=float(data.get("max_total_score", rubric.total_score)),
             question_results=question_results
         )
     

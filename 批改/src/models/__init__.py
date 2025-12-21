@@ -22,6 +22,13 @@ from .rubric import (
     RubricUpdateRequest,
 )
 from .review import ReviewSignal, PendingReview
+from .prompt import PromptSection, AssembledPrompt
+from .calibration import (
+    ToleranceRule,
+    CalibrationProfile,
+    CalibrationProfileCreateRequest,
+    CalibrationProfileUpdateRequest,
+)
 
 __all__ = [
     # 枚举
@@ -55,4 +62,12 @@ __all__ = [
     # 审核
     "ReviewSignal",
     "PendingReview",
+    # 提示词
+    "PromptSection",
+    "AssembledPrompt",
+    # 校准配置
+    "ToleranceRule",
+    "CalibrationProfile",
+    "CalibrationProfileCreateRequest",
+    "CalibrationProfileUpdateRequest",
 ]

@@ -13,11 +13,22 @@ from typing import Optional
 
 from temporalio.client import Client
 from temporalio.worker import Worker
+from temporalio import activity
 
 from src.activities.segment import segment_document_activity
 from src.activities.grade import grade_question_activity
 from src.activities.notify import notify_teacher_activity
 from src.activities.persist import persist_results_activity
+from src.activities.enhanced_activities import (
+    check_checkpoint_exists_activity,
+    acquire_lock_activity,
+    release_lock_activity,
+    forward_redis_event_activity,
+    sync_langgraph_state_activity,
+    get_latest_langgraph_state_activity,
+    check_checkpoint_validity_activity,
+    create_langgraph_config_activity
+)
 from src.services.layout_analysis import LayoutAnalysisService
 from src.services.cache import CacheService
 from src.agents.grading_agent import GradingAgent
@@ -79,13 +90,22 @@ async def create_cognitive_worker(
     # 注意：在实际应用中，这些服务应该从依赖注入容器获取
     logger.info("初始化服务依赖...")
     
+    # 获取 API Key
+    gemini_api_key = os.getenv("GEMINI_API_KEY", "")
+    if not gemini_api_key:
+        logger.warning("GEMINI_API_KEY 未设置，某些功能可能无法正常工作")
+    
     # 数据库连接池
     db_pool = await get_db_pool()
     
     # 服务实例
-    layout_service = LayoutAnalysisService()
+    layout_service = LayoutAnalysisService(api_key=gemini_api_key)
     cache_service = CacheService()
-    grading_agent = GradingAgent()
+    
+    # 初始化 Gemini 推理客户端
+    from src.services.gemini_reasoning import GeminiReasoningClient
+    reasoning_client = GeminiReasoningClient(api_key=gemini_api_key)
+    grading_agent = GradingAgent(reasoning_client=reasoning_client)
     
     # 仓储实例
     grading_result_repo = GradingResultRepository(db_pool)
@@ -145,10 +165,18 @@ async def create_cognitive_worker(
         task_queue=task_queue,
         workflows=[],  # 认知 Worker 不运行工作流
         activities=[
-            segment_document_wrapper,
-            grade_question_wrapper,
-            notify_teacher_activity,
-            persist_results_wrapper
+            activity.defn(name="segment_document_activity")(segment_document_wrapper),
+            activity.defn(name="grade_question_activity")(grade_question_wrapper),
+            activity.defn(name="notify_teacher_activity")(notify_teacher_activity),
+            activity.defn(name="persist_results_activity")(persist_results_wrapper),
+            activity.defn(name="check_checkpoint_exists_activity")(check_checkpoint_exists_activity),
+            activity.defn(name="acquire_lock_activity")(acquire_lock_activity),
+            activity.defn(name="release_lock_activity")(release_lock_activity),
+            activity.defn(name="forward_redis_event_activity")(forward_redis_event_activity),
+            activity.defn(name="sync_langgraph_state_activity")(sync_langgraph_state_activity),
+            activity.defn(name="get_latest_langgraph_state_activity")(get_latest_langgraph_state_activity),
+            activity.defn(name="check_checkpoint_validity_activity")(check_checkpoint_validity_activity),
+            activity.defn(name="create_langgraph_config_activity")(create_langgraph_config_activity)
         ],
         max_concurrent_workflow_tasks=0,  # 不运行工作流
         max_concurrent_activities=max_concurrent_activities,  # 配置并发限制

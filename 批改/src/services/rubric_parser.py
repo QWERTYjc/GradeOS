@@ -16,6 +16,8 @@ from dataclasses import dataclass, field
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage
 
+from src.config.models import get_default_model
+
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +69,9 @@ class RubricParserService:
     2. 嵌入格式：题目上直接标注答案的格式
     """
     
-    def __init__(self, api_key: str, model_name: str = "gemini-2.5-flash-lite"):
+    def __init__(self, api_key: str, model_name: Optional[str] = None):
+        if model_name is None:
+            model_name = get_default_model()
         self.llm = ChatGoogleGenerativeAI(
             model=model_name,
             google_api_key=api_key,
@@ -118,20 +122,23 @@ class RubricParserService:
             if batch_result.rubric_format != "standard":
                 rubric_format = batch_result.rubric_format
         
+        # 计算解析出的总分
+        calculated_total = sum(q.max_score for q in all_questions)
+        
         # 合并结果
         parsed = ParsedRubric(
             total_questions=len(all_questions),
-            total_score=sum(q.max_score for q in all_questions),
+            total_score=calculated_total,
             questions=all_questions,
             general_notes=general_notes,
             rubric_format=rubric_format
         )
         
         # 验证总分
-        if abs(parsed.total_score - expected_total_score) > 1:
+        if abs(calculated_total - expected_total_score) > 1:
             logger.warning(
                 f"总分不匹配: 预期 {expected_total_score}, "
-                f"实际 {parsed.total_score}"
+                f"实际解析出 {calculated_total}，请检查评分标准解析是否正确"
             )
         
         logger.info(
@@ -227,7 +234,20 @@ class RubricParserService:
                     raise
             else:
                 raise last_error
+            
+            # 处理 response.content 可能是列表的情况
             result_text = response.content
+            if isinstance(result_text, list):
+                # 多模态响应可能返回列表，提取文本部分
+                text_parts = []
+                for item in result_text:
+                    if isinstance(item, str):
+                        text_parts.append(item)
+                    elif isinstance(item, dict) and "text" in item:
+                        text_parts.append(item["text"])
+                result_text = "".join(text_parts)
+            elif not isinstance(result_text, str):
+                result_text = str(result_text) if result_text else ""
             
             # 检查响应是否为空
             if not result_text or not result_text.strip():
@@ -285,34 +305,62 @@ class RubricParserService:
                 )
             
             # 解析结果
+            def ensure_string(value, default=""):
+                """确保值是字符串类型"""
+                if value is None:
+                    return default
+                if isinstance(value, list):
+                    return "\n".join(str(item) for item in value)
+                if not isinstance(value, str):
+                    return str(value)
+                return value
+            
             questions = []
             for q in data.get("questions", []):
-                scoring_points = [
-                    ScoringPoint(
-                        description=sp.get("description", ""),
-                        score=float(sp.get("score", 0)),
-                        is_required=sp.get("is_required", True)
-                    )
-                    for sp in q.get("scoring_points", [])
-                ]
+                # 处理 scoring_points，可能是字典列表或字符串列表
+                raw_scoring_points = q.get("scoring_points", [])
+                scoring_points = []
+                for sp in raw_scoring_points:
+                    if isinstance(sp, dict):
+                        scoring_points.append(ScoringPoint(
+                            description=ensure_string(sp.get("description", "")),
+                            score=float(sp.get("score", 0)),
+                            is_required=sp.get("is_required", True)
+                        ))
+                    elif isinstance(sp, str):
+                        # 如果是字符串，将其作为描述，分数设为 0
+                        scoring_points.append(ScoringPoint(
+                            description=sp,
+                            score=0,
+                            is_required=True
+                        ))
                 
-                alternative_solutions = [
-                    AlternativeSolution(
-                        description=alt.get("description", ""),
-                        scoring_criteria=alt.get("scoring_criteria", ""),
-                        note=alt.get("note", "")
-                    )
-                    for alt in q.get("alternative_solutions", [])
-                ]
+                # 处理 alternative_solutions，可能是字典列表或字符串列表
+                raw_alt_solutions = q.get("alternative_solutions", [])
+                alternative_solutions = []
+                for alt in raw_alt_solutions:
+                    if isinstance(alt, dict):
+                        alternative_solutions.append(AlternativeSolution(
+                            description=ensure_string(alt.get("description", "")),
+                            scoring_criteria=ensure_string(alt.get("scoring_criteria", "")),
+                            note=ensure_string(alt.get("note", ""))
+                        ))
+                    elif isinstance(alt, str):
+                        # 如果是字符串，将其作为描述
+                        alternative_solutions.append(AlternativeSolution(
+                            description=alt,
+                            scoring_criteria="",
+                            note=""
+                        ))
                 
                 questions.append(QuestionRubric(
                     question_id=str(q.get("question_id", "")),
                     max_score=float(q.get("max_score", 0)),
-                    question_text=q.get("question_text", ""),
-                    standard_answer=q.get("standard_answer", ""),
+                    question_text=ensure_string(q.get("question_text", "")),
+                    standard_answer=ensure_string(q.get("standard_answer", "")),
                     scoring_points=scoring_points,
                     alternative_solutions=alternative_solutions,
-                    grading_notes=q.get("grading_notes", "")
+                    grading_notes=ensure_string(q.get("grading_notes", ""))
                 ))
             
             # 返回批次结果
@@ -320,8 +368,8 @@ class RubricParserService:
                 total_questions=len(questions),
                 total_score=sum(q.max_score for q in questions),
                 questions=questions,
-                general_notes=data.get("general_notes", ""),
-                rubric_format=data.get("rubric_format", "standard")
+                general_notes=ensure_string(data.get("general_notes", "")),
+                rubric_format=ensure_string(data.get("rubric_format", "standard"))
             )
             
             logger.info(
@@ -340,45 +388,57 @@ class RubricParserService:
         """
         将解析后的评分标准格式化为批改 Agent 可用的上下文
         """
+        def ensure_str(value):
+            """确保值是字符串"""
+            if value is None:
+                return ""
+            if isinstance(value, list):
+                return " ".join(str(item) for item in value)
+            return str(value)
+        
         lines = [
             "=" * 60,
             "评分标准（请严格遵循）",
             "=" * 60,
             f"总题数: {rubric.total_questions}",
             f"总分: {rubric.total_score}",
-            f"格式: {rubric.rubric_format}",
+            f"格式: {ensure_str(rubric.rubric_format)}",
             ""
         ]
         
         if rubric.general_notes:
-            lines.append(f"通用说明: {rubric.general_notes}")
+            lines.append(f"通用说明: {ensure_str(rubric.general_notes)}")
             lines.append("")
         
         for q in rubric.questions:
             lines.append("-" * 40)
-            lines.append(f"【第 {q.question_id} 题】满分: {q.max_score} 分")
+            lines.append(f"【第 {ensure_str(q.question_id)} 题】满分: {q.max_score} 分")
             
-            if q.question_text and isinstance(q.question_text, str):
-                text_preview = q.question_text[:100] if len(q.question_text) > 100 else q.question_text
+            question_text = ensure_str(q.question_text)
+            if question_text:
+                text_preview = question_text[:100] if len(question_text) > 100 else question_text
                 lines.append(f"题目: {text_preview}...")
             
-            if q.standard_answer and isinstance(q.standard_answer, str):
-                answer_preview = q.standard_answer[:200] if len(q.standard_answer) > 200 else q.standard_answer
+            standard_answer = ensure_str(q.standard_answer)
+            if standard_answer:
+                answer_preview = standard_answer[:200] if len(standard_answer) > 200 else standard_answer
                 lines.append(f"标准答案: {answer_preview}...")
             
             lines.append("得分点:")
             for i, sp in enumerate(q.scoring_points, 1):
                 required = "必须" if sp.is_required else "可选"
-                lines.append(f"  {i}. [{sp.score}分/{required}] {sp.description}")
+                description = ensure_str(sp.description)
+                lines.append(f"  {i}. [{sp.score}分/{required}] {description}")
             
             if q.alternative_solutions:
                 lines.append("另类解法（同样可得分）:")
                 for alt in q.alternative_solutions:
-                    lines.append(f"  - {alt.description}")
-                    lines.append(f"    得分条件: {alt.scoring_criteria}")
+                    lines.append(f"  - {ensure_str(alt.description)}")
+                    lines.append(f"    得分条件: {ensure_str(alt.scoring_criteria)}")
             
-            if q.grading_notes:
-                lines.append(f"批改注意: {q.grading_notes}")
+            grading_notes = ensure_str(q.grading_notes)
+            if grading_notes:
+                lines.append(f"批改注意: {grading_notes}")
             
             lines.append("")
         

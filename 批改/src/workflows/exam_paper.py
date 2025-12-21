@@ -18,9 +18,9 @@ from src.models.grading import GradingResult, ExamPaperResult
 from src.models.enums import SubmissionStatus, ReviewAction
 from src.models.region import SegmentationResult, QuestionRegion
 from src.models.state import WorkflowInput, QuestionGradingInput
-from src.activities.segment import segment_document_activity
-from src.activities.persist import persist_results_activity
-from src.activities.notify import notify_teacher_activity
+# from src.activities.segment import segment_document_activity
+# from src.activities.persist import persist_results_activity
+# from src.activities.notify import notify_teacher_activity
 from src.workflows.question_grading import QuestionGradingChildWorkflow
 from src.workflows.enhanced_workflow import EnhancedWorkflowMixin
 
@@ -150,7 +150,7 @@ class ExamPaperWorkflow(EnhancedWorkflowMixin):
                 
                 # 执行分割 Activity
                 result = await workflow.execute_activity(
-                    segment_document_activity,
+                    "segment_document_activity",
                     submission_id,
                     image_data,
                     page_index,
@@ -341,7 +341,7 @@ class ExamPaperWorkflow(EnhancedWorkflowMixin):
                 
                 # 发送通知给教师
                 await workflow.execute_activity(
-                    notify_teacher_activity,
+                    "notify_teacher_activity",
                     submission_id,
                     exam_id,
                     student_id,
@@ -446,7 +446,7 @@ class ExamPaperWorkflow(EnhancedWorkflowMixin):
             )
             
             await workflow.execute_activity(
-                persist_results_activity,
+                "persist_results_activity",
                 submission_id,
                 grading_results,
                 retry_policy=PERSIST_RETRY_POLICY,

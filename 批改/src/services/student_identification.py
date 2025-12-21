@@ -8,6 +8,7 @@
 4. 即使不知道学生具体信息，也用代号（学生A、学生B）标识
 """
 
+import asyncio
 import base64
 import json
 import logging
@@ -19,6 +20,7 @@ from langchain_core.messages import HumanMessage
 
 from src.models.region import BoundingBox
 from src.utils.coordinates import normalize_coordinates
+from src.config.models import get_lite_model
 
 
 logger = logging.getLogger(__name__)
@@ -71,7 +73,9 @@ class StudentIdentificationService:
     2. 如果失败，通过题目顺序循环检测推断学生边界
     """
     
-    def __init__(self, api_key: str, model_name: str = "gemini-2.5-flash-lite"):
+    def __init__(self, api_key: str, model_name: Optional[str] = None):
+        if model_name is None:
+            model_name = get_lite_model()
         self.llm = ChatGoogleGenerativeAI(
             model=model_name,
             google_api_key=api_key,
@@ -157,7 +161,18 @@ class StudentIdentificationService:
             else:
                 raise last_error
             
+            # 处理 response.content 可能是列表的情况
             result_text = response.content
+            if isinstance(result_text, list):
+                text_parts = []
+                for item in result_text:
+                    if isinstance(item, str):
+                        text_parts.append(item)
+                    elif isinstance(item, dict) and "text" in item:
+                        text_parts.append(item["text"])
+                result_text = "".join(text_parts)
+            elif not isinstance(result_text, str):
+                result_text = str(result_text) if result_text else ""
             
             # 提取 JSON
             if "```json" in result_text:
@@ -274,7 +289,8 @@ class StudentIdentificationService:
     
     async def segment_batch_document(
         self,
-        images_data: List[bytes]
+        images_data: List[bytes],
+        progress_callback: Optional[callable] = None
     ) -> BatchSegmentationResult:
         """
         分割多学生合卷文档
@@ -287,13 +303,28 @@ class StudentIdentificationService:
         """
         logger.info(f"开始批量文档分割，共 {len(images_data)} 页")
         
-        # 第一阶段：分析所有页面
-        page_analyses: List[PageAnalysis] = []
-        for i, image_data in enumerate(images_data):
-            analysis = await self.analyze_page(image_data, i)
-            page_analyses.append(analysis)
+        # 第一阶段：分析所有页面 (并行处理)
+        semaphore = asyncio.Semaphore(5)  # 限制并发数为 5，避免 API 过载
+        print(f"DEBUG: Starting parallel analysis of {len(images_data)} pages")
+        
+        async def analyzed_page_with_semaphore(image_data, i):
+            async with semaphore:
+                print(f"DEBUG: Analyzing page {i}...")
+                analysis = await self.analyze_page(image_data, i)
+                print(f"DEBUG: Page {i} analysis complete")
+                if progress_callback:
+                    await progress_callback(i + 1, len(images_data))
+                return analysis
+
+        tasks = [analyzed_page_with_semaphore(img, i) for i, img in enumerate(images_data)]
+        page_analyses = await asyncio.gather(*tasks)
+        
+        # 按索引排序，确保顺序正确
+        page_analyses.sort(key=lambda x: x.page_index)
+        
+        for analysis in page_analyses:
             logger.info(
-                f"页面 {i}: questions={analysis.question_numbers}, "
+                f"页面 {analysis.page_index}: questions={analysis.question_numbers}, "
                 f"first={analysis.first_question}, "
                 f"student={analysis.student_info.name if analysis.student_info else 'None'}"
             )

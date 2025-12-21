@@ -46,7 +46,7 @@ def create_test_image(text: str, width: int = 800, height: int = 600) -> bytes:
 async def test_layout_analysis():
     """测试布局分析功能"""
     print("\n" + "="*60)
-    print("测试 1: 布局分析 (Gemini 2.5 Flash Lite)")
+    print("测试 1: 布局分析 (Gemini 3.0 Flash)")
     print("="*60)
     
     api_key = os.getenv("GEMINI_API_KEY")
@@ -58,7 +58,7 @@ async def test_layout_analysis():
     print(f"✅ 图像创建成功 ({len(image_data)} 字节)")
     
     try:
-        print("\n🔍 调用 Gemini 2.5 Flash Lite 进行页面分割...")
+        print("\n🔍 调用 Gemini 3.0 Flash 进行页面分割...")
         result = await service.segment_document(
             image_data=image_data,
             submission_id="test_submission_001",
@@ -85,7 +85,7 @@ async def test_layout_analysis():
 async def test_vision_extraction():
     """测试视觉提取功能"""
     print("\n" + "="*60)
-    print("测试 2: 视觉提取 (Gemini 2.5 Pro)")
+    print("测试 2: 视觉提取 (Gemini 3.0 Flash)")
     print("="*60)
     
     api_key = os.getenv("GEMINI_API_KEY")
@@ -105,7 +105,7 @@ async def test_vision_extraction():
 """
     
     try:
-        print("\n🔍 调用 Gemini 2.5 Pro 进行视觉提取...")
+        print("\n🔍 调用 Gemini 3.0 Flash 进行视觉提取...")
         vision_analysis = await client.vision_extraction(
             question_image_b64=image_b64,
             rubric=rubric,
@@ -127,7 +127,7 @@ async def test_vision_extraction():
 async def test_rubric_mapping(vision_analysis: str):
     """测试评分映射功能"""
     print("\n" + "="*60)
-    print("测试 3: 评分映射 (Gemini 2.5 Pro)")
+    print("测试 3: 评分映射 (Gemini 3.0 Flash)")
     print("="*60)
     
     api_key = os.getenv("GEMINI_API_KEY")
@@ -141,7 +141,7 @@ async def test_rubric_mapping(vision_analysis: str):
 """
     
     try:
-        print("\n🔍 调用 Gemini 2.5 Pro 进行评分映射...")
+        print("\n🔍 调用 Gemini 3.0 Flash 进行评分映射...")
         result = await client.rubric_mapping(
             vision_analysis=vision_analysis,
             rubric=rubric,
@@ -170,7 +170,7 @@ async def test_rubric_mapping(vision_analysis: str):
 async def test_critique(vision_analysis: str, rubric_mapping: dict):
     """测试自我反思功能"""
     print("\n" + "="*60)
-    print("测试 4: 自我反思 (Gemini 2.5 Pro)")
+    print("测试 4: 自我反思 (Gemini 3.0 Flash)")
     print("="*60)
     
     api_key = os.getenv("GEMINI_API_KEY")
@@ -184,7 +184,7 @@ async def test_critique(vision_analysis: str, rubric_mapping: dict):
 """
     
     try:
-        print("\n🔍 调用 Gemini 2.5 Pro 进行自我反思...")
+        print("\n🔍 调用 Gemini 3.0 Flash 进行自我反思...")
         result = await client.critique(
             vision_analysis=vision_analysis,
             rubric=rubric,

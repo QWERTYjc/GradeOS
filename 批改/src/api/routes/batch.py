@@ -4,6 +4,7 @@ import uuid
 import logging
 import tempfile
 import json
+import asyncio
 from pathlib import Path
 from typing import List, Optional, Dict, Any
 
@@ -19,6 +20,13 @@ from src.services.student_identification import StudentIdentificationService
 from src.services.rubric_parser import RubricParserService
 from src.services.strict_grading import StrictGradingService
 from src.services.cached_grading import CachedGradingService
+
+# 自我成长系统组件
+from src.services.exemplar_memory import ExemplarMemory
+from src.services.prompt_assembler import PromptAssembler
+from src.services.calibration import CalibrationService
+from src.services.grading_logger import GradingLogger, get_grading_logger
+from src.models.grading_log import GradingLog
 
 
 logger = logging.getLogger(__name__)
@@ -75,18 +83,19 @@ async def run_real_grading_workflow(
     """
     真实批改工作流，通过 WebSocket 推送进度
     
-    工作流步骤：
+    正确的工作流步骤（按设计文档）：
     1. Intake - 接收文件
     2. Preprocess - 预处理（已完成 PDF 转图像）
-    3. Segment - 使用 StudentIdentificationService 识别学生
-    4. Grading (并行) - 使用 StrictGradingService 批改
-    5. Review - 汇总审核
-    6. Export - 导出结果
+    3. Rubric Parse - 解析评分标准
+    4. Grading - 固定分批并行批改（10张图片一批，不需要先识别学生）
+    5. Segment - 批改后学生分割（基于批改结果智能判断学生边界）
+    6. Review - 汇总审核
+    7. Export - 导出结果
     """
     import asyncio
     
     # 等待 WebSocket 连接建立
-    await asyncio.sleep(0.5)
+    await asyncio.sleep(2.0)
     
     logger.info(f"开始真实批改工作流: batch_id={batch_id}, rubric_pages={len(rubric_images)}, answer_pages={len(answer_images)}")
     
@@ -124,10 +133,10 @@ async def run_real_grading_workflow(
             "message": "预处理完成"
         })
         
-        # === Step 3: Parse Rubric ===
+        # === Step 3: Parse Rubric (评分标准解析 - 对应前端 rubric_parse 节点) ===
         await broadcast_progress(batch_id, {
             "type": "workflow_update",
-            "nodeId": "segment",
+            "nodeId": "rubric_parse",
             "status": "running",
             "message": "正在解析评分标准..."
         })
@@ -137,165 +146,230 @@ async def run_real_grading_workflow(
         parsed_rubric = await rubric_parser.parse_rubric(rubric_images)
         rubric_context = rubric_parser.format_rubric_context(parsed_rubric)
         
+        # 发送 rubric_parsed 事件（对应设计文档 StreamEvent）
         await broadcast_progress(batch_id, {
-            "type": "workflow_update",
-            "nodeId": "segment",
-            "status": "running",
-            "message": f"评分标准解析完成：{parsed_rubric.total_questions} 道题，满分 {parsed_rubric.total_score} 分，正在识别学生..."
+            "type": "rubric_parsed",
+            "totalQuestions": parsed_rubric.total_questions,
+            "totalScore": parsed_rubric.total_score
         })
         
-        # 初始化学生识别服务
-        student_service = StudentIdentificationService(api_key=api_key)
-        segmentation_result = await student_service.segment_batch_document(answer_images)
-        
-        # 按学生分组页面
-        student_groups = student_service.group_pages_by_student(segmentation_result)
-        num_students = len(student_groups)
-        
         await broadcast_progress(batch_id, {
             "type": "workflow_update",
-            "nodeId": "segment",
+            "nodeId": "rubric_parse",
             "status": "completed",
-            "message": f"识别到 {num_students} 名学生"
+            "message": f"评分标准解析完成：{parsed_rubric.total_questions} 道题，满分 {parsed_rubric.total_score} 分"
         })
         
-        # 创建并行 Agent
+        # === Step 4: 固定分批并行批改 (对应前端 grading 节点) ===
+        await broadcast_progress(batch_id, {
+            "type": "workflow_update",
+            "nodeId": "grading",
+            "status": "running",
+            "message": f"开始固定分批批改，共 {len(answer_images)} 页..."
+        })
+        
+        # 初始化自我成长系统组件（优雅降级：数据库不可用时使用 None）
+        exemplar_memory = None
+        prompt_assembler = None
+        calibration_service = None
+        calibration_profile = None
+        grading_logger = None
+        
+        try:
+            # 1. 判例记忆库 - 检索相似批改示例用于 few-shot 学习
+            exemplar_memory = ExemplarMemory()
+            
+            # 2. 动态提示词拼装器 - 根据上下文构建最优提示词
+            prompt_assembler = PromptAssembler()
+            
+            # 3. 校准服务 - 加载教师个性化评分配置
+            calibration_service = CalibrationService()
+            teacher_id = "default_teacher"
+            calibration_profile = await calibration_service.get_or_create_profile(teacher_id)
+            
+            # 4. 批改日志服务 - 记录批改过程用于后续分析
+            grading_logger = get_grading_logger()
+            
+            logger.info(f"自我成长组件初始化成功: exemplar_memory={exemplar_memory is not None}, "
+                        f"calibration_profile={calibration_profile.profile_id if calibration_profile else None}")
+        except Exception as init_err:
+            logger.warning(f"自我成长组件初始化失败（降级模式）: {init_err}")
+        
+        # 初始化批改服务
+        grading_service = StrictGradingService(api_key=api_key)
+        
+        # 按 10 张一组分批
+        BATCH_SIZE = 10
+        batches = [answer_images[i:i + BATCH_SIZE] for i in range(0, len(answer_images), BATCH_SIZE)]
+        total_batches = len(batches)
+        
+        logger.info(f"分批完成：共 {total_batches} 个批次")
+        
+        # 存储所有页面的批改结果
+        all_page_results = []
+        success_count = 0
+        failure_count = 0
+        
+        # 创建批次 Agent（用于前端显示）
         grading_agents = []
-        for i, (student_key, page_indices) in enumerate(student_groups.items()):
-            agent_id = f"grading_agent_{i}"
-            student_name = student_key
-            
-            # 从 segmentation_result 中找到对应的 student_info
-            student_info = None
-            for mapping in segmentation_result.page_mappings:
-                mapping_key = (
-                    mapping.student_info.student_id or 
-                    mapping.student_info.name or 
-                    f"unknown_{mapping.page_index}"
-                )
-                if mapping_key == student_key:
-                    student_info = mapping.student_info
-                    break
-            
+        for batch_idx in range(total_batches):
+            agent_id = f"batch_{batch_idx}"
             grading_agents.append({
                 "id": agent_id,
-                "label": student_name,
-                "status": "pending",
-                "student_info": student_info,
-                "page_indices": page_indices
+                "label": f"批次 {batch_idx + 1}",
+                "status": "pending"
             })
         
         await broadcast_progress(batch_id, {
             "type": "parallel_agents_created",
             "parentNodeId": "grading",
-            "agents": [{"id": a["id"], "label": a["label"], "status": a["status"]} for a in grading_agents]
+            "agents": grading_agents
         })
         
-        # === Step 4: Grading (Parallel) ===
+        # 发送批次进度
         await broadcast_progress(batch_id, {
-            "type": "workflow_update",
-            "nodeId": "grading",
-            "status": "running",
-            "message": f"开始批改 {num_students} 名学生..."
+            "type": "batch_start",
+            "batchIndex": 0,
+            "totalBatches": total_batches
         })
         
-        # 初始化批改服务
-        grading_service = StrictGradingService(api_key=api_key)
-        
-        # 逐个学生批改（可以后续优化为真正的并行）
-        for i, agent in enumerate(grading_agents):
-            agent_id = agent["id"]
-            student_name = agent["label"]
-            page_indices = agent["page_indices"]
+        # 逐批次处理
+        for batch_idx, batch_images in enumerate(batches):
+            agent_id = f"batch_{batch_idx}"
             
-            # 开始批改
+            # 更新批次状态为运行中
             await broadcast_progress(batch_id, {
                 "type": "agent_update",
                 "agentId": agent_id,
                 "status": "running",
-                "message": f"正在批改 {student_name} 的试卷...",
-                "logs": [f"开始批改 {student_name}，共 {len(page_indices)} 页"]
-            })
-            
-            # 获取该学生的页面
-            student_pages = [answer_images[idx] for idx in page_indices]
-            
-            # 进度更新 1
-            await broadcast_progress(batch_id, {
-                "type": "agent_update",
-                "agentId": agent_id,
-                "status": "running",
-                "progress": 25,
-                "logs": ["提取作答内容..."]
+                "message": f"正在批改第 {batch_idx + 1} 批...",
+                "logs": [f"开始处理批次 {batch_idx + 1}，共 {len(batch_images)} 页"]
             })
             
             try:
-                # 调用真实批改服务
-                result = await grading_service.grade_student(
-                    student_pages=student_pages,
-                    rubric=parsed_rubric,
-                    rubric_context=rubric_context,
-                    student_name=student_name
-                )
+                # 批改当前批次的所有页面
+                for page_offset, page_image in enumerate(batch_images):
+                    page_index = batch_idx * BATCH_SIZE + page_offset
+                    
+                    try:
+                        # === 自我成长：批改前检索相似判例 ===
+                        similar_exemplars = []
+                        if exemplar_memory is not None:
+                            import hashlib
+                            page_hash = hashlib.md5(page_image).hexdigest()
+                            
+                            try:
+                                similar_exemplars = await exemplar_memory.retrieve_similar(
+                                    question_image_hash=page_hash,
+                                    question_type="general",
+                                    top_k=3,
+                                    min_similarity=0.7
+                                )
+                                logger.debug(f"页面 {page_index} 找到 {len(similar_exemplars)} 个相似判例")
+                            except Exception as ex:
+                                logger.warning(f"判例检索失败（继续批改）: {ex}")
+                        
+                        # === 自我成长：动态拼装提示词 ===
+                        if prompt_assembler is not None:
+                            try:
+                                assembled_prompt = prompt_assembler.assemble(
+                                    question_type="general",
+                                    rubric=rubric_context,
+                                    exemplars=similar_exemplars,
+                                    error_patterns=[],
+                                    previous_confidence=None,
+                                    calibration=calibration_profile
+                                )
+                                # 如果拼装成功，可以将 assembled_prompt 传递给批改服务
+                                # 目前 StrictGradingService 使用固定提示词，后续可扩展
+                            except Exception as ex:
+                                logger.warning(f"提示词拼装失败（使用默认）: {ex}")
+                        
+                        # 批改单页
+                        result = await grading_service.grade_student(
+                            student_pages=[page_image],
+                            rubric=parsed_rubric,
+                            rubric_context=rubric_context,
+                            student_name=f"Page_{page_index}"
+                        )
+                        
+                        # === 自我成长：记录批改日志 ===
+                        if grading_logger is not None:
+                            try:
+                                for qr in result.question_results:
+                                    log_entry = GradingLog(
+                                        submission_id=batch_id,
+                                        question_id=qr.question_id,
+                                        extracted_answer="",  # 从 result 中提取
+                                        extraction_confidence=qr.confidence,
+                                        evidence_snippets=[],
+                                        normalized_answer=None,
+                                        normalization_rules_applied=[],
+                                        match_result=qr.awarded_score > 0,
+                                        match_failure_reason=None,
+                                        score=qr.awarded_score,
+                                        max_score=qr.max_score,
+                                        confidence=qr.confidence,
+                                        reasoning_trace=[qr.overall_feedback] if qr.overall_feedback else []
+                                    )
+                                    await grading_logger.log_grading(log_entry)
+                            except Exception as ex:
+                                logger.warning(f"批改日志记录失败: {ex}")
+                        
+                        all_page_results.append({
+                            "page_index": page_index,
+                            "result": result,
+                            "question_ids": [q.question_id for q in result.question_results],
+                            "success": True
+                        })
+                        success_count += 1
+                        
+                        # 推送页面完成事件
+                        await broadcast_progress(batch_id, {
+                            "type": "page_complete",
+                            "pageIndex": page_index,
+                            "success": True,
+                            "score": result.total_score,
+                            "maxScore": result.max_total_score
+                        })
+                        
+                    except Exception as e:
+                        logger.error(f"页面 {page_index} 批改失败: {e}")
+                        all_page_results.append({
+                            "page_index": page_index,
+                            "result": None,
+                            "question_ids": [],
+                            "success": False,
+                            "error": str(e)
+                        })
+                        failure_count += 1
                 
-                # 进度更新 2
-                await broadcast_progress(batch_id, {
-                    "type": "agent_update",
-                    "agentId": agent_id,
-                    "status": "running",
-                    "progress": 75,
-                    "logs": ["计算得分..."]
-                })
-                
-                await asyncio.sleep(0.2)
-                
-                # 批改完成
-                score = result.total_score
-                max_score = result.max_total_score
-                
-                # 生成简单反馈
-                if score / max_score >= 0.85:
-                    feedback = "整体表现优秀"
-                elif score / max_score >= 0.70:
-                    feedback = "整体表现良好"
-                elif score / max_score >= 0.60:
-                    feedback = "整体表现及格"
-                else:
-                    feedback = "需要加强复习"
-                
+                # 更新批次进度
                 await broadcast_progress(batch_id, {
                     "type": "agent_update",
                     "agentId": agent_id,
                     "status": "completed",
                     "progress": 100,
-                    "message": f"{student_name} 批改完成",
-                    "output": {
-                        "score": score,
-                        "maxScore": max_score,
-                        "feedback": feedback,
-                        "questionResults": [
-                            {
-                                "questionId": qr.question_id,
-                                "score": qr.awarded_score,
-                                "maxScore": qr.max_score
-                            } for qr in result.question_results
-                        ]
-                    },
-                    "logs": [f"最终得分: {score}/{max_score}"]
+                    "message": f"批次 {batch_idx + 1} 完成",
+                    "logs": [f"批次 {batch_idx + 1} 处理完成"]
                 })
                 
-                all_results.append({
-                    "studentName": student_name,
-                    "result": result
+                # 推送批次完成事件
+                await broadcast_progress(batch_id, {
+                    "type": "batch_complete",
+                    "batchIndex": batch_idx,
+                    "totalBatches": total_batches,
+                    "successCount": success_count,
+                    "failureCount": failure_count
                 })
                 
             except Exception as e:
-                logger.error(f"批改学生 {student_name} 失败: {e}", exc_info=True)
+                logger.error(f"批次 {batch_idx} 处理失败: {e}")
                 await broadcast_progress(batch_id, {
                     "type": "agent_update",
                     "agentId": agent_id,
                     "status": "failed",
-                    "message": f"批改失败: {str(e)}",
+                    "message": f"批次失败: {str(e)}",
                     "logs": [f"错误: {str(e)}"]
                 })
         
@@ -303,10 +377,117 @@ async def run_real_grading_workflow(
             "type": "workflow_update",
             "nodeId": "grading",
             "status": "completed",
-            "message": f"所有学生批改完成"
+            "message": f"固定分批批改完成：成功 {success_count} 页，失败 {failure_count} 页"
         })
         
-        # === Step 5: Review ===
+        # === Step 5: 批改后学生分割 (对应前端 segment 节点) ===
+        await broadcast_progress(batch_id, {
+            "type": "workflow_update",
+            "nodeId": "segment",
+            "status": "running",
+            "message": "正在基于批改结果分析学生边界..."
+        })
+        
+        # 基于题目序列循环检测学生边界
+        boundaries = []
+        current_start = 0
+        last_max_question = 0
+        student_count = 0
+        
+        for i, page_result in enumerate(all_page_results):
+            question_ids = page_result.get("question_ids", [])
+            if not question_ids:
+                continue
+            
+            try:
+                first_q = int(question_ids[0])
+                
+                # 检测循环：题目编号回退到较小值（如从 5 回到 1），说明换了学生
+                if first_q < last_max_question and first_q <= 2:
+                    if i > current_start:
+                        student_count += 1
+                        boundaries.append({
+                            "studentKey": f"学生{student_count}",
+                            "startPage": current_start,
+                            "endPage": i - 1,
+                            "confidence": 0.7,  # 基于循环检测的置信度较低
+                            "needsConfirmation": True
+                        })
+                    current_start = i
+                    last_max_question = first_q
+                else:
+                    for q_id in question_ids:
+                        try:
+                            q_num = int(q_id)
+                            last_max_question = max(last_max_question, q_num)
+                        except ValueError:
+                            pass
+            except (ValueError, IndexError):
+                pass
+        
+        # 添加最后一个学生
+        if current_start < len(all_page_results):
+            student_count += 1
+            boundaries.append({
+                "studentKey": f"学生{student_count}",
+                "startPage": current_start,
+                "endPage": len(all_page_results) - 1,
+                "confidence": 0.7,
+                "needsConfirmation": True
+            })
+        
+        num_students = len(boundaries)
+        
+        # 发送学生边界检测结果
+        await broadcast_progress(batch_id, {
+            "type": "student_identified",
+            "boundaries": boundaries
+        })
+        
+        await broadcast_progress(batch_id, {
+            "type": "workflow_update",
+            "nodeId": "segment",
+            "status": "completed",
+            "message": f"学生分割完成：检测到 {num_students} 名学生（基于题目序列循环）"
+        })
+        
+        # === Step 6: 按学生聚合结果 ===
+        all_results = []
+        for boundary in boundaries:
+            student_pages = [
+                pr for pr in all_page_results 
+                if pr["success"] and boundary["startPage"] <= pr["page_index"] <= boundary["endPage"]
+            ]
+            
+            total_score = sum(pr["result"].total_score for pr in student_pages if pr.get("result"))
+            max_score = sum(pr["result"].max_total_score for pr in student_pages if pr.get("result"))
+            
+            # 聚合所有页面的题目结果
+            student_question_results = []
+            for pr in student_pages:
+                if pr.get("result") and pr["result"].question_results:
+                    # 将 Pydantic 模型转换为字典
+                    q_results = [
+                        q.dict() if hasattr(q, "dict") else q 
+                        for q in pr["result"].question_results
+                    ]
+                    student_question_results.extend(q_results)
+            
+            # 按题目 ID 排序
+            try:
+                student_question_results.sort(key=lambda x: float(x.get("question_id", 0)) if isinstance(x, dict) else float(x.question_id))
+            except:
+                pass
+
+            all_results.append({
+                "studentName": boundary["studentKey"],
+                "total_score": total_score,
+                "max_score": max_score,
+                "page_range": (boundary["startPage"], boundary["endPage"]),
+                "questionResults": student_question_results
+            })
+        
+        # === Step 7: Review ===
         await broadcast_progress(batch_id, {
             "type": "workflow_update",
             "nodeId": "review",
@@ -317,9 +498,9 @@ async def run_real_grading_workflow(
         
         # 计算统计信息
         if all_results:
-            scores = [r["result"].total_score for r in all_results]
-            avg_score = sum(scores) / len(scores)
-            max_total = all_results[0]["result"].max_total_score if all_results else 100
+            scores = [r["total_score"] for r in all_results]
+            avg_score = sum(scores) / len(scores) if scores else 0
+            max_total = all_results[0]["max_score"] if all_results else 100
             
             await broadcast_progress(batch_id, {
                 "type": "workflow_update",
@@ -335,7 +516,7 @@ async def run_real_grading_workflow(
                 "message": "审核完成"
             })
         
-        # === Step 6: Export ===
+        # === Step 8: Export ===
         await broadcast_progress(batch_id, {
             "type": "workflow_update",
             "nodeId": "export",
@@ -357,8 +538,27 @@ async def run_real_grading_workflow(
             "results": [
                 {
                     "studentName": r["studentName"],
-                    "score": r["result"].total_score,
-                    "maxScore": r["result"].max_total_score
+                    "score": r["total_score"],
+                    "maxScore": r["max_score"],
+                    "questionResults": [
+                        {
+                            "questionId": str(q.get("question_id")) if isinstance(q, dict) else str(q.question_id),
+                            "score": q.get("awarded_score") if isinstance(q, dict) else q.awarded_score,
+                            "maxScore": q.get("max_score") if isinstance(q, dict) else q.max_score,
+                            "feedback": q.get("overall_feedback") if isinstance(q, dict) else q.overall_feedback,
+                            "scoringPoints": [
+                                {
+                                    "description": sp.get("description") if isinstance(sp, dict) else sp.description,
+                                    "score": sp.get("awarded_score") if isinstance(sp, dict) else sp.awarded_score,
+                                    "maxScore": sp.get("max_score") if isinstance(sp, dict) else sp.max_score,
+                                    "isCorrect": sp.get("is_correct") if isinstance(sp, dict) else sp.is_correct,
+                                    "explanation": sp.get("explanation") if isinstance(sp, dict) else sp.explanation
+                                }
+                                for sp in (q.get("scoring_point_results") if isinstance(q, dict) else q.scoring_point_results) or []
+                            ] if (q.get("scoring_point_results") if isinstance(q, dict) else q.scoring_point_results) else []
+                        }
+                        for q in r["questionResults"]
+                    ]
                 } for r in all_results
             ]
         })
@@ -434,8 +634,9 @@ async def submit_batch(
         
         # 转换 PDF 为图像
         logger.info(f"转换 PDF 为图像: batch_id={batch_id}")
-        rubric_images = _pdf_to_images(str(rubric_path), dpi=150)
-        answer_images = _pdf_to_images(str(answer_path), dpi=150)
+        loop = asyncio.get_event_loop()
+        rubric_images = await loop.run_in_executor(None, _pdf_to_images, str(rubric_path), 150)
+        answer_images = await loop.run_in_executor(None, _pdf_to_images, str(answer_path), 150)
         
         total_pages = len(answer_images)
         
@@ -450,7 +651,6 @@ async def submit_batch(
         estimated_time = total_pages * 30
         
         # 启动后台真实批改任务
-        import asyncio
         asyncio.create_task(run_real_grading_workflow(
             batch_id=batch_id,
             rubric_images=rubric_images,
@@ -679,15 +879,17 @@ async def grade_batch_sync(
             for q_result in result.question_results:
                 question_detail = {
                     "question_id": q_result.question_id,
-                    "score": q_result.score,
+                    "score": q_result.awarded_score,
                     "max_score": q_result.max_score,
-                    "scoring_points": [
+                    "scoring_point_results": [
                         {
-                            "point": sp.point,
-                            "score": sp.score,
+                            "description": sp.description,
+                            "max_score": sp.max_score,
+                            "awarded_score": sp.awarded_score,
+                            "is_correct": sp.is_correct,
                             "explanation": sp.explanation
                         }
-                        for sp in q_result.scoring_points
+                        for sp in q_result.scoring_point_results
                     ],
                     "used_alternative_solution": q_result.used_alternative_solution,
                     "confidence": q_result.confidence

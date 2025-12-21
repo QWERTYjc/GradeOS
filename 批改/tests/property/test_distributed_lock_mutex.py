@@ -14,8 +14,8 @@ from unittest.mock import MagicMock, AsyncMock, patch
 import uuid
 import asyncio
 
-from src.workflows.enhanced_workflow import (
-    EnhancedWorkflowMixin,
+from src.workflows.enhanced_workflow import EnhancedWorkflowMixin
+from src.activities.enhanced_activities import (
     acquire_lock_activity,
     release_lock_activity,
 )
@@ -280,7 +280,7 @@ class TestLockActivityLogic:
         mock_pool_manager.get_redis_client.return_value = mock_redis
         
         with patch(
-            'src.workflows.enhanced_workflow.UnifiedPoolManager.get_instance',
+            'src.activities.enhanced_activities.UnifiedPoolManager.get_instance',
             return_value=mock_pool_manager
         ):
             result = await acquire_lock_activity(
@@ -320,7 +320,7 @@ class TestLockActivityLogic:
         mock_pool_manager.get_redis_client.return_value = mock_redis
         
         with patch(
-            'src.workflows.enhanced_workflow.UnifiedPoolManager.get_instance',
+            'src.activities.enhanced_activities.UnifiedPoolManager.get_instance',
             return_value=mock_pool_manager
         ):
             result = await release_lock_activity(
