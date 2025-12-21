@@ -1,0 +1,5 @@
+{
+  "name": "AI EduPlatform",
+  "description": "A React-based education platform featuring a complete class management logic loop with teacher and student roles, utilizing local storage for stateful data persistence.",
+  "requestFramePermissions": []
+}
