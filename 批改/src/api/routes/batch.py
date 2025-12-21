@@ -21,6 +21,10 @@ from src.services.rubric_parser import RubricParserService
 from src.services.strict_grading import StrictGradingService
 from src.services.cached_grading import CachedGradingService
 
+# LangGraph 智能体（自我修正批改）
+from src.agents.grading_agent import GradingAgent
+from src.services.gemini_reasoning import GeminiReasoningClient
+
 # 自我成长系统组件
 from src.services.exemplar_memory import ExemplarMemory
 from src.services.prompt_assembler import PromptAssembler
@@ -195,8 +199,10 @@ async def run_real_grading_workflow(
         except Exception as init_err:
             logger.warning(f"自我成长组件初始化失败（降级模式）: {init_err}")
         
-        # 初始化批改服务
-        grading_service = StrictGradingService(api_key=api_key)
+        # 初始化 LangGraph 批改智能体（支持自我修正）
+        reasoning_client = GeminiReasoningClient(api_key=api_key)
+        # 注意：每个并行批次会创建自己的 GradingAgent 实例，避免状态冲突
+        logger.info("使用 LangGraph GradingAgent（自我修正模式）")
         
         # 按 10 张一组分批
         BATCH_SIZE = 10
@@ -233,17 +239,25 @@ async def run_real_grading_workflow(
             "totalBatches": total_batches
         })
         
-        # 逐批次处理
-        for batch_idx, batch_images in enumerate(batches):
+        # 定义单个批次的处理函数
+        async def process_single_batch(batch_idx: int, batch_images: list) -> dict:
+            """处理单个批次，返回该批次的结果"""
             agent_id = f"batch_{batch_idx}"
+            batch_results = []
+            batch_success = 0
+            batch_failure = 0
+            
+            # 每个批次创建独立的 LangGraph 批改智能体（避免并发状态冲突）
+            batch_reasoning_client = GeminiReasoningClient(api_key=api_key)
+            batch_grading_agent = GradingAgent(reasoning_client=batch_reasoning_client)
             
             # 更新批次状态为运行中
             await broadcast_progress(batch_id, {
                 "type": "agent_update",
                 "agentId": agent_id,
                 "status": "running",
-                "message": f"正在批改第 {batch_idx + 1} 批...",
-                "logs": [f"开始处理批次 {batch_idx + 1}，共 {len(batch_images)} 页"]
+                "message": f"正在批改第 {batch_idx + 1} 批（LangGraph 自我修正模式）...",
+                "logs": [f"开始处理批次 {batch_idx + 1}，共 {len(batch_images)} 页，使用 LangGraph Agent"]
             })
             
             try:
@@ -280,69 +294,102 @@ async def run_real_grading_workflow(
                                     previous_confidence=None,
                                     calibration=calibration_profile
                                 )
-                                # 如果拼装成功，可以将 assembled_prompt 传递给批改服务
-                                # 目前 StrictGradingService 使用固定提示词，后续可扩展
+                                # 后续可将 assembled_prompt 传递给 GradingAgent
                             except Exception as ex:
                                 logger.warning(f"提示词拼装失败（使用默认）: {ex}")
                         
-                        # 批改单页
-                        result = await grading_service.grade_student(
-                            student_pages=[page_image],
-                            rubric=parsed_rubric,
-                            rubric_context=rubric_context,
-                            student_name=f"Page_{page_index}"
+                        # 将图像转换为 base64（LangGraph Agent 需要）
+                        import base64
+                        image_b64 = base64.b64encode(page_image).decode('utf-8')
+                        
+                        # 🚀 使用 LangGraph GradingAgent 批改（支持循环自我修正）
+                        thread_id = f"{batch_id}_page_{page_index}"
+                        grading_state = await batch_grading_agent.run(
+                            question_image=image_b64,
+                            rubric=rubric_context,
+                            max_score=parsed_rubric.total_score,
+                            standard_answer=None,
+                            thread_id=thread_id
                         )
+                        
+                        # 从 LangGraph 状态提取结果
+                        final_score = grading_state.get("final_score", 0.0)
+                        max_score = grading_state.get("max_score", parsed_rubric.total_score)
+                        confidence = grading_state.get("confidence", 0.0)
+                        feedback = grading_state.get("student_feedback", "")
+                        revision_count = grading_state.get("revision_count", 0)
+                        
+                        # 构造兼容的结果对象
+                        class LangGraphResult:
+                            def __init__(self, state, page_idx):
+                                self.total_score = state.get("final_score", 0.0)
+                                self.max_total_score = state.get("max_score", 0.0)
+                                self.question_results = []
+                                # 创建单个题目结果
+                                class QuestionResult:
+                                    def __init__(self, state, page_idx):
+                                        self.question_id = f"q_{page_idx}"
+                                        self.awarded_score = state.get("final_score", 0.0)
+                                        self.max_score = state.get("max_score", 0.0)
+                                        self.confidence = state.get("confidence", 0.0)
+                                        self.overall_feedback = state.get("student_feedback", "")
+                                        self.is_correct = state.get("final_score", 0) > 0
+                                        self.scoring_point_results = []
+                                self.question_results.append(QuestionResult(state, page_idx))
+                        
+                        result = LangGraphResult(grading_state, page_index)
                         
                         # === 自我成长：记录批改日志 ===
                         if grading_logger is not None:
                             try:
-                                for qr in result.question_results:
-                                    log_entry = GradingLog(
-                                        submission_id=batch_id,
-                                        question_id=qr.question_id,
-                                        extracted_answer="",  # 从 result 中提取
-                                        extraction_confidence=qr.confidence,
-                                        evidence_snippets=[],
-                                        normalized_answer=None,
-                                        normalization_rules_applied=[],
-                                        match_result=qr.awarded_score > 0,
-                                        match_failure_reason=None,
-                                        score=qr.awarded_score,
-                                        max_score=qr.max_score,
-                                        confidence=qr.confidence,
-                                        reasoning_trace=[qr.overall_feedback] if qr.overall_feedback else []
-                                    )
-                                    await grading_logger.log_grading(log_entry)
+                                log_entry = GradingLog(
+                                    submission_id=batch_id,
+                                    question_id=f"q_{page_index}",
+                                    extracted_answer="",
+                                    extraction_confidence=confidence,
+                                    evidence_snippets=[],
+                                    normalized_answer=None,
+                                    normalization_rules_applied=[],
+                                    match_result=final_score > 0,
+                                    match_failure_reason=None,
+                                    score=final_score,
+                                    max_score=max_score,
+                                    confidence=confidence,
+                                    reasoning_trace=grading_state.get("reasoning_trace", [])
+                                )
+                                await grading_logger.log_grading(log_entry)
                             except Exception as ex:
                                 logger.warning(f"批改日志记录失败: {ex}")
                         
-                        all_page_results.append({
+                        batch_results.append({
                             "page_index": page_index,
                             "result": result,
-                            "question_ids": [q.question_id for q in result.question_results],
-                            "success": True
+                            "question_ids": [f"q_{page_index}"],
+                            "success": True,
+                            "revision_count": revision_count  # 记录自我修正次数
                         })
-                        success_count += 1
+                        batch_success += 1
                         
                         # 推送页面完成事件
                         await broadcast_progress(batch_id, {
                             "type": "page_complete",
                             "pageIndex": page_index,
                             "success": True,
-                            "score": result.total_score,
-                            "maxScore": result.max_total_score
+                            "score": final_score,
+                            "maxScore": max_score,
+                            "revisionCount": revision_count  # 前端可显示修正次数
                         })
                         
                     except Exception as e:
                         logger.error(f"页面 {page_index} 批改失败: {e}")
-                        all_page_results.append({
+                        batch_results.append({
                             "page_index": page_index,
                             "result": None,
                             "question_ids": [],
                             "success": False,
                             "error": str(e)
                         })
-                        failure_count += 1
+                        batch_failure += 1
                 
                 # 更新批次进度
                 await broadcast_progress(batch_id, {
@@ -359,9 +406,17 @@ async def run_real_grading_workflow(
                     "type": "batch_complete",
                     "batchIndex": batch_idx,
                     "totalBatches": total_batches,
-                    "successCount": success_count,
-                    "failureCount": failure_count
+                    "successCount": batch_success,
+                    "failureCount": batch_failure
                 })
+                
+                return {
+                    "batch_idx": batch_idx,
+                    "results": batch_results,
+                    "success_count": batch_success,
+                    "failure_count": batch_failure,
+                    "status": "completed"
+                }
                 
             except Exception as e:
                 logger.error(f"批次 {batch_idx} 处理失败: {e}")
@@ -372,6 +427,35 @@ async def run_real_grading_workflow(
                     "message": f"批次失败: {str(e)}",
                     "logs": [f"错误: {str(e)}"]
                 })
+                return {
+                    "batch_idx": batch_idx,
+                    "results": batch_results,
+                    "success_count": batch_success,
+                    "failure_count": batch_failure,
+                    "status": "failed",
+                    "error": str(e)
+                }
+        
+        # 🚀 并行处理所有批次
+        logger.info(f"开始并行处理 {total_batches} 个批次...")
+        batch_tasks = [
+            process_single_batch(idx, batch_images) 
+            for idx, batch_images in enumerate(batches)
+        ]
+        batch_results_list = await asyncio.gather(*batch_tasks, return_exceptions=True)
+        
+        # 汇总所有批次的结果
+        for batch_result in batch_results_list:
+            if isinstance(batch_result, Exception):
+                logger.error(f"批次处理异常: {batch_result}")
+                continue
+            if isinstance(batch_result, dict):
+                all_page_results.extend(batch_result.get("results", []))
+                success_count += batch_result.get("success_count", 0)
+                failure_count += batch_result.get("failure_count", 0)
+        
+        # 按页面索引排序结果
+        all_page_results.sort(key=lambda x: x.get("page_index", 0))
         
         await broadcast_progress(batch_id, {
             "type": "workflow_update",
