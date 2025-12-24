@@ -1,14 +1,20 @@
-"""批量提交 API 路由 - 支持多学生合卷上传"""
+"""批量提交 API 路由 - 使用 LangGraph Orchestrator
+
+正确的架构：
+1. 使用 LangGraph Orchestrator 启动批改流程
+2. 通过 LangGraph 的流式 API 实时推送进度
+3. 利用 PostgreSQL Checkpointer 实现持久化和断点恢复
+"""
 
 import uuid
 import logging
 import tempfile
-import json
 import asyncio
 from pathlib import Path
 from typing import List, Optional, Dict, Any
+from datetime import datetime
 
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form, WebSocket, WebSocketDisconnect, Depends
 from pydantic import BaseModel, Field
 import fitz
 from PIL import Image
@@ -16,21 +22,8 @@ from io import BytesIO
 import os
 
 from src.models.enums import SubmissionStatus
-from src.services.student_identification import StudentIdentificationService
-from src.services.rubric_parser import RubricParserService
-from src.services.strict_grading import StrictGradingService
-from src.services.cached_grading import CachedGradingService
-
-# LangGraph 智能体（自我修正批改）
-from src.agents.grading_agent import GradingAgent
-from src.services.gemini_reasoning import GeminiReasoningClient
-
-# 自我成长系统组件
-from src.services.exemplar_memory import ExemplarMemory
-from src.services.prompt_assembler import PromptAssembler
-from src.services.calibration import CalibrationService
-from src.services.grading_logger import GradingLogger, get_grading_logger
-from src.models.grading_log import GradingLog
+from src.orchestration.base import Orchestrator
+from src.api.dependencies import get_orchestrator
 
 
 logger = logging.getLogger(__name__)
@@ -38,6 +31,9 @@ router = APIRouter(prefix="/batch", tags=["批量提交"])
 
 # 存储活跃的 WebSocket 连接
 active_connections: Dict[str, List[WebSocket]] = {}
+
+# 存储每个批次的累积状态（用于最终结果）
+batch_states: Dict[str, Dict[str, Any]] = {}
 
 
 class BatchSubmissionResponse(BaseModel):
@@ -61,10 +57,18 @@ class BatchStatusResponse(BaseModel):
 
 def _pdf_to_images(pdf_path: str, dpi: int = 150) -> List[bytes]:
     """将 PDF 转换为图像列表"""
+    import time
+    start_time = time.time()
+    
+    logger.info(f"[_pdf_to_images] 开始: path={pdf_path}, dpi={dpi}")
+    
     pdf_doc = fitz.open(pdf_path)
+    page_count = len(pdf_doc)
+    logger.info(f"[_pdf_to_images] PDF 页数: {page_count}")
+    
     images = []
     
-    for page_num in range(len(pdf_doc)):
+    for page_num in range(page_count):
         page = pdf_doc[page_num]
         mat = fitz.Matrix(dpi/72, dpi/72)
         pix = page.get_pixmap(matrix=mat)
@@ -73,586 +77,32 @@ def _pdf_to_images(pdf_path: str, dpi: int = 150) -> List[bytes]:
         img_bytes = BytesIO()
         img.save(img_bytes, format='PNG')
         images.append(img_bytes.getvalue())
+        
+        if (page_num + 1) % 10 == 0:
+            logger.info(f"[_pdf_to_images] 进度: {page_num + 1}/{page_count} 页")
     
     pdf_doc.close()
+    
+    elapsed = time.time() - start_time
+    logger.info(f"[_pdf_to_images] 完成: {page_count} 页, 耗时 {elapsed:.2f} 秒")
+    
     return images
 
 
-async def run_real_grading_workflow(
-    batch_id: str, 
-    rubric_images: List[bytes], 
-    answer_images: List[bytes],
-    api_key: str
-):
-    """
-    真实批改工作流，通过 WebSocket 推送进度
-    
-    正确的工作流步骤（按设计文档）：
-    1. Intake - 接收文件
-    2. Preprocess - 预处理（已完成 PDF 转图像）
-    3. Rubric Parse - 解析评分标准
-    4. Grading - 固定分批并行批改（10张图片一批，不需要先识别学生）
-    5. Segment - 批改后学生分割（基于批改结果智能判断学生边界）
-    6. Review - 汇总审核
-    7. Export - 导出结果
-    """
-    import asyncio
-    
-    # 等待 WebSocket 连接建立
-    await asyncio.sleep(2.0)
-    
-    logger.info(f"开始真实批改工作流: batch_id={batch_id}, rubric_pages={len(rubric_images)}, answer_pages={len(answer_images)}")
-    
-    # 存储最终结果
-    all_results = []
-    
-    try:
-        # === Step 1: Intake ===
-        await broadcast_progress(batch_id, {
-            "type": "workflow_update",
-            "nodeId": "intake",
-            "status": "running",
-            "message": "接收文件中..."
-        })
-        await asyncio.sleep(0.3)
-        await broadcast_progress(batch_id, {
-            "type": "workflow_update",
-            "nodeId": "intake",
-            "status": "completed",
-            "message": f"接收完成：评分标准 {len(rubric_images)} 页，学生作答 {len(answer_images)} 页"
-        })
-        
-        # === Step 2: Preprocess (已完成) ===
-        await broadcast_progress(batch_id, {
-            "type": "workflow_update",
-            "nodeId": "preprocess",
-            "status": "running",
-            "message": "正在预处理图像..."
-        })
-        await asyncio.sleep(0.3)
-        await broadcast_progress(batch_id, {
-            "type": "workflow_update",
-            "nodeId": "preprocess",
-            "status": "completed",
-            "message": "预处理完成"
-        })
-        
-        # === Step 3: Parse Rubric (评分标准解析 - 对应前端 rubric_parse 节点) ===
-        await broadcast_progress(batch_id, {
-            "type": "workflow_update",
-            "nodeId": "rubric_parse",
-            "status": "running",
-            "message": "正在解析评分标准..."
-        })
-        
-        # 初始化评分标准解析服务
-        rubric_parser = RubricParserService(api_key=api_key)
-        parsed_rubric = await rubric_parser.parse_rubric(rubric_images)
-        rubric_context = rubric_parser.format_rubric_context(parsed_rubric)
-        
-        # 发送 rubric_parsed 事件（对应设计文档 StreamEvent）
-        await broadcast_progress(batch_id, {
-            "type": "rubric_parsed",
-            "totalQuestions": parsed_rubric.total_questions,
-            "totalScore": parsed_rubric.total_score
-        })
-        
-        await broadcast_progress(batch_id, {
-            "type": "workflow_update",
-            "nodeId": "rubric_parse",
-            "status": "completed",
-            "message": f"评分标准解析完成：{parsed_rubric.total_questions} 道题，满分 {parsed_rubric.total_score} 分"
-        })
-        
-        # === Step 4: 固定分批并行批改 (对应前端 grading 节点) ===
-        await broadcast_progress(batch_id, {
-            "type": "workflow_update",
-            "nodeId": "grading",
-            "status": "running",
-            "message": f"开始固定分批批改，共 {len(answer_images)} 页..."
-        })
-        
-        # 初始化自我成长系统组件（优雅降级：数据库不可用时使用 None）
-        exemplar_memory = None
-        prompt_assembler = None
-        calibration_service = None
-        calibration_profile = None
-        grading_logger = None
-        
-        try:
-            # 1. 判例记忆库 - 检索相似批改示例用于 few-shot 学习
-            exemplar_memory = ExemplarMemory()
-            
-            # 2. 动态提示词拼装器 - 根据上下文构建最优提示词
-            prompt_assembler = PromptAssembler()
-            
-            # 3. 校准服务 - 加载教师个性化评分配置
-            calibration_service = CalibrationService()
-            teacher_id = "default_teacher"
-            calibration_profile = await calibration_service.get_or_create_profile(teacher_id)
-            
-            # 4. 批改日志服务 - 记录批改过程用于后续分析
-            grading_logger = get_grading_logger()
-            
-            logger.info(f"自我成长组件初始化成功: exemplar_memory={exemplar_memory is not None}, "
-                        f"calibration_profile={calibration_profile.profile_id if calibration_profile else None}")
-        except Exception as init_err:
-            logger.warning(f"自我成长组件初始化失败（降级模式）: {init_err}")
-        
-        # 初始化 LangGraph 批改智能体（支持自我修正）
-        reasoning_client = GeminiReasoningClient(api_key=api_key)
-        # 注意：每个并行批次会创建自己的 GradingAgent 实例，避免状态冲突
-        logger.info("使用 LangGraph GradingAgent（自我修正模式）")
-        
-        # 按 10 张一组分批
-        BATCH_SIZE = 10
-        batches = [answer_images[i:i + BATCH_SIZE] for i in range(0, len(answer_images), BATCH_SIZE)]
-        total_batches = len(batches)
-        
-        logger.info(f"分批完成：共 {total_batches} 个批次")
-        
-        # 存储所有页面的批改结果
-        all_page_results = []
-        success_count = 0
-        failure_count = 0
-        
-        # 创建批次 Agent（用于前端显示）
-        grading_agents = []
-        for batch_idx in range(total_batches):
-            agent_id = f"batch_{batch_idx}"
-            grading_agents.append({
-                "id": agent_id,
-                "label": f"批次 {batch_idx + 1}",
-                "status": "pending"
-            })
-        
-        await broadcast_progress(batch_id, {
-            "type": "parallel_agents_created",
-            "parentNodeId": "grading",
-            "agents": grading_agents
-        })
-        
-        # 发送批次进度
-        await broadcast_progress(batch_id, {
-            "type": "batch_start",
-            "batchIndex": 0,
-            "totalBatches": total_batches
-        })
-        
-        # 定义单个批次的处理函数
-        async def process_single_batch(batch_idx: int, batch_images: list) -> dict:
-            """处理单个批次，返回该批次的结果"""
-            agent_id = f"batch_{batch_idx}"
-            batch_results = []
-            batch_success = 0
-            batch_failure = 0
-            
-            # 每个批次创建独立的 LangGraph 批改智能体（避免并发状态冲突）
-            batch_reasoning_client = GeminiReasoningClient(api_key=api_key)
-            batch_grading_agent = GradingAgent(reasoning_client=batch_reasoning_client)
-            
-            # 更新批次状态为运行中
-            await broadcast_progress(batch_id, {
-                "type": "agent_update",
-                "agentId": agent_id,
-                "status": "running",
-                "message": f"正在批改第 {batch_idx + 1} 批（LangGraph 自我修正模式）...",
-                "logs": [f"开始处理批次 {batch_idx + 1}，共 {len(batch_images)} 页，使用 LangGraph Agent"]
-            })
-            
+async def broadcast_progress(batch_id: str, message: dict):
+    """向所有连接的 WebSocket 客户端广播进度"""
+    if batch_id in active_connections:
+        disconnected = []
+        for ws in active_connections[batch_id]:
             try:
-                # 批改当前批次的所有页面
-                for page_offset, page_image in enumerate(batch_images):
-                    page_index = batch_idx * BATCH_SIZE + page_offset
-                    
-                    try:
-                        # === 自我成长：批改前检索相似判例 ===
-                        similar_exemplars = []
-                        if exemplar_memory is not None:
-                            import hashlib
-                            page_hash = hashlib.md5(page_image).hexdigest()
-                            
-                            try:
-                                similar_exemplars = await exemplar_memory.retrieve_similar(
-                                    question_image_hash=page_hash,
-                                    question_type="general",
-                                    top_k=3,
-                                    min_similarity=0.7
-                                )
-                                logger.debug(f"页面 {page_index} 找到 {len(similar_exemplars)} 个相似判例")
-                            except Exception as ex:
-                                logger.warning(f"判例检索失败（继续批改）: {ex}")
-                        
-                        # === 自我成长：动态拼装提示词 ===
-                        if prompt_assembler is not None:
-                            try:
-                                assembled_prompt = prompt_assembler.assemble(
-                                    question_type="general",
-                                    rubric=rubric_context,
-                                    exemplars=similar_exemplars,
-                                    error_patterns=[],
-                                    previous_confidence=None,
-                                    calibration=calibration_profile
-                                )
-                                # 后续可将 assembled_prompt 传递给 GradingAgent
-                            except Exception as ex:
-                                logger.warning(f"提示词拼装失败（使用默认）: {ex}")
-                        
-                        # 将图像转换为 base64（LangGraph Agent 需要）
-                        import base64
-                        image_b64 = base64.b64encode(page_image).decode('utf-8')
-                        
-                        # 🚀 使用 LangGraph GradingAgent 批改（支持循环自我修正）
-                        thread_id = f"{batch_id}_page_{page_index}"
-                        grading_state = await batch_grading_agent.run(
-                            question_image=image_b64,
-                            rubric=rubric_context,
-                            max_score=parsed_rubric.total_score,
-                            standard_answer=None,
-                            thread_id=thread_id
-                        )
-                        
-                        # 从 LangGraph 状态提取结果
-                        final_score = grading_state.get("final_score", 0.0)
-                        max_score = grading_state.get("max_score", parsed_rubric.total_score)
-                        confidence = grading_state.get("confidence", 0.0)
-                        feedback = grading_state.get("student_feedback", "")
-                        revision_count = grading_state.get("revision_count", 0)
-                        
-                        # 构造兼容的结果对象
-                        class LangGraphResult:
-                            def __init__(self, state, page_idx):
-                                self.total_score = state.get("final_score", 0.0)
-                                self.max_total_score = state.get("max_score", 0.0)
-                                self.question_results = []
-                                # 创建单个题目结果
-                                class QuestionResult:
-                                    def __init__(self, state, page_idx):
-                                        self.question_id = f"q_{page_idx}"
-                                        self.awarded_score = state.get("final_score", 0.0)
-                                        self.max_score = state.get("max_score", 0.0)
-                                        self.confidence = state.get("confidence", 0.0)
-                                        self.overall_feedback = state.get("student_feedback", "")
-                                        self.is_correct = state.get("final_score", 0) > 0
-                                        self.scoring_point_results = []
-                                self.question_results.append(QuestionResult(state, page_idx))
-                        
-                        result = LangGraphResult(grading_state, page_index)
-                        
-                        # === 自我成长：记录批改日志 ===
-                        if grading_logger is not None:
-                            try:
-                                log_entry = GradingLog(
-                                    submission_id=batch_id,
-                                    question_id=f"q_{page_index}",
-                                    extracted_answer="",
-                                    extraction_confidence=confidence,
-                                    evidence_snippets=[],
-                                    normalized_answer=None,
-                                    normalization_rules_applied=[],
-                                    match_result=final_score > 0,
-                                    match_failure_reason=None,
-                                    score=final_score,
-                                    max_score=max_score,
-                                    confidence=confidence,
-                                    reasoning_trace=grading_state.get("reasoning_trace", [])
-                                )
-                                await grading_logger.log_grading(log_entry)
-                            except Exception as ex:
-                                logger.warning(f"批改日志记录失败: {ex}")
-                        
-                        batch_results.append({
-                            "page_index": page_index,
-                            "result": result,
-                            "question_ids": [f"q_{page_index}"],
-                            "success": True,
-                            "revision_count": revision_count  # 记录自我修正次数
-                        })
-                        batch_success += 1
-                        
-                        # 推送页面完成事件
-                        await broadcast_progress(batch_id, {
-                            "type": "page_complete",
-                            "pageIndex": page_index,
-                            "success": True,
-                            "score": final_score,
-                            "maxScore": max_score,
-                            "revisionCount": revision_count  # 前端可显示修正次数
-                        })
-                        
-                    except Exception as e:
-                        logger.error(f"页面 {page_index} 批改失败: {e}")
-                        batch_results.append({
-                            "page_index": page_index,
-                            "result": None,
-                            "question_ids": [],
-                            "success": False,
-                            "error": str(e)
-                        })
-                        batch_failure += 1
-                
-                # 更新批次进度
-                await broadcast_progress(batch_id, {
-                    "type": "agent_update",
-                    "agentId": agent_id,
-                    "status": "completed",
-                    "progress": 100,
-                    "message": f"批次 {batch_idx + 1} 完成",
-                    "logs": [f"批次 {batch_idx + 1} 处理完成"]
-                })
-                
-                # 推送批次完成事件
-                await broadcast_progress(batch_id, {
-                    "type": "batch_complete",
-                    "batchIndex": batch_idx,
-                    "totalBatches": total_batches,
-                    "successCount": batch_success,
-                    "failureCount": batch_failure
-                })
-                
-                return {
-                    "batch_idx": batch_idx,
-                    "results": batch_results,
-                    "success_count": batch_success,
-                    "failure_count": batch_failure,
-                    "status": "completed"
-                }
-                
+                await ws.send_json(message)
             except Exception as e:
-                logger.error(f"批次 {batch_idx} 处理失败: {e}")
-                await broadcast_progress(batch_id, {
-                    "type": "agent_update",
-                    "agentId": agent_id,
-                    "status": "failed",
-                    "message": f"批次失败: {str(e)}",
-                    "logs": [f"错误: {str(e)}"]
-                })
-                return {
-                    "batch_idx": batch_idx,
-                    "results": batch_results,
-                    "success_count": batch_success,
-                    "failure_count": batch_failure,
-                    "status": "failed",
-                    "error": str(e)
-                }
+                logger.error(f"WebSocket 发送失败: {e}")
+                disconnected.append(ws)
         
-        # 🚀 并行处理所有批次
-        logger.info(f"开始并行处理 {total_batches} 个批次...")
-        batch_tasks = [
-            process_single_batch(idx, batch_images) 
-            for idx, batch_images in enumerate(batches)
-        ]
-        batch_results_list = await asyncio.gather(*batch_tasks, return_exceptions=True)
-        
-        # 汇总所有批次的结果
-        for batch_result in batch_results_list:
-            if isinstance(batch_result, Exception):
-                logger.error(f"批次处理异常: {batch_result}")
-                continue
-            if isinstance(batch_result, dict):
-                all_page_results.extend(batch_result.get("results", []))
-                success_count += batch_result.get("success_count", 0)
-                failure_count += batch_result.get("failure_count", 0)
-        
-        # 按页面索引排序结果
-        all_page_results.sort(key=lambda x: x.get("page_index", 0))
-        
-        await broadcast_progress(batch_id, {
-            "type": "workflow_update",
-            "nodeId": "grading",
-            "status": "completed",
-            "message": f"固定分批批改完成：成功 {success_count} 页，失败 {failure_count} 页"
-        })
-        
-        # === Step 5: 批改后学生分割 (对应前端 segment 节点) ===
-        await broadcast_progress(batch_id, {
-            "type": "workflow_update",
-            "nodeId": "segment",
-            "status": "running",
-            "message": "正在基于批改结果分析学生边界..."
-        })
-        
-        # 基于题目序列循环检测学生边界
-        boundaries = []
-        current_start = 0
-        last_max_question = 0
-        student_count = 0
-        
-        for i, page_result in enumerate(all_page_results):
-            question_ids = page_result.get("question_ids", [])
-            if not question_ids:
-                continue
-            
-            try:
-                first_q = int(question_ids[0])
-                
-                # 检测循环：题目编号回退到较小值（如从 5 回到 1），说明换了学生
-                if first_q < last_max_question and first_q <= 2:
-                    if i > current_start:
-                        student_count += 1
-                        boundaries.append({
-                            "studentKey": f"学生{student_count}",
-                            "startPage": current_start,
-                            "endPage": i - 1,
-                            "confidence": 0.7,  # 基于循环检测的置信度较低
-                            "needsConfirmation": True
-                        })
-                    current_start = i
-                    last_max_question = first_q
-                else:
-                    for q_id in question_ids:
-                        try:
-                            q_num = int(q_id)
-                            last_max_question = max(last_max_question, q_num)
-                        except ValueError:
-                            pass
-            except (ValueError, IndexError):
-                pass
-        
-        # 添加最后一个学生
-        if current_start < len(all_page_results):
-            student_count += 1
-            boundaries.append({
-                "studentKey": f"学生{student_count}",
-                "startPage": current_start,
-                "endPage": len(all_page_results) - 1,
-                "confidence": 0.7,
-                "needsConfirmation": True
-            })
-        
-        num_students = len(boundaries)
-        
-        # 发送学生边界检测结果
-        await broadcast_progress(batch_id, {
-            "type": "student_identified",
-            "boundaries": boundaries
-        })
-        
-        await broadcast_progress(batch_id, {
-            "type": "workflow_update",
-            "nodeId": "segment",
-            "status": "completed",
-            "message": f"学生分割完成：检测到 {num_students} 名学生（基于题目序列循环）"
-        })
-        
-        # === Step 6: 按学生聚合结果 ===
-        all_results = []
-        for boundary in boundaries:
-            student_pages = [
-                pr for pr in all_page_results 
-                if pr["success"] and boundary["startPage"] <= pr["page_index"] <= boundary["endPage"]
-            ]
-            
-            total_score = sum(pr["result"].total_score for pr in student_pages if pr.get("result"))
-            max_score = sum(pr["result"].max_total_score for pr in student_pages if pr.get("result"))
-            
-            # 聚合所有页面的题目结果
-            student_question_results = []
-            for pr in student_pages:
-                if pr.get("result") and pr["result"].question_results:
-                    # 将 Pydantic 模型转换为字典
-                    q_results = [
-                        q.dict() if hasattr(q, "dict") else q 
-                        for q in pr["result"].question_results
-                    ]
-                    student_question_results.extend(q_results)
-            
-            # 按题目 ID 排序
-            try:
-                student_question_results.sort(key=lambda x: float(x.get("question_id", 0)) if isinstance(x, dict) else float(x.question_id))
-            except:
-                pass
-
-            all_results.append({
-                "studentName": boundary["studentKey"],
-                "total_score": total_score,
-                "max_score": max_score,
-                "page_range": (boundary["startPage"], boundary["endPage"]),
-                "questionResults": student_question_results
-            })
-        
-        # === Step 7: Review ===
-        await broadcast_progress(batch_id, {
-            "type": "workflow_update",
-            "nodeId": "review",
-            "status": "running",
-            "message": "正在汇总审核结果..."
-        })
-        await asyncio.sleep(0.5)
-        
-        # 计算统计信息
-        if all_results:
-            scores = [r["total_score"] for r in all_results]
-            avg_score = sum(scores) / len(scores) if scores else 0
-            max_total = all_results[0]["max_score"] if all_results else 100
-            
-            await broadcast_progress(batch_id, {
-                "type": "workflow_update",
-                "nodeId": "review",
-                "status": "completed",
-                "message": f"审核完成，平均分 {avg_score:.1f}/{max_total}"
-            })
-        else:
-            await broadcast_progress(batch_id, {
-                "type": "workflow_update",
-                "nodeId": "review",
-                "status": "completed",
-                "message": "审核完成"
-            })
-        
-        # === Step 8: Export ===
-        await broadcast_progress(batch_id, {
-            "type": "workflow_update",
-            "nodeId": "export",
-            "status": "running",
-            "message": "正在导出结果..."
-        })
-        await asyncio.sleep(0.3)
-        await broadcast_progress(batch_id, {
-            "type": "workflow_update",
-            "nodeId": "export",
-            "status": "completed",
-            "message": "导出完成"
-        })
-        
-        # 工作流完成，发送最终结果
-        await broadcast_progress(batch_id, {
-            "type": "workflow_completed",
-            "message": f"批改工作流完成，共处理 {num_students} 名学生",
-            "results": [
-                {
-                    "studentName": r["studentName"],
-                    "score": r["total_score"],
-                    "maxScore": r["max_score"],
-                    "questionResults": [
-                        {
-                            "questionId": str(q.get("question_id")) if isinstance(q, dict) else str(q.question_id),
-                            "score": q.get("awarded_score") if isinstance(q, dict) else q.awarded_score,
-                            "maxScore": q.get("max_score") if isinstance(q, dict) else q.max_score,
-                            "feedback": q.get("overall_feedback") if isinstance(q, dict) else q.overall_feedback,
-                            "scoringPoints": [
-                                {
-                                    "description": sp.get("description") if isinstance(sp, dict) else sp.description,
-                                    "score": sp.get("awarded_score") if isinstance(sp, dict) else sp.awarded_score,
-                                    "maxScore": sp.get("max_score") if isinstance(sp, dict) else sp.max_score,
-                                    "isCorrect": sp.get("is_correct") if isinstance(sp, dict) else sp.is_correct,
-                                    "explanation": sp.get("explanation") if isinstance(sp, dict) else sp.explanation
-                                }
-                                for sp in (q.get("scoring_point_results") if isinstance(q, dict) else q.scoring_point_results) or []
-                            ] if (q.get("scoring_point_results") if isinstance(q, dict) else q.scoring_point_results) else []
-                        }
-                        for q in r["questionResults"]
-                    ]
-                } for r in all_results
-            ]
-        })
-        
-    except Exception as e:
-        logger.error(f"批改工作流失败: {str(e)}", exc_info=True)
-        await broadcast_progress(batch_id, {
-            "type": "workflow_error",
-            "message": f"批改失败: {str(e)}"
-        })
+        # 移除断开的连接
+        for ws in disconnected:
+            active_connections[batch_id].remove(ws)
 
 
 @router.post("/submit", response_model=BatchSubmissionResponse)
@@ -661,42 +111,19 @@ async def submit_batch(
     rubrics: List[UploadFile] = File(..., description="评分标准 PDF"),
     files: List[UploadFile] = File(..., description="学生作答 PDF"),
     api_key: Optional[str] = Form(None, description="Gemini API Key"),
-    auto_identify: bool = Form(True, description="是否自动识别学生身份")
+    auto_identify: bool = Form(True, description="是否自动识别学生身份"),
+    orchestrator: Orchestrator = Depends(get_orchestrator)
 ):
-    """
-    批量提交试卷并进行批改
-    
-    支持上传包含多个学生作业的文件（如整班扫描的 PDF），
-    系统会自动识别每页所属的学生并分别批改。
-    
-    Args:
-        exam_id: 考试 ID
-        rubric_file: 评分标准 PDF 文件
-        answer_file: 学生作答 PDF 文件
-        api_key: Gemini API Key
-        auto_identify: 是否启用自动学生识别（默认开启）
-        
-    Returns:
-        BatchSubmissionResponse: 批次信息
-    """
-
+    """批量提交试卷并进行批改（使用 LangGraph Orchestrator）"""
     if not api_key:
         api_key = os.getenv("GEMINI_API_KEY")
-        # Allow request even without API key for testing
-        # if not api_key:
-        #     raise HTTPException(status_code=400, detail="API Key not provided and GEMINI_API_KEY env var not set")
 
     if not exam_id:
         exam_id = str(uuid.uuid4())
 
     batch_id = str(uuid.uuid4())
     
-    logger.info(
-        f"收到批量提交: "
-        f"batch_id={batch_id}, "
-        f"exam_id={exam_id}, "
-        f"auto_identify={auto_identify}"
-    )
+    logger.info(f"收到批量提交（LangGraph）: batch_id={batch_id}, exam_id={exam_id}")
     
     temp_dir = None
     try:
@@ -704,7 +131,7 @@ async def submit_batch(
         temp_dir = tempfile.mkdtemp()
         temp_path = Path(temp_dir)
         
-        # 保存上传的文件 (Taking the first file from the list for now)
+        # 保存上传的文件
         rubric_path = temp_path / "rubric.pdf"
         answer_path = temp_path / "answer.pdf"
         
@@ -716,312 +143,634 @@ async def submit_batch(
         with open(answer_path, "wb") as f:
             f.write(answer_content)
         
-        # 转换 PDF 为图像
-        logger.info(f"转换 PDF 为图像: batch_id={batch_id}")
+        # 转换 PDF 为图像（降低分辨率以提高性能）
+        logger.info(f"开始转换 PDF 为图像: batch_id={batch_id}")
+        logger.info(f"  评分标准文件大小: {len(rubric_content)} bytes")
+        logger.info(f"  学生作答文件大小: {len(answer_content)} bytes")
+        
         loop = asyncio.get_event_loop()
-        rubric_images = await loop.run_in_executor(None, _pdf_to_images, str(rubric_path), 150)
-        answer_images = await loop.run_in_executor(None, _pdf_to_images, str(answer_path), 150)
+        
+        # 转换评分标准（使用 72 DPI 以减少数据量）
+        logger.info(f"  开始转换评分标准 PDF...")
+        try:
+            rubric_images = await asyncio.wait_for(
+                loop.run_in_executor(None, _pdf_to_images, str(rubric_path), 72),
+                timeout=120.0  # 2分钟超时
+            )
+            logger.info(f"  ✓ 评分标准转换完成: {len(rubric_images)} 页")
+        except asyncio.TimeoutError:
+            logger.error(f"  ✗ 评分标准转换超时")
+            raise HTTPException(status_code=504, detail="评分标准 PDF 转换超时")
+        
+        # 转换学生作答
+        logger.info(f"  开始转换学生作答 PDF...")
+        try:
+            answer_images = await asyncio.wait_for(
+                loop.run_in_executor(None, _pdf_to_images, str(answer_path), 72),
+                timeout=180.0  # 3分钟超时
+            )
+            logger.info(f"  ✓ 学生作答转换完成: {len(answer_images)} 页")
+        except asyncio.TimeoutError:
+            logger.error(f"  ✗ 学生作答转换超时")
+            raise HTTPException(status_code=504, detail="学生作答 PDF 转换超时")
         
         total_pages = len(answer_images)
         
-        logger.info(
-            f"PDF 转换完成: "
-            f"batch_id={batch_id}, "
-            f"rubric_pages={len(rubric_images)}, "
-            f"answer_pages={total_pages}"
+        logger.info(f"PDF 转换全部完成: batch_id={batch_id}, rubric_pages={len(rubric_images)}, answer_pages={total_pages}")
+        
+        # 初始化批次状态
+        batch_states[batch_id] = {
+            "total_pages": total_pages,
+            "rubric_pages": len(rubric_images),
+            "grading_results": [],
+            "parsed_rubric": None,
+            "student_results": []
+        }
+        
+        # 使用 LangGraph Orchestrator 启动批改流程
+        logger.info(f"准备启动 LangGraph 批改流程: batch_id={batch_id}")
+        logger.info(f"  Payload 包含: rubric_images={len(rubric_images)}页, answer_images={len(answer_images)}页")
+        
+        payload = {
+            "batch_id": batch_id,
+            "exam_id": exam_id,
+            "pdf_path": str(answer_path),
+            "rubric_images": rubric_images,
+            "answer_images": answer_images,
+            "api_key": api_key,
+            "inputs": {
+                "pdf_path": str(answer_path),
+                "rubric": "",
+                "auto_identify": auto_identify
+            }
+        }
+        
+        logger.info(f"调用 orchestrator.start_run...")
+        run_id = await orchestrator.start_run(
+            graph_name="batch_grading",
+            payload=payload,
+            idempotency_key=batch_id
         )
         
-        # 估算时间：每页 30 秒
-        estimated_time = total_pages * 30
+        logger.info(f"✓ LangGraph 批改流程已启动: batch_id={batch_id}, run_id={run_id}")
         
-        # 启动后台真实批改任务
-        asyncio.create_task(run_real_grading_workflow(
-            batch_id=batch_id,
-            rubric_images=rubric_images,
-            answer_images=answer_images,
-            api_key=api_key or ""
-        ))
+        # 启动后台任务监听进度（原有的事件流方式）
+        logger.info(f"准备启动后台任务: stream_langgraph_progress")
+        task = asyncio.create_task(
+            stream_langgraph_progress(
+                batch_id=batch_id,
+                run_id=run_id,
+                orchestrator=orchestrator,
+                total_pages=total_pages
+            )
+        )
+        logger.info(f"后台任务已创建: task={task}")
         
-        # 返回响应
+        # 启动备用的轮询保存任务（确保结果不丢失）
+        asyncio.create_task(
+            poll_and_save_results(
+                batch_id=batch_id,
+                run_id=run_id,
+                orchestrator=orchestrator
+            )
+        )
+        
         return BatchSubmissionResponse(
             batch_id=batch_id,
             status=SubmissionStatus.UPLOADED,
             total_pages=total_pages,
-            estimated_completion_time=estimated_time
+            estimated_completion_time=total_pages * 3
         )
         
     except Exception as e:
         logger.error(f"批量提交失败: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        # 不清理临时文件，让后台任务使用（后台任务会清理）
-        pass
+        raise HTTPException(status_code=500, detail=f"批量提交失败: {str(e)}")
 
 
-@router.get("/status/{batch_id}", response_model=BatchStatusResponse)
-async def get_batch_status(batch_id: str):
-    """
-    查询批量批改状态
-    
-    Args:
-        batch_id: 批次 ID
-        
-    Returns:
-        BatchStatusResponse: 批次状态和进度
-    """
-    # TODO: 从 Temporal 查询工作流状态
-    # handle = temporal_client.get_workflow_handle(f"batch_{batch_id}")
-    # progress = await handle.query(BatchGradingWorkflow.get_progress)
-    
-    return BatchStatusResponse(
-        batch_id=batch_id,
-        exam_id="",
-        status="processing",
-        total_students=0,
-        completed_students=0,
-        unidentified_pages=0
-    )
-
-
-@router.get("/results/{batch_id}")
-async def get_batch_results(batch_id: str):
-    """
-    获取批量批改结果
-    
-    返回每个学生的批改结果汇总。
-    
-    Args:
-        batch_id: 批次 ID
-        
-    Returns:
-        dict: 包含所有学生批改结果的字典
-    """
-    # TODO: 从数据库或 Temporal 获取结果
-    return {
-        "batch_id": batch_id,
-        "students": []
-    }
-
-
-@router.post("/grade-sync")
-async def grade_batch_sync(
-    rubric_file: UploadFile = File(..., description="评分标准 PDF"),
-    answer_file: UploadFile = File(..., description="学生作答 PDF"),
-    api_key: Optional[str] = Form(None, description="Gemini API Key"),
-    total_score: int = Form(105, description="总分"),
-    total_questions: int = Form(19, description="总题数")
+async def poll_and_save_results(
+    batch_id: str,
+    run_id: str,
+    orchestrator: Orchestrator,
+    poll_interval: float = 5.0,
+    max_wait_time: float = 1800.0  # 30分钟超时
 ):
     """
-    同步批改（用于测试）
+    轮询并保存批改结果（备用方案）
     
-    完整的批改流程：
-    1. 解析评分标准
-    2. 识别学生边界
-    3. 逐题批改
-    4. 返回详细结果
+    这个函数会定期检查工作流程状态，一旦完成就从 orchestrator 获取最终输出并保存到 batch_states。
+    这是一个更可靠的方式，不依赖事件流。
     
     Args:
-        rubric_file: 评分标准 PDF
-        answer_file: 学生作答 PDF
-        api_key: Gemini API Key
-        total_score: 总分
-        total_questions: 总题数
-        
-    Returns:
-        dict: 包含所有学生的批改结果
+        batch_id: 批次 ID
+        run_id: 运行 ID
+        orchestrator: 编排器
+        poll_interval: 轮询间隔（秒）
+        max_wait_time: 最大等待时间（秒）
     """
+    print(f"[poll_and_save_results] 开始轮询: batch_id={batch_id}, run_id={run_id}")
+    logger.info(f"[poll_and_save_results] 开始轮询: batch_id={batch_id}, run_id={run_id}")
+    
+    start_time = asyncio.get_event_loop().time()
+    
+    while True:
+        try:
+            elapsed = asyncio.get_event_loop().time() - start_time
+            
+            # 超时检查
+            if elapsed > max_wait_time:
+                print(f"[poll_and_save_results] 超时: batch_id={batch_id}, elapsed={elapsed:.1f}s")
+                logger.warning(f"[poll_and_save_results] 超时: batch_id={batch_id}, elapsed={elapsed:.1f}s")
+                break
+            
+            # 获取状态
+            status = await orchestrator.get_status(run_id)
+            current_status = status.status.value
+            
+            print(f"[poll_and_save_results] 状态: {current_status}, elapsed={elapsed:.1f}s")
+            
+            # 检查是否完成
+            if current_status == "completed":
+                print(f"[poll_and_save_results] 工作流程完成，获取最终输出...")
+                logger.info(f"[poll_and_save_results] 工作流程完成: batch_id={batch_id}")
+                
+                # 获取最终输出
+                final_output = await orchestrator.get_final_output(run_id)
+                
+                if final_output:
+                    print(f"[poll_and_save_results] 获取到最终输出: keys={list(final_output.keys())}")
+                    logger.info(f"[poll_and_save_results] 获取到最终输出: batch_id={batch_id}, keys={list(final_output.keys())}")
+                    
+                    # 保存到 batch_states
+                    batch_states[batch_id] = {
+                        **batch_states.get(batch_id, {}),
+                        "status": "completed",
+                        "final_state": final_output,
+                        "grading_results": final_output.get("grading_results", []),
+                        "student_results": final_output.get("student_results", []),
+                        "parsed_rubric": final_output.get("parsed_rubric"),
+                        "export_data": final_output.get("export_data"),
+                        "completed_at": datetime.now().isoformat()
+                    }
+                    
+                    print(f"[poll_and_save_results] 结果已保存到 batch_states: batch_id={batch_id}")
+                    logger.info(f"[poll_and_save_results] 结果已保存: batch_id={batch_id}")
+                else:
+                    print(f"[poll_and_save_results] 警告：未获取到最终输出")
+                    logger.warning(f"[poll_and_save_results] 未获取到最终输出: batch_id={batch_id}")
+                
+                break
+                
+            elif current_status in ["failed", "cancelled"]:
+                print(f"[poll_and_save_results] 工作流程失败或取消: {current_status}")
+                logger.warning(f"[poll_and_save_results] 工作流程 {current_status}: batch_id={batch_id}")
+                
+                batch_states[batch_id] = {
+                    **batch_states.get(batch_id, {}),
+                    "status": current_status,
+                    "error": status.error,
+                    "completed_at": datetime.now().isoformat()
+                }
+                break
+            
+            # 等待下一次轮询
+            await asyncio.sleep(poll_interval)
+            
+        except Exception as e:
+            print(f"[poll_and_save_results] 轮询异常: {e}")
+            logger.error(f"[poll_and_save_results] 轮询异常: batch_id={batch_id}, error={e}")
+            await asyncio.sleep(poll_interval)
+    
+    print(f"[poll_and_save_results] 轮询结束: batch_id={batch_id}")
+    logger.info(f"[poll_and_save_results] 轮询结束: batch_id={batch_id}")
 
-    if not api_key:
-        api_key = os.getenv("GEMINI_API_KEY")
-        if not api_key:
-            raise HTTPException(status_code=400, detail="API Key not provided and GEMINI_API_KEY env var not set")
 
-    temp_dir = None
+async def stream_langgraph_progress(
+    batch_id: str,
+    run_id: str,
+    orchestrator: Orchestrator,
+    total_pages: int
+):
+    """
+    流式监听 LangGraph 执行进度并推送到 WebSocket
+    
+    关键改进：
+    1. 累积所有节点的输出状态
+    2. 发送详细的节点输出到前端
+    3. 正确处理批次进度
+    """
+    logger.info(f"开始流式监听 LangGraph 进度: batch_id={batch_id}, run_id={run_id}")
+    
+    # 累积状态
+    accumulated_state = batch_states.get(batch_id, {})
+    grading_results = []
+    completed_batches = set()
+    
     try:
-        # 创建临时目录
-        temp_dir = tempfile.mkdtemp()
-        temp_path = Path(temp_dir)
-        
-        # 保存上传的文件
-        rubric_path = temp_path / "rubric.pdf"
-        answer_path = temp_path / "answer.pdf"
-        
-        rubric_content = await rubric_file.read()
-        answer_content = await answer_file.read()
-        
-        with open(rubric_path, "wb") as f:
-            f.write(rubric_content)
-        with open(answer_path, "wb") as f:
-            f.write(answer_content)
-        
-        # 转换 PDF 为图像
-        logger.info("转换 PDF 为图像...")
-        rubric_images = _pdf_to_images(str(rubric_path), dpi=150)
-        answer_images = _pdf_to_images(str(answer_path), dpi=150)
-        
-        logger.info(
-            f"PDF 转换完成: "
-            f"rubric_pages={len(rubric_images)}, "
-            f"answer_pages={len(answer_images)}"
-        )
-        
-        # ===== 步骤 1: 解析评分标准 =====
-        logger.info("解析评分标准...")
-        rubric_parser = RubricParserService(api_key=api_key)
-        parsed_rubric = await rubric_parser.parse_rubric(
-            rubric_images,
-            expected_total_score=total_score
-        )
-        
-        logger.info(
-            f"评分标准解析完成: "
-            f"题目数={parsed_rubric.total_questions}, "
-            f"总分={parsed_rubric.total_score}"
-        )
-        
-        rubric_context = rubric_parser.format_rubric_context(parsed_rubric)
-        
-        # ===== 步骤 2: 识别学生边界 =====
-        logger.info("识别学生边界...")
-        id_service = StudentIdentificationService(api_key=api_key)
-        segmentation_result = await id_service.segment_batch_document(answer_images)
-        student_groups = id_service.group_pages_by_student(segmentation_result)
-        
-        logger.info(f"识别到 {len(student_groups)} 名学生")
-        
-        # ===== 步骤 3: 批改每个学生 =====
-        logger.info("开始批改...")
-        grading_service = StrictGradingService(api_key=api_key)
-        all_results = []
-        
-        for idx, (student_key, page_indices) in enumerate(student_groups.items(), 1):
-            logger.info(f"正在批改 {student_key}...")
+        async for event in orchestrator.stream_run(run_id):
+            event_type = event.get("type")
+            node_name = event.get("node")
+            data = event.get("data", {})
             
-            # 推送进度
-            await broadcast_progress(
-                batch_id,
-                {
-                    "type": "progress",
-                    "stage": "grading",
-                    "current_student": idx,
-                    "total_students": len(student_groups),
-                    "student_name": student_key,
-                    "percentage": int(idx / len(student_groups) * 100)
+            logger.info(f"[stream_langgraph_progress] 事件: batch_id={batch_id}, type={event_type}, node={node_name}")
+            
+            # ========== 节点开始 ==========
+            if event_type == "node_start":
+                frontend_node = _map_node_to_frontend(node_name)
+                await broadcast_progress(batch_id, {
+                    "type": "workflow_update",
+                    "nodeId": frontend_node,
+                    "status": "running",
+                    "message": f"正在执行 {_get_node_label(node_name)}..."
+                })
+            
+            # ========== 节点结束 ==========
+            elif event_type == "node_end":
+                frontend_node = _map_node_to_frontend(node_name)
+                output = data.get("output", {})
+                
+                # 发送节点完成状态
+                await broadcast_progress(batch_id, {
+                    "type": "workflow_update",
+                    "nodeId": frontend_node,
+                    "status": "completed",
+                    "message": f"{_get_node_label(node_name)} 完成"
+                })
+                
+                # 根据节点类型发送详细输出
+                await _handle_node_output(batch_id, node_name, output, accumulated_state)
+            
+            # ========== 状态更新 ==========
+            elif event_type == "state_update":
+                state = data.get("state", {})
+                
+                # 更新累积状态
+                for key, value in state.items():
+                    if key == "grading_results" and isinstance(value, list):
+                        # 批改结果：追加并去重
+                        for r in value:
+                            page_idx = r.get("page_index")
+                            if page_idx is not None:
+                                # 检查是否已存在
+                                existing = next((x for x in grading_results if x.get("page_index") == page_idx), None)
+                                if not existing:
+                                    grading_results.append(r)
+                                    
+                                    # 发送单页批改完成消息
+                                    await broadcast_progress(batch_id, {
+                                        "type": "page_graded",
+                                        "pageIndex": page_idx,
+                                        "score": r.get("score", 0),
+                                        "maxScore": r.get("max_score", 10),
+                                        "feedback": r.get("feedback", ""),
+                                        "questionNumbers": r.get("question_numbers", []),
+                                        "questionDetails": r.get("question_details", [])
+                                    })
+                        
+                        # 更新批改进度
+                        completed_count = len(grading_results)
+                        await broadcast_progress(batch_id, {
+                            "type": "grading_progress",
+                            "completedPages": completed_count,
+                            "totalPages": total_pages,
+                            "percentage": round(completed_count / total_pages * 100, 1) if total_pages > 0 else 0
+                        })
+                    else:
+                        accumulated_state[key] = value
+                
+                # 处理特定状态更新
+                if "parsed_rubric" in state and state["parsed_rubric"]:
+                    await _send_rubric_parsed(batch_id, state["parsed_rubric"])
+                
+                if "student_results" in state and state["student_results"]:
+                    accumulated_state["student_results"] = state["student_results"]
+            
+            # ========== 错误 ==========
+            elif event_type == "error":
+                await broadcast_progress(batch_id, {
+                    "type": "workflow_error",
+                    "message": data.get("error", "Unknown error")
+                })
+            
+            # ========== 完成 ==========
+            elif event_type == "completed":
+                final_state = data.get("state", {})
+                
+                # 合并最终状态
+                if final_state:
+                    for key, value in final_state.items():
+                        if key not in accumulated_state or value:
+                            accumulated_state[key] = value
+                
+                # 确保 grading_results 被包含
+                if grading_results:
+                    accumulated_state["grading_results"] = grading_results
+                
+                # 获取最终结果
+                student_results = accumulated_state.get("student_results", [])
+                export_data = accumulated_state.get("export_data", {})
+                
+                if export_data and export_data.get("students"):
+                    student_results = export_data["students"]
+                
+                # 计算总分
+                total_score = 0
+                max_total_score = 0
+                for r in grading_results:
+                    if r.get("status") == "completed":
+                        total_score += r.get("score", 0)
+                        max_total_score += r.get("max_score", 0)
+                
+                logger.info(
+                    f"工作流完成: batch_id={batch_id}, "
+                    f"学生数={len(student_results)}, "
+                    f"总分={total_score}/{max_total_score}"
+                )
+                
+                # 保存最终状态到 batch_states（用于后续查询）
+                logger.info(f"[stream_langgraph_progress] 保存最终状态到 batch_states: batch_id={batch_id}")
+                logger.info(f"  accumulated_state keys: {list(accumulated_state.keys())}")
+                logger.info(f"  grading_results count: {len(grading_results)}")
+                logger.info(f"  student_results count: {len(student_results)}")
+                
+                batch_states[batch_id] = {
+                    **batch_states.get(batch_id, {}),
+                    "status": "completed",
+                    "final_state": accumulated_state,
+                    "grading_results": grading_results,
+                    "student_results": student_results,
+                    "export_data": export_data,
+                    "total_score": total_score,
+                    "max_total_score": max_total_score,
+                    "completed_at": datetime.now().isoformat()
                 }
-            )
-            
-            # 获取该学生的页面
-            student_pages = [answer_images[i] for i in page_indices]
-            
-            # 批改
-            result = await grading_service.grade_student(
-                student_pages=student_pages,
-                rubric=parsed_rubric,
-                rubric_context=rubric_context,
-                student_name=student_key
-            )
-            result.page_range = (min(page_indices), max(page_indices))
-            all_results.append(result)
-            
-            logger.info(
-                f"{student_key} 批改完成: "
-                f"{result.total_score}/{result.max_total_score} 分"
-            )
+                
+                logger.info(f"[stream_langgraph_progress] batch_states 已更新，当前 keys: {list(batch_states[batch_id].keys())}")
+                
+                # 发送完成消息
+                await broadcast_progress(batch_id, {
+                    "type": "workflow_completed",
+                    "message": f"批改完成",
+                    "summary": {
+                        "totalPages": total_pages,
+                        "gradedPages": len(grading_results),
+                        "totalScore": total_score,
+                        "maxTotalScore": max_total_score,
+                        "studentCount": len(student_results)
+                    },
+                    "results": _format_results_for_frontend(student_results, grading_results),
+                    "gradingDetails": _format_grading_details(grading_results)
+                })
         
-        # ===== 步骤 4: 格式化结果 =====
-        # 推送完成通知
-        await broadcast_progress(
-            batch_id,
-            {
-                "type": "progress",
-                "stage": "formatting",
-                "percentage": 95
-            }
-        )
-        
-        response_data = {
-            "status": "completed",
-            "total_students": len(all_results),
-            "students": []
-        }
-        
-        for result in all_results:
-            student_data = {
-                "name": result.student_name,
-                "page_range": {
-                    "start": result.page_range[0] + 1,
-                    "end": result.page_range[1] + 1
-                },
-                "total_score": result.total_score,
-                "max_score": result.max_total_score,
-                "percentage": round(result.total_score / result.max_total_score * 100, 1),
-                "questions_graded": len(result.question_results),
-                "details": []
-            }
-            
-            # 添加每题的详细结果
-            for q_result in result.question_results:
-                question_detail = {
-                    "question_id": q_result.question_id,
-                    "score": q_result.awarded_score,
-                    "max_score": q_result.max_score,
-                    "scoring_point_results": [
-                        {
-                            "description": sp.description,
-                            "max_score": sp.max_score,
-                            "awarded_score": sp.awarded_score,
-                            "is_correct": sp.is_correct,
-                            "explanation": sp.explanation
-                        }
-                        for sp in q_result.scoring_point_results
-                    ],
-                    "used_alternative_solution": q_result.used_alternative_solution,
-                    "confidence": q_result.confidence
-                }
-                student_data["details"].append(question_detail)
-            
-            response_data["students"].append(student_data)
-        
-        # 推送完成通知
-        await broadcast_progress(
-            batch_id,
-            {
-                "type": "completed",
-                "percentage": 100,
-                "total_students": len(all_results),
-                "message": "批改完成"
-            }
-        )
-        
-        return response_data
+        logger.info(f"LangGraph 进度流式传输完成: batch_id={batch_id}")
         
     except Exception as e:
-        logger.error(f"批改失败: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"流式传输失败: batch_id={batch_id}, error={str(e)}", exc_info=True)
+        await broadcast_progress(batch_id, {
+            "type": "workflow_error",
+            "message": f"流式传输失败: {str(e)}"
+        })
     finally:
-        # 清理临时文件
-        if temp_dir:
-            import shutil
-            try:
-                shutil.rmtree(temp_dir)
-            except Exception as e:
-                logger.warning(f"清理临时文件失败: {str(e)}")
+        # 保留批次状态以供后续查询
+        # 注意：在生产环境中，应该将结果持久化到数据库，然后清理内存
+        logger.info(f"保留批次状态以供查询: batch_id={batch_id}")
+        # batch_states.pop(batch_id, None)  # 暂时不删除，以便查询结果
 
 
-
-# ==================== WebSocket 实时推送 ====================
-
-@router.websocket("/ws/{batch_id}")
-async def websocket_batch_progress(websocket: WebSocket, batch_id: str):
-    """
-    WebSocket 实时推送批改进度
+async def _handle_node_output(
+    batch_id: str,
+    node_name: str,
+    output: Dict[str, Any],
+    accumulated_state: Dict[str, Any]
+):
+    """处理节点输出并发送到前端"""
     
-    客户端连接后，系统会实时推送以下事件：
-    - "progress": 批改进度更新
-    - "completed": 批改完成
-    - "error": 批改出错
+    if node_name == "rubric_parse":
+        # 评分标准解析完成
+        parsed_rubric = output.get("parsed_rubric")
+        if parsed_rubric:
+            accumulated_state["parsed_rubric"] = parsed_rubric
+            await _send_rubric_parsed(batch_id, parsed_rubric)
+    
+    elif node_name == "grade_batch":
+        # 批次批改完成
+        batch_results = output.get("grading_results", [])
+        if batch_results:
+            # 发送批次完成消息
+            batch_scores = [r.get("score", 0) for r in batch_results if r.get("status") == "completed"]
+            await broadcast_progress(batch_id, {
+                "type": "batch_completed",
+                "batchSize": len(batch_results),
+                "successCount": len(batch_scores),
+                "totalScore": sum(batch_scores),
+                "pages": [r.get("page_index") for r in batch_results]
+            })
+    
+    elif node_name == "segment":
+        # 学生分割完成
+        student_results = output.get("student_results", [])
+        student_boundaries = output.get("student_boundaries", [])
+        if student_results:
+            accumulated_state["student_results"] = student_results
+            await broadcast_progress(batch_id, {
+                "type": "students_identified",
+                "studentCount": len(student_results),
+                "students": [
+                    {
+                        "studentKey": s.get("student_key", "Unknown"),
+                        "startPage": s.get("start_page", 0),
+                        "endPage": s.get("end_page", 0),
+                        "totalScore": s.get("total_score", 0),
+                        "maxScore": s.get("max_total_score", 0),
+                        "confidence": s.get("confidence", 0)
+                    }
+                    for s in student_results
+                ]
+            })
+    
+    elif node_name == "review":
+        # 审核完成
+        review_summary = output.get("review_summary", {})
+        if review_summary:
+            await broadcast_progress(batch_id, {
+                "type": "review_completed",
+                "summary": review_summary
+            })
+    
+    elif node_name == "export":
+        # 导出完成
+        export_data = output.get("export_data", {})
+        if export_data:
+            accumulated_state["export_data"] = export_data
+
+
+async def _send_rubric_parsed(batch_id: str, parsed_rubric: Dict[str, Any]):
+    """发送评分标准解析结果"""
+    questions = parsed_rubric.get("questions", [])
+    
+    await broadcast_progress(batch_id, {
+        "type": "rubric_parsed",
+        "totalQuestions": parsed_rubric.get("total_questions", len(questions)),
+        "totalScore": parsed_rubric.get("total_score", 0),
+        "questions": [
+            {
+                "id": q.get("id", ""),
+                "maxScore": q.get("max_score", 0),
+                "criteria": q.get("criteria", []),
+                "answerSummary": q.get("answer_summary", "")
+            }
+            for q in questions
+        ]
+    })
+
+
+def _format_results_for_frontend(
+    student_results: List[Dict[str, Any]],
+    grading_results: List[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    """格式化结果供前端显示
     
     Args:
+        student_results: 学生结果列表
+        grading_results: 批改结果列表
+        
+    Returns:
+        前端格式的结果列表
+    """
+    if student_results:
+        # 有学生分割结果
+        return [
+            {
+                "studentName": s.get("student_key", "未知学生"),
+                "score": s.get("total_score", 0),
+                "maxScore": s.get("max_total_score", 0),
+                "percentage": round(
+                    s.get("total_score", 0) / s.get("max_total_score", 1) * 100, 1
+                ) if s.get("max_total_score", 0) > 0 else 0,
+                "startPage": s.get("start_page", 0),
+                "endPage": s.get("end_page", 0),
+                "confidence": s.get("confidence", 0),
+                "needsConfirmation": s.get("needs_confirmation", False),
+                "questionResults": [
+                    {
+                        "questionId": r.get("question_id", f"Q{r.get('page_index', 0)}"),
+                        "pageIndex": r.get("page_index", 0),
+                        "score": r.get("score", 0),
+                        "maxScore": r.get("max_score", 0),
+                        "feedback": r.get("feedback", ""),
+                        "questionNumbers": r.get("question_numbers", []),
+                        "questionDetails": r.get("question_details", [])
+                    }
+                    for r in s.get("page_results", [])
+                    if r.get("status") == "completed"
+                ]
+            }
+            for s in student_results
+        ]
+    else:
+        # 没有学生分割，按页面返回
+        total_score = sum(r.get("score", 0) for r in grading_results if r.get("status") == "completed")
+        max_score = sum(r.get("max_score", 0) for r in grading_results if r.get("status") == "completed")
+        
+        return [{
+            "studentName": "全部页面",
+            "score": total_score,
+            "maxScore": max_score,
+            "percentage": round(total_score / max_score * 100, 1) if max_score > 0 else 0,
+            "questionResults": [
+                {
+                    "questionId": r.get("question_id", f"Q{r.get('page_index', 0)}"),
+                    "pageIndex": r.get("page_index", 0),
+                    "score": r.get("score", 0),
+                    "maxScore": r.get("max_score", 0),
+                    "feedback": r.get("feedback", ""),
+                    "questionNumbers": r.get("question_numbers", []),
+                    "questionDetails": r.get("question_details", [])
+                }
+                for r in grading_results
+                if r.get("status") == "completed"
+            ]
+        }]
+
+
+def _format_grading_details(grading_results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """格式化详细批改结果
+    
+    Args:
+        grading_results: 批改结果列表
+        
+    Returns:
+        详细批改结果列表
+    """
+    return [
+        {
+            "pageIndex": r.get("page_index", 0),
+            "status": r.get("status", "unknown"),
+            "score": r.get("score", 0),
+            "maxScore": r.get("max_score", 0),
+            "confidence": r.get("confidence", 0),
+            "feedback": r.get("feedback", ""),
+            "questionNumbers": r.get("question_numbers", []),
+            "questionDetails": r.get("question_details", []),
+            "pageSummary": r.get("page_summary", ""),
+            "studentInfo": r.get("student_info"),
+            "error": r.get("error") if r.get("status") == "failed" else None
+        }
+        for r in sorted(grading_results, key=lambda x: x.get("page_index", 0))
+    ]
+
+
+def _get_node_label(node_name: str) -> str:
+    """获取节点的中文标签
+    
+    Args:
+        node_name: 节点名称
+        
+    Returns:
+        中文标签
+    """
+    labels = {
+        "intake": "接收文件",
+        "preprocess": "图像预处理",
+        "rubric_parse": "解析评分标准",
+        "grade_batch": "批量批改",
+        "grading_fanout_router": "批改任务分发",
+        "segment": "学生分割",
+        "review": "结果审核",
+        "export": "导出结果"
+    }
+    return labels.get(node_name, node_name)
+
+
+def _map_node_to_frontend(node_name: str) -> str:
+    """将后端节点名称映射到前端节点 ID
+    
+    Args:
+        node_name: 后端节点名称
+        
+    Returns:
+        前端节点 ID
+    """
+    mapping = {
+        "intake": "intake",
+        "preprocess": "preprocess",
+        "rubric_parse": "rubric_parse",
+        "grade_batch": "grading",
+        "grading_fanout_router": "grading",  # 扇出路由也映射到 grading
+        "segment": "segment",
+        "review": "review",
+        "export": "export"
+    }
+    return mapping.get(node_name, node_name)
+
+
+# ==================== WebSocket 端点 ====================
+
+@router.websocket("/ws/{batch_id}")
+async def websocket_endpoint(websocket: WebSocket, batch_id: str):
+    """WebSocket 端点，用于实时推送批改进度
+    
+    Args:
+        websocket: WebSocket 连接
         batch_id: 批次 ID
     """
     await websocket.accept()
@@ -1034,321 +783,132 @@ async def websocket_batch_progress(websocket: WebSocket, batch_id: str):
     logger.info(f"WebSocket 连接已建立: batch_id={batch_id}")
     
     try:
-        # 保持连接打开，等待客户端消息
+        # 发送连接确认
+        await websocket.send_json({
+            "type": "connected",
+            "message": f"已连接到批次 {batch_id}"
+        })
+        
+        # 保持连接，等待客户端消息或断开
         while True:
-            data = await websocket.receive_text()
-            # 可以处理客户端发送的命令，例如取消批改
-            if data == "cancel":
-                logger.info(f"收到取消请求: batch_id={batch_id}")
-                await websocket.send_json({
-                    "type": "info",
-                    "message": "取消请求已收到，正在停止批改..."
-                })
-    
+            try:
+                # 等待客户端消息（心跳或命令）
+                data = await asyncio.wait_for(
+                    websocket.receive_text(),
+                    timeout=30.0
+                )
+                
+                # 处理心跳
+                if data == "ping":
+                    await websocket.send_json({"type": "pong"})
+                    
+            except asyncio.TimeoutError:
+                # 发送心跳检测
+                try:
+                    await websocket.send_json({"type": "heartbeat"})
+                except Exception:
+                    break
+                    
     except WebSocketDisconnect:
-        logger.info(f"WebSocket 连接已断开: batch_id={batch_id}")
-        active_connections[batch_id].remove(websocket)
-        if not active_connections[batch_id]:
-            del active_connections[batch_id]
-    
+        logger.info(f"WebSocket 断开连接: batch_id={batch_id}")
     except Exception as e:
-        logger.error(f"WebSocket 错误: batch_id={batch_id}, error={str(e)}")
-        if batch_id in active_connections and websocket in active_connections[batch_id]:
-            active_connections[batch_id].remove(websocket)
+        logger.error(f"WebSocket 错误: batch_id={batch_id}, error={e}")
+    finally:
+        # 移除连接
+        if batch_id in active_connections:
+            if websocket in active_connections[batch_id]:
+                active_connections[batch_id].remove(websocket)
+            if not active_connections[batch_id]:
+                del active_connections[batch_id]
 
 
-async def broadcast_progress(batch_id: str, message: Dict[str, Any]):
-    """
-    广播批改进度到所有连接的客户端
+# ==================== REST 端点 ====================
+
+@router.get("/status/{batch_id}", response_model=BatchStatusResponse)
+async def get_batch_status(
+    batch_id: str,
+    orchestrator: Orchestrator = Depends(get_orchestrator)
+):
+    """获取批次状态
     
     Args:
         batch_id: 批次 ID
-        message: 消息内容
-    """
-    if batch_id not in active_connections:
-        return
-    
-    disconnected = []
-    for websocket in active_connections[batch_id]:
-        try:
-            await websocket.send_json(message)
-        except Exception as e:
-            logger.error(f"发送消息失败: {str(e)}")
-            disconnected.append(websocket)
-    
-    # 清理断开的连接
-    for websocket in disconnected:
-        active_connections[batch_id].remove(websocket)
-
-
-
-@router.post("/grade-cached")
-async def grade_batch_cached(
-    rubric_file: UploadFile = File(..., description="评分标准 PDF"),
-    answer_file: UploadFile = File(..., description="学生作答 PDF"),
-    api_key: Optional[str] = Form(None, description="Gemini API Key"),
-    total_score: int = Form(105, description="总分"),
-    total_questions: int = Form(19, description="总题数"),
-    batch_id: Optional[str] = Form(None, description="批次 ID (可选，用于前端预生成)")
-):
-    """
-    优化的批改端点 - 使用 Context Caching
-    
-    相比 /grade-sync，此端点使用 Gemini Context Caching 技术：
-    - 评分标准只计费一次
-    - 后续学生批改免费使用缓存
-    - 节省约 25% 的 Token 成本
-    
-    适用场景：
-    - 批改多个学生（2+ 个学生）
-    - 同一份评分标准
-    - 需要降低成本
-    
-    Args:
-        rubric_file: 评分标准 PDF
-        answer_file: 学生作答 PDF
-        api_key: Gemini API Key
-        total_score: 总分
-        total_questions: 总题数
+        orchestrator: 编排器
         
     Returns:
-        dict: 包含所有学生的批改结果 + Token 节省信息
+        批次状态信息
     """
-
-    if not api_key:
-        api_key = os.getenv("GEMINI_API_KEY")
-        if not api_key:
-            raise HTTPException(status_code=400, detail="API Key not provided and GEMINI_API_KEY env var not set")
-
-    if not batch_id:
-        batch_id = str(uuid.uuid4())
-    temp_dir = None
-    
     try:
-        # 创建临时目录
-        temp_dir = tempfile.mkdtemp()
-        temp_path = Path(temp_dir)
+        # 尝试从 orchestrator 获取状态
+        run_id = f"batch_grading_{batch_id}"
+        run_info = await orchestrator.get_status(run_id)
         
-        # 保存上传的文件
-        rubric_path = temp_path / "rubric.pdf"
-        answer_path = temp_path / "answer.pdf"
+        # 从累积状态获取详细信息
+        state = batch_states.get(batch_id, {})
+        student_results = state.get("student_results", [])
+        export_data = state.get("export_data") or state.get("final_state")
         
-        rubric_content = await rubric_file.read()
-        answer_content = await answer_file.read()
-        
-        with open(rubric_path, "wb") as f:
-            f.write(rubric_content)
-        with open(answer_path, "wb") as f:
-            f.write(answer_content)
-        
-        # 转换 PDF 为图像
-        logger.info(f"转换 PDF 为图像: batch_id={batch_id}")
-        rubric_images = _pdf_to_images(str(rubric_path), dpi=150)
-        answer_images = _pdf_to_images(str(answer_path), dpi=150)
-        
-        logger.info(
-            f"PDF 转换完成: "
-            f"batch_id={batch_id}, "
-            f"rubric_pages={len(rubric_images)}, "
-            f"answer_pages={len(answer_images)}"
+        return BatchStatusResponse(
+            batch_id=batch_id,
+            exam_id=state.get("exam_id", ""),
+            status=run_info.status.value,
+            total_students=len(student_results),
+            completed_students=len([s for s in student_results if s.get("total_score", 0) > 0]),
+            unidentified_pages=0,
+            results=export_data
         )
-        
-        # 推送进度
-        await broadcast_progress(
-            batch_id,
-            {
-                "type": "progress",
-                "stage": "parsing_rubric",
-                "percentage": 10
-            }
-        )
-        
-        # ===== 步骤 1: 解析评分标准 =====
-        logger.info("解析评分标准...")
-        rubric_parser = RubricParserService(api_key=api_key)
-        parsed_rubric = await rubric_parser.parse_rubric(
-            rubric_images,
-            expected_total_score=total_score
-        )
-        
-        logger.info(
-            f"评分标准解析完成: "
-            f"题目数={parsed_rubric.total_questions}, "
-            f"总分={parsed_rubric.total_score}"
-        )
-        
-        rubric_context = rubric_parser.format_rubric_context(parsed_rubric)
-        
-        # 推送进度
-        await broadcast_progress(
-            batch_id,
-            {
-                "type": "progress",
-                "stage": "identifying_students",
-                "percentage": 20
-            }
-        )
-        
-        # ===== 步骤 2: 识别学生边界 =====
-        logger.info("识别学生边界...")
-        id_service = StudentIdentificationService(api_key=api_key)
-        segmentation_result = await id_service.segment_batch_document(answer_images)
-        student_groups = id_service.group_pages_by_student(segmentation_result)
-        
-        logger.info(f"识别到 {len(student_groups)} 名学生")
-        
-        # 推送进度
-        await broadcast_progress(
-            batch_id,
-            {
-                "type": "progress",
-                "stage": "creating_cache",
-                "percentage": 30
-            }
-        )
-        
-        # ===== 步骤 3: 创建评分标准缓存 =====
-        logger.info("创建评分标准缓存...")
-        cached_service = CachedGradingService(api_key=api_key)
-        await cached_service.create_rubric_cache(parsed_rubric, rubric_context)
-        
-        cache_info = cached_service.get_cache_info()
-        logger.info(f"缓存创建成功: {cache_info['cache_name']}")
-        
-        # 推送进度
-        await broadcast_progress(
-            batch_id,
-            {
-                "type": "progress",
-                "stage": "grading",
-                "percentage": 40,
-                "total_students": len(student_groups)
-            }
-        )
-        
-        # ===== 步骤 4: 使用缓存批改每个学生 =====
-        logger.info("开始批改（使用缓存）...")
-        all_results = []
-        
-        for idx, (student_key, page_indices) in enumerate(student_groups.items(), 1):
-            logger.info(f"正在批改 {student_key}（使用缓存）...")
-            
-            # 推送进度
-            await broadcast_progress(
-                batch_id,
-                {
-                    "type": "progress",
-                    "stage": "grading",
-                    "current_student": idx,
-                    "total_students": len(student_groups),
-                    "student_name": student_key,
-                    "percentage": 40 + int(idx / len(student_groups) * 50)
-                }
-            )
-            
-            # 获取该学生的页面
-            student_pages = [answer_images[i] for i in page_indices]
-            
-            # 使用缓存批改
-            result = await cached_service.grade_student_with_cache(
-                student_pages=student_pages,
-                student_name=student_key
-            )
-            result.page_range = (min(page_indices), max(page_indices))
-            all_results.append(result)
-            
-            logger.info(
-                f"{student_key} 批改完成: "
-                f"{result.total_score}/{result.max_total_score} 分"
-            )
-        
-        # ===== 步骤 5: 格式化结果 =====
-        await broadcast_progress(
-            batch_id,
-            {
-                "type": "progress",
-                "stage": "formatting",
-                "percentage": 95
-            }
-        )
-        
-        response_data = {
-            "status": "completed",
-            "total_students": len(all_results),
-            "optimization": {
-                "method": "context_caching",
-                "cache_info": cache_info,
-                "token_savings": {
-                    "description": "使用 Context Caching 节省约 25% Token",
-                    "estimated_savings_per_student": "约 15,000-20,000 tokens",
-                    "cost_savings_per_student": "约 $0.04-0.05"
-                }
-            },
-            "students": []
-        }
-        
-        for result in all_results:
-            student_data = {
-                "name": result.student_name,
-                "page_range": {
-                    "start": result.page_range[0] + 1,
-                    "end": result.page_range[1] + 1
-                },
-                "total_score": result.total_score,
-                "max_score": result.max_total_score,
-                "percentage": round(result.total_score / result.max_total_score * 100, 1),
-                "questions_graded": len(result.question_results),
-                "details": []
-            }
-            
-            # 添加每题的详细结果
-            for q_result in result.question_results:
-                question_detail = {
-                    "question_id": q_result.question_id,
-                    "score": q_result.awarded_score,
-                    "max_score": q_result.max_score,
-                    "scoring_point_results": [
-                        {
-                            "description": sp.description,
-                            "max_score": sp.max_score,
-                            "awarded_score": sp.awarded_score,
-                            "is_correct": sp.is_correct,
-                            "explanation": sp.explanation
-                        }
-                        for sp in q_result.scoring_point_results
-                    ],
-                    "used_alternative_solution": q_result.used_alternative_solution,
-                    "confidence": q_result.confidence
-                }
-                student_data["details"].append(question_detail)
-            
-            response_data["students"].append(student_data)
-        
-        # 清理缓存
-        cached_service.delete_cache()
-        logger.info("缓存已清理")
-        
-        # 推送完成通知
-        await broadcast_progress(
-            batch_id,
-            {
-                "type": "completed",
-                "percentage": 100,
-                "total_students": len(all_results),
-                "message": "批改完成（使用缓存优化）"
-            }
-        )
-        
-        return response_data
         
     except Exception as e:
-        logger.error(f"批改失败: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        # 清理临时文件
-        if temp_dir:
-            import shutil
-            try:
-                shutil.rmtree(temp_dir)
-            except Exception as e:
-                logger.warning(f"清理临时文件失败: {str(e)}")
+        logger.error(f"获取批次状态失败: batch_id={batch_id}, error={e}")
+        raise HTTPException(status_code=404, detail=f"批次不存在: {batch_id}")
+
+
+@router.get("/results/{batch_id}")
+async def get_batch_results(batch_id: str):
+    """获取批次批改结果
+    
+    Args:
+        batch_id: 批次 ID
+        
+    Returns:
+        批改结果详情
+    """
+    state = batch_states.get(batch_id)
+    
+    if not state:
+        raise HTTPException(status_code=404, detail=f"批次不存在或已过期: {batch_id}")
+    
+    # 过滤掉无法 JSON 序列化的数据（如 bytes 类型的图像）
+    def filter_serializable(obj):
+        if isinstance(obj, dict):
+            return {k: filter_serializable(v) for k, v in obj.items() 
+                    if not isinstance(v, bytes)}
+        elif isinstance(obj, list):
+            return [filter_serializable(item) for item in obj 
+                    if not isinstance(item, bytes)]
+        elif isinstance(obj, bytes):
+            return None
+        else:
+            return obj
+    
+    return filter_serializable(state)
+
+
+@router.get("/debug/batch_states")
+async def debug_batch_states():
+    """调试端点：查看所有 batch_states"""
+    return {
+        "count": len(batch_states),
+        "batch_ids": list(batch_states.keys()),
+        "states": {
+            bid: {
+                "keys": list(state.keys()),
+                "status": state.get("status"),
+                "has_final_state": "final_state" in state,
+                "has_export_data": "export_data" in state,
+                "has_student_results": "student_results" in state,
+                "student_count": len(state.get("student_results", []))
+            }
+            for bid, state in batch_states.items()
+        }
+    }

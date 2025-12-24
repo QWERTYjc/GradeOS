@@ -7,14 +7,13 @@ import uuid
 import logging
 from typing import List, Optional, Dict, Any
 
-from temporalio.client import Client
-
 from src.models.submission import SubmissionRequest, SubmissionResponse, SubmissionStatusResponse
 from src.models.enums import FileType, SubmissionStatus
 from src.repositories.submission import SubmissionRepository
 from src.services.storage import StorageService
 from src.utils.pdf import convert_pdf_to_images, PDFProcessingError
 from src.utils.validation import validate_file, FileValidationError
+from src.orchestration.base import Orchestrator
 
 
 logger = logging.getLogger(__name__)
@@ -36,7 +35,7 @@ class SubmissionService:
         self,
         repository: SubmissionRepository,
         storage: StorageService,
-        temporal_client: Optional[Client] = None
+        orchestrator: Optional[Orchestrator] = None
     ):
         """
         初始化提交服务
@@ -44,11 +43,11 @@ class SubmissionService:
         Args:
             repository: 提交记录仓储
             storage: 对象存储服务
-            temporal_client: Temporal 客户端（可选，用于启动工作流）
+            orchestrator: 编排器实例（可选，用于启动工作流）
         """
         self.repository = repository
         self.storage = storage
-        self.temporal_client = temporal_client
+        self.orchestrator = orchestrator
     
     async def submit(self, request: SubmissionRequest) -> SubmissionResponse:
         """
@@ -190,17 +189,14 @@ class SubmissionService:
                     pass
                 raise SubmissionServiceError(f"创建提交记录失败: {str(e)}") from e
             
-            # ===== 第五步：异步启动 Temporal 工作流 =====
-            if self.temporal_client:
+            # ===== 第五步：异步启动工作流 =====
+            if self.orchestrator:
                 logger.info(
-                    f"启动 Temporal 工作流: "
+                    f"启动工作流: "
                     f"submission_id={submission_id}"
                 )
                 
                 try:
-                    # 导入工作流（延迟导入避免循环依赖）
-                    from src.workflows.exam_paper import ExamPaperWorkflow
-                    
                     # 准备工作流输入
                     workflow_input = {
                         "submission_id": submission_data["submission_id"],
@@ -210,21 +206,21 @@ class SubmissionService:
                     }
                     
                     # 启动工作流（异步，不等待结果）
-                    await self.temporal_client.start_workflow(
-                        ExamPaperWorkflow.run,
-                        workflow_input,
-                        id=f"exam_paper_{submission_id}",
-                        task_queue="default-queue"
+                    run_id = await self.orchestrator.start_run(
+                        graph_name="exam_paper",
+                        payload=workflow_input,
+                        idempotency_key=submission_id
                     )
                     
                     logger.info(
-                        f"Temporal 工作流已启动: "
-                        f"submission_id={submission_id}"
+                        f"工作流已启动: "
+                        f"submission_id={submission_id}, "
+                        f"run_id={run_id}"
                     )
                     
                 except Exception as e:
                     logger.error(
-                        f"启动 Temporal 工作流失败: "
+                        f"启动工作流失败: "
                         f"submission_id={submission_id}, "
                         f"error={str(e)}",
                         exc_info=True
@@ -233,7 +229,7 @@ class SubmissionService:
                     # 可以通过后台任务重试
             else:
                 logger.warning(
-                    f"Temporal 客户端未配置，跳过工作流启动: "
+                    f"编排器未配置，跳过工作流启动: "
                     f"submission_id={submission_id}"
                 )
             

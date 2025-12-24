@@ -235,35 +235,25 @@ class StudentBoundaryDetector:
         if not results:
             return []
         
-        # 提取页面分析信息
-        page_analyses = self._extract_page_analyses(results)
-        
-        # 使用现有的 StudentIdentificationService 逻辑
-        if self.student_identification_service:
-            # 如果有 StudentIdentificationService，使用其检测逻辑
-            boundaries = self.student_identification_service.detect_student_boundaries(
-                page_analyses
-            )
-            return boundaries
-        
-        # 否则使用内置的简单检测逻辑
+        # 使用内置的简单检测逻辑
         boundaries = []
         current_start = 0
         last_max_question = 0
         
-        for i, analysis in enumerate(page_analyses):
-            # 跳过封面页
-            if analysis.is_cover_page:
-                continue
+        for i, result in enumerate(results):
+            # 获取题目编号
+            question_numbers = result.get("question_numbers", [])
+            first_q = result.get("question_id") or result.get("first_question")
             
-            # 获取当前页的第一道题编号
-            first_q = analysis.first_question
+            if not first_q and question_numbers:
+                first_q = question_numbers[0] if question_numbers else None
+            
             if not first_q:
                 continue
             
             try:
                 # 尝试转换为数字进行比较
-                first_q_num = self._normalize_question_number(first_q)
+                first_q_num = self._normalize_question_number(str(first_q))
                 
                 # 检测循环：题目编号回退到较小值
                 if first_q_num < last_max_question and first_q_num <= 2:
@@ -274,16 +264,19 @@ class StudentBoundaryDetector:
                     last_max_question = first_q_num
                 else:
                     # 更新最大题号
-                    for q in analysis.question_numbers:
-                        q_num = self._normalize_question_number(q)
-                        last_max_question = max(last_max_question, q_num)
+                    for q in question_numbers:
+                        try:
+                            q_num = self._normalize_question_number(str(q))
+                            last_max_question = max(last_max_question, q_num)
+                        except ValueError:
+                            continue
                         
             except ValueError:
                 continue
         
         # 添加最后一个学生的范围
-        if current_start < len(page_analyses):
-            boundaries.append((current_start, len(page_analyses) - 1))
+        if current_start < len(results):
+            boundaries.append((current_start, len(results) - 1))
         
         return boundaries
     
@@ -434,7 +427,8 @@ class StudentBoundaryDetector:
         """
         基于题目循环检测边界
         
-        使用 _detect_question_cycle 方法检测边界
+        通过检测题目编号的循环模式来推断学生边界。
+        当题目编号从大变小（如从5回到1）时，说明换了一个学生。
         
         Args:
             page_analyses: 页面分析结果
@@ -446,37 +440,128 @@ class StudentBoundaryDetector:
         boundaries = []
         
         if not page_analyses:
+            # 如果没有页面分析结果，返回单个学生边界
+            if total_pages > 0:
+                boundaries.append(StudentBoundary(
+                    student_key="学生A",
+                    start_page=0,
+                    end_page=total_pages - 1,
+                    confidence=0.3,
+                    needs_confirmation=True,
+                    student_info=StudentInfo(
+                        name="学生A",
+                        student_id="UNKNOWN_001",
+                        confidence=0.3,
+                        is_placeholder=True
+                    )
+                ))
             return boundaries
         
-        # 使用题目循环检测逻辑
-        # 将 page_analyses 转换为批改结果格式
-        results = []
-        for analysis in page_analyses:
-            result = {
-                "page_index": analysis.page_index,
-                "question_numbers": analysis.question_numbers,
-                "question_id": analysis.first_question
-            }
-            if analysis.student_info:
-                result["student_info"] = analysis.student_info
-            results.append(result)
+        # 改进的题目循环检测逻辑
+        boundary_ranges = []
+        current_start = 0
+        last_max_question = 0
+        question_sequence = []  # 记录题目序列
         
-        # 调用 _detect_question_cycle 方法
-        boundary_ranges = self._detect_question_cycle(results)
+        logger.info(f"开始题目循环检测，共 {len(page_analyses)} 页")
+        
+        for i, analysis in enumerate(page_analyses):
+            # 跳过封面页
+            if analysis.is_cover_page:
+                continue
+            
+            # 获取当前页的题目编号
+            current_questions = []
+            
+            # 从 question_numbers 获取
+            if analysis.question_numbers:
+                for q in analysis.question_numbers:
+                    try:
+                        q_num = self._normalize_question_number(q)
+                        current_questions.append(q_num)
+                    except ValueError:
+                        continue
+            
+            # 从 first_question 获取
+            if analysis.first_question:
+                try:
+                    q_num = self._normalize_question_number(analysis.first_question)
+                    if q_num not in current_questions:
+                        current_questions.append(q_num)
+                except ValueError:
+                    pass
+            
+            if not current_questions:
+                continue
+            
+            # 取最小的题目编号作为当前页的主要题目
+            min_question = min(current_questions)
+            max_question = max(current_questions)
+            
+            logger.debug(f"页面 {i}: 题目 {current_questions}, min={min_question}, max={max_question}")
+            
+            # 检测循环：题目编号显著回退
+            if (min_question <= 3 and  # 回到前几题
+                last_max_question >= 5 and  # 之前已经到了较后面的题目
+                i > current_start + 2):  # 确保不是刚开始
+                
+                # 发现新学生的开始
+                logger.info(f"检测到学生边界：页面 {i}，题目从 {last_max_question} 回到 {min_question}")
+                
+                if i > current_start:
+                    boundary_ranges.append((current_start, i - 1))
+                current_start = i
+                last_max_question = max_question
+                question_sequence = [min_question]
+            else:
+                # 更新最大题号
+                last_max_question = max(last_max_question, max_question)
+                question_sequence.append(min_question)
+        
+        # 添加最后一个学生的范围
+        if current_start < len(page_analyses):
+            boundary_ranges.append((current_start, len(page_analyses) - 1))
+        
+        # 如果没有检测到任何边界，尝试基于页数估算
+        if not boundary_ranges:
+            # 估算：假设每个学生大约20-30页
+            estimated_pages_per_student = 25
+            estimated_students = max(1, total_pages // estimated_pages_per_student)
+            
+            if estimated_students > 1:
+                pages_per_student = total_pages // estimated_students
+                for i in range(estimated_students):
+                    start = i * pages_per_student
+                    end = min((i + 1) * pages_per_student - 1, total_pages - 1)
+                    if i == estimated_students - 1:  # 最后一个学生包含剩余页面
+                        end = total_pages - 1
+                    boundary_ranges.append((start, end))
+                    
+                logger.info(f"基于页数估算检测到 {estimated_students} 个学生")
+            else:
+                boundary_ranges = [(0, total_pages - 1)]
+        
+        logger.info(f"最终检测到 {len(boundary_ranges)} 个学生边界: {boundary_ranges}")
         
         # 转换为 StudentBoundary 对象
         for idx, (start, end) in enumerate(boundary_ranges):
             student_count = idx + 1
+            confidence = 0.7 if len(boundary_ranges) > 1 else 0.5  # 多学生时置信度更高
+            
+            # 使用唯一的学生标识（包含索引）
+            student_key = f"学生{chr(65 + idx)}"  # 学生A, 学生B, 学生C...
+            student_id = f"STUDENT_{student_count:03d}"  # STUDENT_001, STUDENT_002...
+            
             boundaries.append(StudentBoundary(
-                student_key=f"学生{chr(65 + idx)}",
+                student_key=student_key,
                 start_page=start,
                 end_page=end,
-                confidence=0.0,  # 稍后计算
-                needs_confirmation=False,
+                confidence=confidence,
+                needs_confirmation=confidence < 0.8,
                 student_info=StudentInfo(
-                    name=f"学生{chr(65 + idx)}",
-                    student_id=f"UNKNOWN_{student_count:03d}",
-                    confidence=0.5,
+                    name=student_key,
+                    student_id=student_id,
+                    confidence=confidence,
                     is_placeholder=True
                 )
             ))
@@ -488,22 +573,36 @@ class StudentBoundaryDetector:
         if not q:
             return 0
         
+        # 移除常见前缀和后缀
+        q = str(q).lower().strip()
+        
+        # 移除括号内容，如 "7(a)" -> "7", "15(1)" -> "15"
+        import re
+        q = re.sub(r'\([^)]*\)', '', q)
+        q = re.sub(r'\[[^\]]*\]', '', q)  # 移除方括号
+        
         # 移除常见前缀
-        q = q.lower().strip()
-        for prefix in ['question', 'q', '第', '题', 'no.', 'no', '#']:
+        for prefix in ['question', 'q', '第', '题', 'no.', 'no', '#', '.']:
             q = q.replace(prefix, '')
-        q = q.strip()
+        q = q.strip('.,;: ')
         
         # 中文数字转换
         chinese_nums = {
             '一': 1, '二': 2, '三': 3, '四': 4, '五': 5,
-            '六': 6, '七': 7, '八': 8, '九': 9, '十': 10
+            '六': 6, '七': 7, '八': 8, '九': 9, '十': 10,
+            '十一': 11, '十二': 12, '十三': 13, '十四': 14, '十五': 15,
+            '十六': 16, '十七': 17, '十八': 18, '十九': 19, '二十': 20
         }
         if q in chinese_nums:
             return chinese_nums[q]
         
-        # 尝试直接转换
-        return int(q)
+        # 提取数字部分
+        numbers = re.findall(r'\d+', q)
+        if numbers:
+            return int(numbers[0])
+        
+        # 如果都失败了，返回0
+        return 0
     
     def _calculate_confidence(
         self,

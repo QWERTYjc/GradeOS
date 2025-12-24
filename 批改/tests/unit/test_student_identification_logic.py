@@ -69,7 +69,7 @@ def test_group_pages_by_student_basic():
 
 
 def test_group_pages_with_low_confidence():
-    """测试低置信度页面被过滤"""
+    """测试低置信度页面被分组到 unknown"""
     
     service = StudentIdentificationService(api_key="test-key")
     
@@ -100,12 +100,14 @@ def test_group_pages_with_low_confidence():
     
     groups = service.group_pages_by_student(batch_result)
     
-    # 低置信度页面不应该被分组
-    assert len(groups) == 2
+    # 低置信度页面被分组到 unknown_1
+    assert len(groups) == 3
     assert "2024001" in groups
     assert "2024002" in groups
-    assert groups["2024001"] == [0]  # 只有第一页
+    assert "unknown_1" in groups
+    assert groups["2024001"] == [0]
     assert groups["2024002"] == [2]
+    assert groups["unknown_1"] == [1]
 
 
 def test_group_pages_20_students():

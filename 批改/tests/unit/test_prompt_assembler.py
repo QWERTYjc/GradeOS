@@ -328,7 +328,8 @@ class TestAssemble:
             rubric="评分标准"
         )
         
-        full_prompt = result.get_full_prompt()
+        # 拼接所有区段内容
+        full_prompt = "\n\n".join(result.sections.values())
         
         # 验证是字符串
         assert isinstance(full_prompt, str)

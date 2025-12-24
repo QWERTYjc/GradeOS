@@ -581,6 +581,61 @@ if critique['needs_revision']:
 - 需求 3.3：评分映射节点将评分点映射到证据
 - 需求 3.4：反思节点识别评分错误并生成修正反馈
 
+### 通用视觉分析
+
+`analyze_with_vision` 方法提供通用的多图像视觉分析能力：
+
+```python
+# 分析多张图像
+result = await client.analyze_with_vision(
+    images=[image_bytes_1, image_bytes_2],  # 支持 bytes 或 base64 字符串
+    prompt="请分析这些图像中的内容..."
+)
+
+print(result["response"])  # 模型的文本响应
+```
+
+### 单页批改
+
+`grade_page` 方法提供简化的单页批改接口，适用于批量批改场景：
+
+```python
+# 读取图像
+with open('student_answer.jpg', 'rb') as f:
+    image_data = f.read()
+
+# 单页批改
+result = await client.grade_page(
+    image=image_data,  # bytes 或 base64 字符串
+    rubric="1. 正确使用公式 (5分)\n2. 计算准确 (5分)",
+    max_score=10.0
+)
+
+print(f"得分: {result['score']}/{result['max_score']}")
+print(f"置信度: {result['confidence']}")
+print(f"反馈: {result['feedback']}")
+print(f"题目编号: {result['question_numbers']}")
+print(f"学生信息: {result['student_info']}")
+```
+
+#### grade_page 返回结构
+
+```python
+{
+    "score": 8.5,                    # 得分
+    "max_score": 10.0,               # 满分
+    "confidence": 0.85,              # 置信度 (0.0-1.0)
+    "feedback": "解题思路正确...",    # 评分反馈
+    "question_numbers": ["1", "2"],  # 识别到的题目编号
+    "student_info": {                # 学生信息（可能为 null）
+        "name": "张三",
+        "student_id": "2024001"
+    }
+}
+```
+
+该方法内置了错误处理，JSON 解析失败或 API 调用异常时会返回默认结果（score=0, confidence=0）。
+
 ### 注意事项
 
 1. **API 密钥**：确保 Google AI API 密钥有效且有足够配额

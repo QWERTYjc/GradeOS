@@ -31,33 +31,6 @@ services:
       timeout: 5s
       retries: 5
 
-  # Temporal Server
-  temporal:
-    image: temporalio/auto-setup:1.22.4
-    environment:
-      - DB=postgresql
-      - DB_PORT=5432
-      - POSTGRES_USER=grading_user
-      - POSTGRES_PWD=grading_pass
-      - POSTGRES_SEEDS=postgres
-    ports:
-      - "7233:7233"
-      - "8233:8233"
-    depends_on:
-      postgres:
-        condition: service_healthy
-
-  # Temporal Web UI
-  temporal-ui:
-    image: temporalio/ui:2.21.3
-    environment:
-      - TEMPORAL_ADDRESS=temporal:7233
-      - TEMPORAL_CORS_ORIGINS=http://localhost:3000
-    ports:
-      - "8080:8080"
-    depends_on:
-      - temporal
-
   # MinIO (S3-compatible object storage)
   minio:
     image: minio/minio:latest
@@ -84,8 +57,6 @@ services:
     environment:
       - DATABASE_URL=postgresql://grading_user:grading_pass@postgres:5432/grading_system
       - REDIS_URL=redis://redis:6379
-      - TEMPORAL_HOST=temporal:7233
-      - TEMPORAL_NAMESPACE=default
       - S3_ENDPOINT=http://minio:9000
       - S3_ACCESS_KEY=minioadmin
       - S3_SECRET_KEY=minioadmin
@@ -98,65 +69,35 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      temporal:
-        condition: service_started
       minio:
         condition: service_healthy
     volumes:
       - ./src:/app/src
     command: [ "uv", "run", "uvicorn", "src.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload" ]
 
-  # 编排 Worker
-  orchestration-worker:
+  # LangGraph Worker
+  langgraph-worker:
     build:
       context: .
       dockerfile: Dockerfile.worker
     environment:
-      - WORKER_TYPE=orchestration
       - DATABASE_URL=postgresql://grading_user:grading_pass@postgres:5432/grading_system
       - REDIS_URL=redis://redis:6379
-      - TEMPORAL_HOST=temporal:7233
-      - TEMPORAL_NAMESPACE=default
       - S3_ENDPOINT=http://minio:9000
       - S3_ACCESS_KEY=minioadmin
       - S3_SECRET_KEY=minioadmin
       - S3_BUCKET=grading-submissions
       - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - WORKER_POLL_INTERVAL=1.0
+      - WORKER_MAX_CONCURRENT=10
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
-      temporal:
-        condition: service_started
     volumes:
       - ./src:/app/src
-
-  # 认知 Worker
-  cognitive-worker:
-    build:
-      context: .
-      dockerfile: Dockerfile.worker
-    environment:
-      - WORKER_TYPE=cognitive
-      - DATABASE_URL=postgresql://grading_user:grading_pass@postgres:5432/grading_system
-      - REDIS_URL=redis://redis:6379
-      - TEMPORAL_HOST=temporal:7233
-      - TEMPORAL_NAMESPACE=default
-      - S3_ENDPOINT=http://minio:9000
-      - S3_ACCESS_KEY=minioadmin
-      - S3_SECRET_KEY=minioadmin
-      - S3_BUCKET=grading-submissions
-      - GEMINI_API_KEY=${GEMINI_API_KEY}
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      temporal:
-        condition: service_started
-    volumes:
-      - ./src:/app/src
+    command: [ "uv", "run", "python", "-m", "src.workers.langgraph_worker" ]
     deploy:
       replicas: 2
 

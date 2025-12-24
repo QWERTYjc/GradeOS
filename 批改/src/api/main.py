@@ -1,5 +1,12 @@
 """FastAPI 应用主入口"""
 
+import sys
+import asyncio
+
+# Windows 事件循环修复 - 必须在所有其他导入之前
+if sys.platform == 'win32':
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
 import logging
 from contextlib import asynccontextmanager
 from typing import Optional
@@ -15,6 +22,7 @@ import redis.asyncio as redis
 
 from src.api.routes import submissions, rubrics, reviews, batch
 from src.api.middleware.rate_limit import RateLimitMiddleware
+from src.api.dependencies import init_orchestrator, close_orchestrator, get_orchestrator
 from src.utils.database import init_db_pool, close_db_pool
 from src.utils.pool_manager import UnifiedPoolManager, PoolConfig
 from src.services.enhanced_api import EnhancedAPIService, QueryParams
@@ -24,7 +32,11 @@ from src.services.tracing import TracingService
 # 配置日志
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler('batch_grading.log', mode='a', encoding='utf-8')
+    ]
 )
 logger = logging.getLogger(__name__)
 
@@ -80,10 +92,21 @@ async def lifespan(app: FastAPI):
         await enhanced_api_service.start()
         logger.info("增强 API 服务已启动")
     
+    # 初始化编排器
+    try:
+        await init_orchestrator()
+        logger.info("LangGraph 编排器已初始化")
+    except Exception as e:
+        logger.warning(f"编排器初始化失败: {e}")
+    
     yield
     
     # 关闭时清理
     logger.info("关闭应用...")
+    
+    # 关闭编排器
+    await close_orchestrator()
+    logger.info("编排器已关闭")
     
     # 停止增强 API 服务
     if enhanced_api_service:
@@ -356,3 +379,4 @@ if __name__ == "__main__":
         reload=True,
         log_level="info"
     )
+

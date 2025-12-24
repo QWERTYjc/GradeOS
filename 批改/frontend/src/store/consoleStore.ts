@@ -31,6 +31,7 @@ export interface GradingAgent {
             score: number;
             maxScore: number;
         }>;
+        totalRevisions?: number;
     };
 }
 
@@ -65,6 +66,7 @@ export interface StudentResult {
     score: number;
     maxScore: number;
     percentage?: number;
+    totalRevisions?: number;
     questionResults?: QuestionResult[];
 }
 
@@ -167,14 +169,19 @@ export interface ConsoleState {
 /**
  * 工作流节点配置
  * 
- * 对应设计文档批改流程（注意：批改后学生分割）：
+ * 基于 LangGraph 架构的批改流程：
  * 1. intake - 接收文件
  * 2. preprocess - 预处理图像
  * 3. rubric_parse - 解析评分标准
- * 4. grading - 固定分批并行批改（10张图片一批）
+ * 4. grading - LangGraph Agent 并行批改（支持自我修正循环）
  * 5. segment - 批改后学生分割（基于批改结果智能判断学生边界）
- * 6. review - 汇总审核
+ * 6. review - 汇总审核（LangGraph interrupt/resume 机制）
  * 7. export - 导出结果
+ * 
+ * 后端 LangGraph Graphs:
+ * - exam_paper: segment → grade → review_check → persist → notify
+ * - batch_grading: 边界检测 → 并行扇出 → 聚合 → 持久化
+ * - rule_upgrade: 规则挖掘 → 补丁生成 → 回归测试 → 部署
  */
 const initialNodes: WorkflowNode[] = [
     { id: 'intake', label: '接收文件', status: 'pending' },
@@ -362,14 +369,37 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
         // 处理单页完成事件（对应设计文档 EventType.PAGE_COMPLETE）
         wsClient.on('page_complete', (data) => {
             console.log('Page Complete:', data);
-            const { pageIndex, success, batchIndex, totalBatches } = data;
+            const { pageIndex, success, batchIndex, totalBatches, revisionCount } = data;
             const currentProgress = get().batchProgress;
+
+            // 更新批次进度
             if (currentProgress) {
                 get().setBatchProgress({
                     ...currentProgress,
                     successCount: success ? currentProgress.successCount + 1 : currentProgress.successCount,
                     failureCount: success ? currentProgress.failureCount : currentProgress.failureCount + 1,
                 });
+            }
+
+            // 更新对应 Agent 的自我修正次数
+            if (revisionCount && revisionCount > 0) {
+                const agentId = `batch_${batchIndex}`;
+                const nodes = get().workflowNodes;
+                const gradingNode = nodes.find(n => n.id === 'grading');
+
+                if (gradingNode && gradingNode.children) {
+                    const agent = gradingNode.children.find(a => a.id === agentId);
+                    if (agent) {
+                        const currentRevisions = agent.output?.totalRevisions || 0;
+                        get().updateAgentStatus(agentId, {
+                            output: {
+                                ...agent.output,
+                                totalRevisions: currentRevisions + revisionCount
+                            }
+                        });
+                        get().addAgentLog(agentId, `页面 ${pageIndex} 触发了 ${revisionCount} 次自我修正`);
+                    }
+                }
             }
         });
 
@@ -388,23 +418,23 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
         });
 
         // 处理学生识别事件（对应设计文档 EventType.STUDENT_IDENTIFIED）
-        wsClient.on('student_identified', (data) => {
-            console.log('Student Identified:', data);
-            const { boundaries } = data;
-            if (boundaries && Array.isArray(boundaries)) {
-                get().setStudentBoundaries(boundaries.map((b: any) => ({
-                    studentKey: b.student_key,
-                    startPage: b.start_page,
-                    endPage: b.end_page,
-                    confidence: b.confidence,
-                    needsConfirmation: b.needs_confirmation,
+        wsClient.on('students_identified', (data) => {
+            console.log('Students Identified:', data);
+            const { students, studentCount } = data;
+            if (students && Array.isArray(students)) {
+                get().setStudentBoundaries(students.map((s: any) => ({
+                    studentKey: s.studentKey,
+                    startPage: s.startPage,
+                    endPage: s.endPage,
+                    confidence: s.confidence,
+                    needsConfirmation: s.needsConfirmation,
                 })));
                 // 统计待确认边界
-                const needsConfirm = boundaries.filter((b: any) => b.needs_confirmation).length;
+                const needsConfirm = students.filter((s: any) => s.needsConfirmation).length;
                 if (needsConfirm > 0) {
-                    get().addLog(`识别到 ${boundaries.length} 名学生，${needsConfirm} 个边界待确认`, 'WARNING');
+                    get().addLog(`识别到 ${studentCount} 名学生，${needsConfirm} 个边界待确认`, 'WARNING');
                 } else {
-                    get().addLog(`识别到 ${boundaries.length} 名学生`, 'INFO');
+                    get().addLog(`识别到 ${studentCount} 名学生`, 'INFO');
                 }
             }
         });
@@ -422,6 +452,50 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
                 setTimeout(() => {
                     set({ currentTab: 'results' });
                 }, 1500);
+            }
+        });
+
+        // 处理单页批改完成事件
+        wsClient.on('page_graded', (data) => {
+            console.log('Page Graded:', data);
+            const { pageIndex, score, maxScore, feedback, questionNumbers, questionDetails } = data;
+            get().addLog(
+                `页面 ${pageIndex} 批改完成: ${score}/${maxScore} 分，题目: ${questionNumbers?.join(', ') || '未识别'}`,
+                'INFO'
+            );
+        });
+
+        // 处理批改进度事件
+        wsClient.on('grading_progress', (data) => {
+            console.log('Grading Progress:', data);
+            const { completedPages, totalPages, percentage } = data;
+            // 更新 grading 节点的进度
+            const nodes = get().workflowNodes;
+            const gradingNode = nodes.find(n => n.id === 'grading');
+            if (gradingNode) {
+                get().updateNodeStatus('grading', 'running', `批改进度: ${completedPages}/${totalPages} (${percentage}%)`);
+            }
+        });
+
+        // 处理批次完成事件
+        wsClient.on('batch_completed', (data) => {
+            console.log('Batch Completed:', data);
+            const { batchSize, successCount, totalScore, pages } = data;
+            get().addLog(
+                `批次完成: ${successCount}/${batchSize} 页成功，总分 ${totalScore}`,
+                'INFO'
+            );
+        });
+
+        // 处理审核完成事件
+        wsClient.on('review_completed', (data) => {
+            console.log('Review Completed:', data);
+            const { summary } = data;
+            if (summary) {
+                get().addLog(
+                    `审核完成: ${summary.total_students} 名学生，${summary.low_confidence_count} 个低置信度结果`,
+                    'INFO'
+                );
             }
         });
 

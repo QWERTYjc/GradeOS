@@ -32,19 +32,25 @@
 │   │       ├── critique.py     # 自我反思节点
 │   │       └── finalize.py     # 最终化节点
 │   │
-│   ├── workflows/              # Temporal 工作流
-│   │   ├── exam_paper.py       # 试卷级父工作流
-│   │   └── question_grading.py # 题目级子工作流
+│   ├── graphs/                 # LangGraph 工作流图
+│   │   ├── state.py            # Graph 状态定义
+│   │   ├── retry.py            # 重试策略
+│   │   ├── exam_paper.py       # 试卷批改 Graph
+│   │   ├── batch_grading.py    # 批量批改 Graph
+│   │   ├── rule_upgrade.py     # 规则升级 Graph
+│   │   └── nodes/              # Graph 节点实现
+│   │       ├── segment.py      # 文档分割节点
+│   │       ├── grade.py        # 批改节点
+│   │       ├── persist.py      # 持久化节点
+│   │       ├── notify.py       # 通知节点
+│   │       └── review.py       # 人工审核节点
 │   │
-│   ├── activities/             # Temporal Activities
-│   │   ├── segment.py          # 文档分割 Activity
-│   │   ├── grade.py            # 批改 Activity
-│   │   ├── notify.py           # 通知 Activity
-│   │   └── persist.py          # 持久化 Activity
+│   ├── orchestration/          # 编排器抽象层
+│   │   ├── base.py             # 编排器接口
+│   │   └── langgraph_orchestrator.py  # LangGraph 实现
 │   │
-│   ├── workers/                # Temporal Worker 入口
-│   │   ├── orchestration_worker.py
-│   │   └── cognitive_worker.py
+│   ├── workers/                # Worker 入口
+│   │   └── langgraph_worker.py # LangGraph Worker
 │   │
 │   ├── repositories/           # 数据访问层
 │   │   ├── submission.py
@@ -77,11 +83,12 @@
 ## 架构分层
 
 1. **接入层**：API Gateway → Submission Service → Object Storage
-2. **编排层**：Temporal Cluster → Orchestration Worker → Task Queues
-3. **认知计算层**：Cognitive Worker Pool → LangGraph Runtime → Gemini Models
-4. **数据存储层**：PostgreSQL (JSONB) + Redis (Cache)
+2. **编排层**：LangGraph Orchestrator → LangGraph Worker → PostgreSQL Checkpointer
+3. **认知计算层**：LangGraph Runtime → Gemini Models
+4. **数据存储层**：PostgreSQL (JSONB + Checkpoint) + Redis (Cache)
 
-## Task Queue 分离
+## LangGraph Graphs
 
-- `default-queue`：轻量级任务（通知、状态更新）
-- `vision-compute-queue`：重计算任务（Gemini API 调用、LangGraph 推理）
+- `exam_paper`: 单份试卷批改流程（分割 → 批改 → 审核 → 持久化 → 通知）
+- `batch_grading`: 批量试卷批改（边界检测 → 并行扇出 → 聚合 → 持久化）
+- `rule_upgrade`: 规则自演化升级（挖掘 → 补丁 → 测试 → 部署）

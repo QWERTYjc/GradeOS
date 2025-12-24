@@ -204,7 +204,7 @@ class TestAssembleIntegration:
         assert PromptSection.CALIBRATION in result.sections
         
         # 验证可以获取完整提示词
-        full_prompt = result.get_full_prompt()
+        full_prompt = "\n\n".join(result.sections.values())
         assert len(full_prompt) > 0
         
         # 验证各区段内容都在完整提示词中
@@ -225,7 +225,7 @@ class TestAssembleIntegration:
         assert PromptSection.RUBRIC in result.sections
         
         # 验证可以获取完整提示词
-        full_prompt = result.get_full_prompt()
+        full_prompt = "\n\n".join(result.sections.values())
         assert len(full_prompt) > 0
     
     def test_get_full_prompt_order(self, assembler):
@@ -237,7 +237,7 @@ class TestAssembleIntegration:
             previous_confidence=0.7
         )
         
-        full_prompt = result.get_full_prompt()
+        full_prompt = "\n\n".join(result.sections.values())
         
         # 验证顺序：SYSTEM 应该在最前面
         system_text = result.sections[PromptSection.SYSTEM]

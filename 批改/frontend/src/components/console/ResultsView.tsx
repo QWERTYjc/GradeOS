@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import { useConsoleStore, StudentResult, QuestionResult } from '@/store/consoleStore';
 import clsx from 'clsx';
-import { Trophy, TrendingUp, Users, Award, ArrowLeft, ChevronDown, ChevronUp, CheckCircle, XCircle, Download } from 'lucide-react';
+import { Trophy, TrendingUp, Users, Award, ArrowLeft, ChevronDown, ChevronUp, CheckCircle, XCircle, Download, GitMerge } from 'lucide-react';
 
 interface ResultCardProps {
     result: StudentResult;
@@ -14,7 +14,7 @@ interface ResultCardProps {
 
 const QuestionDetail: React.FC<{ question: QuestionResult }> = ({ question }) => {
     const percentage = question.maxScore > 0 ? (question.score / question.maxScore) * 100 : 0;
-    
+
     return (
         <div className="border-l-2 border-gray-200 pl-3 py-2">
             <div className="flex items-center justify-between">
@@ -100,12 +100,20 @@ const ResultCard: React.FC<ResultCardProps> = ({ result, rank, onExpand, isExpan
                     )}
                     <div>
                         <h3 className="font-semibold text-gray-800 text-lg">{result.studentName}</h3>
-                        <span className={clsx(
-                            'text-xs px-2 py-0.5 rounded-full font-medium',
-                            percentage >= 60 ? 'bg-white/50 text-gray-600' : 'bg-red-100 text-red-600'
-                        )}>
-                            {gradeLabel}
-                        </span>
+                        <div className="flex items-center gap-2 mt-1">
+                            <span className={clsx(
+                                'text-xs px-2 py-0.5 rounded-full font-medium',
+                                percentage >= 60 ? 'bg-white/50 text-gray-600' : 'bg-red-100 text-red-600'
+                            )}>
+                                {gradeLabel}
+                            </span>
+                            {result.totalRevisions !== undefined && result.totalRevisions > 0 && (
+                                <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-indigo-100 text-indigo-600 flex items-center gap-1">
+                                    <GitMerge className="w-3 h-3" />
+                                    {result.totalRevisions} 次修正
+                                </span>
+                            )}
+                        </div>
                     </div>
                 </div>
                 {result.questionResults && result.questionResults.length > 0 && (
@@ -197,7 +205,7 @@ export const ResultsView: React.FC = () => {
             else grade = '不及格';
             return [idx + 1, r.studentName, r.score, r.maxScore, `${percentage.toFixed(1)}%`, grade];
         });
-        
+
         const csvContent = [headers, ...rows].map(row => row.join(',')).join('\n');
         const blob = new Blob(['\ufeff' + csvContent], { type: 'text/csv;charset=utf-8;' });
         const url = URL.createObjectURL(blob);

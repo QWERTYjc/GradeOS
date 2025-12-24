@@ -11,8 +11,10 @@ from src.models.submission import (
 )
 from src.models.grading import ExamPaperResult
 from src.services.submission import SubmissionService
+from src.services.storage import StorageService
 from src.repositories.submission import SubmissionRepository
 from src.repositories.grading_result import GradingResultRepository
+from src.api.dependencies import get_orchestrator
 from src.utils.database import get_db_pool
 
 router = APIRouter(prefix="/api/v1/submissions", tags=["submissions"])
@@ -69,7 +71,14 @@ async def submit_for_grading(
 
         # 创建服务实例
         submission_repo = SubmissionRepository(pool)
-        submission_service = SubmissionService(submission_repo)
+        storage_service = StorageService()
+        orchestrator = await get_orchestrator()
+        
+        submission_service = SubmissionService(
+            repository=submission_repo,
+            storage=storage_service,
+            orchestrator=orchestrator
+        )
         
         # 处理提交
         response = await submission_service.submit(request)

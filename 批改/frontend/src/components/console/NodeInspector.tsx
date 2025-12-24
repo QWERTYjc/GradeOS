@@ -162,6 +162,16 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({ className }) => {
                                                 {selectedAgent.output.feedback}
                                             </p>
                                         )}
+
+                                        {/* 自我修正统计 */}
+                                        {selectedAgent.output.totalRevisions !== undefined && selectedAgent.output.totalRevisions > 0 && (
+                                            <div className="mt-3 flex items-center gap-2 bg-indigo-100/50 px-3 py-2 rounded-lg border border-indigo-100">
+                                                <GitMerge className="w-4 h-4 text-indigo-600" />
+                                                <span className="text-sm font-medium text-indigo-700">
+                                                    触发了 {selectedAgent.output.totalRevisions} 次自我修正（LangGraph Critique）
+                                                </span>
+                                            </div>
+                                        )}
                                     </div>
                                 )}
 

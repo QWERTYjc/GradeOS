@@ -315,7 +315,18 @@ class RubricParserService:
                     return str(value)
                 return value
             
-            questions = []
+            def normalize_question_id(qid: str) -> str:
+                """标准化题目编号，将子题合并到主题"""
+                if not qid:
+                    return qid
+                
+                # 移除括号内容，如 "7(a)" -> "7", "15(1)" -> "15"
+                import re
+                main_id = re.sub(r'\([^)]*\)', '', str(qid)).strip()
+                return main_id
+            
+            # 先收集所有题目，然后按主题编号合并
+            raw_questions = []
             for q in data.get("questions", []):
                 # 处理 scoring_points，可能是字典列表或字符串列表
                 raw_scoring_points = q.get("scoring_points", [])
@@ -353,14 +364,50 @@ class RubricParserService:
                             note=""
                         ))
                 
+                raw_questions.append({
+                    "original_id": str(q.get("question_id", "")),
+                    "normalized_id": normalize_question_id(str(q.get("question_id", ""))),
+                    "max_score": float(q.get("max_score", 0)),
+                    "question_text": ensure_string(q.get("question_text", "")),
+                    "standard_answer": ensure_string(q.get("standard_answer", "")),
+                    "scoring_points": scoring_points,
+                    "alternative_solutions": alternative_solutions,
+                    "grading_notes": ensure_string(q.get("grading_notes", ""))
+                })
+            
+            # 按标准化题目编号合并子题
+            merged_questions = {}
+            for q in raw_questions:
+                norm_id = q["normalized_id"]
+                if norm_id in merged_questions:
+                    # 合并到现有题目
+                    existing = merged_questions[norm_id]
+                    existing["max_score"] += q["max_score"]
+                    existing["scoring_points"].extend(q["scoring_points"])
+                    existing["alternative_solutions"].extend(q["alternative_solutions"])
+                    
+                    # 合并文本内容
+                    if q["question_text"] and q["question_text"] not in existing["question_text"]:
+                        existing["question_text"] += f"\n子题: {q['question_text']}"
+                    if q["standard_answer"] and q["standard_answer"] not in existing["standard_answer"]:
+                        existing["standard_answer"] += f"\n子题答案: {q['standard_answer']}"
+                    if q["grading_notes"] and q["grading_notes"] not in existing["grading_notes"]:
+                        existing["grading_notes"] += f"\n{q['grading_notes']}"
+                else:
+                    # 新题目
+                    merged_questions[norm_id] = q.copy()
+            
+            # 转换为 QuestionRubric 对象
+            questions = []
+            for norm_id, q in merged_questions.items():
                 questions.append(QuestionRubric(
-                    question_id=str(q.get("question_id", "")),
-                    max_score=float(q.get("max_score", 0)),
-                    question_text=ensure_string(q.get("question_text", "")),
-                    standard_answer=ensure_string(q.get("standard_answer", "")),
-                    scoring_points=scoring_points,
-                    alternative_solutions=alternative_solutions,
-                    grading_notes=ensure_string(q.get("grading_notes", ""))
+                    question_id=norm_id,
+                    max_score=q["max_score"],
+                    question_text=q["question_text"],
+                    standard_answer=q["standard_answer"],
+                    scoring_points=q["scoring_points"],
+                    alternative_solutions=q["alternative_solutions"],
+                    grading_notes=q["grading_notes"]
                 ))
             
             # 返回批次结果

@@ -203,6 +203,12 @@ class UnifiedPoolManager:
             
         验证：需求 8.1
         """
+        # 检查是否强制离线模式
+        if os.getenv("OFFLINE_MODE", "false").lower() == "true":
+            logger.info("离线模式：跳过数据库和 Redis 连接池初始化")
+            self._initialized = True
+            return
+        
         if self._initialized:
             logger.warning("连接池已初始化，跳过重复初始化")
             return
@@ -267,18 +273,22 @@ class UnifiedPoolManager:
             logger.warning("Redis URL 未配置，跳过 Redis 连接池初始化")
             return
         
-        self._redis_client = redis.from_url(
-            self._config.redis_url,
-            max_connections=self._config.redis_max_connections,
-            socket_timeout=self._config.redis_connection_timeout,
-            socket_connect_timeout=self._config.redis_connection_timeout,
-            socket_keepalive=self._config.redis_socket_keepalive,
-            health_check_interval=self._config.redis_health_check_interval,
-            decode_responses=False,  # 保持字节模式以支持二进制数据
-        )
-        # 测试连接
-        await asyncio.wait_for(self._redis_client.ping(), timeout=2.0)
-        logger.info("Redis 连接池初始化完成")
+        try:
+            self._redis_client = redis.from_url(
+                self._config.redis_url,
+                max_connections=self._config.redis_max_connections,
+                socket_timeout=self._config.redis_connection_timeout,
+                socket_connect_timeout=self._config.redis_connection_timeout,
+                socket_keepalive=self._config.redis_socket_keepalive,
+                health_check_interval=self._config.redis_health_check_interval,
+                decode_responses=False,  # 保持字节模式以支持二进制数据
+            )
+            # 测试连接
+            await asyncio.wait_for(self._redis_client.ping(), timeout=2.0)
+            logger.info("Redis 连接池初始化完成")
+        except Exception as e:
+            logger.warning(f"Redis 连接失败，将在降级模式下运行: {e}")
+            self._redis_client = None
     
     async def _cleanup(self) -> None:
         """清理资源"""
@@ -579,3 +589,4 @@ async def init_pool_manager(
     if not manager.is_initialized:
         await manager.initialize(config=config, **kwargs)
     return manager
+
