@@ -1,0 +1,17 @@
+{
+  "enabled": true,
+  "name": "全面测试",
+  "description": "当测试文件或源代码被修改时，自动运行完整的测试套件（单元测试、属性测试、集成测试）如果是全栈应用，启动网页并配合browser mcp进行测试",
+  "version": "1",
+  "when": {
+    "type": "fileEdited",
+    "patterns": [
+      "tests/**/*.py",
+      "src/**/*.py"
+    ]
+  },
+  "then": {
+    "type": "runCommand",
+    "command": "pytest tests/ -v --hypothesis-show-statistics\n"
+  }
+}

@@ -1,0 +1,366 @@
+# ServiceMonitor for Prometheus Operator
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: api-service-monitor
+  namespace: grading-system
+  labels:
+    app: api-service
+    monitoring: prometheus
+spec:
+  selector:
+    matchLabels:
+      app: api-service
+  endpoints:
+  - port: http
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s
+  - port: metrics
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: cognitive-worker-monitor
+  namespace: grading-system
+  labels:
+    app: cognitive-worker
+    monitoring: prometheus
+spec:
+  selector:
+    matchLabels:
+      app: cognitive-worker
+  endpoints:
+  - port: metrics
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: orchestration-worker-monitor
+  namespace: grading-system
+  labels:
+    app: orchestration-worker
+    monitoring: prometheus
+spec:
+  selector:
+    matchLabels:
+      app: orchestration-worker
+  endpoints:
+  - port: metrics
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s
+---
+# PrometheusRule for alerting (需求 5.5)
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: grading-system-alerts
+  namespace: grading-system
+  labels:
+    monitoring: prometheus
+spec:
+  groups:
+  # ========================================
+  # API 和基础告警
+  # ========================================
+  - name: api-alerts
+    interval: 30s
+    rules:
+    - alert: HighErrorRate
+      expr: rate(http_requests_total{status=~"5.."}[5m]) > 0.05
+      for: 5m
+      labels:
+        severity: warning
+        component: api
+      annotations:
+        summary: "High error rate detected"
+        description: "Error rate is {{ $value }} for {{ $labels.instance }}"
+    
+    - alert: HighLatency
+      expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 30
+      for: 5m
+      labels:
+        severity: warning
+        component: api
+      annotations:
+        summary: "High latency detected"
+        description: "95th percentile latency is {{ $value }}s for {{ $labels.instance }}"
+    
+    - alert: WorkerQueueBacklog
+      expr: temporal_task_queue_depth{queue="vision-compute-queue"} > 100
+      for: 10m
+      labels:
+        severity: warning
+        component: temporal
+      annotations:
+        summary: "Worker queue backlog detected"
+        description: "Queue depth is {{ $value }} for vision-compute-queue"
+  
+  # ========================================
+  # 连接池监控告警 (需求 8.1, 8.2, 8.4)
+  # ========================================
+  - name: connection-pool-alerts
+    interval: 30s
+    rules:
+    - alert: PostgreSQLPoolExhausted
+      expr: pool_connections_active{pool_type="postgresql"} / pool_connections_max{pool_type="postgresql"} > 0.9
+      for: 5m
+      labels:
+        severity: critical
+        component: database
+      annotations:
+        summary: "PostgreSQL connection pool near exhaustion"
+        description: "Pool usage is {{ $value | humanizePercentage }} for {{ $labels.instance }}"
+    
+    - alert: RedisPoolExhausted
+      expr: pool_connections_active{pool_type="redis"} / pool_connections_max{pool_type="redis"} > 0.9
+      for: 5m
+      labels:
+        severity: critical
+        component: cache
+      annotations:
+        summary: "Redis connection pool near exhaustion"
+        description: "Pool usage is {{ $value | humanizePercentage }} for {{ $labels.instance }}"
+    
+    - alert: ConnectionTimeoutHigh
+      expr: rate(pool_connection_timeout_total[5m]) > 0.01
+      for: 5m
+      labels:
+        severity: warning
+        component: database
+      annotations:
+        summary: "High connection timeout rate"
+        description: "Timeout rate is {{ $value }} for {{ $labels.pool_type }}"
+  
+  # ========================================
+  # 缓存监控告警 (需求 3.2, 3.5)
+  # ========================================
+  - name: cache-alerts
+    interval: 30s
+    rules:
+    - alert: LowCacheHitRate
+      expr: rate(cache_hits_total[5m]) / rate(cache_requests_total[5m]) < 0.6
+      for: 10m
+      labels:
+        severity: info
+        component: cache
+      annotations:
+        summary: "Low cache hit rate"
+        description: "Cache hit rate is {{ $value | humanizePercentage }} for {{ $labels.instance }}"
+    
+    - alert: CacheFallbackActive
+      expr: cache_fallback_active == 1
+      for: 5m
+      labels:
+        severity: warning
+        component: cache
+      annotations:
+        summary: "Cache fallback mode active"
+        description: "Redis is unavailable, using PostgreSQL fallback for {{ $labels.instance }}"
+    
+    - alert: CacheMemoryHigh
+      expr: cache_memory_usage_bytes / cache_memory_limit_bytes > 0.8
+      for: 5m
+      labels:
+        severity: warning
+        component: cache
+      annotations:
+        summary: "Cache memory usage high"
+        description: "Memory usage is {{ $value | humanizePercentage }} for {{ $labels.instance }}"
+    
+    - alert: CacheEvictionRateHigh
+      expr: rate(cache_evictions_total[5m]) > 10
+      for: 5m
+      labels:
+        severity: info
+        component: cache
+      annotations:
+        summary: "High cache eviction rate"
+        description: "Eviction rate is {{ $value }}/s for {{ $labels.instance }}"
+  
+  # ========================================
+  # 分布式追踪告警 (需求 5.5)
+  # ========================================
+  - name: tracing-alerts
+    interval: 30s
+    rules:
+    - alert: HighTraceSpanDuration
+      expr: histogram_quantile(0.95, rate(trace_span_duration_ms_bucket[5m])) > 500
+      for: 5m
+      labels:
+        severity: warning
+        component: tracing
+      annotations:
+        summary: "High trace span duration detected"
+        description: "95th percentile span duration is {{ $value }}ms for {{ $labels.span_kind }}"
+    
+    - alert: SlowDatabaseQuery
+      expr: histogram_quantile(0.95, rate(trace_span_duration_ms_bucket{span_kind="database"}[5m])) > 500
+      for: 5m
+      labels:
+        severity: warning
+        component: database
+      annotations:
+        summary: "Slow database query detected"
+        description: "95th percentile query duration is {{ $value }}ms"
+    
+    - alert: SlowCacheOperation
+      expr: histogram_quantile(0.95, rate(trace_span_duration_ms_bucket{span_kind="cache"}[5m])) > 100
+      for: 5m
+      labels:
+        severity: warning
+        component: cache
+      annotations:
+        summary: "Slow cache operation detected"
+        description: "95th percentile cache operation duration is {{ $value }}ms"
+  
+  # ========================================
+  # 分布式事务告警 (需求 4.2, 4.5)
+  # ========================================
+  - name: saga-alerts
+    interval: 30s
+    rules:
+    - alert: HighSagaFailureRate
+      expr: rate(saga_transactions_failed_total[5m]) / rate(saga_transactions_total[5m]) > 0.05
+      for: 5m
+      labels:
+        severity: warning
+        component: saga
+      annotations:
+        summary: "High Saga transaction failure rate"
+        description: "Failure rate is {{ $value | humanizePercentage }} for {{ $labels.saga_type }}"
+    
+    - alert: SagaCompensationRequired
+      expr: rate(saga_compensations_total[5m]) > 1
+      for: 5m
+      labels:
+        severity: info
+        component: saga
+      annotations:
+        summary: "Saga compensations being executed"
+        description: "Compensation rate is {{ $value }}/s for {{ $labels.saga_type }}"
+    
+    - alert: SagaManualInterventionRequired
+      expr: saga_manual_intervention_required > 0
+      for: 1m
+      labels:
+        severity: critical
+        component: saga
+      annotations:
+        summary: "Saga transaction requires manual intervention"
+        description: "{{ $value }} transactions require manual intervention"
+  
+  # ========================================
+  # 检查点监控告警 (需求 9.4)
+  # ========================================
+  - name: checkpoint-alerts
+    interval: 30s
+    rules:
+    - alert: CheckpointSaveFailureHigh
+      expr: rate(checkpoint_save_failures_total[5m]) > 0.01
+      for: 5m
+      labels:
+        severity: warning
+        component: langgraph
+      annotations:
+        summary: "High checkpoint save failure rate"
+        description: "Failure rate is {{ $value }}/s for {{ $labels.instance }}"
+    
+    - alert: CheckpointSizeExcessive
+      expr: histogram_quantile(0.95, rate(checkpoint_data_size_bytes_bucket[5m])) > 10485760
+      for: 5m
+      labels:
+        severity: info
+        component: langgraph
+      annotations:
+        summary: "Checkpoint size is excessive"
+        description: "95th percentile checkpoint size is {{ $value | humanize }}B"
+    
+    - alert: CheckpointCompressionRateLow
+      expr: checkpoint_compressed_size_bytes / checkpoint_original_size_bytes > 0.8
+      for: 10m
+      labels:
+        severity: info
+        component: langgraph
+      annotations:
+        summary: "Low checkpoint compression ratio"
+        description: "Compression ratio is {{ $value | humanizePercentage }}"
+  
+  # ========================================
+  # 工作流监控告警 (需求 10.2, 10.4)
+  # ========================================
+  - name: workflow-alerts
+    interval: 30s
+    rules:
+    - alert: WorkflowExecutionTimeHigh
+      expr: histogram_quantile(0.95, rate(workflow_execution_duration_seconds_bucket[5m])) > 3600
+      for: 5m
+      labels:
+        severity: warning
+        component: temporal
+      annotations:
+        summary: "Workflow execution time is high"
+        description: "95th percentile execution time is {{ $value }}s"
+    
+    - alert: DistributedLockContentionHigh
+      expr: rate(distributed_lock_wait_time_seconds_sum[5m]) / rate(distributed_lock_acquisitions_total[5m]) > 5
+      for: 5m
+      labels:
+        severity: warning
+        component: redis
+      annotations:
+        summary: "High distributed lock contention"
+        description: "Average wait time is {{ $value }}s for {{ $labels.resource_type }}"
+    
+    - alert: ChildWorkflowConcurrencyLimitReached
+      expr: workflow_child_concurrent_count >= workflow_child_concurrent_limit
+      for: 5m
+      labels:
+        severity: info
+        component: temporal
+      annotations:
+        summary: "Child workflow concurrency limit reached"
+        description: "{{ $value }} concurrent child workflows running"
+  
+  # ========================================
+  # 系统资源告警
+  # ========================================
+  - name: resource-alerts
+    interval: 30s
+    rules:
+    - alert: HighMemoryUsage
+      expr: container_memory_usage_bytes{namespace="grading-system"} / container_spec_memory_limit_bytes{namespace="grading-system"} > 0.9
+      for: 5m
+      labels:
+        severity: warning
+        component: infrastructure
+      annotations:
+        summary: "High memory usage"
+        description: "Memory usage is {{ $value | humanizePercentage }} for {{ $labels.pod }}"
+    
+    - alert: HighCPUUsage
+      expr: rate(container_cpu_usage_seconds_total{namespace="grading-system"}[5m]) / container_spec_cpu_quota{namespace="grading-system"} > 0.9
+      for: 5m
+      labels:
+        severity: warning
+        component: infrastructure
+      annotations:
+        summary: "High CPU usage"
+        description: "CPU usage is {{ $value | humanizePercentage }} for {{ $labels.pod }}"
+    
+    - alert: PodRestartingFrequently
+      expr: rate(kube_pod_container_status_restarts_total{namespace="grading-system"}[15m]) > 0.1
+      for: 5m
+      labels:
+        severity: warning
+        component: infrastructure
+      annotations:
+        summary: "Pod restarting frequently"
+        description: "Pod {{ $labels.pod }} has restarted {{ $value }} times in the last 15 minutes"
