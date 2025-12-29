@@ -1,17 +1,4 @@
 
-export enum QuestionType {
-  MULTIPLE_CHOICE = '选择题',
-  FILL_IN = '填空题',
-  OPEN_ENDED = '解答题'
-}
-
-export enum ErrorType {
-  CONCEPT = '概念错误',
-  CALCULATION = '计算错误',
-  UNDERSTANDING = '理解偏差',
-  MISREADING = '审题错误'
-}
-
 export interface AnalysisResult {
   error_type: string;
   error_severity: 'high' | 'medium' | 'low';
@@ -26,6 +13,15 @@ export interface AnalysisResult {
     correct_solution: string;
   };
   root_cause: string;
+}
+
+export interface SavedProblem {
+  id: string;
+  timestamp: number;
+  subject: string;
+  question: string;
+  image?: string;
+  analysis: AnalysisResult;
 }
 
 export interface Recommendation {
@@ -77,4 +73,12 @@ export interface DiagnosisReport {
     most_common_error_types: Array<{ type: string; count: number; percentage: number }>;
   };
   personalized_insights: string[];
+}
+
+export interface ClassProblem {
+  id: string;
+  question: string;
+  errorRate: string;
+  tags: string[];
+  imageUrl?: string;
 }
