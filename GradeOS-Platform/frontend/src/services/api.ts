@@ -134,6 +134,13 @@ export const homeworkApi = {
       body: JSON.stringify(data),
     }),
   
+  // 扫描提交作业（图片）
+  submitScan: (data: { homework_id: string; student_id: string; student_name: string; images: string[] }) => 
+    request<SubmissionResponse>('/homework/submit-scan', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  
   getSubmissions: (homeworkId: string) => 
     request<SubmissionResponse[]>(`/homework/submissions?homework_id=${homeworkId}`),
 };

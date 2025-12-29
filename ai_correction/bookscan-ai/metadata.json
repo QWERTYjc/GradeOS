@@ -1,0 +1,7 @@
+{
+  "name": "BookScan AI",
+  "description": "A comprehensive book scanning and media management system with AI-powered editing and generation capabilities.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}

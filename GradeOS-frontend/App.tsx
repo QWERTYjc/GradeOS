@@ -5,6 +5,7 @@ import { TeacherDashboard } from './pages/TeacherDashboard';
 import { TeacherClassDetail } from './pages/TeacherClassDetail';
 import { TeacherHomework } from './pages/TeacherHomework';
 import { StudentDashboard } from './pages/StudentDashboard';
+import { StudentScanSubmit } from './pages/StudentScanSubmit';
 import { MainLayout } from './components/Layout';
 import { useStore } from './store/useStore';
 import { Role } from './types';
@@ -62,6 +63,14 @@ const App: React.FC = () => {
           element={
             <ProtectedRoute allowedRoles={[Role.Student]}>
               <StudentDashboard />
+            </ProtectedRoute>
+          } 
+        />
+        <Route 
+          path="/student/scan" 
+          element={
+            <ProtectedRoute allowedRoles={[Role.Student]}>
+              <StudentScanSubmit />
             </ProtectedRoute>
           } 
         />

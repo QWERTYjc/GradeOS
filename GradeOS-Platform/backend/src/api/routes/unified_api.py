@@ -8,8 +8,15 @@ from pydantic import BaseModel
 from typing import Optional, List
 from datetime import datetime
 import uuid
+import base64
+import os
+from pathlib import Path
 
 router = APIRouter()
+
+# 存储路径配置
+UPLOAD_DIR = Path("./storage/scans")
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 # ============ 数据模型 ============
 
@@ -59,6 +66,13 @@ class SubmissionCreate(BaseModel):
     student_id: str
     student_name: str
     content: str
+
+class ScanSubmissionCreate(BaseModel):
+    """扫描提交请求"""
+    homework_id: str
+    student_id: str
+    student_name: str
+    images: List[str]  # Base64 编码的图片列表
 
 class SubmissionResponse(BaseModel):
     submission_id: str
@@ -257,7 +271,7 @@ async def create_homework(request: HomeworkCreate):
 
 @router.post("/homework/submit", response_model=SubmissionResponse, tags=["作业管理"])
 async def submit_homework(request: SubmissionCreate):
-    """提交作业"""
+    """提交作业（文本）"""
     # 模拟 AI 批改
     import random
     score = random.randint(75, 98)
@@ -271,6 +285,62 @@ async def submit_homework(request: SubmissionCreate):
         status="graded",
         score=score,
         feedback=f"AI Analysis: Good understanding of core concepts. Score: {score}/100"
+    )
+
+
+@router.post("/homework/submit-scan", response_model=SubmissionResponse, tags=["作业管理"])
+async def submit_scan_homework(request: ScanSubmissionCreate):
+    """
+    提交扫描作业（图片）
+    
+    接收 Base64 编码的图片列表，保存到本地存储，并触发 AI 批改
+    """
+    submission_id = str(uuid.uuid4())[:8]
+    
+    # 创建提交目录
+    submission_dir = UPLOAD_DIR / submission_id
+    submission_dir.mkdir(parents=True, exist_ok=True)
+    
+    saved_paths = []
+    
+    # 保存图片
+    for idx, img_data in enumerate(request.images):
+        try:
+            # 移除 data:image/xxx;base64, 前缀
+            if ',' in img_data:
+                img_data = img_data.split(',')[1]
+            
+            # 解码并保存
+            img_bytes = base64.b64decode(img_data)
+            file_path = submission_dir / f"page_{idx + 1}.jpg"
+            
+            with open(file_path, 'wb') as f:
+                f.write(img_bytes)
+            
+            saved_paths.append(str(file_path))
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"图片 {idx + 1} 处理失败: {str(e)}")
+    
+    # 模拟 AI 批改（实际应调用批改服务）
+    import random
+    score = random.randint(75, 98)
+    
+    feedback_templates = [
+        "整体答题规范，书写清晰。",
+        "解题思路正确，计算过程完整。",
+        "部分步骤可以更简洁，建议复习相关公式。",
+        "答案正确，但注意单位的书写规范。"
+    ]
+    
+    return SubmissionResponse(
+        submission_id=submission_id,
+        homework_id=request.homework_id,
+        student_id=request.student_id,
+        student_name=request.student_name,
+        submitted_at=datetime.now().isoformat(),
+        status="graded",
+        score=score,
+        feedback=f"AI 批改完成 ({len(request.images)} 页)：{random.choice(feedback_templates)} 得分：{score}/100"
     )
 
 

@@ -120,6 +120,20 @@ except ImportError as e:
     init_image_optimization = None
     logger.warning(f"图片优化模块加载失败: {e}")
 
+# 导入 Bookscan 集成模块
+try:
+    from functions.bookscan_integration import (
+        show_bookscan_scanner,
+        show_api_integration_demo,
+        BookScanIntegration
+    )
+    BOOKSCAN_AVAILABLE = True
+except ImportError as e:
+    BOOKSCAN_AVAILABLE = False
+    show_bookscan_scanner = None
+    show_api_integration_demo = None
+    logger.warning(f"Bookscan 集成模块加载失败: {e}")
+
 # 常量设置
 DATA_FILE = Path("user_data.json")
 UPLOAD_DIR = Path("uploads")
@@ -1021,6 +1035,48 @@ def show_result():
     
     display_grading_result(st.session_state.correction_result)
 
+def show_scanner():
+    """显示手机我会操作不了手机前端，所以这个会展示手机前端的路径"""
+    if not st.session_state.logged_in:
+        st.session_state.page = "login"
+        st.rerun()
+        return
+    
+    animated_title("SCANNER INTEGRATION", "BOOKSCAN-AI POWERED")
+    
+    if BOOKSCAN_AVAILABLE and show_bookscan_scanner:
+        scanned_images, ready = show_bookscan_scanner()
+        
+        st.markdown("---")
+        
+        if ready and scanned_images:
+            if st.button("🚀 接级到批改水源", type="primary", use_container_width=True):
+                # 准备批改数据
+                st.session_state.uploaded_file_paths = {
+                    'question': [],
+                    'answer': [img['path'] for img in scanned_images],
+                    'rubric': []
+                }
+                st.session_state.current_view = "result"
+                st.session_state.page = "grading"
+                st.info("📌 请先上传评分标准文件")
+    else:
+        st.error("⚠️ Bookscan 模块未就绪")
+
+def show_api_integration():
+    """显示 API 集成效果"""
+    if not st.session_state.logged_in:
+        st.session_state.page = "login"
+        st.rerun()
+        return
+    
+    animated_title("API INTEGRATION", "SYSTEM ARCHITECTURE")
+    
+    if BOOKSCAN_AVAILABLE and show_api_integration_demo:
+        show_api_integration_demo()
+    else:
+        st.error("⚠️ API 演示模块未就绪")
+
 def show_sidebar():
     with st.sidebar:
         st.markdown("### ⚡ AI GURU")
@@ -1032,8 +1088,9 @@ def show_sidebar():
             menu_items = {
                 "home": "🏠 HOME",
                 "grading": "📝 GRADING",
+                "scanner": "📱 SCANNER",
+                "api_demo": "🔗 API DEMO",
                 "history": "📚 HISTORY",
-                # "progress": "📊 PROGRESS"
             }
             
             for page_id, label in menu_items.items():
@@ -1060,6 +1117,8 @@ def main():
         "home": show_home,
         "login": show_login,
         "grading": show_grading,
+        "scanner": show_scanner,
+        "api_demo": show_api_integration,
         "history": show_history,
         "result": show_result
     }
