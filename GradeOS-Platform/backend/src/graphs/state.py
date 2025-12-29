@@ -66,9 +66,9 @@ class BatchGradingGraphState(TypedDict, total=False):
     用于批量处理多份试卷的并行批改场景。
     
     工作流：
-    接收文件 → 图像预处理 → 解析评分标准 → 固定分批批改 → 学生分割 → 结果审核 → 导出结果
+    接收文件 → 图像预处理 → 解析评分标准 → 可配置分批批改 → 跨页题目合并 → 学生分割 → 结果审核 → 导出结果
     
-    Requirements: 5.1, 5.4
+    Requirements: 3.1, 3.2, 3.3, 3.4, 5.1, 5.4, 8.1, 8.2, 8.3, 8.4, 8.5, 10.1
     """
     
     # ===== 基础信息 =====
@@ -86,11 +86,27 @@ class BatchGradingGraphState(TypedDict, total=False):
     # ===== 预处理结果 =====
     processed_images: List[str]          # 预处理后的图像
     parsed_rubric: Dict[str, Any]        # 解析后的评分标准
+
+    # ===== 索引层输出 =====
+    index_results: Dict[str, Any]        # 索引结果（按页题目信息与学生映射）
+    page_index_contexts: Dict[int, Dict[str, Any]]  # 页级上下文索引
+    student_page_map: Dict[int, str]     # 页面 -> 学生标识映射
+    indexed_students: List[Dict[str, Any]]  # 索引阶段识别的学生信息
+    index_unidentified_pages: List[int]  # 未识别学生的页面
     
     # ===== 批改结果（使用 add reducer 聚合并行结果）=====
     grading_results: Annotated[List[Dict[str, Any]], operator.add]  # 各页批改结果
     
-    # ===== 学生分割（批改后）=====
+    # ===== 跨页题目合并结果 (Requirements: 8.1, 8.2, 8.3, 8.4, 8.5) =====
+    merged_questions: List[Dict[str, Any]]  # 合并后的题目结果列表
+    cross_page_questions: List[Dict[str, Any]]  # 跨页题目信息列表
+    
+    # ===== 批次配置与进度 (Requirements: 3.1, 3.4, 10.1) =====
+    batch_config: Dict[str, Any]         # 批次配置（batch_size, max_workers 等）
+    batch_progress: Dict[str, Any]       # 批次进度信息
+    batch_retry_needed: Dict[str, Any]   # 需要重试的批次信息
+    
+    # ===== 学生聚合（基于索引）=====
     student_boundaries: List[Dict[str, Any]]  # 学生试卷边界列表
     student_results: List[Dict[str, Any]]     # 按学生聚合的结果
     
@@ -252,6 +268,11 @@ def create_initial_batch_state(
         },
         pdf_path=pdf_path,
         rubric=rubric,
+        index_results={},
+        page_index_contexts={},
+        student_page_map={},
+        indexed_students=[],
+        index_unidentified_pages=[],
         student_boundaries=[],
         detected_students=[],
         submission_jobs=[],

@@ -284,7 +284,7 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({ className }) => {
                                 )}
 
                                 {/* 学生识别节点 */}
-                                {selectedNode.id === 'segment' && studentBoundaries.length > 0 && (
+                                {selectedNode.id === 'index' && studentBoundaries.length > 0 && (
                                     <div className="space-y-3">
                                         <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider flex items-center gap-1.5">
                                             <Users className="w-3.5 h-3.5" />

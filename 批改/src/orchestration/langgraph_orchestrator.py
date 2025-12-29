@@ -779,7 +779,8 @@ class LangGraphOrchestrator(Orchestrator):
                         yield {
                             "type": "node_start",
                             "node": event_name,
-                            "data": event_data
+                            "data": event_data,
+                            "metadata": event.get("metadata", {})
                         }
                     
                     elif event_kind == "on_chain_end":
@@ -788,15 +789,26 @@ class LangGraphOrchestrator(Orchestrator):
                             "node": event_name,
                             "data": {
                                 "output": event_data.get("output", {})
-                            }
+                            },
+                             "metadata": event.get("metadata", {})
                         }
                     
                     elif event_kind == "on_chain_stream":
-                        # 流式输出（如 LLM 生成）
+                        # 链式流式输出
                         yield {
                             "type": "stream",
                             "node": event_name,
-                            "data": event_data
+                            "data": event_data,
+                            "metadata": event.get("metadata", {})
+                        }
+
+                    elif event_kind == "on_chat_model_stream":
+                        # LLM模型流式输出 (Token级别)
+                        yield {
+                            "type": "stream",
+                            "node": event_name,
+                            "data": event_data, # 通常包含 chunk.content
+                            "metadata": event.get("metadata", {})
                         }
                     
                     elif event_kind == "on_chat_model_stream":

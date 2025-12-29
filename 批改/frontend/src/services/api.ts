@@ -1,70 +1,50 @@
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://127.0.0.1:8001';
+export const API_BASE = "http://localhost:8001";
 
-export interface Submission {
-    id: string;
-    status: string;
-    created_at: string;
+export async function fetcher(url: string, options?: RequestInit) {
+    const res = await fetch(`${API_BASE}${url}`, options);
+    if (!res.ok) {
+        throw new Error(`API Error: ${res.statusText}`);
+    }
+    return res.json();
 }
 
 export const api = {
-    async createSubmission(files: File[], rubrics: File[]): Promise<Submission> {
+    createSubmission: async (examFiles: File[], rubricFiles: File[]) => {
         const formData = new FormData();
+        examFiles.forEach(f => formData.append('files', f));
+        rubricFiles.forEach(f => formData.append('rubrics', f));
+        formData.append('auto_identify', 'true');
 
-        files.forEach(file => {
-            formData.append('files', file);
+        // Map backend response { batch_id, ... } to { id, ... } for frontend compat if needed
+        const res = await fetcher("/batch/submit", {
+            method: "POST",
+            body: formData,
         });
-
-        rubrics.forEach(rubric => {
-            formData.append('rubrics', rubric);
-        });
-
-        // Add a generated exam_id
-        formData.append('exam_id', 'exam_' + Date.now());
-
-        try {
-            const response = await fetch(`${API_BASE_URL}/batch/submit`, {
-                method: 'POST',
-                body: formData,
-            });
-
-            if (!response.ok) {
-                throw new Error(`Upload failed: ${response.status} ${response.statusText}`);
-            }
-
-            const data = await response.json();
-            // Map batch response to Submission interface
-            return {
-                id: data.batch_id,
-                status: data.status || 'UPLOADED',
-                created_at: new Date().toISOString()
-            };
-        } catch (error) {
-            console.error("API Error:", error);
-            throw new Error(error instanceof TypeError && error.message === 'Failed to fetch'
-                ? 'Cannot connect to server. Is the backend running?'
-                : error instanceof Error ? error.message : 'Unknown error');
-        }
+        return { ...res, id: res.batch_id };
     },
 
-    async getSubmission(id: string): Promise<Submission> {
-        const response = await fetch(`${API_BASE_URL}/submissions/${id}`);
-        if (!response.ok) {
-            throw new Error(`Fetch failed: ${response.statusText}`);
-        }
-        return response.json();
+    submitGrading: async (examId: string, studentId: string, file: File) => {
+        // Legacy/Individual support if needed
+        const formData = new FormData();
+        formData.append("file", file);
+        formData.append("exam_id", examId);
+        formData.append("student_id", studentId);
+        return fetcher("/api/v1/submissions", {
+            method: "POST",
+            body: formData,
+        });
     },
 
-    async getNodeDetails(submissionId: string, nodeId: string): Promise<any> {
-        // Mocking this for now as the backend endpoint might vary, 
-        // but structure is ready for real call
-        // const response = await fetch(`${API_BASE_URL}/submissions/${submissionId}/nodes/${nodeId}`);
-        // return response.json();
+    getSubmission: (id: string) => fetcher(`/batch/${id}/status`),
 
-        return {
-            nodeId,
-            status: 'completed',
-            logs: ['Agent started', 'Processing data...', 'Agent finished'],
-            output: { confidence: 0.98, result: 'Pass' }
-        };
-    }
+    getResults: (id: string) => fetcher(`/batch/${id}/results`),
+
+    listSubmissions: () => fetcher("/batch/list"),
+
+    reviewSubmission: (id: string, action: string, data?: any) =>
+        fetcher(`/batch/${id}/review`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action, ...data }),
+        }),
 };

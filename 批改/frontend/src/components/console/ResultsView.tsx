@@ -164,22 +164,57 @@ const ResultCard: React.FC<ResultCardProps> = ({ result, rank, onExpand, isExpan
 };
 
 export const ResultsView: React.FC = () => {
-    const { finalResults, setCurrentTab, workflowNodes } = useConsoleStore();
+    const { finalResults, setCurrentTab, workflowNodes, studentBoundaries } = useConsoleStore();
     const [expandedStudent, setExpandedStudent] = useState<string | null>(null);
 
     // 从 workflowNodes 中获取所有 Agent 的详细结果（如果 finalResults 为空）
     const gradingNode = workflowNodes.find(n => n.id === 'grading');
     const agentResults = gradingNode?.children?.filter(c => c.status === 'completed' && c.output) || [];
 
-    // 优先使用 finalResults，否则从 agents 构建
-    const results: StudentResult[] = finalResults.length > 0
-        ? finalResults
-        : agentResults.map(agent => ({
+    // 尝试从 agent 输出中获取所有页面的批改结果
+    const allPageResults = agentResults.flatMap(agent =>
+        agent.output?.questionResults || []
+    );
+
+    // 构建结果：优先使用 finalResults，但如果分数为 0 且有学生边界信息，尝试重新聚合
+    let results: StudentResult[] = [];
+
+    if (finalResults.length > 0) {
+        // 检查是否所有分数都是 0（表示后端可能没有正确聚合）
+        const allZero = finalResults.every(r => r.score === 0);
+
+        if (allZero && studentBoundaries.length > 0 && allPageResults.length > 0) {
+            // 后端没有正确聚合，尝试在前端手动聚合
+            results = studentBoundaries.map((boundary, idx) => {
+                // 找到属于该学生页面范围的批改结果
+                // 注意：这里假设 pageIndex 对应 questionResults 中的某个字段
+                const studentPageResults = allPageResults.filter((pr: any) => {
+                    const pageIdx = pr.pageIndex ?? pr.page_index ?? idx;
+                    return pageIdx >= boundary.startPage && pageIdx <= boundary.endPage;
+                });
+
+                const totalScore = studentPageResults.reduce((sum: number, pr: any) => sum + (pr.score || 0), 0);
+                const maxScore = studentPageResults.reduce((sum: number, pr: any) => sum + (pr.maxScore || pr.max_score || 0), 0);
+
+                return {
+                    studentName: boundary.studentKey || `学生 ${idx + 1}`,
+                    score: totalScore,
+                    maxScore: maxScore || 100,
+                    questionResults: studentPageResults as any[]
+                };
+            });
+        } else {
+            results = finalResults;
+        }
+    } else if (agentResults.length > 0) {
+        // 从 agents 构建
+        results = agentResults.map(agent => ({
             studentName: agent.label,
             score: agent.output?.score || 0,
             maxScore: agent.output?.maxScore || 100,
             questionResults: agent.output?.questionResults
         }));
+    }
 
     // 按分数排序
     const sortedResults = [...results].sort((a, b) => b.score - a.score);
@@ -286,17 +321,22 @@ export const ResultsView: React.FC = () => {
 
             {/* Results Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {sortedResults.map((result, index) => (
-                    <ResultCard
-                        key={result.studentName}
-                        result={result}
-                        rank={index + 1}
-                        isExpanded={expandedStudent === result.studentName}
-                        onExpand={() => setExpandedStudent(
-                            expandedStudent === result.studentName ? null : result.studentName
-                        )}
-                    />
-                ))}
+                {sortedResults.map((result, index) => {
+                    // Create a unique identifier for UI purposes since names might be duplicate
+                    const uniqueId = `${result.studentName}-${index}`;
+
+                    return (
+                        <ResultCard
+                            key={uniqueId}
+                            result={result}
+                            rank={index + 1}
+                            isExpanded={expandedStudent === uniqueId}
+                            onExpand={() => setExpandedStudent(
+                                expandedStudent === uniqueId ? null : uniqueId
+                            )}
+                        />
+                    );
+                })}
             </div>
         </div>
     );

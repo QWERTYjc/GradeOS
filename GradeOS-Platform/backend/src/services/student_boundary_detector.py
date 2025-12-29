@@ -52,6 +52,7 @@ class StudentBoundaryDetector:
     1. 学生标识提取：从批改结果中提取学生姓名/学号
     2. 题目循环检测：通过题目序列的循环模式推断边界
     3. 混合策略：结合上述两种方法提高准确性
+    4. 学生结果聚合：正确聚合学生范围内的所有题目，处理跨页题目
     """
     
     def __init__(
@@ -365,7 +366,12 @@ class StudentBoundaryDetector:
         total_pages: int
     ) -> List[StudentBoundary]:
         """
-        基于学生标识检测边界
+        基于学生标识检测边界（改进版）
+        
+        改进点：
+        1. 更智能的学生切换检测：考虑置信度和连续性
+        2. 处理学生信息缺失的页面：使用前向填充策略
+        3. 检测异常切换：避免频繁的学生切换
         
         Args:
             student_markers: 页码 -> 学生信息的映射
@@ -377,45 +383,136 @@ class StudentBoundaryDetector:
         boundaries = []
         current_student = None
         current_start = 0
+        student_page_counts = {}  # 统计每个学生的页面数
+        last_reliable_student = None  # 最后一个可靠的学生标识
+        
+        logger.info(f"开始基于学生标识检测边界，共 {total_pages} 页")
         
         for page_idx in range(total_pages):
             student_info = student_markers.get(page_idx)
             
-            # 检测到新学生
+            # 检测到学生信息
             if student_info and student_info.confidence >= 0.6:
                 student_key = student_info.student_id or student_info.name
                 
-                # 检查是否是新学生（与当前学生不同）
+                # 第一个学生
                 if current_student is None:
-                    # 第一个学生
                     current_student = student_key
                     current_start = page_idx
+                    last_reliable_student = student_info
+                    logger.info(f"检测到第一个学生：{student_key}，起始页 {page_idx}")
+                
+                # 检测到不同的学生
                 elif current_student != student_key:
-                    # 不同的学生，保存当前边界
-                    boundaries.append(StudentBoundary(
-                        student_key=current_student,
-                        start_page=current_start,
-                        end_page=page_idx - 1,
-                        confidence=0.0,  # 稍后计算
-                        needs_confirmation=False,
-                        student_info=student_markers.get(current_start)
-                    ))
+                    # 验证是否是真正的学生切换
+                    # 条件1：新学生的置信度足够高
+                    # 条件2：当前学生已经有足够的页面（避免误判）
+                    pages_in_current = page_idx - current_start
                     
-                    # 开始新学生
-                    current_student = student_key
-                    current_start = page_idx
-                # 如果是同一个学生，继续累积页面
+                    if student_info.confidence >= 0.7 and pages_in_current >= 3:
+                        # 确认是新学生，保存当前边界
+                        boundaries.append(StudentBoundary(
+                            student_key=current_student,
+                            start_page=current_start,
+                            end_page=page_idx - 1,
+                            confidence=0.0,  # 稍后计算
+                            needs_confirmation=False,
+                            student_info=last_reliable_student
+                        ))
+                        
+                        # 记录页面数
+                        student_page_counts[current_student] = pages_in_current
+                        
+                        logger.info(
+                            f"检测到学生切换：{current_student} -> {student_key}，"
+                            f"页面范围 [{current_start}, {page_idx - 1}]"
+                        )
+                        
+                        # 开始新学生
+                        current_student = student_key
+                        current_start = page_idx
+                        last_reliable_student = student_info
+                    
+                    elif student_info.confidence >= 0.8 and pages_in_current >= 1:
+                        # 高置信度的新学生，即使当前学生页面较少也切换
+                        boundaries.append(StudentBoundary(
+                            student_key=current_student,
+                            start_page=current_start,
+                            end_page=page_idx - 1,
+                            confidence=0.0,
+                            needs_confirmation=False,
+                            student_info=last_reliable_student
+                        ))
+                        
+                        student_page_counts[current_student] = pages_in_current
+                        
+                        logger.info(
+                            f"检测到高置信度学生切换：{current_student} -> {student_key}，"
+                            f"页面范围 [{current_start}, {page_idx - 1}]"
+                        )
+                        
+                        current_student = student_key
+                        current_start = page_idx
+                        last_reliable_student = student_info
+                    
+                    else:
+                        # 置信度不够或页面太少，可能是误判，继续当前学生
+                        logger.debug(
+                            f"页面 {page_idx} 检测到学生 {student_key}，"
+                            f"但置信度 {student_info.confidence} 或页面数 {pages_in_current} 不足，"
+                            f"继续当前学生 {current_student}"
+                        )
+                
+                # 同一个学生，继续累积页面
+                else:
+                    # 更新最后可靠的学生信息（使用置信度更高的）
+                    if student_info.confidence > last_reliable_student.confidence:
+                        last_reliable_student = student_info
+            
+            # 没有检测到学生信息，使用前向填充策略
+            else:
+                # 如果当前有学生，继续归属到当前学生
+                if current_student is not None:
+                    logger.debug(f"页面 {page_idx} 无学生信息，归属到当前学生 {current_student}")
+                else:
+                    # 如果还没有检测到任何学生，标记为待定
+                    logger.debug(f"页面 {page_idx} 无学生信息，且尚未检测到学生")
         
         # 添加最后一个学生
         if current_student:
+            pages_in_current = total_pages - current_start
             boundaries.append(StudentBoundary(
                 student_key=current_student,
                 start_page=current_start,
                 end_page=total_pages - 1,
                 confidence=0.0,  # 稍后计算
                 needs_confirmation=False,
-                student_info=student_markers.get(current_start)
+                student_info=last_reliable_student
             ))
+            student_page_counts[current_student] = pages_in_current
+            
+            logger.info(
+                f"添加最后一个学生：{current_student}，"
+                f"页面范围 [{current_start}, {total_pages - 1}]"
+            )
+        
+        # 验证检测结果的合理性
+        if boundaries:
+            # 检查是否有异常短的学生范围
+            for boundary in boundaries:
+                pages = boundary.end_page - boundary.start_page + 1
+                if pages < 2:
+                    logger.warning(
+                        f"检测到异常短的学生范围：{boundary.student_key}，"
+                        f"仅 {pages} 页，可能需要人工确认"
+                    )
+            
+            # 统计信息
+            avg_pages = sum(student_page_counts.values()) / len(student_page_counts)
+            logger.info(
+                f"学生边界检测完成：共 {len(boundaries)} 个学生，"
+                f"平均每个学生 {avg_pages:.1f} 页"
+            )
         
         return boundaries
     
@@ -425,10 +522,12 @@ class StudentBoundaryDetector:
         total_pages: int
     ) -> List[StudentBoundary]:
         """
-        基于题目循环检测边界
+        基于题目循环检测边界（改进版）
         
-        通过检测题目编号的循环模式来推断学生边界。
-        当题目编号从大变小（如从5回到1）时，说明换了一个学生。
+        改进点：
+        1. 更智能的循环检测：考虑题目序列的连续性和跳跃
+        2. 多重信号融合：结合题目回退、题目密度、页面特征
+        3. 自适应阈值：根据题目分布动态调整检测阈值
         
         Args:
             page_analyses: 页面分析结果
@@ -462,9 +561,11 @@ class StudentBoundaryDetector:
         current_start = 0
         last_max_question = 0
         question_sequence = []  # 记录题目序列
+        page_question_map = {}  # 页面 -> 题目编号的映射
         
-        logger.info(f"开始题目循环检测，共 {len(page_analyses)} 页")
+        logger.info(f"开始改进的题目循环检测，共 {len(page_analyses)} 页")
         
+        # 第一步：提取所有页面的题目信息
         for i, analysis in enumerate(page_analyses):
             # 跳过封面页
             if analysis.is_cover_page:
@@ -478,7 +579,8 @@ class StudentBoundaryDetector:
                 for q in analysis.question_numbers:
                     try:
                         q_num = self._normalize_question_number(q)
-                        current_questions.append(q_num)
+                        if q_num > 0:  # 过滤无效题号
+                            current_questions.append(q_num)
                     except ValueError:
                         continue
             
@@ -486,31 +588,68 @@ class StudentBoundaryDetector:
             if analysis.first_question:
                 try:
                     q_num = self._normalize_question_number(analysis.first_question)
-                    if q_num not in current_questions:
+                    if q_num > 0 and q_num not in current_questions:
                         current_questions.append(q_num)
                 except ValueError:
                     pass
             
-            if not current_questions:
-                continue
-            
-            # 取最小的题目编号作为当前页的主要题目
+            if current_questions:
+                page_question_map[i] = sorted(current_questions)
+        
+        # 第二步：分析题目序列，检测循环
+        pages_with_questions = sorted(page_question_map.keys())
+        
+        for idx, page_idx in enumerate(pages_with_questions):
+            current_questions = page_question_map[page_idx]
             min_question = min(current_questions)
             max_question = max(current_questions)
             
-            logger.debug(f"页面 {i}: 题目 {current_questions}, min={min_question}, max={max_question}")
+            logger.debug(f"页面 {page_idx}: 题目 {current_questions}, min={min_question}, max={max_question}")
             
-            # 检测循环：题目编号显著回退
-            if (min_question <= 3 and  # 回到前几题
-                last_max_question >= 5 and  # 之前已经到了较后面的题目
-                i > current_start + 2):  # 确保不是刚开始
-                
+            # 改进的循环检测逻辑
+            is_cycle_start = False
+            
+            # 条件1：题目编号显著回退（强信号）
+            if (min_question <= 2 and  # 回到第1或第2题
+                last_max_question >= 5 and  # 之前已经到了第5题或更后
+                page_idx > current_start + 2):  # 确保不是刚开始
+                is_cycle_start = True
+                logger.info(f"检测到强循环信号：页面 {page_idx}，题目从 {last_max_question} 回到 {min_question}")
+            
+            # 条件2：题目编号中等回退 + 连续性中断（中等信号）
+            elif (min_question <= 3 and
+                  last_max_question >= 8 and
+                  page_idx > current_start + 3):
+                # 检查是否有连续性中断
+                if idx > 0:
+                    prev_page = pages_with_questions[idx - 1]
+                    prev_questions = page_question_map[prev_page]
+                    prev_max = max(prev_questions)
+                    
+                    # 如果前一页的最大题号远大于当前页的最小题号
+                    if prev_max - min_question >= 5:
+                        is_cycle_start = True
+                        logger.info(f"检测到中等循环信号：页面 {page_idx}，题目从 {prev_max} 跳到 {min_question}")
+            
+            # 条件3：题目密度突变（弱信号，需要结合其他条件）
+            elif (min_question == 1 and
+                  last_max_question >= 10 and
+                  page_idx > current_start + 5):
+                # 检查题目密度是否突然增加（可能是新学生的开始）
+                if idx > 0:
+                    prev_page = pages_with_questions[idx - 1]
+                    prev_questions = page_question_map[prev_page]
+                    
+                    # 当前页题目数量明显多于前一页
+                    if len(current_questions) >= len(prev_questions) * 1.5:
+                        is_cycle_start = True
+                        logger.info(f"检测到弱循环信号：页面 {page_idx}，题目密度突变")
+            
+            if is_cycle_start:
                 # 发现新学生的开始
-                logger.info(f"检测到学生边界：页面 {i}，题目从 {last_max_question} 回到 {min_question}")
-                
-                if i > current_start:
-                    boundary_ranges.append((current_start, i - 1))
-                current_start = i
+                if page_idx > current_start:
+                    boundary_ranges.append((current_start, page_idx - 1))
+                current_start = page_idx
                 last_max_question = max_question
                 question_sequence = [min_question]
             else:
@@ -522,31 +661,59 @@ class StudentBoundaryDetector:
         if current_start < len(page_analyses):
             boundary_ranges.append((current_start, len(page_analyses) - 1))
         
-        # 如果没有检测到任何边界，尝试基于页数估算
-        if not boundary_ranges:
-            # 估算：假设每个学生大约20-30页
-            estimated_pages_per_student = 25
-            estimated_students = max(1, total_pages // estimated_pages_per_student)
+        # 第三步：如果没有检测到任何边界，使用智能估算
+        if not boundary_ranges or len(boundary_ranges) == 1:
+            # 分析题目分布，估算学生数量
+            all_questions = []
+            for questions in page_question_map.values():
+                all_questions.extend(questions)
             
-            if estimated_students > 1:
-                pages_per_student = total_pages // estimated_students
-                for i in range(estimated_students):
-                    start = i * pages_per_student
-                    end = min((i + 1) * pages_per_student - 1, total_pages - 1)
-                    if i == estimated_students - 1:  # 最后一个学生包含剩余页面
-                        end = total_pages - 1
-                    boundary_ranges.append((start, end))
+            if all_questions:
+                max_q = max(all_questions)
+                min_q = min(all_questions)
+                question_range = max_q - min_q + 1
+                
+                # 如果题目范围较大，可能有多个学生
+                if question_range >= 15 and total_pages >= 30:
+                    # 估算：假设每个学生大约15-25页
+                    estimated_pages_per_student = 20
+                    estimated_students = max(1, total_pages // estimated_pages_per_student)
                     
-                logger.info(f"基于页数估算检测到 {estimated_students} 个学生")
+                    if estimated_students > 1:
+                        boundary_ranges = []
+                        pages_per_student = total_pages // estimated_students
+                        for i in range(estimated_students):
+                            start = i * pages_per_student
+                            end = min((i + 1) * pages_per_student - 1, total_pages - 1)
+                            if i == estimated_students - 1:  # 最后一个学生包含剩余页面
+                                end = total_pages - 1
+                            boundary_ranges.append((start, end))
+                        
+                        logger.info(f"基于题目分布和页数估算检测到 {estimated_students} 个学生")
+                else:
+                    # 题目范围较小或页数较少，可能只有一个学生
+                    boundary_ranges = [(0, total_pages - 1)]
+                    logger.info("题目分布表明可能只有一个学生")
             else:
+                # 没有题目信息，默认单个学生
                 boundary_ranges = [(0, total_pages - 1)]
         
         logger.info(f"最终检测到 {len(boundary_ranges)} 个学生边界: {boundary_ranges}")
         
-        # 转换为 StudentBoundary 对象
+        # 第四步：转换为 StudentBoundary 对象
         for idx, (start, end) in enumerate(boundary_ranges):
             student_count = idx + 1
-            confidence = 0.7 if len(boundary_ranges) > 1 else 0.5  # 多学生时置信度更高
+            
+            # 根据检测方法和边界数量计算置信度
+            if len(boundary_ranges) == 1:
+                # 单个学生，置信度较低
+                confidence = 0.5
+            elif len(boundary_ranges) <= 3:
+                # 2-3个学生，置信度中等
+                confidence = 0.7
+            else:
+                # 多个学生，置信度较高
+                confidence = 0.75
             
             # 使用唯一的学生标识（包含索引）
             student_key = f"学生{chr(65 + idx)}"  # 学生A, 学生B, 学生C...
@@ -729,3 +896,361 @@ class StudentBoundaryDetector:
         
         # 默认中等清晰度
         return 0.6
+    
+    def get_confidence_analysis(
+        self,
+        boundary: StudentBoundary,
+        student_markers: Dict[int, Optional[StudentInfo]],
+        page_analyses: List[PageAnalysis]
+    ) -> Dict[str, Any]:
+        """
+        获取边界置信度的详细分析
+        
+        用于解释为什么某个边界需要人工确认，提供可操作的反馈。
+        
+        Args:
+            boundary: 学生边界
+            student_markers: 学生标识信息
+            page_analyses: 页面分析结果
+            
+        Returns:
+            Dict[str, Any]: 置信度分析结果，包含各项得分和建议
+        """
+        # 计算各项得分
+        student_info_score = 0.0
+        if boundary.student_info and not boundary.student_info.is_placeholder:
+            student_info_score = boundary.student_info.confidence
+        
+        question_continuity = self._calculate_question_continuity(boundary, page_analyses)
+        boundary_clarity = self._calculate_boundary_clarity(boundary, student_markers)
+        
+        # 生成分析报告
+        analysis = {
+            "overall_confidence": boundary.confidence,
+            "needs_confirmation": boundary.needs_confirmation,
+            "threshold": self.confidence_threshold,
+            "factors": {
+                "student_info": {
+                    "score": student_info_score,
+                    "weight": 1.0,
+                    "description": "学生标识信息的置信度"
+                },
+                "question_continuity": {
+                    "score": question_continuity,
+                    "weight": 1.0,
+                    "description": "题目序列的连续性"
+                },
+                "boundary_clarity": {
+                    "score": boundary_clarity,
+                    "weight": 1.0,
+                    "description": "边界的清晰度"
+                }
+            },
+            "issues": [],
+            "recommendations": []
+        }
+        
+        # 识别问题
+        if student_info_score < 0.6:
+            analysis["issues"].append("学生标识信息缺失或置信度较低")
+            analysis["recommendations"].append("建议人工确认学生身份")
+        
+        if question_continuity < 0.5:
+            analysis["issues"].append("题目序列不连续，可能存在跨页或缺页")
+            analysis["recommendations"].append("检查是否有题目跨页或页面缺失")
+        
+        if boundary_clarity < 0.7:
+            analysis["issues"].append("边界不够清晰，可能存在学生切换误判")
+            analysis["recommendations"].append("确认学生边界位置是否正确")
+        
+        # 如果没有问题
+        if not analysis["issues"]:
+            analysis["issues"].append("无明显问题")
+            analysis["recommendations"].append("置信度较高，可以直接使用")
+        
+        return analysis
+    
+    def aggregate_student_results(
+        self,
+        boundaries: List[StudentBoundary],
+        grading_results: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """
+        聚合学生结果
+        
+        为每个学生聚合其范围内的所有题目结果，正确处理跨页题目避免重复计算。
+        
+        Args:
+            boundaries: 学生边界列表
+            grading_results: 批改结果列表（按页面索引排序）
+            
+        Returns:
+            List[Dict[str, Any]]: 每个学生的聚合结果
+        """
+        student_results = []
+        
+        logger.info(f"开始聚合学生结果，共 {len(boundaries)} 个学生")
+        
+        for boundary in boundaries:
+            logger.info(
+                f"聚合学生 {boundary.student_key}，"
+                f"页面范围 [{boundary.start_page}, {boundary.end_page}]"
+            )
+            
+            # 提取该学生范围内的所有批改结果
+            student_pages = []
+            for page_idx in range(boundary.start_page, boundary.end_page + 1):
+                if page_idx < len(grading_results):
+                    student_pages.append(grading_results[page_idx])
+            
+            # 聚合题目结果
+            aggregated_questions = self._aggregate_questions(student_pages)
+            
+            # 计算总分
+            total_score = sum(q.get("score", 0.0) for q in aggregated_questions)
+            max_total_score = sum(q.get("max_score", 0.0) for q in aggregated_questions)
+            
+            # 构建学生结果
+            student_result = {
+                "student_key": boundary.student_key,
+                "student_id": boundary.student_info.student_id if boundary.student_info else None,
+                "student_name": boundary.student_info.name if boundary.student_info else None,
+                "start_page": boundary.start_page,
+                "end_page": boundary.end_page,
+                "total_score": total_score,
+                "max_total_score": max_total_score,
+                "question_results": aggregated_questions,
+                "confidence": boundary.confidence,
+                "needs_confirmation": boundary.needs_confirmation,
+                "detection_method": boundary.detection_method,
+                "page_count": boundary.end_page - boundary.start_page + 1
+            }
+            
+            student_results.append(student_result)
+            
+            logger.info(
+                f"学生 {boundary.student_key} 聚合完成：{len(aggregated_questions)} 道题，"
+                f"总分 {total_score}/{max_total_score}"
+            )
+        
+        return student_results
+    
+    def _aggregate_questions(
+        self,
+        student_pages: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """
+        聚合学生页面中的题目结果，处理跨页题目避免重复计算
+        
+        Args:
+            student_pages: 学生的所有页面批改结果
+            
+        Returns:
+            List[Dict[str, Any]]: 聚合后的题目结果列表
+        """
+        # 使用字典存储题目结果，key 为题目编号
+        question_map = {}
+        
+        for page in student_pages:
+            # 从不同字段提取题目结果
+            page_questions = self._extract_questions_from_page(page)
+            
+            for question in page_questions:
+                question_id = question.get("question_id")
+                if not question_id:
+                    continue
+                
+                # 检查是否是跨页题目
+                is_cross_page = question.get("is_cross_page", False)
+                
+                if question_id in question_map:
+                    # 题目已存在，需要合并
+                    existing = question_map[question_id]
+                    
+                    # 如果是跨页题目，合并结果
+                    if is_cross_page or existing.get("is_cross_page", False):
+                        merged = self._merge_cross_page_question(existing, question)
+                        question_map[question_id] = merged
+                        logger.debug(f"合并跨页题目 {question_id}")
+                    else:
+                        # 不是跨页题目但重复出现，选择置信度更高的
+                        existing_conf = existing.get("confidence", 0.0)
+                        new_conf = question.get("confidence", 0.0)
+                        
+                        if new_conf > existing_conf:
+                            question_map[question_id] = question
+                            logger.debug(
+                                f"题目 {question_id} 重复，选择置信度更高的结果 "
+                                f"({new_conf} > {existing_conf})"
+                            )
+                else:
+                    # 新题目，直接添加
+                    question_map[question_id] = question
+        
+        # 转换为列表并排序
+        aggregated = list(question_map.values())
+        
+        # 按题目编号排序
+        def sort_key(q):
+            qid = q.get("question_id", "")
+            try:
+                return self._normalize_question_number(str(qid))
+            except ValueError:
+                return 999  # 无法解析的题号放在最后
+        
+        aggregated.sort(key=sort_key)
+        
+        return aggregated
+    
+    def _extract_questions_from_page(
+        self,
+        page: Dict[str, Any]
+    ) -> List[Dict[str, Any]]:
+        """
+        从页面批改结果中提取题目结果
+        
+        支持多种数据格式：
+        - question_results 字段（列表）
+        - questions 字段（列表）
+        - 单个题目（question_id 字段）
+        
+        Args:
+            page: 页面批改结果
+            
+        Returns:
+            List[Dict[str, Any]]: 题目结果列表
+        """
+        questions = []
+        
+        # 方法1：从 question_results 字段提取
+        if "question_results" in page:
+            qr = page["question_results"]
+            if isinstance(qr, list):
+                questions.extend(qr)
+            elif isinstance(qr, dict):
+                questions.append(qr)
+        
+        # 方法2：从 questions 字段提取
+        if "questions" in page:
+            qs = page["questions"]
+            if isinstance(qs, list):
+                questions.extend(qs)
+            elif isinstance(qs, dict):
+                questions.append(qs)
+        
+        # 方法3：页面本身就是一个题目结果
+        if "question_id" in page and not questions:
+            questions.append(page)
+        
+        # 方法4：从 metadata 中提取
+        if "metadata" in page and not questions:
+            metadata = page["metadata"]
+            if isinstance(metadata, dict) and "questions" in metadata:
+                qs = metadata["questions"]
+                if isinstance(qs, list):
+                    questions.extend(qs)
+        
+        return questions
+    
+    def _merge_cross_page_question(
+        self,
+        existing: Dict[str, Any],
+        new: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        合并跨页题目的结果
+        
+        合并规则：
+        1. 满分只计算一次（取较大值）
+        2. 得分累加（如果有多个得分点）
+        3. 反馈合并
+        4. 置信度取平均
+        5. 页面索引合并
+        
+        Args:
+            existing: 已存在的题目结果
+            new: 新的题目结果
+            
+        Returns:
+            Dict[str, Any]: 合并后的题目结果
+        """
+        merged = existing.copy()
+        
+        # 1. 满分只计算一次（取较大值）
+        existing_max = existing.get("max_score", 0.0)
+        new_max = new.get("max_score", 0.0)
+        merged["max_score"] = max(existing_max, new_max)
+        
+        # 2. 得分处理：如果有得分点明细，合并得分点；否则取较大值
+        if "scoring_point_results" in existing or "scoring_point_results" in new:
+            # 合并得分点
+            existing_points = existing.get("scoring_point_results", [])
+            new_points = new.get("scoring_point_results", [])
+            
+            # 使用字典去重合并
+            point_map = {}
+            for point in existing_points:
+                point_desc = point.get("description", "")
+                point_map[point_desc] = point
+            
+            for point in new_points:
+                point_desc = point.get("description", "")
+                if point_desc not in point_map:
+                    point_map[point_desc] = point
+            
+            merged["scoring_point_results"] = list(point_map.values())
+            
+            # 重新计算总得分
+            merged["score"] = sum(
+                p.get("awarded", 0.0) for p in merged["scoring_point_results"]
+            )
+        else:
+            # 没有得分点明细，取较大的得分
+            existing_score = existing.get("score", 0.0)
+            new_score = new.get("score", 0.0)
+            merged["score"] = max(existing_score, new_score)
+        
+        # 3. 反馈合并
+        existing_feedback = existing.get("feedback", "")
+        new_feedback = new.get("feedback", "")
+        
+        if existing_feedback and new_feedback:
+            # 如果两个反馈不同，合并它们
+            if existing_feedback != new_feedback:
+                merged["feedback"] = f"{existing_feedback}\n\n{new_feedback}"
+            else:
+                merged["feedback"] = existing_feedback
+        elif new_feedback:
+            merged["feedback"] = new_feedback
+        
+        # 4. 置信度取平均
+        existing_conf = existing.get("confidence", 0.0)
+        new_conf = new.get("confidence", 0.0)
+        merged["confidence"] = (existing_conf + new_conf) / 2
+        
+        # 5. 页面索引合并
+        existing_pages = existing.get("page_indices", [])
+        new_pages = new.get("page_indices", [])
+        
+        if not isinstance(existing_pages, list):
+            existing_pages = [existing_pages] if existing_pages is not None else []
+        if not isinstance(new_pages, list):
+            new_pages = [new_pages] if new_pages is not None else []
+        
+        merged["page_indices"] = sorted(set(existing_pages + new_pages))
+        
+        # 6. 标记为跨页题目
+        merged["is_cross_page"] = True
+        
+        # 7. 记录合并来源
+        existing_sources = existing.get("merge_source", [])
+        new_sources = new.get("merge_source", [])
+        
+        if not isinstance(existing_sources, list):
+            existing_sources = [existing_sources] if existing_sources else []
+        if not isinstance(new_sources, list):
+            new_sources = [new_sources] if new_sources else []
+        
+        merged["merge_source"] = existing_sources + new_sources + ["cross_page_merge"]
+        
+        return merged

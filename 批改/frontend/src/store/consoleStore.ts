@@ -445,13 +445,10 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
             set({ status: 'COMPLETED' });
             get().addLog(data.message || '工作流完成', 'SUCCESS');
 
-            // 保存最终结果并自动切换到结果页
+            // 保存最终结果 (如果后端提供了聚合数据)
+            // 不再自动切换到旧的 results tab，让用户点击 "View Full Report" 进入新页面
             if (data.results && Array.isArray(data.results)) {
                 get().setFinalResults(data.results);
-                // 延迟切换到结果页，让用户看到完成状态
-                setTimeout(() => {
-                    set({ currentTab: 'results' });
-                }, 1500);
             }
         });
 

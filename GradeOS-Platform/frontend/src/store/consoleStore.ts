@@ -59,6 +59,18 @@ export interface QuestionResult {
     feedback?: string;
     confidence?: number;
     scoringPoints?: ScoringPoint[];
+    /** 得分点明细列表 - 新增 */
+    scoringPointResults?: Array<{
+        scoringPoint: ScoringPoint;
+        awarded: number;
+        evidence: string;
+    }>;
+    /** 出现在哪些页面 - 新增 */
+    pageIndices?: number[];
+    /** 是否跨页题目 - 新增 */
+    isCrossPage?: boolean;
+    /** 合并来源（如果是合并结果）- 新增 */
+    mergeSource?: string[];
 }
 
 export interface StudentResult {
@@ -68,6 +80,22 @@ export interface StudentResult {
     percentage?: number;
     totalRevisions?: number;
     questionResults?: QuestionResult[];
+    /** 起始页 - 新增 */
+    startPage?: number;
+    /** 结束页 - 新增 */
+    endPage?: number;
+    /** 置信度 - 新增 */
+    confidence?: number;
+    /** 是否需要人工确认 - 新增 */
+    needsConfirmation?: boolean;
+}
+
+// 跨页题目信息（对应设计文档 CrossPageQuestion）
+export interface CrossPageQuestion {
+    questionId: string;
+    pageIndices: number[];
+    confidence: number;
+    mergeReason: string;
 }
 
 // 学生边界信息（对应设计文档 StudentBoundary）
@@ -142,6 +170,8 @@ export interface ConsoleState {
     batchProgress: BatchProgress | null;
     studentBoundaries: StudentBoundary[];
     selfEvolving: SelfEvolvingState;
+    // 新增：跨页题目信息
+    crossPageQuestions: CrossPageQuestion[];
 
     setView: (view: 'LANDING' | 'CONSOLE') => void;
     setCurrentTab: (tab: ConsoleTab) => void;
@@ -164,31 +194,35 @@ export interface ConsoleState {
     setBatchProgress: (progress: BatchProgress) => void;
     setStudentBoundaries: (boundaries: StudentBoundary[]) => void;
     updateSelfEvolving: (update: Partial<SelfEvolvingState>) => void;
+    // 新增：跨页题目方法
+    setCrossPageQuestions: (questions: CrossPageQuestion[]) => void;
 }
 
 /**
  * 工作流节点配置
  * 
- * 基于 LangGraph 架构的批改流程：
+ * 基于 LangGraph 架构的批改流程（与后端 batch_grading.py 完全对应）：
  * 1. intake - 接收文件
- * 2. preprocess - 预处理图像
- * 3. rubric_parse - 解析评分标准
- * 4. grading - LangGraph Agent 并行批改（支持自我修正循环）
- * 5. segment - 批改后学生分割（基于批改结果智能判断学生边界）
- * 6. review - 汇总审核（LangGraph interrupt/resume 机制）
- * 7. export - 导出结果
+ * 2. preprocess - 图像预处理
+ * 3. index - 批改前索引（题目信息 + 学生识别）
+ * 4. rubric_parse - 解析评分标准
+ * 5. grade_batch - 可配置分批并行批改（支持批次失败重试、Worker 独立性）
+ * 6. cross_page_merge - 跨页题目合并（检测并合并跨页题目，避免重复计分）
+ * 7. index_merge - 索引聚合（基于索引聚合学生结果）
+ * 8. review - 结果审核（标记低置信度结果、待确认边界）
+ * 9. export - 导出结果（支持 JSON 导出、部分结果保存）
  * 
- * 后端 LangGraph Graphs:
- * - exam_paper: segment → grade → review_check → persist → notify
- * - batch_grading: 边界检测 → 并行扇出 → 聚合 → 持久化
- * - rule_upgrade: 规则挖掘 → 补丁生成 → 回归测试 → 部署
+ * 后端 LangGraph Graph 流程：
+ * intake → preprocess → index → rubric_parse → grade_batch (并行) → cross_page_merge → index_merge → review → export → END
  */
 const initialNodes: WorkflowNode[] = [
     { id: 'intake', label: '接收文件', status: 'pending' },
     { id: 'preprocess', label: '图像预处理', status: 'pending' },
+    { id: 'index', label: '索引层', status: 'pending' },
     { id: 'rubric_parse', label: '解析评分标准', status: 'pending' },
-    { id: 'grading', label: '固定分批批改', status: 'pending', isParallelContainer: true, children: [] },
-    { id: 'segment', label: '学生分割', status: 'pending' },
+    { id: 'grade_batch', label: '分批并行批改', status: 'pending', isParallelContainer: true, children: [] },
+    { id: 'cross_page_merge', label: '跨页题目合并', status: 'pending' },
+    { id: 'index_merge', label: '索引聚合', status: 'pending' },
     { id: 'review', label: '结果审核', status: 'pending' },
     { id: 'export', label: '导出结果', status: 'pending' },
 ];
@@ -214,6 +248,8 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
         activePatches: [],
         recentExemplars: []
     },
+    // 跨页题目信息初始值
+    crossPageQuestions: [],
 
     setView: (view) => set({ view }),
     setCurrentTab: (tab) => set({ currentTab: tab }),
@@ -290,6 +326,8 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
         parsedRubric: null,
         batchProgress: null,
         studentBoundaries: [],
+        // 重置跨页题目信息
+        crossPageQuestions: [],
     }),
 
     setSelectedNodeId: (id) => set({ selectedNodeId: id, selectedAgentId: null }),
@@ -303,6 +341,8 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
     updateSelfEvolving: (update) => set((state) => ({
         selfEvolving: { ...state.selfEvolving, ...update }
     })),
+    // 跨页题目方法
+    setCrossPageQuestions: (questions) => set({ crossPageQuestions: questions }),
 
     connectWs: (batchId) => {
         const wsUrl = process.env.NEXT_PUBLIC_WS_BASE_URL || 'ws://127.0.0.1:8001';
@@ -312,7 +352,9 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
         wsClient.on('workflow_update', (data) => {
             console.log('Workflow Update:', data);
             const { nodeId, status, message } = data;
-            get().updateNodeStatus(nodeId, status, message);
+            // 后端节点 ID 映射到前端（兼容旧名称）
+            const mappedNodeId = nodeId === 'grading' ? 'grade_batch' : nodeId;
+            get().updateNodeStatus(mappedNodeId, status, message);
             if (message) {
                 get().addLog(message, 'INFO');
             }
@@ -322,7 +364,9 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
         wsClient.on('parallel_agents_created', (data) => {
             console.log('Parallel Agents Created:', data);
             const { parentNodeId, agents } = data;
-            get().setParallelAgents(parentNodeId, agents);
+            // 后端节点 ID 映射到前端
+            const mappedNodeId = parentNodeId === 'grading' ? 'grade_batch' : parentNodeId;
+            get().setParallelAgents(mappedNodeId, agents);
             get().addLog(`创建了 ${agents.length} 个批改 Agent`, 'INFO');
         });
 
@@ -439,15 +483,80 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
             }
         });
 
+        // 处理跨页题目检测事件
+        wsClient.on('cross_page_detected', (data) => {
+            console.log('Cross Page Questions Detected:', data);
+            const { questions, mergedCount, crossPageCount } = data;
+            if (questions && Array.isArray(questions)) {
+                get().setCrossPageQuestions(questions.map((q: any) => ({
+                    questionId: q.question_id || q.questionId,
+                    pageIndices: q.page_indices || q.pageIndices || [],
+                    confidence: q.confidence || 0,
+                    mergeReason: q.merge_reason || q.mergeReason || '',
+                })));
+                get().addLog(
+                    `跨页题目合并完成：检测到 ${crossPageCount || questions.length} 道跨页题目，合并后共 ${mergedCount || '?'} 道题目`,
+                    'INFO'
+                );
+            }
+        });
+
         // 处理工作流完成
         wsClient.on('workflow_completed', (data) => {
             console.log('Workflow Completed:', data);
             set({ status: 'COMPLETED' });
             get().addLog(data.message || '工作流完成', 'SUCCESS');
 
-            // 保存最终结果并自动切换到结果页
+            // 保存跨页题目信息
+            if (data.cross_page_questions && Array.isArray(data.cross_page_questions)) {
+                get().setCrossPageQuestions(data.cross_page_questions.map((q: any) => ({
+                    questionId: q.question_id || q.questionId,
+                    pageIndices: q.page_indices || q.pageIndices || [],
+                    confidence: q.confidence || 0,
+                    mergeReason: q.merge_reason || q.mergeReason || '',
+                })));
+            }
+
+            // 保存最终结果
             if (data.results && Array.isArray(data.results)) {
-                get().setFinalResults(data.results);
+                // 转换后端格式到前端格式
+                const formattedResults: StudentResult[] = data.results.map((r: any) => ({
+                    studentName: r.studentName || r.student_name || r.student_key || 'Unknown',
+                    score: r.score || r.total_score || 0,
+                    maxScore: r.maxScore || r.max_score || r.max_total_score || 100,
+                    percentage: r.percentage,
+                    totalRevisions: r.totalRevisions,
+                    startPage: r.start_page || r.startPage,
+                    endPage: r.end_page || r.endPage,
+                    confidence: r.confidence,
+                    needsConfirmation: r.needs_confirmation || r.needsConfirmation,
+                    questionResults: (r.questionResults || r.question_results || []).map((q: any) => ({
+                        questionId: q.questionId || q.question_id || '',
+                        score: q.score || 0,
+                        maxScore: q.maxScore || q.max_score || 0,
+                        feedback: q.feedback || '',
+                        confidence: q.confidence,
+                        pageIndices: q.page_indices || q.pageIndices,
+                        isCrossPage: q.is_cross_page || q.isCrossPage,
+                        mergeSource: q.merge_source || q.mergeSource,
+                        scoringPoints: q.scoringPoints || q.scoring_points,
+                        scoringPointResults: (q.scoring_point_results || q.scoringPointResults || []).map((spr: any) => ({
+                            scoringPoint: {
+                                description: spr.scoring_point?.description || spr.scoringPoint?.description || '',
+                                score: spr.scoring_point?.score || spr.scoringPoint?.score || 0,
+                                maxScore: spr.scoring_point?.score || spr.scoringPoint?.score || 0,
+                                isCorrect: spr.awarded > 0,
+                                isRequired: spr.scoring_point?.is_required || spr.scoringPoint?.isRequired,
+                            },
+                            awarded: spr.awarded || 0,
+                            evidence: spr.evidence || '',
+                        }))
+                    }))
+                }));
+                
+                get().setFinalResults(formattedResults);
+                get().addLog(`已保存 ${formattedResults.length} 名学生的批改结果`, 'SUCCESS');
+                
                 // 延迟切换到结果页，让用户看到完成状态
                 setTimeout(() => {
                     set({ currentTab: 'results' });

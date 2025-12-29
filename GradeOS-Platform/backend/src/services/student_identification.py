@@ -342,6 +342,38 @@ class StudentIdentificationService:
         else:
             # 使用题目顺序循环检测
             return self._segment_by_question_cycle(page_analyses)
+
+    def segment_from_analyses(
+        self,
+        page_analyses: List[PageAnalysis]
+    ) -> BatchSegmentationResult:
+        """
+        基于已有页面分析结果执行分组（避免重复调用模型）
+
+        Args:
+            page_analyses: 页面分析结果列表
+
+        Returns:
+            BatchSegmentationResult: 分组结果
+        """
+        if not page_analyses:
+            return BatchSegmentationResult(
+                total_pages=0,
+                student_count=0,
+                page_mappings=[],
+                unidentified_pages=[]
+            )
+
+        page_analyses.sort(key=lambda x: x.page_index)
+
+        has_student_info = any(
+            a.student_info and a.student_info.confidence >= 0.6
+            for a in page_analyses
+        )
+
+        if has_student_info:
+            return self._segment_by_student_info(page_analyses)
+        return self._segment_by_question_cycle(page_analyses)
     
     def _segment_by_student_info(
         self,

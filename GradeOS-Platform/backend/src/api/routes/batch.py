@@ -565,27 +565,61 @@ async def _handle_node_output(
                 "pages": [r.get("page_index") for r in batch_results]
             })
     
-    elif node_name == "segment":
-        # 学生分割完成
-        student_results = output.get("student_results", [])
-        student_boundaries = output.get("student_boundaries", [])
-        if student_results:
-            accumulated_state["student_results"] = student_results
+    elif node_name in ("index", "segment"):
+        # 索引完成（或兼容旧的学生分割节点）
+        boundaries = output.get("student_boundaries") or []
+        if not boundaries:
+            indexed_students = output.get("indexed_students") or []
+            boundaries = [
+                {
+                    "student_key": s.get("student_key", ""),
+                    "start_page": s.get("start_page", 0),
+                    "end_page": s.get("end_page", 0),
+                    "confidence": s.get("confidence", 0),
+                    "needs_confirmation": s.get("needs_confirmation", False),
+                }
+                for s in indexed_students
+            ]
+        if not boundaries:
+            student_results = output.get("student_results") or []
+            boundaries = [
+                {
+                    "student_key": s.get("student_key", ""),
+                    "start_page": s.get("start_page", 0),
+                    "end_page": s.get("end_page", 0),
+                    "confidence": s.get("confidence", 0),
+                    "needs_confirmation": s.get("needs_confirmation", False),
+                }
+                for s in student_results
+            ]
+
+        if boundaries:
+            accumulated_state["student_boundaries"] = boundaries
             await broadcast_progress(batch_id, {
                 "type": "students_identified",
-                "studentCount": len(student_results),
+                "studentCount": len(boundaries),
                 "students": [
                     {
-                        "studentKey": s.get("student_key", "Unknown"),
-                        "startPage": s.get("start_page", 0),
-                        "endPage": s.get("end_page", 0),
-                        "totalScore": s.get("total_score", 0),
-                        "maxScore": s.get("max_total_score", 0),
-                        "confidence": s.get("confidence", 0)
+                        "studentKey": b.get("student_key", "Unknown"),
+                        "startPage": b.get("start_page", 0),
+                        "endPage": b.get("end_page", 0),
+                        "confidence": b.get("confidence", 0),
+                        "needsConfirmation": b.get("needs_confirmation", False),
                     }
-                    for s in student_results
+                    for b in boundaries
                 ]
             })
+
+        if node_name == "segment":
+            student_results = output.get("student_results", [])
+            if student_results:
+                accumulated_state["student_results"] = student_results
+
+    elif node_name == "index_merge":
+        # 索引聚合完成
+        student_results = output.get("student_results", [])
+        if student_results:
+            accumulated_state["student_results"] = student_results
     
     elif node_name == "review":
         # 审核完成
@@ -731,10 +765,13 @@ def _get_node_label(node_name: str) -> str:
     labels = {
         "intake": "接收文件",
         "preprocess": "图像预处理",
+        "index": "索引层",
         "rubric_parse": "解析评分标准",
-        "grade_batch": "批量批改",
+        "grade_batch": "分批并行批改",
         "grading_fanout_router": "批改任务分发",
-        "segment": "学生分割",
+        "cross_page_merge": "跨页题目合并",
+        "index_merge": "索引聚合",
+        "segment": "索引聚合",
         "review": "结果审核",
         "export": "导出结果"
     }
@@ -753,10 +790,13 @@ def _map_node_to_frontend(node_name: str) -> str:
     mapping = {
         "intake": "intake",
         "preprocess": "preprocess",
+        "index": "index",
         "rubric_parse": "rubric_parse",
-        "grade_batch": "grading",
-        "grading_fanout_router": "grading",  # 扇出路由也映射到 grading
-        "segment": "segment",
+        "grade_batch": "grade_batch",
+        "grading_fanout_router": "grade_batch",  # 扇出路由也映射到 grade_batch
+        "cross_page_merge": "cross_page_merge",
+        "index_merge": "index_merge",
+        "segment": "index_merge",
         "review": "review",
         "export": "export"
     }

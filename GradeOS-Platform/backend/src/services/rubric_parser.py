@@ -174,6 +174,7 @@ class RubricParserService:
 - 得分点要具体，说明给分条件
 - 另类解法单独列出，不计入主要得分点
 - 只提取这些页面中出现的题目
+- 注意区分主题和子题（如 7(a)、7(b) 应合并为第7题）
 
 ## 输出格式（JSON）
 ```json
@@ -185,7 +186,7 @@ class RubricParserService:
             "question_id": "1",
             "max_score": 5,
             "question_text": "题目内容（简短描述）",
-            "standard_answer": "标准答案（简短）",
+            "standard_answer": "标准答案（完整）",
             "scoring_points": [
                 {{"description": "正确列出方程", "score": 2, "is_required": true}},
                 {{"description": "正确求解", "score": 3, "is_required": true}}
@@ -199,7 +200,9 @@ class RubricParserService:
 
 ## 重要提醒
 - 只提取当前页面中的题目，不要猜测其他页面的内容
-- 另类解法的分值不要重复计算到 max_score 中"""
+- 另类解法的分值不要重复计算到 max_score 中
+- 标准答案要尽可能完整，包括解题步骤
+- 得分点要明确具体的给分条件和分值"""
 
         # 构建消息
         content = [{"type": "text", "text": prompt}]

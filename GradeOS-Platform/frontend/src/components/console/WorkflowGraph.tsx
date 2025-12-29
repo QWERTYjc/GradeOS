@@ -4,7 +4,7 @@ import React, { useMemo } from 'react';
 import { useConsoleStore, WorkflowNode, GradingAgent } from '@/store/consoleStore';
 import clsx from 'clsx';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Check, Loader2, AlertCircle, Clock, Cpu } from 'lucide-react';
+import { Check, Loader2, AlertCircle, Clock, Cpu, GitMerge } from 'lucide-react';
 
 // --- 动效配置 ---
 const transition = { type: 'spring', stiffness: 400, damping: 30 };
@@ -210,6 +210,10 @@ const NodeCard: React.FC<{
 }> = ({ node, onClick, isSelected }) => {
     const styles = statusStyles[node.status];
     const isRunning = node.status === 'running';
+    
+    // 跨页合并节点使用特殊图标
+    const isCrossPageMerge = node.id === 'cross_page_merge';
+    const nodeIcon = isCrossPageMerge ? <GitMerge className="w-5 h-5" /> : styles.icon;
 
     return (
         <motion.div
@@ -224,16 +228,18 @@ const NodeCard: React.FC<{
                 styles.bg, styles.border,
                 isSelected ? 'ring-2 ring-blue-500 ring-offset-2' : '',
                 styles.glow,
-                'backdrop-blur-xl group'
+                'backdrop-blur-xl group',
+                isCrossPageMerge && node.status === 'completed' && 'border-purple-400 bg-purple-50/80'
             )}
         >
             <div className="relative bg-white/60 rounded-xl p-4 flex flex-col items-center text-center gap-3 overflow-hidden">
                 {/* 状态图标 */}
                 <div className={clsx(
                     'p-3 rounded-xl shadow-sm transition-transform duration-300 group-hover:scale-110',
-                    'bg-white', styles.text
+                    'bg-white', 
+                    isCrossPageMerge && node.status === 'completed' ? 'text-purple-600' : styles.text
                 )}>
-                    {styles.icon}
+                    {nodeIcon}
                 </div>
 
                 {/* 文本信息 */}

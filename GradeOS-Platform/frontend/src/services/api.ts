@@ -260,6 +260,7 @@ export interface Submission {
   id: string;
   status: string;
   created_at: string;
+  total_pages?: number;
 }
 
 export interface GradingResult {
@@ -272,32 +273,100 @@ export interface GradingResult {
     score: number;
     max_score: number;
     feedback: string;
+    confidence?: number;
+    page_indices?: number[];
+    is_cross_page?: boolean;
+    merge_source?: string[];
+    scoring_point_results?: Array<{
+      scoring_point: { description: string; score: number; is_required: boolean };
+      awarded: number;
+      evidence: string;
+    }>;
   }>;
+  confidence?: number;
+  needs_confirmation?: boolean;
+  start_page?: number;
+  end_page?: number;
+}
+
+/** 跨页题目信息 */
+export interface CrossPageQuestionInfo {
+  question_id: string;
+  page_indices: number[];
+  confidence: number;
+  merge_reason: string;
+}
+
+/** 批量批改结果响应 */
+export interface BatchGradingResponse {
+  batch_id: string;
+  student_results: GradingResult[];
+  total_pages: number;
+  processed_pages: number;
+  cross_page_questions: CrossPageQuestionInfo[];
+  errors: Array<{ type: string; message: string; page_index?: number }>;
+}
+
+/** 学生边界确认请求 */
+export interface ConfirmBoundaryRequest {
+  batch_id: string;
+  student_key: string;
+  confirmed_start_page: number;
+  confirmed_end_page: number;
 }
 
 export const gradingApi = {
   createSubmission: async (examFiles: File[], rubricFiles: File[]): Promise<Submission> => {
     const formData = new FormData();
-    examFiles.forEach(file => formData.append('exam_files', file));
-    rubricFiles.forEach(file => formData.append('rubric_files', file));
     
-    const response = await fetch(`${API_BASE.replace('/api', '')}/submissions/upload`, {
+    // 添加考试文件
+    examFiles.forEach(file => formData.append('files', file));
+    
+    // 添加评分标准文件
+    rubricFiles.forEach(file => formData.append('rubrics', file));
+    
+    // 使用正确的批改 API 端点
+    const response = await fetch(`${API_BASE.replace('/api', '')}/batch/submit`, {
       method: 'POST',
       body: formData,
     });
     
     if (!response.ok) {
-      throw new Error('Upload failed');
+      const error = await response.json().catch(() => ({ detail: 'Upload failed' }));
+      throw new Error(error.detail || 'Upload failed');
     }
     
-    return response.json();
+    const result = await response.json();
+    
+    // 转换响应格式
+    return {
+      id: result.batch_id,
+      status: result.status,
+      created_at: new Date().toISOString(),
+      total_pages: result.total_pages,
+    };
   },
   
   getSubmission: (submissionId: string) => 
-    request<Submission>(`/submissions/${submissionId}`),
+    request<Submission>(`/batch/status/${submissionId}`),
   
   getResults: (submissionId: string) => 
-    request<GradingResult[]>(`/submissions/${submissionId}/results`),
+    request<GradingResult[]>(`/batch/results/${submissionId}`),
+  
+  /** 获取批量批改完整结果（包含跨页题目信息） */
+  getBatchResults: (batchId: string) =>
+    request<BatchGradingResponse>(`/batch/full-results/${batchId}`),
+  
+  /** 获取跨页题目信息 */
+  getCrossPageQuestions: (batchId: string) =>
+    request<CrossPageQuestionInfo[]>(`/batch/cross-page-questions/${batchId}`),
+  
+  /** 确认学生边界 */
+  confirmStudentBoundary: (data: ConfirmBoundaryRequest) =>
+    request<{ success: boolean; message: string }>('/batch/confirm-boundary', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
 };
 
 // ============ 导出所有 API ============

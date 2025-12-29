@@ -105,6 +105,51 @@ async def broadcast_progress(batch_id: str, message: dict):
             active_connections[batch_id].remove(ws)
 
 
+@router.websocket("/ws/{batch_id}")
+async def websocket_endpoint(websocket: WebSocket, batch_id: str):
+    """WebSocket 端点，用于实时推送进度"""
+    await websocket.accept()
+    
+    if batch_id not in active_connections:
+        active_connections[batch_id] = []
+    
+    active_connections[batch_id].append(websocket)
+    
+    logger.info(f"WebSocket 连接已建立: batch_id={batch_id}")
+    
+    try:
+        # 发送连接成功消息
+        await websocket.send_json({
+            "type": "connected",
+            "message": "已连接到进度流",
+            "batchId": batch_id
+        })
+
+        # 回放预处理日志（如果有）
+        if batch_id in batch_states and "pre_logs" in batch_states[batch_id]:
+            pre_logs = batch_states[batch_id]["pre_logs"]
+            if pre_logs:
+                logger.info(f"回放预处理日志: {len(pre_logs)} 条")
+                for log in pre_logs:
+                    await websocket.send_json(log)
+                    # 稍微延迟一下确保前端能反应过来（可选）
+                    await asyncio.sleep(0.01)
+
+        while True:
+            # 保持连接，接收心跳或其他控制消息
+            data = await websocket.receive_text()
+            # 这里可以处理来自客户端的消息，如 "stop"
+            
+    except WebSocketDisconnect:
+        logger.info(f"WebSocket 连接断开: batch_id={batch_id}")
+        if batch_id in active_connections:
+            if websocket in active_connections[batch_id]:
+                active_connections[batch_id].remove(websocket)
+    except Exception as e:
+        logger.error(f"WebSocket 异常: {e}")
+        if batch_id in active_connections:
+            if websocket in active_connections[batch_id]:
+                active_connections[batch_id].remove(websocket)
 @router.post("/submit", response_model=BatchSubmissionResponse)
 async def submit_batch(
     exam_id: Optional[str] = Form(None, description="考试 ID"),
@@ -123,7 +168,27 @@ async def submit_batch(
 
     batch_id = str(uuid.uuid4())
     
+    # 初始化批次状态，提前记录日志
+    batch_states[batch_id] = {
+        "total_pages": 0,
+        "rubric_pages": 0,
+        "grading_results": [],
+        "parsed_rubric": None,
+        "student_results": [],
+        "pre_logs": []  # 存储预处理阶段的日志
+    }
+    
+    def log_pre_event(node_id, status, message):
+        """记录预处理日志"""
+        batch_states[batch_id]["pre_logs"].append({
+            "type": "workflow_update",
+            "nodeId": node_id,
+            "status": status,
+            "message": message
+        })
+
     logger.info(f"收到批量提交（LangGraph）: batch_id={batch_id}, exam_id={exam_id}")
+    log_pre_event("intake", "running", "开始接收文件...")
     
     temp_dir = None
     try:
@@ -142,50 +207,47 @@ async def submit_batch(
             f.write(rubric_content)
         with open(answer_path, "wb") as f:
             f.write(answer_content)
-        
+            
+        log_pre_event("intake", "completed", f"接收完成: 评分标准({len(rubric_content)}B), 作答文件({len(answer_content)}B)")
+        log_pre_event("preprocess", "running", "开始 PDF 转图像预处理...")
+
         # 转换 PDF 为图像（降低分辨率以提高性能）
         logger.info(f"开始转换 PDF 为图像: batch_id={batch_id}")
-        logger.info(f"  评分标准文件大小: {len(rubric_content)} bytes")
-        logger.info(f"  学生作答文件大小: {len(answer_content)} bytes")
         
         loop = asyncio.get_event_loop()
         
-        # 转换评分标准（使用 72 DPI 以减少数据量）
-        logger.info(f"  开始转换评分标准 PDF...")
+        # 转换评分标准
         try:
             rubric_images = await asyncio.wait_for(
                 loop.run_in_executor(None, _pdf_to_images, str(rubric_path), 72),
-                timeout=120.0  # 2分钟超时
+                timeout=120.0
             )
             logger.info(f"  ✓ 评分标准转换完成: {len(rubric_images)} 页")
         except asyncio.TimeoutError:
-            logger.error(f"  ✗ 评分标准转换超时")
+            log_pre_event("preprocess", "failed", "评分标准 PDF 转换超时")
             raise HTTPException(status_code=504, detail="评分标准 PDF 转换超时")
         
         # 转换学生作答
-        logger.info(f"  开始转换学生作答 PDF...")
         try:
             answer_images = await asyncio.wait_for(
                 loop.run_in_executor(None, _pdf_to_images, str(answer_path), 72),
-                timeout=180.0  # 3分钟超时
+                timeout=180.0
             )
             logger.info(f"  ✓ 学生作答转换完成: {len(answer_images)} 页")
         except asyncio.TimeoutError:
-            logger.error(f"  ✗ 学生作答转换超时")
+            log_pre_event("preprocess", "failed", "学生作答 PDF 转换超时")
             raise HTTPException(status_code=504, detail="学生作答 PDF 转换超时")
         
         total_pages = len(answer_images)
+        log_pre_event("preprocess", "completed", f"预处理完成: 共 {total_pages} 页")
         
         logger.info(f"PDF 转换全部完成: batch_id={batch_id}, rubric_pages={len(rubric_images)}, answer_pages={total_pages}")
         
-        # 初始化批次状态
-        batch_states[batch_id] = {
+        # 更新批次状态
+        batch_states[batch_id].update({
             "total_pages": total_pages,
-            "rubric_pages": len(rubric_images),
-            "grading_results": [],
-            "parsed_rubric": None,
-            "student_results": []
-        }
+            "rubric_pages": len(rubric_images)
+        })
         
         # 使用 LangGraph Orchestrator 启动批改流程
         logger.info(f"准备启动 LangGraph 批改流程: batch_id={batch_id}")
@@ -398,6 +460,32 @@ async def stream_langgraph_progress(
                 
                 # 根据节点类型发送详细输出
                 await _handle_node_output(batch_id, node_name, output, accumulated_state)
+
+            # ========== 流式输出 (AI Delta) ==========
+            elif event_type == "stream":
+                # 转发 AI 流式输出
+                frontend_node = _map_node_to_frontend(node_name)
+                chunk = data.get("chunk")
+                
+                # 尝试解析 chunk，如果它是 AIMessageChunk 或类似的
+                content = ""
+                if isinstance(chunk, dict):
+                    content = chunk.get("content", "")
+                elif hasattr(chunk, "content"):
+                    content = chunk.content
+                elif isinstance(chunk, str):
+                    content = chunk
+                
+                if content:
+                    await broadcast_progress(batch_id, {
+                        "type": "ai_delta",
+                        "nodeId": frontend_node,
+                        "data": {
+                            "content": content,
+                            # 如果有结构化数据 patch，也可以在这里发送
+                            # "patch": ... 
+                        }
+                    })
             
             # ========== 状态更新 ==========
             elif event_type == "state_update":
@@ -823,6 +911,77 @@ async def websocket_endpoint(websocket: WebSocket, batch_id: str):
 
 
 # ==================== REST 端点 ====================
+
+@router.get("/{batch_id}/results")
+async def get_batch_results(batch_id: str):
+    """获取批次详细结果 (用于前端结果页面)
+    
+    结果按页面顺序合并，并标注每个 Worker 的处理范围
+    """
+    state = batch_states.get(batch_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Batch results not found")
+        
+    student_results = state.get("student_results", [])
+    grading_results = state.get("grading_results", [])
+    
+    # 1. 按页面顺序排序
+    sorted_grading_results = sorted(grading_results, key=lambda x: x.get("page_index", 0))
+    
+    # 2. 识别 Worker 分组 (假设每个 Worker 处理连续的页面批次)
+    # 这里我们根据 batch_index 或推断的分组来标记
+    worker_groups = []
+    current_worker = None
+    current_group = []
+    
+    for result in sorted_grading_results:
+        # 尝试从 result 中获取 batch_index，如果没有则使用页面索引推断
+        batch_idx = result.get("batch_index", result.get("page_index", 0) // 5)  # 默认每5页一个批次
+        
+        if current_worker is None:
+            current_worker = batch_idx
+            
+        if batch_idx != current_worker:
+            # 新的 Worker，保存之前的组
+            if current_group:
+                worker_groups.append({
+                    "worker_id": f"worker_{current_worker}",
+                    "batch_index": current_worker,
+                    "page_range": f"{current_group[0].get('page_index', 0) + 1} - {current_group[-1].get('page_index', 0) + 1}",
+                    "total_score": sum(r.get("score", 0) for r in current_group),
+                    "max_score": sum(r.get("max_score", 0) for r in current_group),
+                    "pages": current_group
+                })
+            current_worker = batch_idx
+            current_group = []
+            
+        current_group.append(result)
+    
+    # 最后一个 Worker 组
+    if current_group:
+        worker_groups.append({
+            "worker_id": f"worker_{current_worker}",
+            "batch_index": current_worker,
+            "page_range": f"{current_group[0].get('page_index', 0) + 1} - {current_group[-1].get('page_index', 0) + 1}",
+            "total_score": sum(r.get("score", 0) for r in current_group),
+            "max_score": sum(r.get("max_score", 0) for r in current_group),
+            "pages": current_group
+        })
+    
+    # 重新使用 _format_results_for_frontend 函数来确保格式一致
+    results = _format_results_for_frontend(student_results, sorted_grading_results)
+    
+    return {
+        "batch_id": batch_id,
+        "results": results,
+        "grading_results": sorted_grading_results,  # 已排序的原始分页结果
+        "worker_groups": worker_groups,  # 按 Worker 分组的结果
+        "summary": {
+            "total_pages": state.get("total_pages", 0),
+            "total_score": state.get("total_score", 0),
+            "total_workers": len(worker_groups)
+        }
+    }
 
 @router.get("/status/{batch_id}", response_model=BatchStatusResponse)
 async def get_batch_status(

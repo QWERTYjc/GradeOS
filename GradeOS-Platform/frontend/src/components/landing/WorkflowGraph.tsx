@@ -39,7 +39,7 @@ interface WorkerData {
 const NODES_CONFIG = [
     { id: 'ingest', label: 'Ingest', icon: CloudUpload, x: 6, y: 50 },
     { id: 'preprocess', label: 'Preprocess', icon: FileImage, x: 18.5, y: 50 },
-    { id: 'segment', label: 'Segment', icon: Scissors, x: 31, y: 50 },
+    { id: 'index', label: 'Index', icon: Scissors, x: 31, y: 50 },
     { id: 'rubric', label: 'Rubric Load', icon: BookOpen, x: 43.5, y: 50 },
     { id: 'worker_pool', label: 'Worker Pool', icon: Cpu, x: 56, y: 50 },
     { id: 'consistency', label: 'Consistency', icon: CheckCircle2, x: 68.5, y: 50 },
@@ -85,7 +85,7 @@ const useWorkflowSimulation = () => {
     }, []);
 
     const triggerPipeline = () => {
-        const sequence = ['ingest', 'preprocess', 'segment', 'rubric', 'worker_pool', 'consistency', 'merge', 'export'];
+        const sequence = ['ingest', 'preprocess', 'index', 'rubric', 'worker_pool', 'consistency', 'merge', 'export'];
 
         // Staggered execution
         let accumulatedDelay = 0;

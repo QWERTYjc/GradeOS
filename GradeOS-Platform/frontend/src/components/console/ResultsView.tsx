@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import { useConsoleStore, StudentResult, QuestionResult } from '@/store/consoleStore';
 import clsx from 'clsx';
-import { Trophy, TrendingUp, Users, Award, ArrowLeft, ChevronDown, ChevronUp, CheckCircle, XCircle, Download, GitMerge } from 'lucide-react';
+import { Trophy, TrendingUp, Users, Award, ArrowLeft, ChevronDown, ChevronUp, CheckCircle, XCircle, Download, GitMerge, AlertCircle, Layers, FileText } from 'lucide-react';
 
 interface ResultCardProps {
     result: StudentResult;
@@ -18,7 +18,16 @@ const QuestionDetail: React.FC<{ question: QuestionResult }> = ({ question }) =>
     return (
         <div className="border-l-2 border-gray-200 pl-3 py-2">
             <div className="flex items-center justify-between">
-                <span className="font-medium text-gray-700">第 {question.questionId} 题</span>
+                <div className="flex items-center gap-2">
+                    <span className="font-medium text-gray-700">第 {question.questionId} 题</span>
+                    {/* 跨页题目标记 */}
+                    {question.isCrossPage && (
+                        <span className="text-xs px-1.5 py-0.5 rounded bg-purple-100 text-purple-600 flex items-center gap-0.5">
+                            <Layers className="w-3 h-3" />
+                            跨页
+                        </span>
+                    )}
+                </div>
                 <span className={clsx(
                     'text-sm font-semibold',
                     percentage >= 60 ? 'text-green-600' : 'text-red-600'
@@ -26,10 +35,44 @@ const QuestionDetail: React.FC<{ question: QuestionResult }> = ({ question }) =>
                     {question.score} / {question.maxScore}
                 </span>
             </div>
-            {question.feedback && (
-                <p className="text-xs text-gray-500 mt-1">{question.feedback}</p>
+            
+            {/* 页面索引信息 */}
+            {question.pageIndices && question.pageIndices.length > 0 && (
+                <div className="text-xs text-gray-400 mt-0.5 flex items-center gap-1">
+                    <FileText className="w-3 h-3" />
+                    页面: {question.pageIndices.map(p => p + 1).join(', ')}
+                </div>
             )}
-            {question.scoringPoints && question.scoringPoints.length > 0 && (
+            
+            {question.feedback && (
+                <p className="text-xs text-gray-500 mt-1 whitespace-pre-wrap">{question.feedback}</p>
+            )}
+            
+            {/* 得分点明细 - 优先显示 scoringPointResults */}
+            {question.scoringPointResults && question.scoringPointResults.length > 0 ? (
+                <div className="mt-2 space-y-1">
+                    <div className="text-xs font-medium text-gray-500">得分点明细:</div>
+                    {question.scoringPointResults.map((spr, idx) => (
+                        <div key={idx} className="flex items-start gap-2 text-xs">
+                            {spr.awarded > 0 ? (
+                                <CheckCircle className="w-3 h-3 text-green-500 mt-0.5 flex-shrink-0" />
+                            ) : (
+                                <XCircle className="w-3 h-3 text-red-500 mt-0.5 flex-shrink-0" />
+                            )}
+                            <div className="flex-1">
+                                <span className={clsx(
+                                    spr.awarded > 0 ? 'text-green-700' : 'text-red-700'
+                                )}>
+                                    [{spr.awarded}/{spr.scoringPoint.score}] {spr.scoringPoint.description}
+                                </span>
+                                {spr.evidence && (
+                                    <p className="text-gray-500 mt-0.5">依据: {spr.evidence}</p>
+                                )}
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            ) : question.scoringPoints && question.scoringPoints.length > 0 && (
                 <div className="mt-2 space-y-1">
                     {question.scoringPoints.map((sp, idx) => (
                         <div key={idx} className="flex items-start gap-2 text-xs">
@@ -50,6 +93,22 @@ const QuestionDetail: React.FC<{ question: QuestionResult }> = ({ question }) =>
                             </div>
                         </div>
                     ))}
+                </div>
+            )}
+            
+            {/* 显示置信度 */}
+            {question.confidence !== undefined && question.confidence < 0.8 && (
+                <div className="mt-1 text-xs text-yellow-600 flex items-center gap-1">
+                    <AlertCircle className="w-3 h-3" />
+                    置信度较低 ({(question.confidence * 100).toFixed(0)}%)，建议人工复核
+                </div>
+            )}
+            
+            {/* 合并来源信息 */}
+            {question.mergeSource && question.mergeSource.length > 0 && (
+                <div className="mt-1 text-xs text-purple-500 flex items-center gap-1">
+                    <GitMerge className="w-3 h-3" />
+                    合并自: {question.mergeSource.join(', ')}
                 </div>
             )}
         </div>
@@ -81,10 +140,14 @@ const ResultCard: React.FC<ResultCardProps> = ({ result, rank, onExpand, isExpan
         gradeLabel = '不及格';
     }
 
+    // 统计跨页题目数量
+    const crossPageCount = result.questionResults?.filter(q => q.isCrossPage).length || 0;
+
     return (
         <div className={clsx(
             'rounded-2xl p-6 transition-all duration-300 hover:shadow-lg',
-            gradeBg
+            gradeBg,
+            result.needsConfirmation && 'ring-2 ring-yellow-400'
         )}>
             <div className="flex items-start justify-between mb-4">
                 <div className="flex items-center gap-3">
@@ -100,7 +163,7 @@ const ResultCard: React.FC<ResultCardProps> = ({ result, rank, onExpand, isExpan
                     )}
                     <div>
                         <h3 className="font-semibold text-gray-800 text-lg">{result.studentName}</h3>
-                        <div className="flex items-center gap-2 mt-1">
+                        <div className="flex items-center gap-2 mt-1 flex-wrap">
                             <span className={clsx(
                                 'text-xs px-2 py-0.5 rounded-full font-medium',
                                 percentage >= 60 ? 'bg-white/50 text-gray-600' : 'bg-red-100 text-red-600'
@@ -113,7 +176,29 @@ const ResultCard: React.FC<ResultCardProps> = ({ result, rank, onExpand, isExpan
                                     {result.totalRevisions} 次修正
                                 </span>
                             )}
+                            {crossPageCount > 0 && (
+                                <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-purple-100 text-purple-600 flex items-center gap-1">
+                                    <Layers className="w-3 h-3" />
+                                    {crossPageCount} 道跨页
+                                </span>
+                            )}
+                            {result.needsConfirmation && (
+                                <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-yellow-100 text-yellow-700 flex items-center gap-1">
+                                    <AlertCircle className="w-3 h-3" />
+                                    待确认
+                                </span>
+                            )}
                         </div>
+                        {/* 页面范围信息 */}
+                        {result.startPage !== undefined && result.endPage !== undefined && (
+                            <div className="text-xs text-gray-400 mt-1 flex items-center gap-1">
+                                <FileText className="w-3 h-3" />
+                                页面 {result.startPage + 1} - {result.endPage + 1}
+                                {result.confidence !== undefined && (
+                                    <span className="ml-2">置信度: {(result.confidence * 100).toFixed(0)}%</span>
+                                )}
+                            </div>
+                        )}
                     </div>
                 </div>
                 {result.questionResults && result.questionResults.length > 0 && (
@@ -164,7 +249,7 @@ const ResultCard: React.FC<ResultCardProps> = ({ result, rank, onExpand, isExpan
 };
 
 export const ResultsView: React.FC = () => {
-    const { finalResults, setCurrentTab, workflowNodes } = useConsoleStore();
+    const { finalResults, setCurrentTab, workflowNodes, crossPageQuestions } = useConsoleStore();
     const [expandedStudent, setExpandedStudent] = useState<string | null>(null);
 
     // 从 workflowNodes 中获取所有 Agent 的详细结果（如果 finalResults 为空）
@@ -178,7 +263,18 @@ export const ResultsView: React.FC = () => {
             studentName: agent.label,
             score: agent.output?.score || 0,
             maxScore: agent.output?.maxScore || 100,
-            questionResults: agent.output?.questionResults
+            questionResults: agent.output?.questionResults?.map(q => ({
+                questionId: q.questionId,
+                score: q.score,
+                maxScore: q.maxScore,
+                feedback: (q as any).feedback || '',
+                confidence: (q as any).confidence,
+                scoringPoints: (q as any).scoringPoints,
+                pageIndices: (q as any).pageIndices,
+                isCrossPage: (q as any).isCrossPage,
+                mergeSource: (q as any).mergeSource,
+                scoringPointResults: (q as any).scoringPointResults
+            }))
         }));
 
     // 按分数排序
@@ -192,6 +288,12 @@ export const ResultsView: React.FC = () => {
     const maxScore = sortedResults.length > 0 ? sortedResults[0].maxScore : 100;
     const highestScore = sortedResults.length > 0 ? sortedResults[0].score : 0;
     const passCount = sortedResults.filter(r => (r.score / r.maxScore) >= 0.6).length;
+    
+    // 统计需要确认的学生数量
+    const needsConfirmCount = sortedResults.filter(r => r.needsConfirmation).length;
+    
+    // 统计跨页题目总数
+    const totalCrossPageQuestions = crossPageQuestions.length;
 
     // 导出为 CSV
     const handleExportCSV = () => {
@@ -259,7 +361,7 @@ export const ResultsView: React.FC = () => {
             </div>
 
             {/* Statistics Cards */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
                 <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl p-4 text-center">
                     <Users className="w-5 h-5 text-blue-500 mx-auto mb-1" />
                     <div className="text-2xl font-bold text-blue-600">{totalStudents}</div>
@@ -282,13 +384,52 @@ export const ResultsView: React.FC = () => {
                     </div>
                     <div className="text-xs text-gray-500">及格率</div>
                 </div>
+                {/* 跨页题目统计 */}
+                {totalCrossPageQuestions > 0 && (
+                    <div className="bg-gradient-to-br from-indigo-50 to-violet-50 rounded-xl p-4 text-center">
+                        <Layers className="w-5 h-5 text-indigo-500 mx-auto mb-1" />
+                        <div className="text-2xl font-bold text-indigo-600">{totalCrossPageQuestions}</div>
+                        <div className="text-xs text-gray-500">跨页题目</div>
+                    </div>
+                )}
+                {/* 待确认统计 */}
+                {needsConfirmCount > 0 && (
+                    <div className="bg-gradient-to-br from-orange-50 to-red-50 rounded-xl p-4 text-center">
+                        <AlertCircle className="w-5 h-5 text-orange-500 mx-auto mb-1" />
+                        <div className="text-2xl font-bold text-orange-600">{needsConfirmCount}</div>
+                        <div className="text-xs text-gray-500">待确认</div>
+                    </div>
+                )}
             </div>
+
+            {/* 跨页题目信息提示 */}
+            {crossPageQuestions.length > 0 && (
+                <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
+                    <div className="flex items-center gap-2 text-purple-700 font-medium mb-2">
+                        <Layers className="w-4 h-4" />
+                        跨页题目检测结果
+                    </div>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                        {crossPageQuestions.map((cpq, idx) => (
+                            <div key={idx} className="bg-white rounded px-3 py-2 text-sm">
+                                <span className="font-medium text-purple-600">第 {cpq.questionId} 题</span>
+                                <span className="text-gray-500 ml-2">
+                                    页面 {cpq.pageIndices.map(p => p + 1).join(', ')}
+                                </span>
+                                {cpq.confidence < 0.8 && (
+                                    <span className="text-yellow-600 ml-1 text-xs">(低置信度)</span>
+                                )}
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
 
             {/* Results Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {sortedResults.map((result, index) => (
                     <ResultCard
-                        key={result.studentName}
+                        key={`${result.studentName}-${index}`}
                         result={result}
                         rank={index + 1}
                         isExpanded={expandedStudent === result.studentName}

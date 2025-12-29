@@ -14,9 +14,15 @@ from datetime import datetime
 import json
 
 from langgraph.graph import StateGraph
-from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.types import Command, interrupt
-import asyncpg
+
+# 可选导入 - 支持离线模式
+try:
+    from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+    import asyncpg
+except ImportError:
+    AsyncPostgresSaver = None
+    asyncpg = None
 
 from src.orchestration.base import Orchestrator, RunStatus, RunInfo
 
@@ -42,8 +48,8 @@ class LangGraphOrchestrator(Orchestrator):
     
     def __init__(
         self,
-        db_pool: Optional[asyncpg.Pool] = None,
-        checkpointer: Optional[AsyncPostgresSaver] = None,
+        db_pool: Optional[Any] = None,  # 改为 Any 以支持离线模式
+        checkpointer: Optional[Any] = None,
         offline_mode: bool = False
     ):
         """初始化 LangGraph Orchestrator

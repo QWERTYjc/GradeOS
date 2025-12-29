@@ -59,3 +59,4 @@ temporal-data/
 
 # Alembic
 alembic.ini
+!frontend/src/lib/
