@@ -177,7 +177,7 @@ export default function RubricReviewPage({ params }: { params: Promise<{ batchId
 
   useEffect(() => {
     const wsBase = process.env.NEXT_PUBLIC_WS_BASE_URL || "ws://127.0.0.1:8001";
-    const socket = new WebSocket(`${wsBase}/batch/ws/${batchId}`);
+    const socket = new WebSocket(`${wsBase}/api/batch/ws/${batchId}`);
 
     socket.onmessage = (event) => {
       try {

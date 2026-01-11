@@ -448,7 +448,7 @@ export const gradingApi = {
     }
 
     // 使用正确的批改 API 端点
-    const response = await fetch(`${API_BASE.replace('/api', '')}/batch/submit`, {
+    const response = await fetch(`${API_BASE}/batch/submit`, {
       method: 'POST',
       body: formData,
     });

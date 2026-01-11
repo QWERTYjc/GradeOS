@@ -873,7 +873,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
 
     connectWs: (batchId) => {
         const wsUrl = process.env.NEXT_PUBLIC_WS_BASE_URL || 'ws://127.0.0.1:8001';
-        wsClient.connect(`${wsUrl}/batch/ws/${batchId}`);
+        wsClient.connect(`${wsUrl}/api/batch/ws/${batchId}`);
 
         // 处理工作流节点更新
         wsClient.on('workflow_update', (data) => {
