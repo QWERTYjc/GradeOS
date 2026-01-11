@@ -6,6 +6,8 @@
 import logging
 from typing import Optional
 
+from langgraph.checkpoint.memory import InMemorySaver
+
 from src.orchestration.langgraph_orchestrator import LangGraphOrchestrator
 from src.graphs.batch_grading import create_batch_grading_graph
 from src.utils.database import get_db_pool
@@ -26,14 +28,15 @@ async def init_orchestrator():
     
     try:
         # 创建编排器（离线模式，不依赖数据库）
+        checkpointer = InMemorySaver()
         _orchestrator = LangGraphOrchestrator(
             db_pool=None,
-            checkpointer=None,
+            checkpointer=checkpointer,
             offline_mode=True
         )
         
         # 注册批量批改 Graph
-        batch_grading_graph = create_batch_grading_graph(checkpointer=None)
+        batch_grading_graph = create_batch_grading_graph(checkpointer=checkpointer)
         _orchestrator.register_graph("batch_grading", batch_grading_graph)
         
         logger.info("LangGraph 编排器初始化成功（离线模式）")

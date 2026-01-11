@@ -71,10 +71,7 @@ async def main():
     print("   (提取每道题的分值、得分点、另类解法)")
     
     rubric_parser = RubricParserService(api_key=API_KEY)
-    parsed_rubric = await rubric_parser.parse_rubric(
-        rubric_images,
-        expected_total_score=TOTAL_SCORE
-    )
+    parsed_rubric = await rubric_parser.parse_rubric(rubric_images)
     
     print(f"\n   ✅ 解析完成:")
     print(f"      题目数: {parsed_rubric.total_questions}")

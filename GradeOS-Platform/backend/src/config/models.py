@@ -9,14 +9,15 @@ import os
 # 统一模型配置 - Gemini 2.0 Flash
 # ============================================================
 
-# 从环境变量获取，默认使用 gemini-2.0-flash-exp
-MODEL = os.getenv("DEFAULT_MODEL", "gemini-2.0-flash-exp")
+# 从环境变量获取，默认使用 gemini-3-flash-preview
+MODEL = os.getenv("DEFAULT_MODEL", "gemini-3-flash-preview")
 
 # 兼容别名
 DEFAULT_MODEL = MODEL
 LITE_MODEL = MODEL
 CACHE_MODEL = MODEL
-INDEX_MODEL = os.getenv("INDEX_MODEL", "gemini-3.0-flash")
+INDEX_MODEL = os.getenv("INDEX_MODEL", "gemini-3-flash-preview")
+FLASH_MODEL = os.getenv("FLASH_MODEL", "gemini-3-flash-preview")
 
 
 def get_model() -> str:
@@ -47,6 +48,11 @@ def get_cache_model() -> str:
 def get_index_model() -> str:
     """获取索引模型名称"""
     return INDEX_MODEL
+
+
+def get_flash_model() -> str:
+    """获取 Flash 模型名称（用于快速任务）"""
+    return FLASH_MODEL
 
 
 def get_model_for_task(task_type: str) -> str:

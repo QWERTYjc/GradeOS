@@ -50,6 +50,9 @@ htmlcov/
 # Logs
 *.log
 
+# Runtime exports
+exports/
+
 # OS
 .DS_Store
 Thumbs.db

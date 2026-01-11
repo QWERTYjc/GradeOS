@@ -11,6 +11,8 @@ export interface AppContextType {
   deleteImages: (sessionId: string, imageIds: string[]) => void;
   setCurrentSessionId: (id: string) => void;
   updateImage: (sessionId: string, imageId: string, newUrl: string, isOptimizing?: boolean) => void;
+  splitImageIds: Set<string>;
+  markImageAsSplit: (imageId: string) => void;
   reorderImages: (sessionId: string, fromIndex: number, toIndex: number) => void;
 }
 

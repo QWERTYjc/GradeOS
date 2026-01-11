@@ -82,22 +82,20 @@ async def lifespan(app: FastAPI):
         try:
             pool_manager = await UnifiedPoolManager.get_instance()
             await pool_manager.initialize()
-            logger.info("统一连接池已初始化")
+            logger.debug("统一连接池已初始化")
             
-            # 获取 Redis 客户端
-            redis_client = pool_manager.get_redis_client()
+            # 获取 Redis 客户端 (可能为空)
+            try:
+                redis_client = pool_manager.get_redis_client()
+            except Exception:
+                redis_client = None
             
             # 初始化全局数据库实例
             await init_db_pool(use_unified_pool=True)
             
-            if db.is_degraded:
-                logger.warning("数据库连接失败，已降级到无数据库模式")
-                logger.warning("系统将使用内存缓存继续运行")
-            else:
-                logger.info("全局数据库实例已初始化")
+            logger.info("全局服务初始化完成")
         except Exception as e:
-            logger.error(f"初始化失败: {e}")
-            logger.warning("降级到无数据库模式")
+            logger.error(f"初始化部分服务失败 (但这可能不影响本地运行): {e}")
             redis_client = None
             pool_manager = None
     else:
@@ -106,12 +104,13 @@ async def lifespan(app: FastAPI):
         logger.info("系统将使用内存缓存和 LLM API 运行")
         redis_client = None
         pool_manager = None
+        # 强制设置 OFFLINE_MODE 环境变量，防止后续组件自动尝试连接
+        os.environ["OFFLINE_MODE"] = "true"
     
     # 初始化追踪服务（仅在数据库模式下）
     if pool_manager and not db.is_degraded:
         tracing_service = TracingService(
-            pool_manager=pool_manager,
-            alert_threshold_ms=500
+            pool_manager=pool_manager
         )
         logger.info("追踪服务已初始化")
     
@@ -214,7 +213,16 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 # 注册路由
 app.include_router(unified_api.router, prefix="/api", tags=["GradeOS统一API"])
-app.include_router(batch_langgraph.router, tags=["批量批改"])
+app.include_router(batch_langgraph.router, prefix="/api", tags=["批量批改"])
+logger.info("DEBUG: batch_langgraph router included with prefix=/api (router has internal /batch prefix)")
+
+# Phase 6: 班级系统集成 API (延迟导入避免循环依赖)
+try:
+    from src.api.routes import class_integration
+    app.include_router(class_integration.router, tags=["班级系统集成"])
+except ImportError as e:
+    logger.warning(f"班级系统集成 API 导入失败: {e}")
+
 # app.include_router(submissions.router)
 # app.include_router(rubrics.router)
 # app.include_router(reviews.router)

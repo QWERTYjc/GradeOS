@@ -86,6 +86,7 @@ class LangGraphOrchestrator(Orchestrator):
         
         注意：如果数据库连接池不可用，返回 None（离线模式）
         """
+        paused = False
         try:
             # 尝试从连接池获取连接字符串
             # 注意：asyncpg.Pool 没有 get_dsn 方法，需要从配置获取
@@ -208,6 +209,7 @@ class LangGraphOrchestrator(Orchestrator):
             compiled_graph: 编译后的 Graph
             payload: 输入数据
         """
+        paused = False  # 初始化，避免 finally 中 UnboundLocalError
         try:
             # 更新状态为 running
             await self._update_run_status(run_id, "running")
@@ -241,17 +243,52 @@ class LangGraphOrchestrator(Orchestrator):
                 # 检查是否有 interrupt
                 if event_kind == "on_chain_end" and "__interrupt__" in event_data.get("output", {}):
                     logger.info(f"Graph 中断: run_id={run_id}")
+                    paused = True
                     await self._update_run_status(run_id, "paused")
                     return  # 等待外部 resume
                 
+                # 处理 LLM 流式输出 (Requirement: 全流程流式)
+                if event_kind == "on_chat_model_stream":
+                    chunk = event_data.get("chunk")
+                    if chunk:
+                        # 尝试从 chunk 中提取内容
+                        content = ""
+                        if hasattr(chunk, "content"):
+                            content = chunk.content
+                        elif isinstance(chunk, dict) and "content" in chunk:
+                            content = chunk["content"]
+                        elif isinstance(chunk, str):
+                            content = chunk
+                        
+                        if content:
+                            await self._push_event(run_id, {
+                                "kind": "llm_stream",
+                                "name": event_name,
+                                "data": {
+                                    "chunk": content,
+                                    "node": event.get("metadata", {}).get("langgraph_node", "")
+                                }
+                            })
+
                 # 累积节点输出到状态
                 if event_kind == "on_chain_end":
                     output = event_data.get("output", {})
                     if isinstance(output, dict):
                         # 合并输出到累积状态
                         for key, value in output.items():
-                            if key in accumulated_state and isinstance(accumulated_state[key], list) and isinstance(value, list):
-                                # 列表类型：追加
+                            # #region agent log - 假设F: 累积状态
+                            if key == "student_results":
+                                import json as _json_f
+                                from datetime import datetime as _dt_f
+                                with open(r'd:\project\aiguru\.cursor\debug.log', 'a', encoding='utf-8') as _f:
+                                    existing = accumulated_state.get(key, [])
+                                    _f.write(_json_f.dumps({"hypothesisId":"F","location":"langgraph_orchestrator.py:accumulate","message":f"累积student_results from {event_name}","data":{"event_name":event_name,"existing_count":len(existing) if isinstance(existing, list) else 0,"new_count":len(value) if isinstance(value, list) else 0},"timestamp":int(_dt_f.now().timestamp()*1000),"sessionId":"debug-session"}, ensure_ascii=False) + '\n')
+                            # #endregion
+                            
+                            # 只对 grading_results 使用追加逻辑（它有 operator.add reducer）
+                            # 其他字段（包括 student_results）使用覆盖逻辑
+                            if key == "grading_results" and key in accumulated_state and isinstance(accumulated_state[key], list) and isinstance(value, list):
+                                # 只有 grading_results 追加
                                 accumulated_state[key].extend(value)
                             else:
                                 # 其他类型：覆盖
@@ -261,8 +298,41 @@ class LangGraphOrchestrator(Orchestrator):
                 if event_kind == "on_chain_end" and event_name == graph_name:
                     result = event_data.get("output", {})
             
+            # 循环结束后再次检查 Graph 状态
+            # astream_events 可能在 interrupt 时正常结束循环，我们需要通过 get_state 确认是否真的完成了
+            snapshot = compiled_graph.get_state(config)
+            if snapshot.next:
+                logger.info(f"Graph 中断 (detected via state): run_id={run_id}, next={snapshot.next}")
+                paused = True
+                await self._update_run_status(run_id, "paused")
+                
+                # 尝试获取 interrupt payload
+                interrupt_value = None
+                if snapshot.tasks and hasattr(snapshot.tasks[0], "interrupts") and snapshot.tasks[0].interrupts:
+                    # interrupts is usually a tuple or list
+                    interrupt_value = snapshot.tasks[0].interrupts[0] if snapshot.tasks[0].interrupts else None
+                
+                await self._push_event(run_id, {
+                    "kind": "paused", 
+                    "name": None, 
+                    "data": {
+                        "state": snapshot.values,
+                        "interrupt_value": interrupt_value
+                    }
+                })
+                return
+            
             # 执行完成 - 使用累积的完整状态
             logger.info(f"Graph 执行完成: run_id={run_id}")
+            
+            # #region agent log - 假设G: completed 事件发送前的 accumulated_state
+            import json as _json_g
+            from datetime import datetime as _dt_g
+            with open(r'd:\project\aiguru\.cursor\debug.log', 'a', encoding='utf-8') as _f:
+                student_results = accumulated_state.get("student_results", [])
+                _f.write(_json_g.dumps({"hypothesisId":"G","location":"langgraph_orchestrator.py:completed:before_push","message":"completed事件发送前的student_results","data":{"count":len(student_results),"students":[{"key":r.get("student_key"),"score":r.get("total_score"),"max":r.get("max_total_score")} for r in student_results]},"timestamp":int(_dt_g.now().timestamp()*1000),"sessionId":"debug-session"}, ensure_ascii=False) + '\n')
+            # #endregion
+            
             await self._update_run_status(
                 run_id,
                 "completed",
@@ -271,6 +341,7 @@ class LangGraphOrchestrator(Orchestrator):
             
             # 标记事件流结束 - 传递完整状态
             await self._push_event(run_id, {"kind": "completed", "name": None, "data": {"state": accumulated_state}})
+
             
         except Exception as e:
             logger.error(
@@ -293,7 +364,8 @@ class LangGraphOrchestrator(Orchestrator):
             self._background_tasks.pop(run_id, None)
             
             # 标记事件流结束（如果还没标记）
-            await self._mark_event_stream_complete(run_id)
+            if not paused:
+                await self._mark_event_stream_complete(run_id)
     
     async def get_status(self, run_id: str) -> RunInfo:
         """查询 Graph 执行状态
@@ -692,6 +764,8 @@ class LangGraphOrchestrator(Orchestrator):
             resume_command: Resume 命令
             config: 配置
         """
+        paused = False
+        accumulated_state: Dict[str, Any] = {}
         try:
             # 更新状态为 running
             await self._update_run_status(run_id, "running")
@@ -699,24 +773,75 @@ class LangGraphOrchestrator(Orchestrator):
             # 执行 Graph（从 interrupt 点恢复）
             logger.info(f"恢复执行 Graph: run_id={run_id}")
             
+            accumulated_state = await self._get_final_state(run_id) or {}
+            if not accumulated_state:
+                run = await self._get_run_from_db(run_id)
+                if run and run.get("input_data"):
+                    accumulated_state = dict(run["input_data"])
+
             result = None
-            async for event in compiled_graph.astream(resume_command, config=config):
+            async for event in compiled_graph.astream_events(resume_command, config=config, version="v2"):
+                event_kind = event.get("event")
+                event_name = event.get("name", "")
+                event_data = event.get("data", {})
                 logger.debug(f"Graph 事件: run_id={run_id}, event={event}")
-                
-                # 检查是否有新的 interrupt
-                if "__interrupt__" in event:
+
+                await self._push_event(run_id, {
+                    "kind": event_kind,
+                    "name": event_name,
+                    "data": event_data
+                })
+
+                if event_kind == "on_chain_end" and "__interrupt__" in event_data.get("output", {}):
                     logger.info(f"Graph 再次中断: run_id={run_id}")
+                    paused = True
                     await self._update_run_status(run_id, "paused")
                     return
-                
-                result = event
+
+                if event_kind == "on_chat_model_stream":
+                    chunk = event_data.get("chunk")
+                    if chunk:
+                        content = ""
+                        if hasattr(chunk, "content"):
+                            content = chunk.content
+                        elif isinstance(chunk, dict) and "content" in chunk:
+                            content = chunk["content"]
+                        elif isinstance(chunk, str):
+                            content = chunk
+                        if content:
+                            await self._push_event(run_id, {
+                                "kind": "llm_stream",
+                                "name": event_name,
+                                "data": {
+                                    "chunk": content,
+                                    "node": event.get("metadata", {}).get("langgraph_node", "")
+                                }
+                            })
+
+                if event_kind == "on_chain_end":
+                    output = event_data.get("output", {})
+                    if isinstance(output, dict):
+                        for key, value in output.items():
+                            if (
+                                key == "grading_results"
+                                and key in accumulated_state
+                                and isinstance(accumulated_state[key], list)
+                                and isinstance(value, list)
+                            ):
+                                accumulated_state[key].extend(value)
+                            else:
+                                accumulated_state[key] = value
+
+                if event_kind == "on_chain_end" and event_name == graph_name:
+                    result = event_data.get("output", {})
             
             # 执行完成
             logger.info(f"Graph 恢复执行完成: run_id={run_id}")
-            await self._update_run_status(
+            output_state = accumulated_state if accumulated_state else (result or {})
+            await self._update_run_status(run_id, "completed", output_data=output_state)
+            await self._push_event(
                 run_id,
-                "completed",
-                output_data=result
+                {"kind": "completed", "name": None, "data": {"state": output_state}},
             )
             
         except Exception as e:
@@ -733,6 +858,8 @@ class LangGraphOrchestrator(Orchestrator):
             )
         finally:
             self._background_tasks.pop(run_id, None)
+            if not paused:
+                await self._mark_event_stream_complete(run_id)
     
     # ==================== 流式 API ====================
     
@@ -785,6 +912,12 @@ class LangGraphOrchestrator(Orchestrator):
                         yield {
                             "type": "node_start",
                             "node": event_name,
+                            "data": event_data
+                        }
+                    elif event_kind == "llm_stream":
+                        yield {
+                            "type": "llm_stream",
+                            "node": event_data.get("node", ""),
                             "data": event_data
                         }
                     
@@ -958,8 +1091,8 @@ class LangGraphOrchestrator(Orchestrator):
             logger.error(f"获取 Run 信息失败: {str(e)}", exc_info=True)
             return None
     
-    async def _get_final_state(self, run_id: str) -> Dict[str, Any]:
-        """从 Checkpointer 获取最终状态
+    async def get_state(self, run_id: str) -> Dict[str, Any]:
+        """从 Checkpointer 获取当前/最终状态
         
         Args:
             run_id: 执行 ID
@@ -968,14 +1101,33 @@ class LangGraphOrchestrator(Orchestrator):
             状态字典
         """
         try:
+            logger.info(f"DEBUG: get_state called for run_id={run_id}")
             config = {"configurable": {"thread_id": run_id}}
             checkpoint = await self.checkpointer.aget(config)
+            logger.info(f"DEBUG: checkpointer.aget result for {run_id}: {bool(checkpoint)}")
+            
             if checkpoint:
                 return checkpoint.get("channel_values", {})
+            
+            # 如果 Checkpointer 中没有，尝试从 DB 或内存中获取（针对已完成的）
+            run = await self._get_run_from_db(run_id)
+            logger.info(f"DEBUG: _get_run_from_db result for {run_id}: {bool(run)}")
+            
+            if run:
+                if run.get("output_data"):
+                     return run["output_data"]
+                if run.get("input_data"):
+                     # 如果只有输入数据（刚开始），至少返回输入
+                     return run["input_data"]
+
             return {}
         except Exception as e:
             logger.debug(f"获取 Checkpoint 失败: {str(e)}")
             return {}
+
+    async def _get_final_state(self, run_id: str) -> Dict[str, Any]:
+        """已弃用：请使用 get_state"""
+        return await self.get_state(run_id)
     
     # ==================== 事件队列管理 ====================
     

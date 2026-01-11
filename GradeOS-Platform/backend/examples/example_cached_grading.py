@@ -56,10 +56,7 @@ async def main():
     # 第二步：解析评分标准
     print("\n📋 解析评分标准...")
     rubric_parser = RubricParserService(api_key=API_KEY)
-    parsed_rubric = await rubric_parser.parse_rubric(
-        rubric_images=rubric_images,
-        expected_total_score=105
-    )
+    parsed_rubric = await rubric_parser.parse_rubric(rubric_images=rubric_images)
     rubric_context = rubric_parser.format_rubric_context(parsed_rubric)
     print(f"   ✅ 解析完成: {parsed_rubric.total_questions} 题, 总分 {parsed_rubric.total_score}")
     

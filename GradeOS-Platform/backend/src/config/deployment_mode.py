@@ -46,26 +46,22 @@ class DeploymentConfig:
         
         检测逻辑：
         1. 检查 DATABASE_URL 环境变量
-        2. 如果为空或未设置，使用无数据库模式
-        3. 如果已设置，使用数据库模式
+        2. 默认为数据库模式（使用 SQLite 或 PostgreSQL）
         """
         self._database_url = os.getenv("DATABASE_URL", "").strip()
         self._redis_url = os.getenv("REDIS_URL", "").strip()
         
-        # 检测模式
-        if not self._database_url:
-            self._mode = DeploymentMode.NO_DATABASE
-            logger.info("检测到无数据库模式：DATABASE_URL 未设置")
-            logger.info("系统将使用内存缓存和 LLM API 运行")
+        self._mode = DeploymentMode.DATABASE
+        
+        if self._database_url:
+            logger.info(f"检测到数据库配置：{self._mask_connection_string(self._database_url)}")
         else:
-            self._mode = DeploymentMode.DATABASE
-            logger.info("检测到数据库模式：DATABASE_URL 已设置")
-            logger.info(f"数据库连接: {self._mask_connection_string(self._database_url)}")
+            logger.info("未检测到外部数据库配置，将使用 SQLite 本地存储")
             
-            if self._redis_url:
-                logger.info(f"Redis 连接: {self._mask_connection_string(self._redis_url)}")
-            else:
-                logger.warning("Redis URL 未设置，某些功能可能受限")
+        if self._redis_url:
+            logger.info(f"检测到 Redis 配置：{self._mask_connection_string(self._redis_url)}")
+        else:
+            logger.info("未检测到 Redis 配置，将使用内存缓存")
     
     @staticmethod
     def _mask_connection_string(conn_str: str) -> str:

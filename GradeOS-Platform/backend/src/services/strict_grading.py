@@ -17,6 +17,7 @@ from langchain_core.messages import HumanMessage
 
 from src.services.rubric_parser import ParsedRubric, QuestionRubric
 from src.config.models import get_default_model
+from src.utils.llm_thinking import get_thinking_kwargs
 
 
 logger = logging.getLogger(__name__)
@@ -70,11 +71,13 @@ class StrictGradingService:
     def __init__(self, api_key: str, model_name: Optional[str] = None):
         if model_name is None:
             model_name = get_default_model()
+        thinking_kwargs = get_thinking_kwargs(model_name, enable_thinking=True)
         self.llm = ChatGoogleGenerativeAI(
             model=model_name,
             google_api_key=api_key,
             temperature=0.1,
-            streaming=True  # 启用流式传输
+            streaming=True,  # enable streaming
+            **thinking_kwargs,
         )
     
     async def grade_student(

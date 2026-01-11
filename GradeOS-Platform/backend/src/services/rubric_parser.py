@@ -5,18 +5,19 @@
 2. 各个得分点及其分值
 3. 另类解法（不计入总分）
 4. 支持"题目+答案"混合格式的解析
+
+支持 OpenRouter API 和直连 Gemini API。
 """
 
 import base64
 import json
 import logging
+import os
 from typing import List, Optional, Dict, Any
 from dataclasses import dataclass, field
 
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.messages import HumanMessage
-
-from src.config.models import get_default_model
+# 使用 GeminiReasoningClient（与批改流程一致）
+from src.services.gemini_reasoning import GeminiReasoningClient
 
 
 logger = logging.getLogger(__name__)
@@ -28,6 +29,9 @@ class ScoringPoint:
     description: str          # 得分点描述
     score: float              # 该得分点的分值
     is_required: bool = True  # 是否必须（部分分数可能是可选的）
+    point_id: str = ""        # 得分点编号
+    keywords: List[str] = field(default_factory=list)  # 关键词
+    expected_value: str = ""  # 期望值
 
 
 @dataclass
@@ -67,21 +71,29 @@ class RubricParserService:
     支持两种格式：
     1. 标准格式：独立的评分标准文档
     2. 嵌入格式：题目上直接标注答案的格式
+    
+    支持 OpenRouter API 和直连 Gemini API。
     """
     
-    def __init__(self, api_key: str, model_name: Optional[str] = None):
-        if model_name is None:
-            model_name = get_default_model()
-        self.llm = ChatGoogleGenerativeAI(
-            model=model_name,
-            google_api_key=api_key,
-            temperature=0.1
-        )
+    def __init__(self, api_key: str = None, model_name: Optional[str] = None):
+        """
+        初始化服务
+        
+        Args:
+            api_key: API 密钥（可选，默认从环境变量获取）
+            model_name: 模型名称（可选，使用环境变量配置）
+        """
+        # 使用 GeminiReasoningClient（与批改流程一致）
+        self.api_key = api_key or os.getenv("GEMINI_API_KEY", "")
+        self.model_name = model_name or os.getenv("DEFAULT_MODEL", "gemini-3-flash-preview")
+        self.gemini_client = GeminiReasoningClient(api_key=self.api_key)
     
     async def parse_rubric(
         self,
         rubric_images: List[bytes],
-        expected_total_score: float = 105
+        expected_total_score: float = 105,
+        progress_callback=None,
+        stream_callback=None
     ) -> ParsedRubric:
         """
         解析批改标准
@@ -89,14 +101,16 @@ class RubricParserService:
         Args:
             rubric_images: 批改标准页面图像列表
             expected_total_score: 预期总分（用于验证）
+            progress_callback: 进度回调 (batch_index, total_batches, status, message)
+            stream_callback: 流式输出回调 (stream_type, chunk)
             
         Returns:
             ParsedRubric: 解析后的评分标准
         """
-        logger.info(f"开始解析批改标准，共 {len(rubric_images)} 页")
+        logger.info(f"[rubric_parse] received {len(rubric_images)} pages")
         
-        # 分批处理：每批最多 4 页，避免请求过大
-        MAX_PAGES_PER_BATCH = 4
+        # 分批处理：每批最多 12 页
+        MAX_PAGES_PER_BATCH = 12
         all_questions = []
         general_notes = ""
         rubric_format = "standard"
@@ -107,7 +121,18 @@ class RubricParserService:
             batch_num = batch_start // MAX_PAGES_PER_BATCH + 1
             total_batches = (len(rubric_images) + MAX_PAGES_PER_BATCH - 1) // MAX_PAGES_PER_BATCH
             
-            logger.info(f"解析第 {batch_num}/{total_batches} 批（第 {batch_start+1}-{batch_end} 页）")
+            logger.info(f"[rubric_parse] batch {batch_num}/{total_batches} pages {batch_start+1}-{batch_end}")
+            
+            # 进度回调
+            if progress_callback:
+                try:
+                    import asyncio
+                    if asyncio.iscoroutinefunction(progress_callback):
+                        await progress_callback(batch_num - 1, total_batches, "parsing", f"Parsing batch {batch_num}/{total_batches}")
+                    else:
+                        progress_callback(batch_num - 1, total_batches, "parsing", f"Parsing batch {batch_num}/{total_batches}")
+                except Exception as e:
+                    logger.warning(f"[rubric_parse] progress_callback error: {e}")
             
             batch_result = await self._parse_rubric_batch(
                 batch_images, 
@@ -157,9 +182,6 @@ class RubricParserService:
         total_batches: int
     ) -> ParsedRubric:
         """解析单批评分标准页面"""
-        # 将图像转为 base64
-        images_b64 = [base64.b64encode(img).decode('utf-8') for img in rubric_images]
-        
         batch_info = f"（第 {batch_num}/{total_batches} 批）" if total_batches > 1 else ""
         
         prompt = f"""你是一位专业的阅卷标准分析专家。请仔细分析这些批改标准/答案页面{batch_info}。
@@ -170,6 +192,7 @@ class RubricParserService:
 3. 识别另类解法（如果有）
 
 ## 分析要求
+- **不要基于任何预设的总分来推断，完全基于页面内容提取。**
 - 每道题必须明确分值
 - 得分点要具体，说明给分条件
 - 另类解法单独列出，不计入主要得分点
@@ -204,32 +227,27 @@ class RubricParserService:
 - 标准答案要尽可能完整，包括解题步骤
 - 得分点要明确具体的给分条件和分值"""
 
-        # 构建消息
-        content = [{"type": "text", "text": prompt}]
-        for img_b64 in images_b64:
-            content.append({
-                "type": "image_url",
-                "image_url": f"data:image/png;base64,{img_b64}"
-            })
-        
-        message = HumanMessage(content=content)
-        
         try:
-            # 添加重试机制处理 503 错误
+            # 使用 GeminiReasoningClient 调用视觉模型（带重试）
             max_retries = 3
             retry_delay = 5  # 秒
             last_error = None
             
             for attempt in range(max_retries):
                 try:
-                    response = await self.llm.ainvoke([message])
+                    # 使用 GeminiReasoningClient 的 analyze_with_vision 方法
+                    response = await self.gemini_client.analyze_with_vision(
+                        images=rubric_images,
+                        prompt=prompt
+                    )
+                    result_text = response.get("response", "")
                     break
                 except Exception as e:
                     last_error = e
                     error_str = str(e)
-                    if "503" in error_str or "overloaded" in error_str.lower():
+                    if "503" in error_str or "overloaded" in error_str.lower() or "429" in error_str:
                         if attempt < max_retries - 1:
-                            logger.warning(f"Gemini API 过载，{retry_delay}秒后重试 ({attempt + 1}/{max_retries})")
+                            logger.warning(f"API 过载，{retry_delay}秒后重试 ({attempt + 1}/{max_retries})")
                             import asyncio
                             await asyncio.sleep(retry_delay)
                             retry_delay *= 2  # 指数退避
@@ -238,23 +256,9 @@ class RubricParserService:
             else:
                 raise last_error
             
-            # 处理 response.content 可能是列表的情况
-            result_text = response.content
-            if isinstance(result_text, list):
-                # 多模态响应可能返回列表，提取文本部分
-                text_parts = []
-                for item in result_text:
-                    if isinstance(item, str):
-                        text_parts.append(item)
-                    elif isinstance(item, dict) and "text" in item:
-                        text_parts.append(item["text"])
-                result_text = "".join(text_parts)
-            elif not isinstance(result_text, str):
-                result_text = str(result_text) if result_text else ""
-            
             # 检查响应是否为空
             if not result_text or not result_text.strip():
-                logger.warning(f"Gemini 返回空响应，使用空结果")
+                logger.warning(f"LLM 返回空响应，使用空结果")
                 return ParsedRubric(
                     total_questions=0,
                     total_score=0,
@@ -263,7 +267,7 @@ class RubricParserService:
                     rubric_format="standard"
                 )
             
-            logger.debug(f"Gemini 原始响应: {result_text[:500]}...")
+            logger.debug(f"LLM 原始响应: {result_text[:500]}...")
             
             # 提取 JSON
             json_text = result_text

@@ -3,14 +3,21 @@ GradeOS 统一 API 路由
 整合所有子系统的 API 接口
 """
 
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Depends
-from pydantic import BaseModel
-from typing import Optional, List
-from datetime import datetime
-import uuid
+import asyncio
 import base64
 import os
+import uuid
+from datetime import datetime
 from pathlib import Path
+from typing import Optional, List, Dict, Any
+
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Depends
+from pydantic import BaseModel
+
+from src.api.dependencies import get_orchestrator
+from src.orchestration.base import Orchestrator
+from src.api.routes.batch_langgraph import _format_results_for_frontend
+from src.utils.image import to_jpeg_bytes
 
 router = APIRouter()
 
@@ -42,6 +49,12 @@ class ClassResponse(BaseModel):
     invite_code: str
     student_count: int
 
+class StudentInfo(BaseModel):
+    """学生信息模型"""
+    id: str
+    name: str
+    username: str
+
 class JoinClassRequest(BaseModel):
     code: str
     student_id: str
@@ -51,6 +64,7 @@ class HomeworkCreate(BaseModel):
     title: str
     description: str
     deadline: str
+    allow_early_grading: bool = False
 
 class HomeworkResponse(BaseModel):
     homework_id: str
@@ -59,6 +73,7 @@ class HomeworkResponse(BaseModel):
     title: str
     description: str
     deadline: str
+    allow_early_grading: bool = False
     created_at: str
 
 class SubmissionCreate(BaseModel):
@@ -84,6 +99,56 @@ class SubmissionResponse(BaseModel):
     score: Optional[float]
     feedback: Optional[str]
 
+
+class GradingImportTarget(BaseModel):
+    class_id: str
+    student_ids: List[str]
+    assignment_id: Optional[str] = None
+
+
+class GradingImportRequest(BaseModel):
+    batch_id: str
+    targets: List[GradingImportTarget]
+
+
+class GradingImportRecord(BaseModel):
+    import_id: str
+    batch_id: str
+    class_id: str
+    class_name: Optional[str] = None
+    assignment_id: Optional[str] = None
+    assignment_title: Optional[str] = None
+    student_count: int
+    status: str
+    created_at: str
+    revoked_at: Optional[str] = None
+
+
+class GradingImportItem(BaseModel):
+    item_id: str
+    import_id: str
+    batch_id: str
+    class_id: str
+    student_id: str
+    student_name: str
+    status: str
+    created_at: str
+    revoked_at: Optional[str] = None
+    result: Optional[dict] = None
+
+
+class GradingHistoryResponse(BaseModel):
+    records: List[GradingImportRecord]
+
+
+class GradingHistoryDetailResponse(BaseModel):
+    record: GradingImportRecord
+    items: List[GradingImportItem]
+
+
+class GradingRevokeRequest(BaseModel):
+    reason: Optional[str] = None
+
 class ErrorAnalysisRequest(BaseModel):
     subject: str
     question: str
@@ -108,6 +173,165 @@ class DiagnosisReportResponse(BaseModel):
     error_patterns: dict
     personalized_insights: List[str]
 
+
+# ============ In-memory stores ============
+
+CLASSES: Dict[str, Dict[str, Any]] = {}
+CLASS_STUDENTS: Dict[str, List[StudentInfo]] = {}
+HOMEWORKS: Dict[str, Dict[str, Any]] = {}
+SUBMISSIONS: Dict[str, List[Dict[str, Any]]] = {}
+GRADING_IMPORTS: Dict[str, Dict[str, Any]] = {}
+GRADING_IMPORT_ITEMS: Dict[str, Dict[str, Any]] = {}
+HOMEWORK_GRADING_TASKS: Dict[str, asyncio.Task] = {}
+
+
+def _ensure_seed_data() -> None:
+    if CLASSES:
+        return
+    class_a = ClassResponse(
+        class_id="c-001",
+        class_name="Advanced Physics 2024",
+        teacher_id="t-001",
+        invite_code="PHY24A",
+        student_count=3,
+    ).dict()
+    class_b = ClassResponse(
+        class_id="c-002",
+        class_name="Mathematics Grade 11",
+        teacher_id="t-001",
+        invite_code="MTH11B",
+        student_count=3,
+    ).dict()
+    CLASSES[class_a["class_id"]] = class_a
+    CLASSES[class_b["class_id"]] = class_b
+
+    CLASS_STUDENTS[class_a["class_id"]] = [
+        StudentInfo(id="s-001", name="Alice Chen", username="alice"),
+        StudentInfo(id="s-002", name="Bob Wang", username="bob"),
+        StudentInfo(id="s-003", name="Carol Liu", username="carol"),
+    ]
+    CLASS_STUDENTS[class_b["class_id"]] = [
+        StudentInfo(id="s-004", name="David Zhang", username="david"),
+        StudentInfo(id="s-005", name="Eva Li", username="eva"),
+        StudentInfo(id="s-006", name="Frank Zhao", username="frank"),
+    ]
+
+
+def _parse_deadline(deadline: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(deadline)
+    except ValueError:
+        parsed = datetime.strptime(deadline, "%Y-%m-%d")
+    if parsed.hour == 0 and parsed.minute == 0 and parsed.second == 0:
+        parsed = parsed.replace(hour=23, minute=59, second=59)
+    return parsed
+
+
+def _get_student_map(class_id: str) -> Dict[str, str]:
+    students = CLASS_STUDENTS.get(class_id, [])
+    return {student.id: student.name for student in students}
+
+
+async def _get_formatted_results(batch_id: str, orchestrator: Orchestrator) -> List[Dict[str, Any]]:
+    run_id = f"batch_grading_{batch_id}"
+    run_info = await orchestrator.get_run_info(run_id)
+    if not run_info:
+        raise HTTPException(status_code=404, detail="批改批次不存在")
+    state = run_info.state or {}
+    student_results = state.get("student_results", [])
+    if not student_results:
+        final_output = await orchestrator.get_final_output(run_id)
+        if final_output:
+            student_results = final_output.get("student_results", [])
+    return _format_results_for_frontend(student_results)
+
+
+async def _trigger_homework_grading(homework_id: str, orchestrator: Orchestrator) -> Optional[str]:
+    homework = HOMEWORKS.get(homework_id)
+    if not homework or homework.get("grading_triggered"):
+        return None
+
+    class_id = homework["class_id"]
+    submissions = SUBMISSIONS.get(homework_id, [])
+    if not submissions:
+        return None
+
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=400, detail="未配置 GEMINI_API_KEY")
+
+    answer_images: List[bytes] = []
+    manual_boundaries: List[Dict[str, Any]] = []
+    page_cursor = 0
+    for submission in submissions:
+        images = submission.get("images", [])
+        if not images:
+            continue
+        pages = list(range(page_cursor, page_cursor + len(images)))
+        manual_boundaries.append({
+            "student_id": submission["student_id"],
+            "student_key": submission["student_name"],
+            "pages": pages,
+        })
+        answer_images.extend(images)
+        page_cursor += len(images)
+
+    if not answer_images:
+        return None
+
+    batch_id = str(uuid.uuid4())
+    payload = {
+        "batch_id": batch_id,
+        "exam_id": homework_id,
+        "temp_dir": "",
+        "rubric_images": [],
+        "answer_images": answer_images,
+        "api_key": api_key,
+        "inputs": {
+            "rubric": "rubric_content",
+            "auto_identify": False,
+            "manual_boundaries": manual_boundaries,
+            "expected_students": len(CLASS_STUDENTS.get(class_id, [])) or len(manual_boundaries),
+        },
+    }
+
+    await orchestrator.start_run(
+        graph_name="batch_grading",
+        payload=payload,
+        idempotency_key=batch_id,
+    )
+
+    homework["grading_triggered"] = True
+    homework["grading_batch_id"] = batch_id
+    homework["grading_triggered_at"] = datetime.utcnow().isoformat()
+    return batch_id
+
+
+async def _schedule_deadline_grading(homework_id: str, deadline: datetime, orchestrator: Orchestrator) -> None:
+    delay = (deadline - datetime.utcnow()).total_seconds()
+    if delay > 0:
+        await asyncio.sleep(delay)
+    await _trigger_homework_grading(homework_id, orchestrator)
+
+
+async def _maybe_trigger_grading(homework_id: str, orchestrator: Orchestrator) -> None:
+    homework = HOMEWORKS.get(homework_id)
+    if not homework or homework.get("grading_triggered"):
+        return
+    deadline = _parse_deadline(homework["deadline"])
+    allow_early = homework.get("allow_early_grading", False)
+    submissions = SUBMISSIONS.get(homework_id, [])
+    total_students = len(CLASS_STUDENTS.get(homework["class_id"], []))
+
+    if allow_early and total_students > 0 and len(submissions) >= total_students:
+        await _trigger_homework_grading(homework_id, orchestrator)
+        task = HOMEWORK_GRADING_TASKS.pop(homework_id, None)
+        if task:
+            task.cancel()
+        return
+
+    if not allow_early and datetime.utcnow() >= deadline:
+        await _trigger_homework_grading(homework_id, orchestrator)
 
 # ============ 认证接口 ============
 
@@ -144,48 +368,50 @@ async def get_user_info(user_id: str):
 @router.get("/class/my", response_model=List[ClassResponse], tags=["班级管理"])
 async def get_my_classes(student_id: str):
     """获取学生加入的班级"""
-    return [
-        ClassResponse(
-            class_id="c-001",
-            class_name="Advanced Physics 2024",
-            teacher_id="t-001",
-            invite_code="PHY24A",
-            student_count=32
-        )
-    ]
+    _ensure_seed_data()
+    classes: List[ClassResponse] = []
+    for class_id, students in CLASS_STUDENTS.items():
+        if any(student.id == student_id for student in students):
+            data = CLASSES.get(class_id)
+            if data:
+                classes.append(ClassResponse(**data))
+    return classes
 
 
 @router.post("/class/join", tags=["班级管理"])
 async def join_class(request: JoinClassRequest):
     """学生加入班级"""
+    _ensure_seed_data()
+    class_info = next(
+        (c for c in CLASSES.values() if c["invite_code"] == request.code),
+        None,
+    )
+    if not class_info:
+        raise HTTPException(status_code=404, detail="班级不存在")
+    class_id = class_info["class_id"]
+    students = CLASS_STUDENTS.setdefault(class_id, [])
+    if not any(s.id == request.student_id for s in students):
+        students.append(StudentInfo(id=request.student_id, name=f"Student {request.student_id}", username=request.student_id))
+        class_info["student_count"] = len(students)
     return {
         "success": True,
         "class": {
-            "id": "c-001",
-            "name": "Advanced Physics 2024"
-        }
+            "id": class_id,
+            "name": class_info["class_name"],
+        },
     }
 
 
 @router.get("/teacher/classes", response_model=List[ClassResponse], tags=["班级管理"])
 async def get_teacher_classes(teacher_id: str):
     """获取教师的班级列表"""
-    return [
-        ClassResponse(
-            class_id="c-001",
-            class_name="Advanced Physics 2024",
-            teacher_id=teacher_id,
-            invite_code="PHY24A",
-            student_count=32
-        ),
-        ClassResponse(
-            class_id="c-002",
-            class_name="Mathematics Grade 11",
-            teacher_id=teacher_id,
-            invite_code="MTH11B",
-            student_count=28
-        )
+    _ensure_seed_data()
+    classes = [
+        ClassResponse(**data)
+        for data in CLASSES.values()
+        if data["teacher_id"] == teacher_id
     ]
+    return classes
 
 
 @router.post("/teacher/classes", response_model=ClassResponse, tags=["班级管理"])
@@ -195,23 +421,25 @@ async def create_class(request: ClassCreate):
     import string
     invite_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
     
-    return ClassResponse(
-        class_id=str(uuid.uuid4())[:8],
+    class_id = str(uuid.uuid4())[:8]
+    class_record = ClassResponse(
+        class_id=class_id,
         class_name=request.name,
         teacher_id=request.teacher_id,
         invite_code=invite_code,
         student_count=0
     )
+    CLASSES[class_id] = class_record.dict()
+    CLASS_STUDENTS[class_id] = []
+    return class_record
 
 
 @router.get("/class/students", tags=["班级管理"])
 async def get_class_students(class_id: str):
     """获取班级学生列表"""
-    return [
-        {"id": "s-001", "name": "Alice Chen", "username": "alice"},
-        {"id": "s-002", "name": "Bob Wang", "username": "bob"},
-        {"id": "s-003", "name": "Carol Liu", "username": "carol"},
-    ]
+    _ensure_seed_data()
+    students = CLASS_STUDENTS.get(class_id, [])
+    return [student.dict() for student in students]
 
 
 # ============ 作业管理接口 ============
@@ -219,82 +447,102 @@ async def get_class_students(class_id: str):
 @router.get("/homework/list", response_model=List[HomeworkResponse], tags=["作业管理"])
 async def get_homework_list(class_id: Optional[str] = None, student_id: Optional[str] = None):
     """获取作业列表"""
-    return [
-        HomeworkResponse(
-            homework_id="hw-001",
-            class_id="c-001",
-            class_name="Advanced Physics 2024",
-            title="Newton's Laws Problem Set",
-            description="Complete problems 1-10 from Chapter 5",
-            deadline="2024-12-30",
-            created_at=datetime.now().isoformat()
-        ),
-        HomeworkResponse(
-            homework_id="hw-002",
-            class_id="c-001",
-            class_name="Advanced Physics 2024",
-            title="Energy Conservation Quiz",
-            description="Online quiz covering kinetic and potential energy",
-            deadline="2024-12-28",
-            created_at=datetime.now().isoformat()
-        )
-    ]
+    _ensure_seed_data()
+    records = list(HOMEWORKS.values())
+    if class_id:
+        records = [record for record in records if record["class_id"] == class_id]
+    return [HomeworkResponse(**record) for record in records]
 
 
 @router.get("/homework/detail/{homework_id}", response_model=HomeworkResponse, tags=["作业管理"])
 async def get_homework_detail(homework_id: str):
     """获取作业详情"""
-    return HomeworkResponse(
-        homework_id=homework_id,
-        class_id="c-001",
-        class_name="Advanced Physics 2024",
-        title="Newton's Laws Problem Set",
-        description="Complete problems 1-10 from Chapter 5",
-        deadline="2024-12-30",
-        created_at=datetime.now().isoformat()
-    )
+    record = HOMEWORKS.get(homework_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="作业不存在")
+    return HomeworkResponse(**record)
 
 
 @router.post("/homework/create", response_model=HomeworkResponse, tags=["作业管理"])
-async def create_homework(request: HomeworkCreate):
+async def create_homework(
+    request: HomeworkCreate,
+    orchestrator: Orchestrator = Depends(get_orchestrator),
+):
     """创建作业"""
-    return HomeworkResponse(
-        homework_id=str(uuid.uuid4())[:8],
+    _ensure_seed_data()
+    class_info = CLASSES.get(request.class_id)
+    if not class_info:
+        raise HTTPException(status_code=404, detail="班级不存在")
+
+    homework_id = str(uuid.uuid4())[:8]
+    record = HomeworkResponse(
+        homework_id=homework_id,
         class_id=request.class_id,
-        class_name="Class Name",
+        class_name=class_info["class_name"],
         title=request.title,
         description=request.description,
         deadline=request.deadline,
-        created_at=datetime.now().isoformat()
-    )
+        allow_early_grading=request.allow_early_grading,
+        created_at=datetime.now().isoformat(),
+    ).dict()
+    record["grading_triggered"] = False
+    record["grading_batch_id"] = None
+    HOMEWORKS[homework_id] = record
+
+    deadline_dt = _parse_deadline(request.deadline)
+    if orchestrator:
+        task = asyncio.create_task(_schedule_deadline_grading(homework_id, deadline_dt, orchestrator))
+        HOMEWORK_GRADING_TASKS[homework_id] = task
+
+    return HomeworkResponse(**record)
 
 
 @router.post("/homework/submit", response_model=SubmissionResponse, tags=["作业管理"])
 async def submit_homework(request: SubmissionCreate):
     """提交作业（文本）"""
-    # 模拟 AI 批改
-    import random
-    score = random.randint(75, 98)
-    
+    _ensure_seed_data()
+    if request.homework_id not in HOMEWORKS:
+        raise HTTPException(status_code=404, detail="作业不存在")
+
+    submission_id = str(uuid.uuid4())[:8]
+    submission_record = {
+        "submission_id": submission_id,
+        "homework_id": request.homework_id,
+        "student_id": request.student_id,
+        "student_name": request.student_name,
+        "submitted_at": datetime.now().isoformat(),
+        "status": "submitted",
+        "content": request.content,
+        "images": [],
+    }
+    SUBMISSIONS.setdefault(request.homework_id, []).append(submission_record)
+
     return SubmissionResponse(
-        submission_id=str(uuid.uuid4())[:8],
+        submission_id=submission_id,
         homework_id=request.homework_id,
         student_id=request.student_id,
         student_name=request.student_name,
-        submitted_at=datetime.now().isoformat(),
-        status="graded",
-        score=score,
-        feedback=f"AI Analysis: Good understanding of core concepts. Score: {score}/100"
+        submitted_at=submission_record["submitted_at"],
+        status="submitted",
+        score=None,
+        feedback=None,
     )
 
 
 @router.post("/homework/submit-scan", response_model=SubmissionResponse, tags=["作业管理"])
-async def submit_scan_homework(request: ScanSubmissionCreate):
+async def submit_scan_homework(
+    request: ScanSubmissionCreate,
+    orchestrator: Orchestrator = Depends(get_orchestrator),
+):
     """
     提交扫描作业（图片）
     
     接收 Base64 编码的图片列表，保存到本地存储，并触发 AI 批改
     """
+    _ensure_seed_data()
+    if request.homework_id not in HOMEWORKS:
+        raise HTTPException(status_code=404, detail="作业不存在")
+
     submission_id = str(uuid.uuid4())[:8]
     
     # 创建提交目录
@@ -303,6 +551,7 @@ async def submit_scan_homework(request: ScanSubmissionCreate):
     
     saved_paths = []
     
+    images_bytes: List[bytes] = []
     # 保存图片
     for idx, img_data in enumerate(request.images):
         try:
@@ -312,63 +561,178 @@ async def submit_scan_homework(request: ScanSubmissionCreate):
             
             # 解码并保存
             img_bytes = base64.b64decode(img_data)
+            img_bytes = to_jpeg_bytes(img_bytes)
             file_path = submission_dir / f"page_{idx + 1}.jpg"
             
             with open(file_path, 'wb') as f:
                 f.write(img_bytes)
             
             saved_paths.append(str(file_path))
+            images_bytes.append(img_bytes)
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"图片 {idx + 1} 处理失败: {str(e)}")
     
-    # 模拟 AI 批改（实际应调用批改服务）
-    import random
-    score = random.randint(75, 98)
-    
-    feedback_templates = [
-        "整体答题规范，书写清晰。",
-        "解题思路正确，计算过程完整。",
-        "部分步骤可以更简洁，建议复习相关公式。",
-        "答案正确，但注意单位的书写规范。"
-    ]
-    
+    submission_record = {
+        "submission_id": submission_id,
+        "homework_id": request.homework_id,
+        "student_id": request.student_id,
+        "student_name": request.student_name,
+        "submitted_at": datetime.now().isoformat(),
+        "status": "submitted",
+        "images": images_bytes,
+        "image_paths": saved_paths,
+    }
+    SUBMISSIONS.setdefault(request.homework_id, []).append(submission_record)
+
+    if orchestrator:
+        await _maybe_trigger_grading(request.homework_id, orchestrator)
+
     return SubmissionResponse(
         submission_id=submission_id,
         homework_id=request.homework_id,
         student_id=request.student_id,
         student_name=request.student_name,
-        submitted_at=datetime.now().isoformat(),
-        status="graded",
-        score=score,
-        feedback=f"AI 批改完成 ({len(request.images)} 页)：{random.choice(feedback_templates)} 得分：{score}/100"
+        submitted_at=submission_record["submitted_at"],
+        status="submitted",
+        score=None,
+        feedback=None,
     )
 
 
 @router.get("/homework/submissions", response_model=List[SubmissionResponse], tags=["作业管理"])
 async def get_submissions(homework_id: str):
     """获取作业提交列表"""
+    submissions = SUBMISSIONS.get(homework_id, [])
     return [
         SubmissionResponse(
-            submission_id="sub-001",
-            homework_id=homework_id,
-            student_id="s-001",
-            student_name="Alice Chen",
-            submitted_at=datetime.now().isoformat(),
-            status="graded",
-            score=92,
-            feedback="Excellent work! Clear understanding of concepts."
-        ),
-        SubmissionResponse(
-            submission_id="sub-002",
-            homework_id=homework_id,
-            student_id="s-002",
-            student_name="Bob Wang",
-            submitted_at=datetime.now().isoformat(),
-            status="graded",
-            score=78,
-            feedback="Good effort. Review section 5.3 for improvement."
+            submission_id=submission["submission_id"],
+            homework_id=submission["homework_id"],
+            student_id=submission["student_id"],
+            student_name=submission["student_name"],
+            submitted_at=submission["submitted_at"],
+            status=submission["status"],
+            score=submission.get("score"),
+            feedback=submission.get("feedback"),
         )
+        for submission in submissions
     ]
+
+
+# ============ 批改结果导入与历史 ============
+
+@router.post("/grading/import", response_model=GradingHistoryResponse, tags=["批改历史"])
+async def import_grading_results(
+    request: GradingImportRequest,
+    orchestrator: Orchestrator = Depends(get_orchestrator),
+):
+    """导入批改结果到班级"""
+    _ensure_seed_data()
+    if not orchestrator:
+        raise HTTPException(status_code=503, detail="编排器未初始化")
+
+    formatted_results = await _get_formatted_results(request.batch_id, orchestrator)
+    results_by_key = {result.get("studentName"): result for result in formatted_results}
+
+    records: List[GradingImportRecord] = []
+    now = datetime.utcnow().isoformat()
+
+    for target in request.targets:
+        if not target.student_ids:
+            raise HTTPException(status_code=400, detail="必须选择学生")
+
+        class_info = CLASSES.get(target.class_id)
+        if not class_info:
+            raise HTTPException(status_code=404, detail="班级不存在")
+
+        student_map = _get_student_map(target.class_id)
+        assignment_title = None
+        if target.assignment_id and target.assignment_id in HOMEWORKS:
+            assignment_title = HOMEWORKS[target.assignment_id]["title"]
+
+        import_id = str(uuid.uuid4())[:8]
+        record = {
+            "import_id": import_id,
+            "batch_id": request.batch_id,
+            "class_id": target.class_id,
+            "class_name": class_info["class_name"],
+            "assignment_id": target.assignment_id,
+            "assignment_title": assignment_title,
+            "student_count": len(target.student_ids),
+            "status": "imported",
+            "created_at": now,
+            "revoked_at": None,
+        }
+        GRADING_IMPORTS[import_id] = record
+
+        for student_id in target.student_ids:
+            student_name = student_map.get(student_id, student_id)
+            result = results_by_key.get(student_name) or results_by_key.get(student_id)
+            item_id = str(uuid.uuid4())[:8]
+            GRADING_IMPORT_ITEMS[item_id] = {
+                "item_id": item_id,
+                "import_id": import_id,
+                "batch_id": request.batch_id,
+                "class_id": target.class_id,
+                "student_id": student_id,
+                "student_name": student_name,
+                "status": "imported",
+                "created_at": now,
+                "revoked_at": None,
+                "result": result,
+            }
+
+        records.append(GradingImportRecord(**record))
+
+    return GradingHistoryResponse(records=records)
+
+
+@router.get("/grading/history", response_model=GradingHistoryResponse, tags=["批改历史"])
+async def get_grading_history(
+    class_id: Optional[str] = None,
+    assignment_id: Optional[str] = None,
+):
+    """获取批改历史列表"""
+    records = list(GRADING_IMPORTS.values())
+    if class_id:
+        records = [record for record in records if record["class_id"] == class_id]
+    if assignment_id:
+        records = [record for record in records if record.get("assignment_id") == assignment_id]
+
+    records = sorted(records, key=lambda item: item.get("created_at") or "", reverse=True)
+    return GradingHistoryResponse(records=[GradingImportRecord(**record) for record in records])
+
+
+@router.get("/grading/history/{import_id}", response_model=GradingHistoryDetailResponse, tags=["批改历史"])
+async def get_grading_history_detail(import_id: str):
+    """获取批改历史详情"""
+    record = GRADING_IMPORTS.get(import_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="记录不存在")
+
+    items = [
+        GradingImportItem(**item)
+        for item in GRADING_IMPORT_ITEMS.values()
+        if item["import_id"] == import_id
+    ]
+    return GradingHistoryDetailResponse(record=GradingImportRecord(**record), items=items)
+
+
+@router.post("/grading/import/{import_id}/revoke", response_model=GradingImportRecord, tags=["批改历史"])
+async def revoke_grading_import(import_id: str, request: GradingRevokeRequest):
+    """撤回导入记录"""
+    record = GRADING_IMPORTS.get(import_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="记录不存在")
+
+    if record.get("status") != "revoked":
+        record["status"] = "revoked"
+        record["revoked_at"] = datetime.utcnow().isoformat()
+        for item in GRADING_IMPORT_ITEMS.values():
+            if item["import_id"] == import_id:
+                item["status"] = "revoked"
+                item["revoked_at"] = record["revoked_at"]
+
+    return GradingImportRecord(**record)
 
 
 # ============ 错题分析接口 (IntelliLearn) ============

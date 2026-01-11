@@ -36,7 +36,7 @@ class StorageService:
         file_data: bytes,
         submission_id: str,
         file_index: int,
-        extension: str = "png"
+        extension: str = "jpg"
     ) -> str:
         """
         保存文件到存储
@@ -77,7 +77,7 @@ class StorageService:
         self,
         files_data: List[bytes],
         submission_id: str,
-        extension: str = "png"
+        extension: str = "jpg"
     ) -> List[str]:
         """
         批量保存文件

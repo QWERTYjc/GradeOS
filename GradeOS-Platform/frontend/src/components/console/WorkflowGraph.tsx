@@ -4,12 +4,10 @@ import React, { useMemo } from 'react';
 import { useConsoleStore, WorkflowNode, GradingAgent } from '@/store/consoleStore';
 import clsx from 'clsx';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Check, Loader2, AlertCircle, Clock, Cpu, GitMerge } from 'lucide-react';
+import { Check, Loader2, AlertCircle, Clock, Cpu, GitMerge, Undo2, BookOpen } from 'lucide-react';
 
-// --- 动效配置 ---
 const transition = { type: 'spring', stiffness: 400, damping: 30 };
 
-// --- 状态样式配置 ---
 const statusStyles = {
     pending: {
         bg: 'bg-slate-50/50',
@@ -41,31 +39,24 @@ const statusStyles = {
     }
 };
 
-// --- 组件：流动的连接线 ---
 const FlowingConnector = ({ active }: { active: boolean }) => (
     <div className="relative w-12 h-[2px] mx-2 flex items-center">
-        {/* 基础轨道 */}
         <div className="absolute inset-0 bg-slate-200 rounded-full" />
-
-        {/* 流动光效 - 仅在激活时显示 */}
         {active && (
             <motion.div
                 className="absolute inset-0 bg-gradient-to-r from-transparent via-blue-500 to-transparent h-full rounded-full"
                 initial={{ x: '-100%' }}
                 animate={{ x: '100%' }}
-                transition={{
-                    repeat: Infinity,
-                    duration: 1.5,
-                    ease: "linear"
-                }}
+                transition={{ repeat: Infinity, duration: 1.5, ease: 'linear' }}
             />
         )}
     </div>
 );
 
-// --- 组件：Agent 卡片 (微型) ---
 const AgentCard: React.FC<{ agent: GradingAgent; onClick: () => void; isSelected: boolean }> = ({
-    agent, onClick, isSelected
+    agent,
+    onClick,
+    isSelected
 }) => {
     const isRunning = agent.status === 'running';
     const isCompleted = agent.status === 'completed';
@@ -77,7 +68,10 @@ const AgentCard: React.FC<{ agent: GradingAgent; onClick: () => void; isSelected
             initial={{ opacity: 0, scale: 0.8 }}
             animate={{ opacity: 1, scale: 1 }}
             whileHover={{ scale: 1.05, y: -2 }}
-            onClick={(e) => { e.stopPropagation(); onClick(); }}
+            onClick={(event) => {
+                event.stopPropagation();
+                onClick();
+            }}
             className={clsx(
                 'relative group cursor-pointer overflow-hidden rounded-lg border p-2.5 transition-all',
                 'backdrop-blur-md bg-white/60',
@@ -85,11 +79,8 @@ const AgentCard: React.FC<{ agent: GradingAgent; onClick: () => void; isSelected
                 isFailed && 'border-red-200 bg-red-50/30'
             )}
         >
-            {/* 进度条背景 */}
             {isRunning && agent.progress !== undefined && (
-                <div
-                    className="absolute bottom-0 left-0 h-1 bg-blue-500/20 w-full"
-                >
+                <div className="absolute bottom-0 left-0 h-1 bg-blue-500/20 w-full">
                     <motion.div
                         className="h-full bg-blue-500"
                         initial={{ width: 0 }}
@@ -100,15 +91,19 @@ const AgentCard: React.FC<{ agent: GradingAgent; onClick: () => void; isSelected
 
             <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2 min-w-0">
-                    <div className={clsx(
-                        'w-2 h-2 rounded-full shrink-0',
-                        isRunning ? 'bg-blue-500 animate-pulse' :
-                            isCompleted ? 'bg-emerald-500' :
-                                isFailed ? 'bg-red-500' : 'bg-slate-300'
-                    )} />
-                    <span className="text-xs font-medium text-slate-700 truncate">
-                        {agent.label}
-                    </span>
+                    <div
+                        className={clsx(
+                            'w-2 h-2 rounded-full shrink-0',
+                            isRunning
+                                ? 'bg-blue-500 animate-pulse'
+                                : isCompleted
+                                    ? 'bg-emerald-500'
+                                    : isFailed
+                                        ? 'bg-red-500'
+                                        : 'bg-slate-300'
+                        )}
+                    />
+                    <span className="text-xs font-medium text-slate-700 truncate">{agent.label}</span>
                 </div>
 
                 {agent.output && (
@@ -121,7 +116,6 @@ const AgentCard: React.FC<{ agent: GradingAgent; onClick: () => void; isSelected
     );
 };
 
-// --- 组件：并行容器节点 ---
 const ParallelContainer: React.FC<{
     node: WorkflowNode;
     onAgentClick: (id: string) => void;
@@ -131,6 +125,15 @@ const ParallelContainer: React.FC<{
     const styles = statusStyles[node.status];
     const agents = node.children || [];
     const isRunning = node.status === 'running';
+    const isLogicReview = node.id === 'logic_review';
+    const isRubricReview = node.id === 'rubric_review';
+    const isRubricParse = node.id === 'rubric_parse';
+
+    const waitLabel = isLogicReview || isRubricReview
+        ? 'Waiting for reviews...'
+        : isRubricParse
+            ? 'Waiting for parse...'
+            : 'Waiting for tasks...';
 
     return (
         <motion.div
@@ -139,51 +142,56 @@ const ParallelContainer: React.FC<{
             animate={{ opacity: 1, scale: 1 }}
             className={clsx(
                 'relative min-w-[280px] max-w-[320px] rounded-2xl border p-1 transition-all duration-500',
-                styles.bg, styles.border, styles.glow,
+                styles.bg,
+                styles.border,
+                styles.glow,
                 'backdrop-blur-xl'
             )}
         >
-            {/* 动态流光边框 (仅运行时) */}
             {isRunning && (
                 <div className="absolute -inset-[1px] rounded-2xl bg-gradient-to-r from-transparent via-blue-400/50 to-transparent opacity-50 blur-sm animate-pulse" />
             )}
 
             <div className="relative bg-white/40 rounded-xl p-4 overflow-hidden">
-                {/* Header */}
                 <div className="flex items-center gap-3 mb-4">
                     <div className={clsx('p-2 rounded-lg bg-white shadow-sm', styles.text)}>
-                        <Cpu className={clsx("w-5 h-5", isRunning && "animate-pulse")} />
+                        {isLogicReview || isRubricReview ? (
+                            <Undo2 className={clsx('w-5 h-5', isRunning && 'animate-pulse')} />
+                        ) : isRubricParse ? (
+                            <BookOpen className={clsx('w-5 h-5', isRunning && 'animate-pulse')} />
+                        ) : (
+                            <Cpu className={clsx('w-5 h-5', isRunning && 'animate-pulse')} />
+                        )}
                     </div>
                     <div>
                         <h3 className="font-bold text-slate-800 text-sm">{node.label}</h3>
                         <div className="text-xs text-slate-500 flex items-center gap-1">
                             {agents.length > 0 ? (
                                 <>
-                                    <span className="font-medium text-blue-600">{agents.length}</span> 个并行任务
+                                    <span className="font-medium text-blue-600">{agents.length}</span>
+                                    <span>active agents</span>
                                 </>
                             ) : (
-                                '等待分配...'
+                                waitLabel
                             )}
                         </div>
                     </div>
-                    {/* 批次指示器 */}
-                    {batchProgress && (
+                    {batchProgress && node.id === 'grade_batch' && (
                         <div className="ml-auto text-xs font-mono bg-slate-900/5 text-slate-600 px-2 py-1 rounded">
                             Batch {batchProgress.batchIndex + 1}/{batchProgress.totalBatches}
                         </div>
                     )}
                 </div>
 
-                {/* Agents Grid */}
                 <div className="grid grid-cols-1 gap-2 max-h-[240px] overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-slate-200 scrollbar-track-transparent">
-                    <AnimatePresence mode='popLayout'>
+                    <AnimatePresence mode="popLayout">
                         {agents.length === 0 ? (
                             <motion.div
                                 initial={{ opacity: 0 }}
                                 animate={{ opacity: 1 }}
                                 className="col-span-1 py-8 text-center text-xs text-slate-400 italic border border-dashed border-slate-200 rounded-lg"
                             >
-                                正在等待任务分发...
+                                Waiting for tasks...
                             </motion.div>
                         ) : (
                             agents.map((agent) => (
@@ -202,18 +210,23 @@ const ParallelContainer: React.FC<{
     );
 };
 
-// --- 组件：普通节点 ---
 const NodeCard: React.FC<{
     node: WorkflowNode;
     onClick: () => void;
     isSelected: boolean;
 }> = ({ node, onClick, isSelected }) => {
-    const styles = statusStyles[node.status];
-    const isRunning = node.status === 'running';
-    
-    // 跨页合并节点使用特殊图标
+    const inferredStatus = node.status === 'pending' && !node.isParallelContainer ? 'completed' : node.status;
+    const effectiveStatus = (node as any).isVisualCompleted ? 'completed' : inferredStatus;
+    const styles = statusStyles[effectiveStatus] || statusStyles.pending;
+    const isRunning = effectiveStatus === 'running';
+
     const isCrossPageMerge = node.id === 'cross_page_merge';
-    const nodeIcon = isCrossPageMerge ? <GitMerge className="w-5 h-5" /> : styles.icon;
+    const isLogicReview = node.id === 'logic_review';
+    const nodeIcon = isCrossPageMerge
+        ? <GitMerge className="w-5 h-5" />
+        : isLogicReview
+            ? <Undo2 className="w-5 h-5" />
+            : styles.icon;
 
     return (
         <motion.div
@@ -225,7 +238,8 @@ const NodeCard: React.FC<{
             onClick={onClick}
             className={clsx(
                 'relative min-w-[180px] rounded-2xl border p-1 cursor-pointer transition-all duration-300',
-                styles.bg, styles.border,
+                styles.bg,
+                styles.border,
                 isSelected ? 'ring-2 ring-blue-500 ring-offset-2' : '',
                 styles.glow,
                 'backdrop-blur-xl group',
@@ -233,16 +247,16 @@ const NodeCard: React.FC<{
             )}
         >
             <div className="relative bg-white/60 rounded-xl p-4 flex flex-col items-center text-center gap-3 overflow-hidden">
-                {/* 状态图标 */}
-                <div className={clsx(
-                    'p-3 rounded-xl shadow-sm transition-transform duration-300 group-hover:scale-110',
-                    'bg-white', 
-                    isCrossPageMerge && node.status === 'completed' ? 'text-purple-600' : styles.text
-                )}>
+                <div
+                    className={clsx(
+                        'p-3 rounded-xl shadow-sm transition-transform duration-300 group-hover:scale-110',
+                        'bg-white',
+                        isCrossPageMerge && node.status === 'completed' ? 'text-purple-600' : styles.text
+                    )}
+                >
                     {nodeIcon}
                 </div>
 
-                {/* 文本信息 */}
                 <div>
                     <h3 className="font-bold text-slate-800 text-sm">{node.label}</h3>
                     <AnimatePresence mode="wait">
@@ -260,11 +274,12 @@ const NodeCard: React.FC<{
                     </AnimatePresence>
                 </div>
 
-                {/* 底部装饰条 */}
-                <div className={clsx(
-                    'absolute bottom-0 left-0 w-full h-1 opacity-0 transition-opacity duration-300',
-                    isRunning ? 'opacity-100 bg-blue-500/20' : 'group-hover:opacity-100 bg-slate-200'
-                )}>
+                <div
+                    className={clsx(
+                        'absolute bottom-0 left-0 w-full h-1 opacity-0 transition-opacity duration-300',
+                        isRunning ? 'opacity-100 bg-blue-500/20' : 'group-hover:opacity-100 bg-slate-200'
+                    )}
+                >
                     {isRunning && (
                         <motion.div
                             className="h-full bg-blue-500"
@@ -278,7 +293,6 @@ const NodeCard: React.FC<{
     );
 };
 
-// --- 主组件 ---
 export const WorkflowGraph: React.FC = () => {
     const {
         workflowNodes,
@@ -290,21 +304,27 @@ export const WorkflowGraph: React.FC = () => {
         batchProgress
     } = useConsoleStore();
 
-    // 渐进式显示逻辑
     const visibleNodes = useMemo(() => {
-        if (status === 'IDLE' || status === 'UPLOADING') return workflowNodes.slice(0, 1);
-        const lastActiveIndex = workflowNodes.findLastIndex(n => n.status !== 'pending');
-        const showIndex = lastActiveIndex === -1 ? 0 : Math.min(lastActiveIndex + 1, workflowNodes.length - 1);
-        return workflowNodes.slice(0, showIndex + 1);
+        const filteredNodes = workflowNodes;
+        if (status === 'IDLE' || status === 'UPLOADING') {
+            return filteredNodes.slice(0, 1);
+        }
+        const lastActiveIndex = filteredNodes.findLastIndex((node) => node.status !== 'pending');
+        // 渐进式显示：只显示已激活的节点，不显示下一个 pending 节点
+        const showIndex = lastActiveIndex === -1 ? 0 : lastActiveIndex;
+
+        return filteredNodes.slice(0, showIndex + 1).map((node, index) => ({
+            ...node,
+            isVisualCompleted: index < lastActiveIndex && node.status === 'pending'
+        }));
     }, [workflowNodes, status]);
 
     return (
         <div className="w-full h-full flex items-center justify-center overflow-x-auto py-12 px-8 scrollbar-hide">
             <div className="flex items-center">
-                <AnimatePresence mode='popLayout'>
+                <AnimatePresence mode="popLayout">
                     {visibleNodes.map((node, index) => (
                         <React.Fragment key={node.id}>
-                            {/* 节点渲染 */}
                             <div className="relative z-10">
                                 {node.isParallelContainer ? (
                                     <ParallelContainer
@@ -322,7 +342,6 @@ export const WorkflowGraph: React.FC = () => {
                                 )}
                             </div>
 
-                            {/* 连接线 */}
                             {index < visibleNodes.length - 1 && (
                                 <motion.div
                                     initial={{ width: 0, opacity: 0 }}

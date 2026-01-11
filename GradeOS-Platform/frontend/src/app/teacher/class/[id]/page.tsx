@@ -24,10 +24,10 @@ export default function ClassDetailPage() {
   const params = useParams();
   const router = useRouter();
   const classId = params.id as string;
-  
+
   const [classDetail, setClassDetail] = useState<ClassDetail | null>(null);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'students' | 'homework' | 'stats'>('students');
+  const [activeTab, setActiveTab] = useState<'students' | 'homework' | 'grading_history' | 'stats'>('students');
   const [showInviteModal, setShowInviteModal] = useState(false);
 
   useEffect(() => {
@@ -76,7 +76,7 @@ export default function ClassDetailPage() {
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
-            <button 
+            <button
               onClick={() => router.back()}
               className="text-slate-500 hover:text-slate-700 mb-2 flex items-center gap-1"
             >
@@ -85,12 +85,24 @@ export default function ClassDetailPage() {
             <h1 className="text-2xl font-bold text-slate-800">{classDetail.class_name}</h1>
             <p className="text-slate-500">{classDetail.student_count} 名学生</p>
           </div>
-          <button
-            onClick={() => setShowInviteModal(true)}
-            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-          >
-            邀请学生
-          </button>
+          <div className="flex gap-3">
+            <button
+              onClick={() => {
+                // TODO: 需选择作业，此处暂时硬编码示例 ID
+                router.push(`/console?classId=${classDetail.class_id}&homeworkId=homework-1`);
+              }}
+              className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 flex items-center gap-2"
+            >
+              <span>✨</span>
+              Start Grading
+            </button>
+            <button
+              onClick={() => setShowInviteModal(true)}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+            >
+              Invite Students
+            </button>
+          </div>
         </div>
 
         {/* Tabs */}
@@ -99,16 +111,16 @@ export default function ClassDetailPage() {
             {[
               { key: 'students', label: '学生列表' },
               { key: 'homework', label: '作业管理' },
+              { key: 'grading_history', label: '批改历史' },
               { key: 'stats', label: '班级统计' },
             ].map((tab) => (
               <button
                 key={tab.key}
                 onClick={() => setActiveTab(tab.key as typeof activeTab)}
-                className={`pb-3 text-sm font-medium border-b-2 transition-colors ${
-                  activeTab === tab.key
-                    ? 'border-blue-600 text-blue-600'
-                    : 'border-transparent text-slate-500 hover:text-slate-700'
-                }`}
+                className={`pb-3 text-sm font-medium border-b-2 transition-colors ${activeTab === tab.key
+                  ? 'border-blue-600 text-blue-600'
+                  : 'border-transparent text-slate-500 hover:text-slate-700'
+                  }`}
               >
                 {tab.label}
               </button>
@@ -144,17 +156,16 @@ export default function ClassDetailPage() {
                     </td>
                     <td className="px-6 py-4 text-slate-600">{student.username}</td>
                     <td className="px-6 py-4">
-                      <span className={`font-medium ${
-                        (student.avgScore || 0) >= 90 ? 'text-green-600' :
+                      <span className={`font-medium ${(student.avgScore || 0) >= 90 ? 'text-green-600' :
                         (student.avgScore || 0) >= 60 ? 'text-blue-600' : 'text-red-600'
-                      }`}>
+                        }`}>
                         {student.avgScore || '-'}
                       </span>
                     </td>
                     <td className="px-6 py-4">
                       <div className="flex items-center gap-2">
                         <div className="w-24 h-2 bg-slate-200 rounded-full overflow-hidden">
-                          <div 
+                          <div
                             className="h-full bg-green-500 rounded-full"
                             style={{ width: `${student.submissionRate || 0}%` }}
                           />
@@ -178,7 +189,7 @@ export default function ClassDetailPage() {
           <div className="bg-white rounded-xl shadow-sm p-6">
             <div className="flex justify-between items-center mb-6">
               <h3 className="font-semibold text-slate-800">作业列表</h3>
-              <button 
+              <button
                 onClick={() => router.push('/teacher/homework')}
                 className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm"
               >
@@ -188,6 +199,19 @@ export default function ClassDetailPage() {
             <p className="text-slate-500 text-center py-8">
               前往作业管理页面查看和管理作业
             </p>
+          </div>
+        )}
+
+        {activeTab === 'grading_history' && (
+          <div className="bg-white rounded-xl shadow-sm p-6">
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="font-semibold text-slate-800">批改历史记录</h3>
+            </div>
+            <div className="space-y-4">
+              <div className="text-center py-8 text-slate-400">
+                暂无批改记录，使用一键批改功能开始批改。
+              </div>
+            </div>
           </div>
         )}
 
@@ -213,7 +237,7 @@ export default function ClassDetailPage() {
               </div>
             </div>
             <div className="mt-6 text-center">
-              <button 
+              <button
                 onClick={() => router.push('/teacher/statistics')}
                 className="text-blue-600 hover:text-blue-800"
               >

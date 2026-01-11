@@ -14,6 +14,7 @@ from src.models.enums import QuestionType
 from src.models.state import ContextPack, GradingState, EvidenceItem
 from src.agents.base import BaseGradingAgent
 from src.config.models import get_default_model
+from src.utils.llm_thinking import get_thinking_kwargs
 
 
 logger = logging.getLogger(__name__)
@@ -53,10 +54,12 @@ class EssayAgent(BaseGradingAgent):
         """
         if model_name is None:
             model_name = get_default_model()
+        thinking_kwargs = get_thinking_kwargs(model_name, enable_thinking=True)
         self.llm = ChatGoogleGenerativeAI(
             model=model_name,
             google_api_key=api_key,
-            temperature=0.3  # 稍高温度允许更灵活的评价
+            temperature=0.3,  # slightly higher temperature for flexible evaluation
+            **thinking_kwargs,
         )
         self._api_key = api_key
     

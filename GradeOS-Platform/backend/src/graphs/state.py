@@ -8,6 +8,11 @@ from datetime import datetime
 import operator
 
 
+def last_value(current: Any, new: Any) -> Any:
+    """取最新值的 reducer，用于处理并发更新时只保留最后一个值"""
+    return new if new is not None else current
+
+
 class GradingGraphState(TypedDict, total=False):
     """批改 Graph 状态定义
     
@@ -103,8 +108,10 @@ class BatchGradingGraphState(TypedDict, total=False):
     
     # ===== 批次配置与进度 (Requirements: 3.1, 3.4, 10.1) =====
     batch_config: Dict[str, Any]         # 批次配置（batch_size, max_workers 等）
-    batch_progress: Dict[str, Any]       # 批次进度信息
+    batch_progress: Annotated[Dict[str, Any], last_value]  # 批次进度信息（使用 last_value reducer 处理并发）
     batch_retry_needed: Dict[str, Any]   # 需要重试的批次信息
+
+    # ===== 批改结果核验 =====
     
     # ===== 学生聚合（基于索引）=====
     student_boundaries: List[Dict[str, Any]]  # 学生试卷边界列表
@@ -112,6 +119,14 @@ class BatchGradingGraphState(TypedDict, total=False):
     
     # ===== 审核结果 =====
     review_summary: Dict[str, Any]       # 审核摘要
+    review_result: Optional[Dict[str, Any]]  # 人工审核结果
+    rubric_review_result: Optional[Dict[str, Any]]  # 评分标准审核结果
+
+    # ===== 逻辑复核结果 =====
+    logic_review_results: List[Dict[str, Any]]  # 逻辑复核摘要/修正记录
+
+    # ===== 汇总报告 =====
+    class_report: Dict[str, Any]        # 班级总结报告
     
     # ===== 导出数据 =====
     export_data: Dict[str, Any]          # 导出数据

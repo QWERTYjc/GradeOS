@@ -1,9 +1,8 @@
 """PDF 处理工具"""
 
 from typing import List
-from io import BytesIO
 from pdf2image import convert_from_bytes
-from PIL import Image
+from src.utils.image import pil_to_jpeg_bytes
 
 
 class PDFProcessingError(Exception):
@@ -35,10 +34,8 @@ async def convert_pdf_to_images(pdf_data: bytes, dpi: int = 300) -> List[bytes]:
         # 将每个 PIL Image 转换为字节数据
         image_bytes_list: List[bytes] = []
         for img in images:
-            # 使用 BytesIO 将图像保存为字节
-            buffer = BytesIO()
-            img.save(buffer, format='PNG')
-            image_bytes_list.append(buffer.getvalue())
+            # Convert each PIL image to JPEG bytes.
+            image_bytes_list.append(pil_to_jpeg_bytes(img))
         
         return image_bytes_list
         

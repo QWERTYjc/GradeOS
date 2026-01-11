@@ -3,14 +3,12 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-    CloudUpload,
-    FileImage,
-    Scissors,
     BookOpen,
     Cpu,
     CheckCircle2,
     FileText,
     Share2,
+    Undo2,
     Loader2
 } from 'lucide-react';
 
@@ -37,15 +35,15 @@ interface WorkerData {
 // --- Constants ---
 
 const NODES_CONFIG = [
-    { id: 'ingest', label: 'Ingest', icon: CloudUpload, x: 6, y: 50 },
-    { id: 'preprocess', label: 'Preprocess', icon: FileImage, x: 18.5, y: 50 },
-    { id: 'index', label: 'Index', icon: Scissors, x: 31, y: 50 },
-    { id: 'rubric', label: 'Rubric Load', icon: BookOpen, x: 43.5, y: 50 },
-    { id: 'worker_pool', label: 'Worker Pool', icon: Cpu, x: 56, y: 50 },
-    { id: 'consistency', label: 'Consistency', icon: CheckCircle2, x: 68.5, y: 50 },
-    { id: 'merge', label: 'Merge', icon: FileText, x: 81, y: 50 },
-    { id: 'export', label: 'Export', icon: Share2, x: 93.5, y: 50 },
+    { id: 'rubric_parse', label: 'Rubric Parse', icon: BookOpen, x: 8, y: 50 },
+    { id: 'rubric_review', label: 'Rubric Review', icon: Undo2, x: 22, y: 50 },
+    { id: 'grade_batch', label: 'Batch Grading', icon: Cpu, x: 36, y: 50 },
+    { id: 'cross_page_merge', label: 'Cross-Page Merge', icon: CheckCircle2, x: 50, y: 50 },
+    { id: 'logic_review', label: 'Logic Review', icon: Undo2, x: 64, y: 50 },
+    { id: 'index_merge', label: 'Result Merge', icon: FileText, x: 78, y: 50 },
+    { id: 'export', label: 'Export', icon: Share2, x: 92, y: 50 },
 ];
+
 
 // --- Simulation Hook ---
 
@@ -85,7 +83,7 @@ const useWorkflowSimulation = () => {
     }, []);
 
     const triggerPipeline = () => {
-        const sequence = ['ingest', 'preprocess', 'index', 'rubric', 'worker_pool', 'consistency', 'merge', 'export'];
+        const sequence = ['rubric_parse', 'rubric_review', 'grade_batch', 'cross_page_merge', 'logic_review', 'index_merge', 'export'];
 
         // Staggered execution
         let accumulatedDelay = 0;
@@ -138,12 +136,12 @@ const useWorkflowSimulation = () => {
 
 const NodeCard = ({ data, onClick }: { data: NodeData, onClick: () => void }) => {
     const statusColors: Record<NodeStatus, string> = {
-        idle: 'border-gray-200 text-gray-400',
-        queued: 'border-blue-200 text-blue-400 animate-pulse',
-        running: 'border-blue-500 text-blue-600 shadow-[0_0_15px_rgba(37,99,235,0.3)]',
-        success: 'border-green-400 text-green-600',
-        failed: 'border-indigo-800 text-indigo-800', // Removed animate-shake
-        retrying: 'border-orange-400 text-orange-500',
+        idle: 'border-slate-200 text-slate-400',
+        queued: 'border-blue-200 text-blue-500 animate-pulse',
+        running: 'border-blue-500 text-blue-700 shadow-[0_0_25px_rgba(37,99,235,0.35)]',
+        success: 'border-emerald-400 text-emerald-600',
+        failed: 'border-rose-500 text-rose-600',
+        retrying: 'border-amber-400 text-amber-500',
     };
 
     return (
@@ -153,7 +151,7 @@ const NodeCard = ({ data, onClick }: { data: NodeData, onClick: () => void }) =>
             style={{ left: `${data.x}%`, top: `${data.y}%` }}
         >
             <motion.div
-                className={`w-28 h-24 bg-white rounded-xl border-2 flex flex-col items-center justify-center gap-2 cursor-pointer transition-colors duration-300 ${statusColors[data.status] || statusColors.idle}`}
+                className={`w-28 h-24 bg-white/90 rounded-2xl border-2 flex flex-col items-center justify-center gap-2 cursor-pointer transition-colors duration-300 ${statusColors[data.status] || statusColors.idle}`}
                 whileHover={{ scale: 1.05, y: -5 }}
                 animate={
                     data.status === 'failed'
@@ -193,12 +191,12 @@ const NodeCard = ({ data, onClick }: { data: NodeData, onClick: () => void }) =>
 
 const WorkerPool = ({ workers }: { workers: WorkerData[] }) => {
     return (
-        <div className="absolute top-[80%] left-[56%] -translate-x-1/2 flex gap-2">
+        <div className="absolute top-[80%] left-[45%] -translate-x-1/2 flex gap-2">
             {workers.map(w => (
                 <motion.div
                     key={w.id}
-                    className={`w-20 p-2 rounded border bg-white text-[10px] flex flex-col items-center gap-1
-                ${w.status === 'running' ? 'border-blue-400 shadow-lg shadow-blue-100' : 'border-gray-100 text-gray-300'}
+                    className={`w-20 p-2 rounded-xl border bg-white/90 text-[10px] flex flex-col items-center gap-1
+                ${w.status === 'running' ? 'border-blue-400 text-blue-600 shadow-lg shadow-blue-100' : 'border-slate-200 text-slate-400'}
             `}
                 >
                     <Cpu size={12} />
@@ -309,15 +307,16 @@ export default function WorkflowGraph() {
     const [selectedNode, setSelectedNode] = useState<string | null>(null);
 
     return (
-        <div className="relative w-full h-[500px] bg-white rounded-3xl border border-gray-100 shadow-2xl overflow-hidden overflow-x-auto">
+        <div className="relative w-full h-[520px] bg-white/85 rounded-[32px] border border-slate-200/60 shadow-[0_40px_120px_rgba(15,23,42,0.15)] overflow-hidden overflow-x-auto backdrop-blur">
+            <div className="landing-grid absolute inset-0" />
             {/* Header */}
-            <div className="absolute top-0 left-0 w-full p-4 border-b border-gray-100 flex justify-between items-center bg-white/80 backdrop-blur z-20">
+            <div className="absolute top-0 left-0 w-full p-4 border-b border-slate-200/60 flex justify-between items-center bg-white/80 backdrop-blur z-20">
                 <div className="flex items-center gap-2">
                     <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
-                    <span className="text-xs font-mono text-gray-500">SYSTEM STATUS: ONLINE</span>
+                    <span className="text-[11px] font-mono uppercase tracking-[0.3em] text-slate-500">System Status: Online</span>
                 </div>
-                <div className="text-xs font-mono text-gray-400">
-                    LATENCY: 24ms | WORKERS: {workers.filter(w => w.status === 'running').length}/3
+                <div className="text-[11px] font-mono uppercase tracking-[0.3em] text-slate-400">
+                    Latency 24ms | Workers {workers.filter(w => w.status === 'running').length}/3
                 </div>
             </div>
 

@@ -31,6 +31,7 @@ export interface Homework {
   description: string;
   deadline: string;
   createdAt: string;
+  allowEarlyGrading?: boolean;
 }
 
 export interface Submission {
@@ -40,9 +41,36 @@ export interface Submission {
   studentName: string;
   content: string;
   submittedAt: string;
-  status: 'pending' | 'graded';
+  status: 'submitted' | 'pending' | 'graded';
   score?: number;
   aiFeedback?: string;
+}
+
+// ============ Grading Import Types ============
+export interface GradingImportRecord {
+  importId: string;
+  batchId: string;
+  classId: string;
+  className?: string;
+  assignmentId?: string;
+  assignmentTitle?: string;
+  studentCount: number;
+  status: string;
+  createdAt: string;
+  revokedAt?: string;
+}
+
+export interface GradingImportItem {
+  itemId: string;
+  importId: string;
+  batchId: string;
+  classId: string;
+  studentId: string;
+  studentName: string;
+  status: string;
+  createdAt: string;
+  revokedAt?: string;
+  result?: Record<string, any>;
 }
 
 // ============ Student Assistant Types ============
@@ -129,8 +157,15 @@ export interface ScoringPoint {
 /** 得分点评分结果 - 对应后端 ScoringPointResult */
 export interface ScoringPointResult {
   scoringPoint: ScoringPoint;
+  pointId?: string;
+  description?: string;
   awarded: number;
+  maxPoints?: number;
   evidence: string;
+  rubricReference?: string;
+  rubricReferenceSource?: string;
+  decision?: string;
+  reason?: string;
 }
 
 export interface QuestionResult {
@@ -139,6 +174,11 @@ export interface QuestionResult {
   maxScore: number;
   feedback: string;
   confidence?: number;
+  confidenceReason?: string;
+  selfCritique?: string;
+  selfCritiqueConfidence?: number;
+  rubricRefs?: string[];
+  typoNotes?: string[];
   studentAnswer?: string;
   isCorrect?: boolean;
   scoringPoints?: ScoringPoint[];

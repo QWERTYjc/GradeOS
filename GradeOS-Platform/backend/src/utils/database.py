@@ -120,7 +120,7 @@ class Database:
                 if self._unified_pool_manager.is_initialized:
                     self._use_unified_pool = True
                     self._degraded_mode = False
-                    logger.info("使用统一连接池管理器")
+                    logger.debug("使用统一连接池管理器")
                     return
             except Exception as e:
                 logger.warning(f"无法使用统一连接池管理器: {e}")

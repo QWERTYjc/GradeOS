@@ -4,96 +4,103 @@ import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { useAuthStore } from '@/store/authStore';
-import { Homework, Submission, ClassEntity } from '@/types';
+import { classApi, homeworkApi, ClassResponse, HomeworkResponse, SubmissionResponse } from '@/services/api';
 import dayjs from 'dayjs';
 
 export default function TeacherHomework() {
   const { user } = useAuthStore();
   const router = useRouter();
-  const [classes, setClasses] = useState<ClassEntity[]>([]);
-  const [homeworks, setHomeworks] = useState<Homework[]>([]);
+  const [classes, setClasses] = useState<ClassResponse[]>([]);
+  const [homeworks, setHomeworks] = useState<HomeworkResponse[]>([]);
   const [selectedClass, setSelectedClass] = useState<string>('');
   const [loading, setLoading] = useState(true);
+  const [loadingHomeworks, setLoadingHomeworks] = useState(false);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
-  const [currentHw, setCurrentHw] = useState<Homework | null>(null);
-  const [submissions, setSubmissions] = useState<Submission[]>([]);
+  const [currentHw, setCurrentHw] = useState<HomeworkResponse | null>(null);
+  const [submissions, setSubmissions] = useState<SubmissionResponse[]>([]);
+  const [loadingSubmissions, setLoadingSubmissions] = useState(false);
+  const [error, setError] = useState('');
 
   // Form state
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [deadline, setDeadline] = useState('');
+  const [allowEarlyGrading, setAllowEarlyGrading] = useState(false);
 
   useEffect(() => {
-    setTimeout(() => {
-      const mockClasses: ClassEntity[] = [
-        { id: '1', name: 'Advanced Physics 2024', teacherId: user?.id || '', inviteCode: 'PHY24A', studentCount: 32 },
-        { id: '2', name: 'Mathematics Grade 11', teacherId: user?.id || '', inviteCode: 'MTH11B', studentCount: 28 },
-      ];
-      setClasses(mockClasses);
-      if (mockClasses.length > 0) {
-        setSelectedClass(mockClasses[0].id);
-      }
-      setLoading(false);
-    }, 300);
+    const teacherId = user?.id || 't-001';
+    setLoading(true);
+    classApi
+      .getTeacherClasses(teacherId)
+      .then((data) => {
+        setClasses(data);
+        if (data.length > 0) {
+          setSelectedClass(data[0].class_id);
+        }
+      })
+      .catch(() => {
+        setClasses([]);
+      })
+      .finally(() => {
+        setLoading(false);
+      });
   }, [user]);
 
   useEffect(() => {
-    if (selectedClass) {
-      // Mock homeworks
-      setHomeworks([
-        {
-          id: '1',
-          classId: selectedClass,
-          className: classes.find(c => c.id === selectedClass)?.name,
-          title: 'Newton\'s Laws Problem Set',
-          description: 'Complete problems 1-10 from Chapter 5',
-          deadline: '2024-12-30',
-          createdAt: new Date().toISOString()
-        },
-        {
-          id: '2',
-          classId: selectedClass,
-          className: classes.find(c => c.id === selectedClass)?.name,
-          title: 'Energy Conservation Quiz',
-          description: 'Online quiz covering kinetic and potential energy',
-          deadline: '2024-12-28',
-          createdAt: new Date().toISOString()
-        }
-      ]);
-    }
-  }, [selectedClass, classes]);
+    if (!selectedClass) return;
+    setLoadingHomeworks(true);
+    homeworkApi
+      .getList({ class_id: selectedClass })
+      .then((data) => {
+        setHomeworks(data);
+      })
+      .catch(() => {
+        setHomeworks([]);
+      })
+      .finally(() => {
+        setLoadingHomeworks(false);
+      });
+  }, [selectedClass]);
 
-  const handleCreate = () => {
-    if (!title || !description || !deadline) return;
-    const newHw: Homework = {
-      id: Date.now().toString(),
-      classId: selectedClass,
-      className: classes.find(c => c.id === selectedClass)?.name,
-      title,
-      description,
-      deadline,
-      createdAt: new Date().toISOString()
-    };
-    setHomeworks([newHw, ...homeworks]);
-    setTitle('');
-    setDescription('');
-    setDeadline('');
-    setIsCreateOpen(false);
+  const handleCreate = async () => {
+    if (!title || !description || !deadline || !selectedClass) return;
+    setError('');
+    try {
+      const created = await homeworkApi.create({
+        class_id: selectedClass,
+        title,
+        description,
+        deadline,
+        allow_early_grading: allowEarlyGrading,
+      });
+      setHomeworks((prev) => [created, ...prev]);
+      setTitle('');
+      setDescription('');
+      setDeadline('');
+      setAllowEarlyGrading(false);
+      setIsCreateOpen(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '创建作业失败');
+    }
   };
 
-  const openSubmissions = (hw: Homework) => {
+  const openSubmissions = async (hw: HomeworkResponse) => {
     setCurrentHw(hw);
     setIsDrawerOpen(true);
-    // Mock submissions
-    setSubmissions([
-      { id: '1', homeworkId: hw.id, studentId: 's1', studentName: 'Alice Chen', content: 'My answer...', submittedAt: new Date().toISOString(), status: 'graded', score: 92, aiFeedback: 'Excellent work! Clear understanding of concepts.' },
-      { id: '2', homeworkId: hw.id, studentId: 's2', studentName: 'Bob Wang', content: 'Solution...', submittedAt: new Date().toISOString(), status: 'graded', score: 78, aiFeedback: 'Good effort. Review section 5.3 for improvement.' },
-      { id: '3', homeworkId: hw.id, studentId: 's3', studentName: 'Carol Liu', content: 'Answer...', submittedAt: new Date().toISOString(), status: 'graded', score: 85, aiFeedback: 'Well done! Minor calculation errors in Q3.' },
-    ]);
+    setLoadingSubmissions(true);
+    try {
+      const data = await homeworkApi.getSubmissions(hw.homework_id);
+      setSubmissions(data);
+    } catch {
+      setSubmissions([]);
+    } finally {
+      setLoadingSubmissions(false);
+    }
   };
 
-  const getScoreColor = (score: number) => {
+  const getScoreColor = (score?: number) => {
+    if (score === undefined || score === null) return 'bg-slate-100 text-slate-500';
     if (score >= 90) return 'bg-green-100 text-green-700';
     if (score >= 80) return 'bg-blue-100 text-blue-700';
     if (score >= 60) return 'bg-yellow-100 text-yellow-700';
@@ -113,19 +120,19 @@ export default function TeacherHomework() {
             </button>
             <div>
               <h1 className="text-xl font-bold text-slate-800">Assignment Manager</h1>
+              {loading && <div className="mt-2 text-xs text-slate-400">Loading classes...</div>}
               {classes.length > 0 && (
                 <div className="flex gap-2 mt-3 flex-wrap">
                   {classes.map(cls => (
                     <button
-                      key={cls.id}
-                      onClick={() => setSelectedClass(cls.id)}
-                      className={`px-3 py-1 rounded-full text-sm transition-all ${
-                        selectedClass === cls.id
+                      key={cls.class_id}
+                      onClick={() => setSelectedClass(cls.class_id)}
+                      className={`px-3 py-1 rounded-full text-sm transition-all ${selectedClass === cls.class_id
                           ? 'bg-blue-600 text-white'
                           : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                      }`}
+                        }`}
                     >
-                      {cls.name}
+                      {cls.class_name}
                     </button>
                   ))}
                 </div>
@@ -139,6 +146,11 @@ export default function TeacherHomework() {
             + New Assignment
           </button>
         </div>
+        {error && (
+          <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-600">
+            {error}
+          </div>
+        )}
 
         {/* Homework List */}
         <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
@@ -147,17 +159,36 @@ export default function TeacherHomework() {
               <tr>
                 <th className="text-left px-6 py-3 text-sm font-medium text-slate-600">Title</th>
                 <th className="text-left px-6 py-3 text-sm font-medium text-slate-600">Deadline</th>
+                <th className="text-left px-6 py-3 text-sm font-medium text-slate-600">Trigger</th>
                 <th className="text-left px-6 py-3 text-sm font-medium text-slate-600">Created</th>
                 <th className="text-right px-6 py-3 text-sm font-medium text-slate-600">Action</th>
               </tr>
             </thead>
             <tbody>
+              {loadingHomeworks && (
+                <tr>
+                  <td className="px-6 py-4 text-slate-400" colSpan={5}>
+                    Loading assignments...
+                  </td>
+                </tr>
+              )}
               {homeworks.map(hw => (
-                <tr key={hw.id} className="border-b border-slate-100 hover:bg-slate-50">
+                <tr key={hw.homework_id} className="border-b border-slate-100 hover:bg-slate-50">
                   <td className="px-6 py-4 font-medium text-slate-800">{hw.title}</td>
                   <td className="px-6 py-4 text-slate-600 font-mono text-sm">{hw.deadline}</td>
-                  <td className="px-6 py-4 text-slate-400 text-sm">{dayjs(hw.createdAt).format('MM-DD HH:mm')}</td>
-                  <td className="px-6 py-4 text-right">
+                  <td className="px-6 py-4 text-slate-600 text-sm">
+                    {hw.allow_early_grading ? '全部提交后' : '截止后'}
+                  </td>
+                  <td className="px-6 py-4 text-slate-400 text-sm">
+                    {dayjs(hw.created_at).format('MM-DD HH:mm')}
+                  </td>
+                  <td className="px-6 py-4 text-right flex justify-end gap-2">
+                    <button
+                      onClick={() => router.push(`/console?classId=${selectedClass}&homeworkId=${hw.homework_id}`)}
+                      className="px-3 py-1 text-sm text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
+                    >
+                      一键批改
+                    </button>
                     <button
                       onClick={() => openSubmissions(hw)}
                       className="px-3 py-1 text-sm text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
@@ -169,7 +200,7 @@ export default function TeacherHomework() {
               ))}
             </tbody>
           </table>
-          {homeworks.length === 0 && (
+          {!loadingHomeworks && homeworks.length === 0 && (
             <div className="text-center py-12 text-slate-400">No assignments yet</div>
           )}
         </div>
@@ -200,6 +231,20 @@ export default function TeacherHomework() {
                   onChange={(e) => setDeadline(e.target.value)}
                   className="w-full px-4 py-3 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
+                <label className="flex items-start gap-3 rounded-lg border border-slate-200 p-3 text-sm text-slate-600">
+                  <input
+                    type="checkbox"
+                    checked={allowEarlyGrading}
+                    onChange={(e) => setAllowEarlyGrading(e.target.checked)}
+                    className="mt-1 h-4 w-4 rounded border-slate-300 text-slate-900"
+                  />
+                  <div>
+                    <div className="font-medium text-slate-700">允许全部提交后提前批改</div>
+                    <div className="text-xs text-slate-400">
+                      开启后，所有学生提交完成即可触发批改；关闭则等待截止时间。
+                    </div>
+                  </div>
+                </label>
               </div>
               <div className="flex gap-2 mt-6">
                 <button
@@ -235,22 +280,32 @@ export default function TeacherHomework() {
                 </button>
               </div>
               <div className="p-6 space-y-4">
-                {submissions.map(sub => (
-                  <div key={sub.id} className="bg-slate-50 rounded-xl p-4 border border-slate-200">
-                    <div className="flex justify-between items-start mb-2">
-                      <div>
-                        <span className="font-bold text-slate-800">{sub.studentName}</span>
-                        <span className="text-xs text-slate-400 ml-2">
-                          {dayjs(sub.submittedAt).format('MM-DD HH:mm')}
+                {loadingSubmissions && (
+                  <div className="text-sm text-slate-500">加载提交记录中...</div>
+                )}
+                {!loadingSubmissions && submissions.length === 0 && (
+                  <div className="text-sm text-slate-400">暂无提交记录</div>
+                )}
+                {submissions.map(sub => {
+                  const scoreLabel = sub.score ?? '--';
+                  return (
+                    <div key={sub.submission_id} className="bg-slate-50 rounded-xl p-4 border border-slate-200">
+                      <div className="flex justify-between items-start mb-2">
+                        <div>
+                          <span className="font-bold text-slate-800">{sub.student_name}</span>
+                          <span className="text-xs text-slate-400 ml-2">
+                            {dayjs(sub.submitted_at).format('MM-DD HH:mm')}
+                          </span>
+                        </div>
+                        <span className={`px-3 py-1 rounded-full text-sm font-bold ${getScoreColor(sub.score)}`}>
+                          {scoreLabel}
                         </span>
                       </div>
-                      <span className={`px-3 py-1 rounded-full text-sm font-bold ${getScoreColor(sub.score || 0)}`}>
-                        {sub.score}
-                      </span>
+                      <p className="text-xs text-slate-400 mb-2">状态：{sub.status}</p>
+                      <p className="text-sm text-slate-600">{sub.feedback || '暂无反馈'}</p>
                     </div>
-                    <p className="text-sm text-slate-600">{sub.aiFeedback}</p>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           </div>

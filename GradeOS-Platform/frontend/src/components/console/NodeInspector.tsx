@@ -3,7 +3,7 @@
 import React from 'react';
 import { useConsoleStore, WorkflowNode, GradingAgent } from '@/store/consoleStore';
 import clsx from 'clsx';
-import { X, Activity, CheckCircle, XCircle, Clock, FileText, Users, BookOpen, AlertTriangle, Brain, GitMerge, Shield, Target } from 'lucide-react';
+import { X, Activity, CheckCircle, XCircle, Clock, FileText, Users, BookOpen, AlertTriangle, GitMerge, Shield, Target } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 const statusIcons = {
@@ -31,11 +31,9 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({ className }) => {
         selectedAgentId,
         setSelectedNodeId,
         setSelectedAgentId,
-        // 自我成长系统状态
         parsedRubric,
         batchProgress,
         studentBoundaries,
-        selfEvolving,
     } = useConsoleStore();
 
     // 获取选中的节点
@@ -157,10 +155,55 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({ className }) => {
                                                 / {selectedAgent.output.maxScore} 分
                                             </span>
                                         </div>
+                                        {selectedAgent.status === 'running' && selectedAgent.output.streamingText && (
+                                            <div className="mt-2">
+                                                <label className="text-[10px] font-bold text-blue-500 uppercase tracking-wider mb-1 block">实时 AI 思考内容...</label>
+                                                <div className="text-sm text-gray-600 leading-relaxed bg-white/60 p-3 rounded-lg border border-blue-100/30 font-mono max-h-[150px] overflow-y-auto custom-scrollbar">
+                                                    {selectedAgent.output.streamingText}
+                                                    <span className="inline-block w-1.5 h-4 bg-blue-500 ml-1 animate-pulse" />
+                                                </div>
+                                            </div>
+                                        )}
+
                                         {selectedAgent.output.feedback && (
-                                            <p className="text-sm text-gray-600 leading-relaxed bg-white/50 p-3 rounded-lg border border-white/50">
-                                                {selectedAgent.output.feedback}
-                                            </p>
+                                            <div className="mt-3">
+                                                <label className="text-[10px] font-bold text-indigo-500 uppercase tracking-wider mb-1 block">综合评分反馈</label>
+                                                <p className="text-sm text-gray-600 leading-relaxed bg-white/50 p-3 rounded-lg border border-white/50">
+                                                    {selectedAgent.output.feedback}
+                                                </p>
+                                            </div>
+                                        )}
+
+                                        {/* 题目得分详情 */}
+                                        {selectedAgent.output.questionResults && selectedAgent.output.questionResults.length > 0 && (
+                                            <div className="mt-4 space-y-3">
+                                                <div className="text-xs font-bold text-gray-500 uppercase tracking-wider">题目明细</div>
+                                                <div className="grid grid-cols-1 gap-2">
+                                                    {selectedAgent.output.questionResults.map((q, idx) => (
+                                                        <div key={idx} className="bg-white/60 rounded-lg p-3 border border-blue-100/50 flex items-center justify-between">
+                                                            <div className="flex items-center gap-3">
+                                                                <span className="font-mono text-sm font-bold text-blue-700 bg-blue-50 px-2 py-1 rounded">
+                                                                    {q.questionId}
+                                                                </span>
+                                                                <div className="flex flex-col">
+                                                                    <div className="flex items-baseline gap-1">
+                                                                        <span className={clsx(
+                                                                            "font-bold",
+                                                                            q.score === q.maxScore ? "text-emerald-600" :
+                                                                                q.score === 0 ? "text-red-600" : "text-amber-600"
+                                                                        )}>
+                                                                            {q.score}
+                                                                        </span>
+                                                                        <span className="text-xs text-gray-400">/ {q.maxScore}</span>
+                                                                    </div>
+                                                                </div>
+                                                            </div>
+                                                            {/* 从后端日志中可能没有 feedback，如果有则显示 */}
+                                                            {/* 这里我们暂时只显示分数，详细的可能需要点击查看 */}
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
                                         )}
 
                                         {/* 自我修正统计 */}
@@ -197,28 +240,6 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({ className }) => {
                                     </div>
                                 )}
 
-                                {/* 判例引用 */}
-                                {selfEvolving.recentExemplars.length > 0 && (
-                                    <div className="bg-gradient-to-br from-amber-50/80 to-orange-50/80 rounded-xl p-5 border border-amber-100/50 shadow-sm">
-                                        <label className="text-xs font-bold text-amber-600 uppercase tracking-wider flex items-center gap-1.5 mb-3">
-                                            <Brain className="w-3.5 h-3.5" />
-                                            参考判例 ({selfEvolving.recentExemplars.length})
-                                        </label>
-                                        <div className="space-y-2">
-                                            {selfEvolving.recentExemplars.map((exemplar, idx) => (
-                                                <div key={idx} className="bg-white/60 rounded-lg p-2.5 text-sm border border-amber-100/50">
-                                                    <div className="flex justify-between items-center mb-1">
-                                                        <span className="font-bold text-gray-700">Similarity: {(exemplar.similarity * 100).toFixed(0)}%</span>
-                                                        <span className="text-xs font-medium text-amber-600 bg-amber-100 px-1.5 py-0.5 rounded">
-                                                            {exemplar.score} 分
-                                                        </span>
-                                                    </div>
-                                                    <div className="text-xs text-gray-500 line-clamp-2">{exemplar.description}</div>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    </div>
-                                )}
 
                                 {/* 日志 */}
                                 {selectedAgent.logs && selectedAgent.logs.length > 0 && (
@@ -350,62 +371,7 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({ className }) => {
                                     </div>
                                 )}
 
-                                {/* 自我成长系统状态 */}
-                                {selectedNode.id === 'grading' && (
-                                    <div className="space-y-4">
-                                        {/* 校准配置 */}
-                                        {selfEvolving.calibration && (
-                                            <div className="bg-gradient-to-br from-indigo-50/80 to-violet-50/80 rounded-xl p-5 border border-indigo-100/50 shadow-sm">
-                                                <label className="text-xs font-bold text-indigo-600 uppercase tracking-wider flex items-center gap-1.5 mb-3">
-                                                    <Target className="w-3.5 h-3.5" />
-                                                    教师校准配置
-                                                </label>
-                                                <div className="flex items-center justify-between mb-2">
-                                                    <span className="text-sm font-medium text-gray-600">Profile ID</span>
-                                                    <span className="text-sm font-bold text-indigo-700">{selfEvolving.calibration.profileId}</span>
-                                                </div>
-                                                <div className="flex items-center justify-between">
-                                                    <span className="text-sm font-medium text-gray-600">严格度</span>
-                                                    <div className="flex items-center gap-2">
-                                                        <div className="w-20 bg-gray-200 rounded-full h-1.5 overflow-hidden">
-                                                            <div
-                                                                className="bg-indigo-500 h-full rounded-full"
-                                                                style={{ width: `${(selfEvolving.calibration.strictnessLevel / 2) * 100}%` }}
-                                                            />
-                                                        </div>
-                                                        <span className="text-xs font-bold text-indigo-600">{selfEvolving.calibration.strictnessLevel.toFixed(1)}</span>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        )}
 
-                                        {/* 规则补丁状态 */}
-                                        {selfEvolving.activePatches.length > 0 && (
-                                            <div className="bg-gradient-to-br from-emerald-50/80 to-teal-50/80 rounded-xl p-5 border border-emerald-100/50 shadow-sm">
-                                                <label className="text-xs font-bold text-emerald-600 uppercase tracking-wider flex items-center gap-1.5 mb-3">
-                                                    <Shield className="w-3.5 h-3.5" />
-                                                    活跃规则补丁 ({selfEvolving.activePatches.length})
-                                                </label>
-                                                <div className="space-y-2">
-                                                    {selfEvolving.activePatches.map((patch, idx) => (
-                                                        <div key={idx} className="bg-white/60 rounded-lg p-2.5 text-sm border border-emerald-100/50">
-                                                            <div className="flex justify-between items-center mb-1">
-                                                                <span className="font-bold text-gray-700">{patch.patchId}</span>
-                                                                <span className={clsx(
-                                                                    "text-[10px] px-1.5 py-0.5 rounded font-medium uppercase",
-                                                                    patch.status === 'testing' ? "bg-yellow-100 text-yellow-700" : "bg-emerald-100 text-emerald-700"
-                                                                )}>
-                                                                    {patch.status}
-                                                                </span>
-                                                            </div>
-                                                            <div className="text-xs text-gray-500 truncate">{patch.description}</div>
-                                                        </div>
-                                                    ))}
-                                                </div>
-                                            </div>
-                                        )}
-                                    </div>
-                                )}
 
                                 {/* 并行容器统计 */}
                                 {selectedNode.isParallelContainer && selectedNode.children && (
