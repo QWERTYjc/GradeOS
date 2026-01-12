@@ -1,6 +1,6 @@
 "use client";
 
-import React, { use, useCallback, useEffect, useMemo, useState } from "react";
+import React, { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import clsx from "clsx";
 import { gradingApi } from "@/services/api";
@@ -45,8 +45,8 @@ const workflowSteps = [
   { id: "rubric_parse", label: "Rubric Parse" },
   { id: "grade_batch", label: "Batch Grading" },
   { id: "cross_page_merge", label: "Cross-Page Merge" },
-  { id: "logic_review", label: "Logic Review" },
   { id: "index_merge", label: "Result Merge" },
+  { id: "logic_review", label: "Logic Review" },
   { id: "export", label: "Export" },
 ];
 
@@ -145,6 +145,8 @@ export default function RubricReviewPage({ params }: { params: Promise<{ batchId
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [streamText, setStreamText] = useState("");
+  const streamBufferRef = useRef("");
+  const streamFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -176,8 +178,18 @@ export default function RubricReviewPage({ params }: { params: Promise<{ batchId
   }, [batchId]);
 
   useEffect(() => {
+    streamBufferRef.current = "";
+    setStreamText("");
+    if (streamFlushTimerRef.current) {
+      clearTimeout(streamFlushTimerRef.current);
+      streamFlushTimerRef.current = null;
+    }
     const wsBase = process.env.NEXT_PUBLIC_WS_BASE_URL || "ws://127.0.0.1:8001";
     const socket = new WebSocket(`${wsBase}/api/batch/ws/${batchId}`);
+    const flushStream = () => {
+      streamFlushTimerRef.current = null;
+      setStreamText(streamBufferRef.current);
+    };
 
     socket.onmessage = (event) => {
       try {
@@ -185,10 +197,11 @@ export default function RubricReviewPage({ params }: { params: Promise<{ batchId
         if (message.type === "llm_stream_chunk" && message.nodeId === "rubric_parse") {
           const chunk = message.chunk || "";
           if (!chunk) return;
-          setStreamText((prev) => {
-            const combined = prev + chunk;
-            return combined.length > 12000 ? combined.slice(-12000) : combined;
-          });
+          const combined = streamBufferRef.current + chunk;
+          streamBufferRef.current = combined.length > 12000 ? combined.slice(-12000) : combined;
+          if (!streamFlushTimerRef.current) {
+            streamFlushTimerRef.current = setTimeout(flushStream, 200);
+          }
         }
       } catch (err) {
         console.warn("Failed to parse WS message", err);
@@ -197,10 +210,14 @@ export default function RubricReviewPage({ params }: { params: Promise<{ batchId
 
     return () => {
       socket.close();
+      if (streamFlushTimerRef.current) {
+        clearTimeout(streamFlushTimerRef.current);
+        streamFlushTimerRef.current = null;
+      }
     };
   }, [batchId]);
 
-  const toggleSelected = (questionId: string) => {
+  const toggleSelected = useCallback((questionId: string) => {
     setSelectedIds((prev) => {
       const next = new Set(prev);
       if (next.has(questionId)) {
@@ -210,9 +227,9 @@ export default function RubricReviewPage({ params }: { params: Promise<{ batchId
       }
       return next;
     });
-  };
+  }, []);
 
-  const toggleExpanded = (questionId: string) => {
+  const toggleExpanded = useCallback((questionId: string) => {
     setExpandedIds((prev) => {
       const next = new Set(prev);
       if (next.has(questionId)) {
@@ -222,7 +239,7 @@ export default function RubricReviewPage({ params }: { params: Promise<{ batchId
       }
       return next;
     });
-  };
+  }, []);
 
   const updateQuestion = useCallback((questionId: string, field: keyof RubricQuestionDraft, value: any) => {
     setRubricDraft((prev) => {
@@ -253,7 +270,7 @@ export default function RubricReviewPage({ params }: { params: Promise<{ batchId
     []
   );
 
-  const addScoringPoint = (questionId: string) => {
+  const addScoringPoint = useCallback((questionId: string) => {
     setRubricDraft((prev) => {
       if (!prev) return prev;
       return {
@@ -273,9 +290,9 @@ export default function RubricReviewPage({ params }: { params: Promise<{ batchId
         }),
       };
     });
-  };
+  }, []);
 
-  const removeScoringPoint = (questionId: string, index: number) => {
+  const removeScoringPoint = useCallback((questionId: string, index: number) => {
     setRubricDraft((prev) => {
       if (!prev) return prev;
       return {
@@ -287,7 +304,7 @@ export default function RubricReviewPage({ params }: { params: Promise<{ batchId
         }),
       };
     });
-  };
+  }, []);
 
   const handleApprove = async () => {
     if (!batchId) return;
@@ -365,14 +382,235 @@ export default function RubricReviewPage({ params }: { params: Promise<{ batchId
       rubric_review_skipped: "rubric_parse",
       grade_batch_completed: "grade_batch",
       cross_page_merge_completed: "cross_page_merge",
-      logic_review_completed: "logic_review",
       index_merge_completed: "index_merge",
+      logic_review_completed: "logic_review",
+      logic_review_skipped: "logic_review",
       completed: "export",
     };
     const stepId = mapping[currentStage] || "rubric_parse";
     const idx = workflowSteps.findIndex((s) => s.id === stepId);
     return idx >= 0 ? idx : 0;
   }, [currentStage]);
+
+  const rubricImageItems = useMemo(() => {
+    if (rubricImages.length === 0) return null;
+    return rubricImages.map((img, idx) => (
+      <div key={idx} className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
+        <div className="mb-2 text-xs font-semibold text-slate-500">Page {idx + 1}</div>
+        <div className="aspect-[3/4] overflow-hidden rounded-xl bg-slate-50">
+          <img
+            src={img}
+            alt={`Rubric page ${idx + 1}`}
+            className="h-full w-full object-contain"
+            loading="lazy"
+            decoding="async"
+          />
+        </div>
+      </div>
+    ));
+  }, [rubricImages]);
+
+  const questionCards = useMemo(() => {
+    if (!rubricDraft) return [];
+    return rubricDraft.questions.map((q) => {
+      const isSelected = selectedIds.has(q.questionId);
+      const isExpanded = expandedIds.has(q.questionId);
+      return (
+        <div key={q.questionId} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-sm font-semibold text-slate-800">
+                题号 {q.questionId} · {q.maxScore} 分
+              </div>
+              <div className="text-xs text-slate-400">可勾选有问题并添加备注</div>
+            </div>
+            <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+              <input
+                type="checkbox"
+                checked={isSelected}
+                onChange={() => toggleSelected(q.questionId)}
+                className="h-4 w-4 rounded border-slate-300 text-slate-900"
+              />
+              有问题
+            </label>
+          </div>
+
+          <div className="mt-4 grid gap-3">
+            <div>
+              <label className="text-[11px] uppercase tracking-[0.2em] text-slate-400">题目内容</label>
+              <textarea
+                value={q.questionText}
+                onChange={(e) => updateQuestion(q.questionId, "questionText", e.target.value)}
+                className="mt-2 w-full rounded-xl border border-slate-200 p-3 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300"
+                rows={2}
+              />
+            </div>
+            <div className="grid gap-3 lg:grid-cols-2">
+              <div>
+                <label className="text-[11px] uppercase tracking-[0.2em] text-slate-400">标准答案</label>
+                <textarea
+                  value={q.standardAnswer}
+                  onChange={(e) => updateQuestion(q.questionId, "standardAnswer", e.target.value)}
+                  className="mt-2 w-full rounded-xl border border-slate-200 p-3 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300"
+                  rows={2}
+                />
+              </div>
+              <div>
+                <label className="text-[11px] uppercase tracking-[0.2em] text-slate-400">满分</label>
+                <input
+                  value={q.maxScore}
+                  onChange={(e) => updateQuestion(q.questionId, "maxScore", Number(e.target.value))}
+                  type="number"
+                  className="mt-2 w-full rounded-xl border border-slate-200 p-3 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300"
+                />
+              </div>
+            </div>
+            <div>
+              <label className="text-[11px] uppercase tracking-[0.2em] text-slate-400">备注</label>
+              <textarea
+                value={q.gradingNotes}
+                onChange={(e) => updateQuestion(q.questionId, "gradingNotes", e.target.value)}
+                className="mt-2 w-full rounded-xl border border-slate-200 p-3 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300"
+                rows={2}
+              />
+            </div>
+            <div>
+              <label className="text-[11px] uppercase tracking-[0.2em] text-slate-400">解析问题备注</label>
+              <textarea
+                value={q.reviewNote}
+                onChange={(e) => updateQuestion(q.questionId, "reviewNote", e.target.value)}
+                className="mt-2 w-full rounded-xl border border-slate-200 p-3 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300"
+                rows={2}
+                placeholder="说明这题解析哪里有问题，便于重解析。"
+              />
+            </div>
+          </div>
+
+          <div className="mt-4">
+            <div className="flex items-center justify-between">
+              <div className="text-xs font-semibold text-slate-500">评分点</div>
+              <button
+                onClick={() => addScoringPoint(q.questionId)}
+                className="rounded-full border border-slate-300 px-3 py-1 text-xs text-slate-600 hover:border-slate-400"
+              >
+                添加评分点
+              </button>
+            </div>
+            <div className="mt-3 space-y-3">
+              {q.scoringPoints.map((sp, idx) => (
+                <div key={sp.pointId} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                  <div className="flex items-center justify-between">
+                    <div className="text-xs font-semibold text-slate-600">点 {sp.pointId}</div>
+                    <button
+                      onClick={() => removeScoringPoint(q.questionId, idx)}
+                      className="text-[11px] text-rose-500 hover:text-rose-600"
+                    >
+                      删除
+                    </button>
+                  </div>
+                  <div className="mt-2 grid gap-2">
+                    <input
+                      value={sp.description}
+                      onChange={(e) => updateScoringPoint(q.questionId, idx, "description", e.target.value)}
+                      className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300"
+                      placeholder="评分点描述"
+                    />
+                    <div className="grid gap-2 md:grid-cols-3">
+                      <input
+                        value={sp.expectedValue}
+                        onChange={(e) => updateScoringPoint(q.questionId, idx, "expectedValue", e.target.value)}
+                        className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300"
+                        placeholder="期望值"
+                      />
+                      <input
+                        value={sp.score}
+                        onChange={(e) => updateScoringPoint(q.questionId, idx, "score", Number(e.target.value))}
+                        type="number"
+                        className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300"
+                        placeholder="分值"
+                      />
+                      <input
+                        value={sp.keywords.join(", ")}
+                        onChange={(e) =>
+                          updateScoringPoint(
+                            q.questionId,
+                            idx,
+                            "keywords",
+                            e.target.value
+                              .split(",")
+                              .map((v) => v.trim())
+                              .filter(Boolean)
+                          )
+                        }
+                        className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300"
+                        placeholder="关键词"
+                      />
+                    </div>
+                    <label className="flex items-center gap-2 text-xs text-slate-500">
+                      <input
+                        type="checkbox"
+                        checked={sp.isRequired}
+                        onChange={(e) => updateScoringPoint(q.questionId, idx, "isRequired", e.target.checked)}
+                        className="h-4 w-4 rounded border-slate-300 text-slate-900"
+                      />
+                      必要项
+                    </label>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="mt-4">
+            <button
+              onClick={() => toggleExpanded(q.questionId)}
+              className="text-xs font-semibold text-slate-600 hover:text-slate-800"
+            >
+              {isExpanded ? "收起解析依据" : "展开解析依据"}
+            </button>
+            {isExpanded && (
+              <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+                <div className="text-[11px] text-slate-500">
+                  来源页：{q.sourcePages.length > 0 ? q.sourcePages.map((p) => p + 1).join(", ") : "未标注"}
+                </div>
+                {q.sourcePages.length > 0 && (
+                  <div className="mt-3 grid grid-cols-2 gap-2">
+                    {q.sourcePages.map((pageIndex) => (
+                      <div key={`${q.questionId}-page-${pageIndex}`} className="rounded-lg border border-slate-200 bg-white p-2">
+                        <div className="text-[10px] text-slate-400 mb-1">Page {pageIndex + 1}</div>
+                        {rubricImages[pageIndex] ? (
+                          <img
+                            src={rubricImages[pageIndex]}
+                            alt={`Evidence ${pageIndex + 1}`}
+                            className="h-32 w-full object-contain"
+                            loading="lazy"
+                            decoding="async"
+                          />
+                        ) : (
+                          <div className="text-xs text-slate-400">No image</div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    });
+  }, [
+    rubricDraft,
+    selectedIds,
+    expandedIds,
+    toggleSelected,
+    toggleExpanded,
+    updateQuestion,
+    updateScoringPoint,
+    addScoringPoint,
+    removeScoringPoint,
+    rubricImages,
+  ]);
 
   if (isLoading) {
     return (
@@ -472,19 +710,13 @@ export default function RubricReviewPage({ params }: { params: Promise<{ batchId
               </div>
 
               <div className="max-h-[640px] overflow-y-auto space-y-4 pr-2">
-                {rubricImages.length === 0 && (
+                {rubricImages.length === 0 ? (
                   <div className="rounded-2xl border border-dashed border-slate-200 p-6 text-center text-sm text-slate-400">
                     No rubric images available.
                   </div>
+                ) : (
+                  rubricImageItems
                 )}
-                {rubricImages.map((img, idx) => (
-                  <div key={idx} className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
-                    <div className="mb-2 text-xs font-semibold text-slate-500">Page {idx + 1}</div>
-                    <div className="aspect-[3/4] overflow-hidden rounded-xl bg-slate-50">
-                      <img src={img} alt={`Rubric page ${idx + 1}`} className="h-full w-full object-contain" />
-                    </div>
-                  </div>
-                ))}
               </div>
             </div>
           </section>
@@ -529,191 +761,7 @@ export default function RubricReviewPage({ params }: { params: Promise<{ batchId
               </div>
 
               <div className="max-h-[620px] overflow-y-auto space-y-4 pr-2">
-                {rubricDraft.questions.map((q) => {
-                  const isSelected = selectedIds.has(q.questionId);
-                  const isExpanded = expandedIds.has(q.questionId);
-                  return (
-                    <div key={q.questionId} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <div className="text-sm font-semibold text-slate-800">
-                            题号 {q.questionId} · {q.maxScore} 分
-                          </div>
-                          <div className="text-xs text-slate-400">可勾选有问题并添加备注</div>
-                        </div>
-                        <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
-                          <input
-                            type="checkbox"
-                            checked={isSelected}
-                            onChange={() => toggleSelected(q.questionId)}
-                            className="h-4 w-4 rounded border-slate-300 text-slate-900"
-                          />
-                          有问题
-                        </label>
-                      </div>
-
-                      <div className="mt-4 grid gap-3">
-                        <div>
-                          <label className="text-[11px] uppercase tracking-[0.2em] text-slate-400">题目内容</label>
-                          <textarea
-                            value={q.questionText}
-                            onChange={(e) => updateQuestion(q.questionId, "questionText", e.target.value)}
-                            className="mt-2 w-full rounded-xl border border-slate-200 p-3 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300"
-                            rows={2}
-                          />
-                        </div>
-                        <div className="grid gap-3 lg:grid-cols-2">
-                          <div>
-                            <label className="text-[11px] uppercase tracking-[0.2em] text-slate-400">标准答案</label>
-                            <textarea
-                              value={q.standardAnswer}
-                              onChange={(e) => updateQuestion(q.questionId, "standardAnswer", e.target.value)}
-                              className="mt-2 w-full rounded-xl border border-slate-200 p-3 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300"
-                              rows={2}
-                            />
-                          </div>
-                          <div>
-                            <label className="text-[11px] uppercase tracking-[0.2em] text-slate-400">满分</label>
-                            <input
-                              value={q.maxScore}
-                              onChange={(e) => updateQuestion(q.questionId, "maxScore", Number(e.target.value))}
-                              type="number"
-                              className="mt-2 w-full rounded-xl border border-slate-200 p-3 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300"
-                            />
-                          </div>
-                        </div>
-                        <div>
-                          <label className="text-[11px] uppercase tracking-[0.2em] text-slate-400">备注</label>
-                          <textarea
-                            value={q.gradingNotes}
-                            onChange={(e) => updateQuestion(q.questionId, "gradingNotes", e.target.value)}
-                            className="mt-2 w-full rounded-xl border border-slate-200 p-3 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300"
-                            rows={2}
-                          />
-                        </div>
-                        <div>
-                          <label className="text-[11px] uppercase tracking-[0.2em] text-slate-400">解析问题备注</label>
-                          <textarea
-                            value={q.reviewNote}
-                            onChange={(e) => updateQuestion(q.questionId, "reviewNote", e.target.value)}
-                            className="mt-2 w-full rounded-xl border border-slate-200 p-3 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300"
-                            rows={2}
-                            placeholder="说明这题解析哪里有问题，便于重解析。"
-                          />
-                        </div>
-                      </div>
-
-                      <div className="mt-4">
-                        <div className="flex items-center justify-between">
-                          <div className="text-xs font-semibold text-slate-500">评分点</div>
-                          <button
-                            onClick={() => addScoringPoint(q.questionId)}
-                            className="rounded-full border border-slate-300 px-3 py-1 text-xs text-slate-600 hover:border-slate-400"
-                          >
-                            添加评分点
-                          </button>
-                        </div>
-                        <div className="mt-3 space-y-3">
-                          {q.scoringPoints.map((sp, idx) => (
-                            <div key={sp.pointId} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                              <div className="flex items-center justify-between">
-                                <div className="text-xs font-semibold text-slate-600">点 {sp.pointId}</div>
-                                <button
-                                  onClick={() => removeScoringPoint(q.questionId, idx)}
-                                  className="text-[11px] text-rose-500 hover:text-rose-600"
-                                >
-                                  删除
-                                </button>
-                              </div>
-                              <div className="mt-2 grid gap-2">
-                                <input
-                                  value={sp.description}
-                                  onChange={(e) => updateScoringPoint(q.questionId, idx, "description", e.target.value)}
-                                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300"
-                                  placeholder="评分点描述"
-                                />
-                                <div className="grid gap-2 md:grid-cols-3">
-                                  <input
-                                    value={sp.expectedValue}
-                                    onChange={(e) => updateScoringPoint(q.questionId, idx, "expectedValue", e.target.value)}
-                                    className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300"
-                                    placeholder="期望值"
-                                  />
-                                  <input
-                                    value={sp.score}
-                                    onChange={(e) => updateScoringPoint(q.questionId, idx, "score", Number(e.target.value))}
-                                    type="number"
-                                    className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300"
-                                    placeholder="分值"
-                                  />
-                                  <input
-                                    value={sp.keywords.join(", ")}
-                                    onChange={(e) =>
-                                      updateScoringPoint(
-                                        q.questionId,
-                                        idx,
-                                        "keywords",
-                                        e.target.value
-                                          .split(",")
-                                          .map((v) => v.trim())
-                                          .filter(Boolean)
-                                      )
-                                    }
-                                    className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300"
-                                    placeholder="关键词"
-                                  />
-                                </div>
-                                <label className="flex items-center gap-2 text-xs text-slate-500">
-                                  <input
-                                    type="checkbox"
-                                    checked={sp.isRequired}
-                                    onChange={(e) => updateScoringPoint(q.questionId, idx, "isRequired", e.target.checked)}
-                                    className="h-4 w-4 rounded border-slate-300 text-slate-900"
-                                  />
-                                  必要项
-                                </label>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-
-                      <div className="mt-4">
-                        <button
-                          onClick={() => toggleExpanded(q.questionId)}
-                          className="text-xs font-semibold text-slate-600 hover:text-slate-800"
-                        >
-                          {isExpanded ? "收起解析依据" : "展开解析依据"}
-                        </button>
-                        {isExpanded && (
-                          <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
-                            <div className="text-[11px] text-slate-500">
-                              来源页：{q.sourcePages.length > 0 ? q.sourcePages.map((p) => p + 1).join(", ") : "未标注"}
-                            </div>
-                            {q.sourcePages.length > 0 && (
-                              <div className="mt-3 grid grid-cols-2 gap-2">
-                                {q.sourcePages.map((pageIndex) => (
-                                  <div key={`${q.questionId}-page-${pageIndex}`} className="rounded-lg border border-slate-200 bg-white p-2">
-                                    <div className="text-[10px] text-slate-400 mb-1">Page {pageIndex + 1}</div>
-                                    {rubricImages[pageIndex] ? (
-                                      <img
-                                        src={rubricImages[pageIndex]}
-                                        alt={`Evidence ${pageIndex + 1}`}
-                                        className="h-32 w-full object-contain"
-                                      />
-                                    ) : (
-                                      <div className="text-xs text-slate-400">No image</div>
-                                    )}
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
+                {questionCards}
               </div>
             </div>
           </section>

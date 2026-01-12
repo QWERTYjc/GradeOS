@@ -5,6 +5,8 @@ GradeOS 统一 API 路由
 
 import asyncio
 import base64
+import json
+import logging
 import os
 import uuid
 from datetime import datetime
@@ -17,7 +19,16 @@ from pydantic import BaseModel
 from src.api.dependencies import get_orchestrator
 from src.orchestration.base import Orchestrator
 from src.api.routes.batch_langgraph import _format_results_for_frontend
+from src.db.sqlite import (
+    HomeworkSubmission,
+    save_homework_submission,
+    list_grading_history as list_sqlite_grading_history,
+    get_student_results as get_sqlite_student_results,
+    get_connection as get_sqlite_connection,
+)
 from src.utils.image import to_jpeg_bytes
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -552,6 +563,7 @@ async def submit_scan_homework(
     saved_paths = []
     
     images_bytes: List[bytes] = []
+    stored_images: List[str] = []
     # 保存图片
     for idx, img_data in enumerate(request.images):
         try:
@@ -569,6 +581,7 @@ async def submit_scan_homework(
             
             saved_paths.append(str(file_path))
             images_bytes.append(img_bytes)
+            stored_images.append(f"data:image/jpeg;base64,{base64.b64encode(img_bytes).decode('utf-8')}")
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"图片 {idx + 1} 处理失败: {str(e)}")
     
@@ -583,6 +596,23 @@ async def submit_scan_homework(
         "image_paths": saved_paths,
     }
     SUBMISSIONS.setdefault(request.homework_id, []).append(submission_record)
+
+    try:
+        class_id = HOMEWORKS[request.homework_id]["class_id"]
+        submission = HomeworkSubmission(
+            id=submission_id,
+            class_id=class_id,
+            homework_id=request.homework_id,
+            student_id=request.student_id,
+            student_name=request.student_name,
+            images=stored_images,
+            page_count=len(stored_images),
+            submitted_at=submission_record["submitted_at"],
+            status="submitted",
+        )
+        save_homework_submission(submission)
+    except Exception as exc:
+        logger.warning(f"保存作业提交到 SQLite 失败: {exc}")
 
     if orchestrator:
         await _maybe_trigger_grading(request.homework_id, orchestrator)
@@ -692,11 +722,44 @@ async def get_grading_history(
     assignment_id: Optional[str] = None,
 ):
     """获取批改历史列表"""
-    records = list(GRADING_IMPORTS.values())
-    if class_id:
-        records = [record for record in records if record["class_id"] == class_id]
-    if assignment_id:
-        records = [record for record in records if record.get("assignment_id") == assignment_id]
+    records: List[Dict[str, Any]] = []
+
+    try:
+        sqlite_histories = list_sqlite_grading_history(class_id=class_id, limit=50)
+        for history in sqlite_histories:
+            class_ids = history.class_ids or []
+            target_class_id = class_id or (class_ids[0] if class_ids else None)
+            if class_id and class_id not in class_ids:
+                continue
+            result_meta = history.result_data or {}
+            assignment_id_value = result_meta.get("homework_id") or result_meta.get("assignment_id")
+            if assignment_id and assignment_id_value != assignment_id:
+                continue
+            class_info = CLASSES.get(target_class_id) if target_class_id else None
+            assignment_title = None
+            if assignment_id_value and assignment_id_value in HOMEWORKS:
+                assignment_title = HOMEWORKS[assignment_id_value]["title"]
+            records.append({
+                "import_id": history.id,
+                "batch_id": history.batch_id,
+                "class_id": target_class_id or "",
+                "class_name": class_info["class_name"] if class_info else None,
+                "assignment_id": assignment_id_value,
+                "assignment_title": assignment_title,
+                "student_count": history.total_students,
+                "status": history.status,
+                "created_at": history.created_at,
+                "revoked_at": None,
+            })
+    except Exception as exc:
+        logger.warning(f"SQLite 批改历史读取失败: {exc}")
+
+    for record in GRADING_IMPORTS.values():
+        if class_id and record.get("class_id") != class_id:
+            continue
+        if assignment_id and record.get("assignment_id") != assignment_id:
+            continue
+        records.append(record)
 
     records = sorted(records, key=lambda item: item.get("created_at") or "", reverse=True)
     return GradingHistoryResponse(records=[GradingImportRecord(**record) for record in records])
@@ -705,6 +768,50 @@ async def get_grading_history(
 @router.get("/grading/history/{import_id}", response_model=GradingHistoryDetailResponse, tags=["批改历史"])
 async def get_grading_history_detail(import_id: str):
     """获取批改历史详情"""
+    try:
+        with get_sqlite_connection() as conn:
+            row = conn.execute("SELECT * FROM grading_history WHERE id = ?", (import_id,)).fetchone()
+        if row:
+            class_ids = json.loads(row["class_ids"]) if row["class_ids"] else []
+            result_data = json.loads(row["result_data"]) if row["result_data"] else {}
+            class_id = class_ids[0] if class_ids else ""
+            class_info = CLASSES.get(class_id) if class_id else None
+            assignment_id_value = result_data.get("homework_id") or result_data.get("assignment_id")
+            assignment_title = None
+            if assignment_id_value and assignment_id_value in HOMEWORKS:
+                assignment_title = HOMEWORKS[assignment_id_value]["title"]
+            record = {
+                "import_id": row["id"],
+                "batch_id": row["batch_id"],
+                "class_id": class_id,
+                "class_name": class_info["class_name"] if class_info else None,
+                "assignment_id": assignment_id_value,
+                "assignment_title": assignment_title,
+                "student_count": row["total_students"] or 0,
+                "status": row["status"],
+                "created_at": row["created_at"],
+                "revoked_at": None,
+            }
+            items = []
+            for idx, item in enumerate(get_sqlite_student_results(row["id"])):
+                result = item.result_data or {}
+                student_name = result.get("studentName") or item.student_key or item.student_id or f"Student {idx + 1}"
+                items.append({
+                    "item_id": item.id,
+                    "import_id": row["id"],
+                    "batch_id": row["batch_id"],
+                    "class_id": class_id,
+                    "student_id": item.student_id or "",
+                    "student_name": student_name,
+                    "status": "revoked" if item.revoked_at else "imported",
+                    "created_at": item.imported_at or row["created_at"],
+                    "revoked_at": item.revoked_at,
+                    "result": result,
+                })
+            return GradingHistoryDetailResponse(record=GradingImportRecord(**record), items=[GradingImportItem(**item) for item in items])
+    except Exception as exc:
+        logger.warning(f"SQLite 批改历史详情读取失败: {exc}")
+
     record = GRADING_IMPORTS.get(import_id)
     if not record:
         raise HTTPException(status_code=404, detail="记录不存在")
@@ -720,6 +827,38 @@ async def get_grading_history_detail(import_id: str):
 @router.post("/grading/import/{import_id}/revoke", response_model=GradingImportRecord, tags=["批改历史"])
 async def revoke_grading_import(import_id: str, request: GradingRevokeRequest):
     """撤回导入记录"""
+    try:
+        with get_sqlite_connection() as conn:
+            row = conn.execute("SELECT * FROM grading_history WHERE id = ?", (import_id,)).fetchone()
+        if row:
+            now = datetime.utcnow().isoformat()
+            with get_sqlite_connection() as conn:
+                conn.execute("UPDATE student_grading_results SET revoked_at = ? WHERE grading_history_id = ? AND revoked_at IS NULL", (now, import_id))
+                conn.execute("UPDATE grading_history SET status = 'revoked' WHERE id = ?", (import_id,))
+            class_ids = json.loads(row["class_ids"]) if row["class_ids"] else []
+            result_data = json.loads(row["result_data"]) if row["result_data"] else {}
+            class_id = class_ids[0] if class_ids else ""
+            class_info = CLASSES.get(class_id) if class_id else None
+            assignment_id_value = result_data.get("homework_id") or result_data.get("assignment_id")
+            assignment_title = None
+            if assignment_id_value and assignment_id_value in HOMEWORKS:
+                assignment_title = HOMEWORKS[assignment_id_value]["title"]
+            record = {
+                "import_id": row["id"],
+                "batch_id": row["batch_id"],
+                "class_id": class_id,
+                "class_name": class_info["class_name"] if class_info else None,
+                "assignment_id": assignment_id_value,
+                "assignment_title": assignment_title,
+                "student_count": row["total_students"] or 0,
+                "status": "revoked",
+                "created_at": row["created_at"],
+                "revoked_at": now,
+            }
+            return GradingImportRecord(**record)
+    except Exception as exc:
+        logger.warning(f"SQLite 批改记录撤回失败: {exc}")
+
     record = GRADING_IMPORTS.get(import_id)
     if not record:
         raise HTTPException(status_code=404, detail="记录不存在")
@@ -754,8 +893,8 @@ async def analyze_error(request: ErrorAnalysisRequest):
         ],
         detailed_analysis={
             "step_by_step_correction": [
-                "首先确认二次函数的一般形式 y=ax²+bx+c",
-                "使用配方法将其转换为顶点式 y=a(x-h)²+k",
+                "首先确认二次函数的一般形式 y=ax2+bx+c",
+                "使用配方法将其转换为顶点式 y=a(x-h)2+k",
                 "注意 h 的符号：当 h>0 时，图像向右平移"
             ],
             "common_mistakes": "忽略 a 的正负影响开口方向",
@@ -811,9 +950,9 @@ async def get_class_wrong_problems(class_id: Optional[str] = None):
     """获取班级高频错题"""
     return {
         "problems": [
-            {"id": "p-001", "question": "已知二次函数 y=x²-4x+3，求其顶点坐标", "errorRate": "32%", "tags": ["二次函数", "顶点式"]},
+            {"id": "p-001", "question": "已知二次函数 y=x2-4x+3，求其顶点坐标", "errorRate": "32%", "tags": ["二次函数", "顶点式"]},
             {"id": "p-002", "question": "解不等式 2x-1 > 3x+2", "errorRate": "28%", "tags": ["不等式", "变号"]},
-            {"id": "p-003", "question": "圆 x²+y²=4 与直线 y=x+k 相切，求 k 的值", "errorRate": "45%", "tags": ["圆", "切线"]}
+            {"id": "p-003", "question": "圆 x2+y2=4 与直线 y=x+k 相切，求 k 的值", "errorRate": "45%", "tags": ["圆", "切线"]}
         ]
     }
 
@@ -853,3 +992,4 @@ async def merge_statistics(class_id: str, external_data: Optional[str] = None):
         "internalAssignments": ["Homework 1", "Homework 2"],
         "externalAssignments": ["Midterm"]
     }
+

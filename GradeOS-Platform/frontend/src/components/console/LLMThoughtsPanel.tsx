@@ -11,24 +11,60 @@ const tabLabels: Record<StreamTab, string> = {
   thinking: 'Thinking',
 };
 
-export default function LLMThoughtsPanel() {
+interface LLMThoughtsPanelProps {
+  className?: string;
+}
+
+export default function LLMThoughtsPanel({ className }: LLMThoughtsPanelProps) {
   const llmThoughts = useConsoleStore((state) => state.llmThoughts);
+  const selectedAgentId = useConsoleStore((state) => state.selectedAgentId);
+  const selectedNodeId = useConsoleStore((state) => state.selectedNodeId);
+  const workflowNodes = useConsoleStore((state) => state.workflowNodes);
   const [activeTab, setActiveTab] = useState<StreamTab>('output');
 
+  const activeLabel = useMemo(() => {
+    if (!selectedAgentId && !selectedNodeId) return 'All Streams';
+    if (selectedAgentId) {
+      const agentNode = workflowNodes.find((node) =>
+        node.children?.some((agent) => agent.id === selectedAgentId)
+      );
+      const agent = agentNode?.children?.find((item) => item.id === selectedAgentId);
+      return agent?.label || selectedAgentId;
+    }
+    const node = workflowNodes.find((item) => item.id === selectedNodeId);
+    return node?.label || selectedNodeId || 'All Streams';
+  }, [selectedAgentId, selectedNodeId, workflowNodes]);
+
   const thoughts = useMemo(() => {
-    const filtered = llmThoughts.filter((t) => (t.streamType || 'output') === activeTab);
-    return filtered.sort((a, b) => a.timestamp - b.timestamp);
-  }, [llmThoughts, activeTab]);
+    const filteredByTarget = llmThoughts.filter((t) => {
+      if (selectedAgentId) {
+        return t.agentId === selectedAgentId;
+      }
+      if (selectedNodeId) {
+        return t.nodeId === selectedNodeId;
+      }
+      return true;
+    });
+    const filteredByTab = filteredByTarget.filter((t) => (t.streamType || 'output') === activeTab);
+    const ordered = filteredByTab.sort((a, b) => a.timestamp - b.timestamp);
+    return ordered.slice(-40);
+  }, [llmThoughts, activeTab, selectedAgentId, selectedNodeId]);
 
   const totalCount = llmThoughts.length;
 
   return (
-    <div className="h-full flex flex-col rounded-2xl border border-gray-200/70 bg-white/80 backdrop-blur-md shadow-inner">
+    <div className={clsx(
+      "h-full flex flex-col rounded-2xl border border-gray-200/70 bg-white/80 backdrop-blur-md shadow-inner",
+      className
+    )}>
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200/60">
         <div>
           <p className="text-xs uppercase tracking-[0.2em] text-gray-400">AI Live Streams</p>
           <p className="text-sm font-semibold text-gray-800">
-            {totalCount > 0 ? `${totalCount} streams` : 'Waiting for AI streams...'}
+            {activeLabel}
+            {totalCount > 0 && (
+              <span className="ml-2 text-xs font-medium text-gray-400">{totalCount} streams</span>
+            )}
           </p>
         </div>
         <div className="flex rounded-full bg-gray-100 p-1 text-xs font-medium">

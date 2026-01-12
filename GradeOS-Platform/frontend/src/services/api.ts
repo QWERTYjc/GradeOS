@@ -324,8 +324,9 @@ export interface BatchGradingResponse {
 export interface ConfirmBoundaryRequest {
   batch_id: string;
   student_key: string;
-  confirmed_start_page: number;
-  confirmed_end_page: number;
+  confirmed_pages?: number[];
+  confirmed_start_page?: number;
+  confirmed_end_page?: number;
 }
 
 export interface RubricReviewRequest {
@@ -484,11 +485,19 @@ export const gradingApi = {
     request<CrossPageQuestionInfo[]>(`/batch/cross-page-questions/${batchId}`),
 
   /** 确认学生边界 */
-  confirmStudentBoundary: (data: ConfirmBoundaryRequest) =>
-    request<{ success: boolean; message: string }>('/batch/confirm-boundary', {
+  confirmStudentBoundary: (data: ConfirmBoundaryRequest) => {
+    const { confirmed_pages, confirmed_start_page, confirmed_end_page, ...rest } = data;
+    let resolvedPages = confirmed_pages;
+    if (!resolvedPages && confirmed_start_page != null && confirmed_end_page != null) {
+      const start = Math.max(0, confirmed_start_page);
+      const end = Math.max(start, confirmed_end_page);
+      resolvedPages = Array.from({ length: end - start + 1 }, (_, idx) => start + idx);
+    }
+    return request<{ success: boolean; message: string }>('/batch/confirm-boundary', {
       method: 'POST',
-      body: JSON.stringify(data),
-    }),
+      body: JSON.stringify({ ...rest, confirmed_pages: resolvedPages || [] }),
+    });
+  },
 
   /** 获取 rubric review 上下文 */
   getRubricReviewContext: (batchId: string) =>

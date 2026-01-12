@@ -201,6 +201,9 @@ const ScannerContainer = ({ activeTab, onTabChange, examSessionId, rubricSession
 export default function ConsolePage() {
     const status = useConsoleStore((state) => state.status);
     const reset = useConsoleStore((state) => state.reset);
+    const selectedAgentId = useConsoleStore((state) => state.selectedAgentId);
+    const selectedNodeId = useConsoleStore((state) => state.selectedNodeId);
+    const llmThoughtsCount = useConsoleStore((state) => state.llmThoughts.length);
 
     // Initial Sessions State
     const [sessions, setSessions] = useState<Session[]>([]);
@@ -572,7 +575,12 @@ export default function ConsolePage() {
                 </main>
 
                 {/* Drawers & Overlays */}
-                <NodeInspector />
+                {(selectedAgentId || selectedNodeId || llmThoughtsCount > 0) && (
+                    <div className="fixed right-6 top-24 bottom-6 w-[360px] flex flex-col gap-4 z-40 pointer-events-auto">
+                        <NodeInspector className="flex-1 min-h-[200px]" />
+                        <LLMThoughtsPanel className="flex-1 min-h-[220px]" />
+                    </div>
+                )}
                 <ReviewOverlay />
 
             </div>

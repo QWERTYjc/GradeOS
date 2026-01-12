@@ -11,10 +11,13 @@ import logging
 import tempfile
 import asyncio
 import base64
+import json
+from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Dict, Any
 
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, WebSocket, WebSocketDisconnect, Depends
+from starlette.websockets import WebSocketState
 from pydantic import BaseModel, Field
 import fitz
 from PIL import Image
@@ -40,6 +43,18 @@ router = APIRouter(prefix="/batch", tags=["批量提交"])
 active_connections: Dict[str, List[WebSocket]] = {}
 # 缓存图片，避免 images_ready 早于 WebSocket 连接导致前端丢失
 batch_image_cache: Dict[str, Dict[str, dict]] = {}
+DEBUG_LOG_PATH = os.getenv("GRADEOS_DEBUG_LOG_PATH")
+
+
+def _write_debug_log(payload: Dict[str, Any]) -> None:
+    if not DEBUG_LOG_PATH:
+        return
+    try:
+        Path(DEBUG_LOG_PATH).parent.mkdir(parents=True, exist_ok=True)
+        with open(DEBUG_LOG_PATH, "a", encoding="utf-8") as log_file:
+            log_file.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    except Exception as exc:
+        logger.debug(f"Failed to write debug log: {exc}")
 
 
 def _safe_to_jpeg_bytes(image_bytes: bytes, label: str) -> bytes:
@@ -140,16 +155,27 @@ async def broadcast_progress(batch_id: str, message: dict):
         if cached and "llm_stream_cache" in cached:
             cached.pop("llm_stream_cache", None)
     if msg_type == "workflow_completed":
-        import json as _json_debug_j
-        from datetime import datetime as _dt_j
         import traceback as _tb_j
         stack = ''.join(_tb_j.format_stack()[-5:-1])  # 获取调用栈
-        with open(r'd:\project\aiguru\.cursor\debug.log', 'a', encoding='utf-8') as _f:
-            _f.write(_json_debug_j.dumps({"hypothesisId":"J","location":"batch_langgraph.py:broadcast_progress","message":"broadcast_progress发送workflow_completed","data":{"batch_id":batch_id,"results_count":len(message.get("results",[])),"stack_trace":stack[:500]},"timestamp":int(_dt_j.now().timestamp()*1000),"sessionId":"debug-session"}, ensure_ascii=False) + '\n')
+        _write_debug_log({
+            "hypothesisId": "J",
+            "location": "batch_langgraph.py:broadcast_progress",
+            "message": "broadcast_progress发送workflow_completed",
+            "data": {
+                "batch_id": batch_id,
+                "results_count": len(message.get("results", [])),
+                "stack_trace": stack[:500],
+            },
+            "timestamp": int(datetime.now().timestamp() * 1000),
+            "sessionId": "debug-session",
+        })
     # #endregion
     if batch_id in active_connections:
         disconnected = []
         for ws in active_connections[batch_id]:
+            if ws.client_state != WebSocketState.CONNECTED:
+                disconnected.append(ws)
+                continue
             try:
                 await ws.send_json(message)
             except Exception as e:
@@ -176,13 +202,6 @@ async def submit_batch(
     student_mapping_json: Optional[str] = Form(None, description="学生映射 JSON [{studentId, studentName, startIndex, endIndex}]"),
     orchestrator: Orchestrator = Depends(get_orchestrator)
 ):
-    import datetime
-    print(f"DEBUG: submit_batch called at {datetime.datetime.now()}", flush=True)
-    try:
-        with open("debug_entry.txt", "a") as f:
-            f.write(f"Entered at {datetime.datetime.now()}\n")
-    except Exception:
-        pass
     """
     批量提交试卷并进行批改（使用 LangGraph Orchestrator）
     
@@ -203,10 +222,14 @@ async def submit_batch(
         BatchSubmissionResponse: 批次信息
     """
     # #region agent log - 假设K: submit_batch 被调用
-    import json as _json_debug_k
-    from datetime import datetime as _dt_k
-    with open(r'd:\project\aiguru\.cursor\debug.log', 'a', encoding='utf-8') as _f:
-        _f.write(_json_debug_k.dumps({"hypothesisId":"K","location":"batch_langgraph.py:submit_batch:entry","message":"submit_batch端点被调用","data":{"files_count":len(files),"rubrics_count":len(rubrics)},"timestamp":int(_dt_k.now().timestamp()*1000),"sessionId":"debug-session"}, ensure_ascii=False) + '\n')
+    _write_debug_log({
+        "hypothesisId": "K",
+        "location": "batch_langgraph.py:submit_batch:entry",
+        "message": "submit_batch端点被调用",
+        "data": {"files_count": len(files), "rubrics_count": len(rubrics)},
+        "timestamp": int(datetime.now().timestamp() * 1000),
+        "sessionId": "debug-session",
+    })
     # #endregion
     # 检查 orchestrator 是否可用
     if not orchestrator:
@@ -422,84 +445,6 @@ async def submit_batch(
         raise HTTPException(status_code=500, detail=f"批量提交失败: {str(e)}")
 
 
-@router.get("/rubric/{batch_id}", response_model=RubricReviewContextResponse)
-async def get_rubric_review_context(
-    batch_id: str,
-    orchestrator: Orchestrator = Depends(get_orchestrator)
-):
-    """获取评分标准审核上下文"""
-    if not orchestrator:
-         raise HTTPException(status_code=503, detail="服务未初始化")
-
-    # Reconstruct run_id (assuming idempotency_key=batch_id)
-    run_id = f"batch_grading_{batch_id}"
-    
-    try:
-        # Get state from orchestrator
-        state = await orchestrator.get_state(run_id)
-        
-        # Try to get images from cache first (faster)
-        rubric_images = []
-        cached = batch_image_cache.get(batch_id, {})
-        if "rubric_images_ready" in cached:
-             rubric_images = cached["rubric_images_ready"].get("images", [])
-        
-        # If not in cache, try to get from state
-        if not rubric_images and state.get("rubric_images"):
-             # State stores bytes, need to convert to base64
-             try:
-                 rubric_images = [base64.b64encode(img).decode('utf-8') for img in state["rubric_images"]]
-             except Exception:
-                 pass
-
-        return RubricReviewContextResponse(
-            batch_id=batch_id,
-            status=state.get("status", "unknown"),
-            current_stage=state.get("current_stage"),
-            parsed_rubric=state.get("parsed_rubric"),
-            rubric_images=rubric_images
-        )
-    except Exception as e:
-        logger.error(f"获取 Rubric Review Context 失败: {e}", exc_info=True)
-        raise HTTPException(status_code=404, detail=f"未找到批次 {batch_id} 的信息")
-
-@router.get("/results/{batch_id}", response_model=ResultsReviewContextResponse)
-async def get_results_review_context(
-    batch_id: str,
-    orchestrator: Orchestrator = Depends(get_orchestrator)
-):
-    """获取结果审核上下文"""
-    if not orchestrator:
-         raise HTTPException(status_code=503, detail="服务未初始化")
-
-    run_id = f"batch_grading_{batch_id}"
-    
-    try:
-        state = await orchestrator.get_state(run_id)
-        
-        # Images from cache or state
-        answer_images = []
-        cached = batch_image_cache.get(batch_id, {})
-        if "images_ready" in cached:
-             answer_images = cached["images_ready"].get("images", [])
-        
-        if not answer_images and state.get("answer_images"):
-             try:
-                 answer_images = [base64.b64encode(img).decode('utf-8') for img in state["answer_images"]]
-             except Exception:
-                 pass
-
-        return ResultsReviewContextResponse(
-            batch_id=batch_id,
-            status=state.get("status", "unknown"),
-            current_stage=state.get("current_stage"),
-            student_results=state.get("student_results", []) or [],
-            answer_images=answer_images
-        )
-    except Exception as e:
-        logger.error(f"获取 Results Review Context 失败: {e}", exc_info=True)
-        raise HTTPException(status_code=404, detail=f"未找到批次 {batch_id} 的信息")
-
 async def stream_langgraph_progress(
     batch_id: str,
     run_id: str,
@@ -519,10 +464,14 @@ async def stream_langgraph_progress(
         orchestrator: LangGraph Orchestrator
     """
     # #region agent log - 假设G: stream_langgraph_progress 入口
-    import json as _json_debug_g
-    from datetime import datetime as _dt_g
-    with open(r'd:\project\aiguru\.cursor\debug.log', 'a', encoding='utf-8') as _f:
-        _f.write(_json_debug_g.dumps({"hypothesisId":"G","location":"batch_langgraph.py:stream_langgraph_progress:entry","message":"stream_langgraph_progress函数被调用","data":{"batch_id":batch_id,"run_id":run_id},"timestamp":int(_dt_g.now().timestamp()*1000),"sessionId":"debug-session"}, ensure_ascii=False) + '\n')
+    _write_debug_log({
+        "hypothesisId": "G",
+        "location": "batch_langgraph.py:stream_langgraph_progress:entry",
+        "message": "stream_langgraph_progress函数被调用",
+        "data": {"batch_id": batch_id, "run_id": run_id},
+        "timestamp": int(datetime.now().timestamp() * 1000),
+        "sessionId": "debug-session",
+    })
     # #endregion
     logger.info(f"开始流式监听 LangGraph 进度: batch_id={batch_id}, run_id={run_id}")
     
@@ -542,7 +491,7 @@ async def stream_langgraph_progress(
             
             # 将 LangGraph 事件转换为前端 WebSocket 消息
             if event_type == "node_start":
-                if node_name != "rubric_review":
+                if node_name not in ("rubric_review", "review"):
                     await broadcast_progress(batch_id, {
                         "type": "workflow_update",
                         "nodeId": _map_node_to_frontend(node_name),
@@ -551,7 +500,7 @@ async def stream_langgraph_progress(
                     })
             
             elif event_type == "node_end":
-                if node_name != "rubric_review":
+                if node_name not in ("rubric_review", "review"):
                     await broadcast_progress(batch_id, {
                         "type": "workflow_update",
                         "nodeId": _map_node_to_frontend(node_name),
@@ -731,10 +680,17 @@ async def stream_langgraph_progress(
             
             elif event_type == "completed":
                 # #region agent log - 假设H: completed 事件
-                import json as _json_debug_h
-                from datetime import datetime as _dt_h
-                with open(r'd:\project\aiguru\.cursor\debug.log', 'a', encoding='utf-8') as _f:
-                    _f.write(_json_debug_h.dumps({"hypothesisId":"H","location":"batch_langgraph.py:event_completed","message":"收到completed事件","data":{"event_type":event_type,"data_keys":list(data.keys()) if isinstance(data, dict) else str(type(data))},"timestamp":int(_dt_h.now().timestamp()*1000),"sessionId":"debug-session"}, ensure_ascii=False) + '\n')
+                _write_debug_log({
+                    "hypothesisId": "H",
+                    "location": "batch_langgraph.py:event_completed",
+                    "message": "收到completed事件",
+                    "data": {
+                        "event_type": event_type,
+                        "data_keys": list(data.keys()) if isinstance(data, dict) else str(type(data)),
+                    },
+                    "timestamp": int(datetime.now().timestamp() * 1000),
+                    "sessionId": "debug-session",
+                })
                 # #endregion
                 # 工作流完成 - 获取完整的最终状态
                 final_state = data.get("state", {})
@@ -743,10 +699,17 @@ async def stream_langgraph_progress(
                 student_results = final_state.get("student_results", [])
                 
                 # #region agent log - 假设I: student_results 原始数据
-                import json as _json_debug_i
-                from datetime import datetime as _dt_i
-                with open(r'd:\project\aiguru\.cursor\debug.log', 'a', encoding='utf-8') as _f:
-                    _f.write(_json_debug_i.dumps({"hypothesisId":"I","location":"batch_langgraph.py:student_results_raw","message":"student_results原始数据","data":{"count":len(student_results),"students":[{"key":r.get("student_key"),"score":r.get("total_score")} for r in student_results]},"timestamp":int(_dt_i.now().timestamp()*1000),"sessionId":"debug-session"}, ensure_ascii=False) + '\n')
+                _write_debug_log({
+                    "hypothesisId": "I",
+                    "location": "batch_langgraph.py:student_results_raw",
+                    "message": "student_results原始数据",
+                    "data": {
+                        "count": len(student_results),
+                        "students": [{"key": r.get("student_key"), "score": r.get("total_score")} for r in student_results],
+                    },
+                    "timestamp": int(datetime.now().timestamp() * 1000),
+                    "sessionId": "debug-session",
+                })
                 # #endregion
                 
                 # 如果没有 student_results，尝试从 orchestrator 获取最终输出
@@ -771,14 +734,21 @@ async def stream_langgraph_progress(
                         
                         # 1. 保存批改历史
                         history_id = str(uuid.uuid4())
+                        now = datetime.now().isoformat()
                         history = GradingHistory(
                             id=history_id,
                             batch_id=batch_id,
                             status="completed",
                             class_ids=[class_id],
+                            created_at=now,
+                            completed_at=now,
                             total_students=len(formatted_results),
                             average_score=class_report.get("average_score") if class_report else None,
-                            result_data={"summary": class_report} if class_report else None
+                            result_data={
+                                "summary": class_report,
+                                "class_id": class_id,
+                                "homework_id": homework_id,
+                            } if class_report or class_id or homework_id else None,
                         )
                         save_grading_history(history)
                         
@@ -798,16 +768,19 @@ async def stream_langgraph_progress(
                             student_name = real_student["studentName"] if real_student else result.get("studentName")
                             
                             # 保存学生结果
+                            student_summary = result.get("studentSummary") or result.get("student_summary") or {}
+                            self_audit = result.get("selfAudit") or result.get("self_audit") or {}
                             student_result = StudentGradingResult(
                                 id=str(uuid.uuid4()),
                                 grading_history_id=history_id,
-                                student_key=result.get("studentId"), # 原始 key (student_1)
+                                student_key=student_name or result.get("studentName") or f"Student {idx + 1}",
                                 score=result.get("score"),
-                                max_score=result.get("totalScore"), # 假设有 totalScore
+                                max_score=result.get("maxScore") or result.get("max_score"),
                                 class_id=class_id,
                                 student_id=student_id,
-                                summary=result.get("summary"),
-                                result_data=result
+                                summary=student_summary.get("overall") if isinstance(student_summary, dict) else None,
+                                self_report=self_audit.get("summary") if isinstance(self_audit, dict) else None,
+                                result_data=result,
                             )
                             save_student_result(student_result)
                             
@@ -827,10 +800,17 @@ async def stream_langgraph_progress(
                         logger.error(f"保存班级批改结果失败: {e}", exc_info=True)
 
                 # #region agent log - 假设E: WebSocket 消息发送
-                import json as _json_debug_e
-                from datetime import datetime as _dt_e
-                with open(r'd:\project\aiguru\.cursor\debug.log', 'a', encoding='utf-8') as _f:
-                    _f.write(_json_debug_e.dumps({"hypothesisId":"E","location":"batch_langgraph.py:workflow_completed","message":"发送workflow_completed","data":{"student_count":len(formatted_results),"students":[{"name":f.get("studentName"),"score":f.get("score")} for f in formatted_results]},"timestamp":int(_dt_e.now().timestamp()*1000),"sessionId":"debug-session"}, ensure_ascii=False) + '\n')
+                _write_debug_log({
+                    "hypothesisId": "E",
+                    "location": "batch_langgraph.py:workflow_completed",
+                    "message": "发送workflow_completed",
+                    "data": {
+                        "student_count": len(formatted_results),
+                        "students": [{"name": f.get("studentName"), "score": f.get("score")} for f in formatted_results],
+                    },
+                    "timestamp": int(datetime.now().timestamp() * 1000),
+                    "sessionId": "debug-session",
+                })
                 # #endregion
                 
                 await broadcast_progress(batch_id, {
@@ -875,7 +855,7 @@ def _map_node_to_frontend(node_name: str) -> str:
         "index": "index",
         "index_merge": "index_merge",
         "segment": "index_merge",
-        "review": "logic_review",
+        "review": "review",
         "logic_review": "logic_review",
         "export": "export",
         # 兼容旧名称
@@ -912,10 +892,17 @@ def _get_node_display_name(node_name: str) -> str:
 def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
     """格式化批改结果为前端格式"""
     # #region agent log - 假设D: _format_results_for_frontend 输入
-    import json as _json_debug_d
-    from datetime import datetime as _dt_d
-    with open(r'd:\project\aiguru\.cursor\debug.log', 'a', encoding='utf-8') as _f:
-        _f.write(_json_debug_d.dumps({"hypothesisId":"D","location":"batch_langgraph.py:_format_results_for_frontend:input","message":"输入的results","data":{"count":len(results),"students":[{"key":r.get("student_key"),"score":r.get("total_score")} for r in results]},"timestamp":int(_dt_d.now().timestamp()*1000),"sessionId":"debug-session"}, ensure_ascii=False) + '\n')
+    _write_debug_log({
+        "hypothesisId": "D",
+        "location": "batch_langgraph.py:_format_results_for_frontend:input",
+        "message": "输入的results",
+        "data": {
+            "count": len(results),
+            "students": [{"key": r.get("student_key"), "score": r.get("total_score")} for r in results],
+        },
+        "timestamp": int(datetime.now().timestamp() * 1000),
+        "sessionId": "debug-session",
+    })
     # #endregion
     formatted = []
     for r in results:
@@ -1014,10 +1001,17 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
             "selfAudit": self_audit
         })
     # #region agent log - 假设D: _format_results_for_frontend 输出
-    import json as _json_debug_d2
-    from datetime import datetime as _dt_d2
-    with open(r'd:\project\aiguru\.cursor\debug.log', 'a', encoding='utf-8') as _f:
-        _f.write(_json_debug_d2.dumps({"hypothesisId":"D","location":"batch_langgraph.py:_format_results_for_frontend:output","message":"输出的formatted","data":{"count":len(formatted),"students":[{"name":f.get("studentName"),"score":f.get("score")} for f in formatted]},"timestamp":int(_dt_d2.now().timestamp()*1000),"sessionId":"debug-session"}, ensure_ascii=False) + '\n')
+    _write_debug_log({
+        "hypothesisId": "D",
+        "location": "batch_langgraph.py:_format_results_for_frontend:output",
+        "message": "输出的formatted",
+        "data": {
+            "count": len(formatted),
+            "students": [{"name": f.get("studentName"), "score": f.get("score")} for f in formatted],
+        },
+        "timestamp": int(datetime.now().timestamp() * 1000),
+        "sessionId": "debug-session",
+    })
     # #endregion
     return formatted
 
@@ -1144,14 +1138,25 @@ async def websocket_endpoint(websocket: WebSocket, batch_id: str):
     try:
         # 保持连接，等待客户端消息或断开
         while True:
+            if websocket.client_state != WebSocketState.CONNECTED:
+                break
             data = await websocket.receive_text()
             logger.debug(f"收到 WebSocket 消息: batch_id={batch_id}, data={data}")
             
-    except WebSocketDisconnect:
+    except (WebSocketDisconnect, RuntimeError) as exc:
+        logger.info(f"WebSocket 连接断开: batch_id={batch_id}, reason={exc}")
+        if batch_id in active_connections and websocket in active_connections[batch_id]:
+            active_connections[batch_id].remove(websocket)
+            if not active_connections[batch_id]:
+                del active_connections[batch_id]
+        return
+    except Exception as exc:
+        logger.warning(f"WebSocket 接收异常: batch_id={batch_id}, error={exc}")
         logger.info(f"WebSocket 连接断开: batch_id={batch_id}")
-        active_connections[batch_id].remove(websocket)
-        if not active_connections[batch_id]:
-            del active_connections[batch_id]
+        if batch_id in active_connections and websocket in active_connections[batch_id]:
+            active_connections[batch_id].remove(websocket)
+            if not active_connections[batch_id]:
+                del active_connections[batch_id]
 
 
 @router.get("/status/{batch_id}", response_model=BatchStatusResponse)
@@ -1622,154 +1627,3 @@ async def confirm_student_boundary(
         raise HTTPException(status_code=500, detail=f"确认失败: {str(e)}")
 
 
-class RubricReviewRequest(BaseModel):
-    batch_id: str
-    action: str
-    parsed_rubric: Optional[Dict[str, Any]] = None
-    selected_question_ids: Optional[List[str]] = None
-    notes: Optional[str] = None
-
-
-@router.get("/rubric/{batch_id}", response_model=RubricReviewContextResponse)
-async def get_rubric_review_context(
-    batch_id: str,
-    orchestrator: Orchestrator = Depends(get_orchestrator)
-):
-    try:
-        # 尝试从 orchestrator 获取状态
-        state = await orchestrator.get_state(batch_id)
-        if not state:
-            # 尝试从 SQLite 获取持久化状态
-            from src.db.sqlite import get_workflow_state
-            wf_state = get_workflow_state(batch_id)
-            if wf_state and wf_state.state_data:
-                import json
-                state = json.loads(wf_state.state_data)
-            else:
-                raise HTTPException(status_code=404, detail="Batch not found")
-        
-        # 提取评分标准图像并转换为 base64
-        # 注意: state["rubric_images"] 可能是 bytes 列表
-        rubric_images = state.get("rubric_images") or []
-        rubric_images_b64 = []
-        for img_bytes in rubric_images:
-            if isinstance(img_bytes, bytes):
-                rubric_images_b64.append(base64.b64encode(img_bytes).decode('utf-8'))
-            else:
-                conn = str(img_bytes) if img_bytes else ""
-                rubric_images_b64.append(conn)
-
-        return RubricReviewContextResponse(
-            batch_id=batch_id,
-            status=state.get("status", "running"),
-            current_stage=state.get("current_stage", "rubric_review"),
-            parsed_rubric=state.get("parsed_rubric"),
-            rubric_images=rubric_images_b64
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to get rubric review context: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/review/rubric")
-async def submit_rubric_review(
-    request: RubricReviewRequest,
-    orchestrator: Orchestrator = Depends(get_orchestrator)
-):
-    try:
-        logger.info(f"Submitting rubric review for batch {request.batch_id}, action={request.action}")
-        
-        # 转换请求为 dict
-        resume_payload = request.model_dump()
-        
-        # 恢复运行
-        await orchestrator.resume_run(
-            request.batch_id,
-            input_data=resume_payload
-        )
-        
-        return {"success": True, "message": "Rubric review submitted"}
-    except Exception as e:
-        logger.error(f"Failed to submit rubric review: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-class ResultsReviewRequest(BaseModel):
-    batch_id: str
-    action: str
-    results: Optional[List[Dict[str, Any]]] = None
-    regrade_items: Optional[List[Dict[str, Any]]] = None
-    notes: Optional[str] = None
-
-
-@router.get("/results-review/{batch_id}", response_model=ResultsReviewContextResponse)
-async def get_results_review_context(
-    batch_id: str,
-    orchestrator: Orchestrator = Depends(get_orchestrator)
-):
-    try:
-        # 尝试从 orchestrator 获取状态
-        state = await orchestrator.get_state(batch_id)
-        if not state:
-            # 尝试从 SQLite 获取持久化状态
-            from src.db.sqlite import get_workflow_state
-            wf_state = get_workflow_state(batch_id)
-            if wf_state and wf_state.state_data:
-                import json
-                state = json.loads(wf_state.state_data)
-            else:
-                logger.warning(f"Batch {batch_id} not found in memory or DB")
-                raise HTTPException(status_code=404, detail="Batch not found")
-        
-        # 提取图像并转换为 base64
-        processed_images = state.get("processed_images") or state.get("answer_images") or []
-        answer_images_b64 = []
-        for img_bytes in processed_images:
-            if isinstance(img_bytes, bytes):
-                answer_images_b64.append(base64.b64encode(img_bytes).decode('utf-8'))
-            else:
-                # 可能是已经转换过的或其他格式，暂且转字符串或跳过
-                conn = str(img_bytes) if img_bytes else ""
-                answer_images_b64.append(conn)
-
-        # 格式化学生结果
-        raw_results = state.get("student_results", [])
-        formatted_results = _format_results_for_frontend(raw_results)
-
-        return ResultsReviewContextResponse(
-            batch_id=batch_id,
-            status=state.get("status", "running"),
-            current_stage=state.get("current_stage", "review"),
-            student_results=formatted_results,
-            answer_images=answer_images_b64
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to get results review context: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/review/results")
-async def submit_results_review(
-    request: ResultsReviewRequest,
-    orchestrator: Orchestrator = Depends(get_orchestrator)
-):
-    try:
-        logger.info(f"Submitting results review for batch {request.batch_id}, action={request.action}")
-        
-        # 转换请求为 dict
-        resume_payload = request.model_dump()
-        
-        # 恢复运行
-        await orchestrator.resume_run(
-            request.batch_id,
-            input_data=resume_payload
-        )
-        
-        return {"success": True, "message": "Results review submitted"}
-    except Exception as e:
-        logger.error(f"Failed to submit results review: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))

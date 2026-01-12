@@ -307,7 +307,10 @@ export const WorkflowGraph: React.FC = () => {
     const visibleNodes = useMemo(() => {
         const filteredNodes = workflowNodes;
         if (status === 'IDLE' || status === 'UPLOADING') {
-            return filteredNodes.slice(0, 1);
+            return filteredNodes.map((node) => ({
+                ...node,
+                isVisualCompleted: false
+            }));
         }
         const lastActiveIndex = filteredNodes.findLastIndex((node) => node.status !== 'pending');
         // 渐进式显示：只显示已激活的节点，不显示下一个 pending 节点

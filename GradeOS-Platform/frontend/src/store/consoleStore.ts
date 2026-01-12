@@ -33,6 +33,23 @@ export interface GradingAgent {
         }>;
         totalRevisions?: number;
         streamingText?: string;
+        reviewSummary?: {
+            totalQuestions?: number;
+            averageConfidence?: number;
+            lowConfidenceCount?: number;
+            notes?: string;
+        };
+        selfAudit?: {
+            summary?: string;
+            confidence?: number;
+            issues?: Array<{
+                issueType?: string;
+                message?: string;
+                questionId?: string;
+            }>;
+            honestyNote?: string;
+            generatedAt?: string;
+        };
     };
 }
 
@@ -395,14 +412,14 @@ export interface ConsoleState {
  * 6. export - 导出结果（支持 JSON 导出、部分结果保存）
  * 
  * 后端 LangGraph Graph 流程：
- * index -> rubric_parse -> grade_batch -> cross_page_merge -> logic_review -> index_merge -> export -> END
+ * index -> rubric_parse -> grade_batch -> cross_page_merge -> index_merge -> logic_review -> export -> END
  */
 const initialNodes: WorkflowNode[] = [
     { id: 'rubric_parse', label: 'Rubric Parse', status: 'pending', isParallelContainer: true, children: [] },
     { id: 'grade_batch', label: 'Batch Grading', status: 'pending', isParallelContainer: true, children: [] },
     { id: 'cross_page_merge', label: 'Cross-Page Merge', status: 'pending' },
-    { id: 'logic_review', label: 'Logic Review', status: 'pending', isParallelContainer: true, children: [] },
     { id: 'index_merge', label: 'Result Merge', status: 'pending' },
+    { id: 'logic_review', label: 'Logic Review', status: 'pending', isParallelContainer: true, children: [] },
     { id: 'export', label: 'Export', status: 'pending' },
 ];
 
@@ -642,7 +659,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
                     }
                     const newAgent: GradingAgent = {
                         id: agentId,
-                        label: inferredLabel,
+                        label: update.label || inferredLabel,
                         status: update.status || 'pending',
                         progress: update.progress,
                         logs: [],
@@ -744,6 +761,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
         let shouldAppend = true;
         const normalizedStreamType = streamType || 'output';
         const isThinking = normalizedStreamType === 'thinking';
+        const maxChars = 12000;
 
         if (isThinking) {
             if (typeof chunk === 'string') {
@@ -798,13 +816,15 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
         if (existingIdx >= 0) {
             // 追加到现有思考
             const updated = [...state.llmThoughts];
+            const combined = updated[existingIdx].content + contentStr;
             updated[existingIdx] = {
                 ...updated[existingIdx],
-                content: updated[existingIdx].content + contentStr
+                content: combined.length > maxChars ? combined.slice(-maxChars) : combined
             };
             return { llmThoughts: updated };
         } else {
             // 创建新思考
+            const truncated = contentStr.length > maxChars ? contentStr.slice(-maxChars) : contentStr;
             return {
                 llmThoughts: [...state.llmThoughts, {
                     id: thoughtId,
@@ -814,7 +834,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
                     agentLabel,
                     streamType: normalizedStreamType,
                     pageIndex: normalizedPageIndex,
-                    content: contentStr,
+                    content: truncated,
                     timestamp: Date.now(),
                     isComplete: false
                 }]
@@ -904,8 +924,9 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
         wsClient.on('agent_update', (data) => {
             console.log('Agent Update:', data);
             const { agentId, status, progress, message, output, logs, error } = data;
+            const label = data.agentLabel || data.agent_label || data.agentName || data.agent_name;
             const parentNodeId = data.parentNodeId || data.nodeId;
-            get().updateAgentStatus(agentId, { status, progress, output, error }, parentNodeId);
+            get().updateAgentStatus(agentId, { status, progress, output, error, label }, parentNodeId);
             if (logs && logs.length > 0) {
                 logs.forEach((log: string) => get().addAgentLog(agentId, log));
             }
@@ -1021,11 +1042,6 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
             }
         });
 
-        // 🔥 处理单页批改完成事件 (与 page_complete 类似，但携带批改结果详情)
-        wsClient.on('page_graded', (data) => {
-            console.log('Page Graded:', data);
-        });
-
         // 处理 LLM 流式输出消息 (P4) - 统一流式输出展示
         wsClient.on('llm_stream_chunk', (data) => {
             const nodeId = data.nodeId || data.node || 'unknown';
@@ -1069,10 +1085,12 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
                     const agent = gradingNode.children.find(a => a.status === 'running');
                     if (agent) {
                         const currentText = agent.output?.streamingText || '';
+                        const combined = currentText + contentStr;
+                        const maxChars = 8000;
                         get().updateAgentStatus(agent.id, {
                             output: {
                                 ...agent.output,
-                                streamingText: currentText + contentStr
+                                streamingText: combined.length > maxChars ? combined.slice(-maxChars) : combined
                             }
                         });
                     }
@@ -1301,9 +1319,9 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
             const { completedPages, totalPages, percentage } = data;
             // 更新 grading 节点的进度
             const nodes = get().workflowNodes;
-            const gradingNode = nodes.find(n => n.id === 'grading');
+            const gradingNode = nodes.find(n => n.id === 'grade_batch');
             if (gradingNode) {
-                get().updateNodeStatus('grading', 'running', `Grading progress: ${completedPages}/${totalPages} (${percentage}%)`);
+                get().updateNodeStatus('grade_batch', 'running', `Grading progress: ${completedPages}/${totalPages} (${percentage}%)`);
             }
             const currentStage = data.currentStage || data.current_stage;
             if (currentStage) {
@@ -1313,12 +1331,13 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
                     rubric_review_skipped: 'rubric_parse',
                     grade_batch_completed: 'grade_batch',
                     cross_page_merge_completed: 'cross_page_merge',
-                    logic_review_completed: 'logic_review',
                     index_merge_completed: 'index_merge',
-                    review_completed: 'review',
+                    logic_review_completed: 'logic_review',
+                    logic_review_skipped: 'logic_review',
+                    review_completed: 'logic_review',
                     completed: 'export'
                 };
-                const orderedNodes = ['rubric_parse', 'grade_batch', 'cross_page_merge', 'logic_review', 'index_merge', 'export'];
+                const orderedNodes = ['rubric_parse', 'grade_batch', 'cross_page_merge', 'index_merge', 'logic_review', 'export'];
                 const stageNode = stageToNode[currentStage];
                 if (stageNode) {
                     const stageIndex = orderedNodes.indexOf(stageNode);
@@ -1354,35 +1373,6 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
             const { summary } = data;
             if (summary) {
                 get().addLog(`Review completed: ${summary.total_students} students, ${summary.low_confidence_count} low-confidence results`, 'INFO');
-            }
-        });
-
-        wsClient.on('review_required', (data) => {
-            console.log('Review Required:', data);
-            const reviewType = data.reviewType || data.review_type || data.payload?.type || 'review_required';
-            get().setPendingReview({ reviewType, payload: data.payload || {} });
-            const payload = data.payload || {};
-            const parsedPayload = payload.parsed_rubric || payload.parsedRubric;
-            const normalized = normalizeParsedRubricPayload(parsedPayload);
-            if (normalized) {
-                get().setParsedRubric(normalized);
-            }
-            get().addLog(`Review required: ${reviewType}`, 'WARNING');
-        });
-
-        // 处理学生识别完成事件
-        wsClient.on('students_identified', (data) => {
-            console.log('Students Identified:', data);
-            if (data.students) {
-                const boundaries: StudentBoundary[] = data.students.map((s: any) => ({
-                    studentKey: s.studentKey,
-                    startPage: s.startPage,
-                    endPage: s.endPage,
-                    confidence: s.confidence,
-                    needsConfirmation: s.needsConfirmation
-                }));
-                set({ studentBoundaries: boundaries });
-                get().addLog(`Identified ${boundaries.length} students`, 'INFO');
             }
         });
 

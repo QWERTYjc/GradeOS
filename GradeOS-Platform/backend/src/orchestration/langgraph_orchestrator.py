@@ -9,6 +9,7 @@
 import logging
 import uuid
 import asyncio
+import os
 from typing import Any, Dict, List, Optional
 from datetime import datetime
 import json
@@ -28,6 +29,17 @@ from src.orchestration.base import Orchestrator, RunStatus, RunInfo
 
 
 logger = logging.getLogger(__name__)
+DEBUG_LOG_PATH = os.getenv("GRADEOS_DEBUG_LOG_PATH")
+
+
+def _write_debug_log(payload: Dict[str, Any]) -> None:
+    if not DEBUG_LOG_PATH:
+        return
+    try:
+        with open(DEBUG_LOG_PATH, "a", encoding="utf-8") as log_file:
+            log_file.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    except Exception as exc:
+        logger.debug(f"Failed to write debug log: {exc}")
 
 
 class LangGraphOrchestrator(Orchestrator):
@@ -278,11 +290,19 @@ class LangGraphOrchestrator(Orchestrator):
                         for key, value in output.items():
                             # #region agent log - 假设F: 累积状态
                             if key == "student_results":
-                                import json as _json_f
-                                from datetime import datetime as _dt_f
-                                with open(r'd:\project\aiguru\.cursor\debug.log', 'a', encoding='utf-8') as _f:
-                                    existing = accumulated_state.get(key, [])
-                                    _f.write(_json_f.dumps({"hypothesisId":"F","location":"langgraph_orchestrator.py:accumulate","message":f"累积student_results from {event_name}","data":{"event_name":event_name,"existing_count":len(existing) if isinstance(existing, list) else 0,"new_count":len(value) if isinstance(value, list) else 0},"timestamp":int(_dt_f.now().timestamp()*1000),"sessionId":"debug-session"}, ensure_ascii=False) + '\n')
+                                existing = accumulated_state.get(key, [])
+                                _write_debug_log({
+                                    "hypothesisId": "F",
+                                    "location": "langgraph_orchestrator.py:accumulate",
+                                    "message": f"累积student_results from {event_name}",
+                                    "data": {
+                                        "event_name": event_name,
+                                        "existing_count": len(existing) if isinstance(existing, list) else 0,
+                                        "new_count": len(value) if isinstance(value, list) else 0,
+                                    },
+                                    "timestamp": int(datetime.now().timestamp() * 1000),
+                                    "sessionId": "debug-session",
+                                })
                             # #endregion
                             
                             # 只对 grading_results 使用追加逻辑（它有 operator.add reducer）
@@ -326,11 +346,25 @@ class LangGraphOrchestrator(Orchestrator):
             logger.info(f"Graph 执行完成: run_id={run_id}")
             
             # #region agent log - 假设G: completed 事件发送前的 accumulated_state
-            import json as _json_g
-            from datetime import datetime as _dt_g
-            with open(r'd:\project\aiguru\.cursor\debug.log', 'a', encoding='utf-8') as _f:
-                student_results = accumulated_state.get("student_results", [])
-                _f.write(_json_g.dumps({"hypothesisId":"G","location":"langgraph_orchestrator.py:completed:before_push","message":"completed事件发送前的student_results","data":{"count":len(student_results),"students":[{"key":r.get("student_key"),"score":r.get("total_score"),"max":r.get("max_total_score")} for r in student_results]},"timestamp":int(_dt_g.now().timestamp()*1000),"sessionId":"debug-session"}, ensure_ascii=False) + '\n')
+            student_results = accumulated_state.get("student_results", [])
+            _write_debug_log({
+                "hypothesisId": "G",
+                "location": "langgraph_orchestrator.py:completed:before_push",
+                "message": "completed事件发送前的student_results",
+                "data": {
+                    "count": len(student_results),
+                    "students": [
+                        {
+                            "key": r.get("student_key"),
+                            "score": r.get("total_score"),
+                            "max": r.get("max_total_score"),
+                        }
+                        for r in student_results
+                    ],
+                },
+                "timestamp": int(datetime.now().timestamp() * 1000),
+                "sessionId": "debug-session",
+            })
             # #endregion
             
             await self._update_run_status(

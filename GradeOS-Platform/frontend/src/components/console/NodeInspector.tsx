@@ -218,6 +218,57 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({ className }) => {
                                     </div>
                                 )}
 
+                                {(selectedAgent.output?.reviewSummary || selectedAgent.output?.selfAudit) && (
+                                    <div className="bg-amber-50/80 border border-amber-100 rounded-xl p-4">
+                                        <label className="text-xs font-bold text-amber-600 uppercase tracking-wider flex items-center gap-1.5 mb-3">
+                                            <Shield className="w-3.5 h-3.5" />
+                                            逻辑复核
+                                        </label>
+                                        {selectedAgent.output?.reviewSummary && (
+                                            <div className="grid grid-cols-3 gap-3 text-center mb-3">
+                                                <div className="bg-white/70 rounded-lg p-2 border border-amber-100">
+                                                    <div className="text-sm font-bold text-amber-700">
+                                                        {selectedAgent.output.reviewSummary.totalQuestions ?? '-'}
+                                                    </div>
+                                                    <div className="text-[10px] text-amber-500 uppercase tracking-wider">题目数</div>
+                                                </div>
+                                                <div className="bg-white/70 rounded-lg p-2 border border-amber-100">
+                                                    <div className="text-sm font-bold text-amber-700">
+                                                        {selectedAgent.output.reviewSummary.averageConfidence !== undefined
+                                                            ? `${Math.round(selectedAgent.output.reviewSummary.averageConfidence * 100)}%`
+                                                            : '-'}
+                                                    </div>
+                                                    <div className="text-[10px] text-amber-500 uppercase tracking-wider">平均置信度</div>
+                                                </div>
+                                                <div className="bg-white/70 rounded-lg p-2 border border-amber-100">
+                                                    <div className="text-sm font-bold text-amber-700">
+                                                        {selectedAgent.output.reviewSummary.lowConfidenceCount ?? 0}
+                                                    </div>
+                                                    <div className="text-[10px] text-amber-500 uppercase tracking-wider">低置信题</div>
+                                                </div>
+                                            </div>
+                                        )}
+                                        {selectedAgent.output?.selfAudit && (
+                                            <div className="space-y-2">
+                                                {selectedAgent.output.selfAudit.summary && (
+                                                    <p className="text-sm text-amber-700 leading-relaxed bg-white/70 p-3 rounded-lg border border-amber-100/80">
+                                                        {selectedAgent.output.selfAudit.summary}
+                                                    </p>
+                                                )}
+                                                {selectedAgent.output.selfAudit.issues && selectedAgent.output.selfAudit.issues.length > 0 && (
+                                                    <div className="space-y-1 text-xs text-amber-700">
+                                                        {selectedAgent.output.selfAudit.issues.map((issue, idx) => (
+                                                            <div key={idx} className="bg-white/70 border border-amber-100/80 rounded-lg px-2 py-1">
+                                                                {issue.message || issue.issueType || (issue as any).issue_type}
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+
                                 {/* 错误信息 */}
                                 {selectedAgent.error && (
                                     <div className="bg-red-50/80 border border-red-100 rounded-xl p-4">
@@ -347,7 +398,7 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({ className }) => {
                                 )}
 
                                 {/* 批次进度信息 */}
-                                {batchProgress && selectedNode.id === 'grading' && (
+                                {batchProgress && selectedNode.id === 'grade_batch' && (
                                     <div className="bg-gradient-to-br from-blue-50/80 to-cyan-50/80 rounded-xl p-5 border border-blue-100/50 shadow-sm">
                                         <label className="text-xs font-bold text-blue-600 uppercase tracking-wider mb-3 block">批次处理进度</label>
                                         <div className="flex justify-between items-end mb-2">

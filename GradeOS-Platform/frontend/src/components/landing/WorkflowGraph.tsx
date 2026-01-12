@@ -39,8 +39,8 @@ const NODES_CONFIG = [
     { id: 'rubric_review', label: 'Rubric Review', icon: Undo2, x: 22, y: 50 },
     { id: 'grade_batch', label: 'Batch Grading', icon: Cpu, x: 36, y: 50 },
     { id: 'cross_page_merge', label: 'Cross-Page Merge', icon: CheckCircle2, x: 50, y: 50 },
-    { id: 'logic_review', label: 'Logic Review', icon: Undo2, x: 64, y: 50 },
-    { id: 'index_merge', label: 'Result Merge', icon: FileText, x: 78, y: 50 },
+    { id: 'index_merge', label: 'Result Merge', icon: FileText, x: 64, y: 50 },
+    { id: 'logic_review', label: 'Logic Review', icon: Undo2, x: 78, y: 50 },
     { id: 'export', label: 'Export', icon: Share2, x: 92, y: 50 },
 ];
 
@@ -83,7 +83,7 @@ const useWorkflowSimulation = () => {
     }, []);
 
     const triggerPipeline = () => {
-        const sequence = ['rubric_parse', 'rubric_review', 'grade_batch', 'cross_page_merge', 'logic_review', 'index_merge', 'export'];
+        const sequence = ['rubric_parse', 'rubric_review', 'grade_batch', 'cross_page_merge', 'index_merge', 'logic_review', 'export'];
 
         // Staggered execution
         let accumulatedDelay = 0;

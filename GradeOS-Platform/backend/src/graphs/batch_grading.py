@@ -11,6 +11,7 @@ from langgraph.types import Send, interrupt
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
 from src.graphs.state import BatchGradingGraphState
+from src.utils.llm_thinking import split_thinking_content
 
 
 logger = logging.getLogger(__name__)
@@ -3646,6 +3647,417 @@ def _apply_student_result_overrides(
     return updated_results
 
 
+def _extract_logic_review_questions(student: Dict[str, Any]) -> List[Dict[str, Any]]:
+    details = student.get("question_details") or []
+    if isinstance(details, list) and details:
+        return details
+
+    fallback: List[Dict[str, Any]] = []
+    for page in student.get("page_results", []) or []:
+        for q in page.get("question_details", []) or []:
+            merged = dict(q)
+            if not merged.get("page_indices") and page.get("page_index") is not None:
+                merged["page_indices"] = [page.get("page_index")]
+            fallback.append(merged)
+    return fallback
+
+
+def _normalize_logic_review_items(raw: Any) -> List[Dict[str, Any]]:
+    if not raw:
+        return []
+    if isinstance(raw, list):
+        return [item for item in raw if isinstance(item, dict)]
+    if isinstance(raw, dict):
+        return [raw]
+    return []
+
+
+def _normalize_logic_review_issues(raw: Any) -> List[Dict[str, Any]]:
+    issues: List[Dict[str, Any]] = []
+    for item in _normalize_logic_review_items(raw):
+        if "message" in item:
+            issues.append(item)
+            continue
+        summary = item.get("summary") if isinstance(item, dict) else None
+        if summary:
+            issues.append({"issue_type": "logic_review_note", "message": summary})
+    if isinstance(raw, list):
+        for item in raw:
+            if isinstance(item, str):
+                issues.append({"issue_type": "logic_review_note", "message": item})
+    if isinstance(raw, str):
+        issues.append({"issue_type": "logic_review_note", "message": raw})
+    return issues
+
+
+def _normalize_logic_review_self_audit(raw: Any) -> Optional[Dict[str, Any]]:
+    if not isinstance(raw, dict):
+        return None
+    issues = _normalize_logic_review_issues(raw.get("issues"))
+    return {
+        "summary": raw.get("summary") or "",
+        "confidence": _safe_float(raw.get("confidence", 0.0)),
+        "issues": issues,
+        "generated_at": datetime.now().isoformat(),
+        "honesty_note": raw.get("honesty_note") or raw.get("honestyNote") or "",
+    }
+
+
+def _build_logic_review_summary(question_details: List[Dict[str, Any]]) -> Dict[str, Any]:
+    confidences = [
+        _safe_float(q.get("confidence"))
+        for q in question_details
+        if q.get("confidence") is not None
+    ]
+    avg_confidence = sum(confidences) / len(confidences) if confidences else None
+    low_confidence_count = sum(1 for c in confidences if c < 0.7)
+    return {
+        "totalQuestions": len(question_details),
+        "averageConfidence": avg_confidence,
+        "lowConfidenceCount": low_confidence_count,
+    }
+
+
+def _merge_logic_review_fields(
+    question: Dict[str, Any],
+    review: Dict[str, Any],
+) -> Dict[str, Any]:
+    updated = dict(question)
+    confidence = review.get("confidence")
+    if confidence is not None:
+        updated["confidence"] = max(0.0, min(1.0, _safe_float(confidence)))
+    confidence_reason = review.get("confidence_reason") or review.get("confidenceReason")
+    if confidence_reason:
+        updated["confidence_reason"] = confidence_reason
+    self_critique = review.get("self_critique") or review.get("selfCritique")
+    if self_critique:
+        updated["self_critique"] = self_critique
+    self_conf = review.get("self_critique_confidence") or review.get("selfCritiqueConfidence")
+    if self_conf is not None:
+        updated["self_critique_confidence"] = max(0.0, min(1.0, _safe_float(self_conf)))
+    review_summary = review.get("review_summary") or review.get("reviewSummary")
+    if review_summary:
+        updated["review_summary"] = review_summary
+    review_corrections = review.get("review_corrections") or review.get("reviewCorrections") or []
+    existing_corrections = updated.get("review_corrections") or []
+    merged_corrections = list(existing_corrections) if isinstance(existing_corrections, list) else []
+    for item in _normalize_logic_review_items(review_corrections):
+        if item not in merged_corrections:
+            merged_corrections.append(item)
+    if merged_corrections:
+        updated["review_corrections"] = merged_corrections
+    honesty = review.get("honesty_note") or review.get("honestyNote")
+    if honesty:
+        updated["honesty_note"] = honesty
+    return updated
+
+
+def _build_logic_review_prompt(
+    student: Dict[str, Any],
+    question_details: List[Dict[str, Any]],
+    rubric_map: Dict[str, Dict[str, Any]],
+    limits: Dict[str, int],
+) -> str:
+    student_key = student.get("student_key") or student.get("student_name") or "Unknown"
+    max_questions = limits.get("max_questions", 20)
+    max_answer_chars = limits.get("max_answer_chars", 400)
+    max_feedback_chars = limits.get("max_feedback_chars", 200)
+    max_rubric_chars = limits.get("max_rubric_chars", 240)
+    max_points = limits.get("max_scoring_points", 4)
+    max_evidence_chars = limits.get("max_evidence_chars", 120)
+
+    lines = [
+        "你是批改流程的逻辑复核助手，只能基于文本摘要判断批改是否自洽。",
+        "目标：评估每题评分是否和证据/反馈一致，给出置信度与自白。",
+        "要求诚实：如果证据不足或存在不确定性，必须明确说明并降低置信度。",
+        "若自白过于武断且证据不足，应在 review_summary 中指出并降低 confidence。",
+        "请仅输出 JSON，不要添加额外说明或 markdown。",
+        "",
+        f"学生标识: {student_key}",
+        "",
+        "题目摘要：",
+    ]
+
+    for idx, question in enumerate(question_details[:max_questions]):
+        qid = _normalize_question_id(question.get("question_id") or question.get("questionId")) or str(idx + 1)
+        rubric = rubric_map.get(qid, {})
+        score = question.get("score", 0)
+        max_score = question.get("max_score", rubric.get("max_score", 0))
+        question_text = _trim_text(rubric.get("question_text", ""), max_rubric_chars)
+        standard_answer = _trim_text(rubric.get("standard_answer", ""), max_rubric_chars)
+        student_answer = _trim_text(question.get("student_answer", ""), max_answer_chars)
+        feedback = _trim_text(question.get("feedback", ""), max_feedback_chars)
+
+        lines.append(f"- Q{qid}: score {score}/{max_score}")
+        if question_text:
+            lines.append(f"  prompt: {question_text}")
+        if standard_answer:
+            lines.append(f"  standard_answer: {standard_answer}")
+        if student_answer:
+            lines.append(f"  student_answer: {student_answer}")
+        if feedback:
+            lines.append(f"  feedback: {feedback}")
+
+        scoring_points = question.get("scoring_point_results") or question.get("scoring_results") or []
+        if scoring_points:
+            lines.append("  scoring_points:")
+            for sp in scoring_points[:max_points]:
+                if not isinstance(sp, dict):
+                    continue
+                point_id = (
+                    sp.get("point_id")
+                    or sp.get("pointId")
+                    or (sp.get("scoring_point") or {}).get("point_id")
+                    or ""
+                )
+                awarded = sp.get("awarded", sp.get("score", 0))
+                max_points_val = (
+                    sp.get("max_points")
+                    or sp.get("maxPoints")
+                    or (sp.get("scoring_point") or {}).get("score")
+                    or 0
+                )
+                evidence = _trim_text(sp.get("evidence", ""), max_evidence_chars)
+                lines.append(f"    - {point_id}: {awarded}/{max_points_val} evidence: {evidence}")
+        lines.append("")
+
+    schema_hint = {
+        "student_key": student_key,
+        "question_reviews": [
+            {
+                "question_id": "1",
+                "confidence": 0.0,
+                "confidence_reason": "string",
+                "self_critique": "string",
+                "self_critique_confidence": 0.0,
+                "review_summary": "string",
+                "review_corrections": [
+                    {"point_id": "1.1", "review_reason": "string"}
+                ],
+                "honesty_note": "string"
+            }
+        ],
+        "self_audit": {
+            "summary": "string",
+            "confidence": 0.0,
+            "issues": [{"issue_type": "string", "message": "string", "question_id": "1"}],
+            "honesty_note": "string"
+        }
+    }
+
+    lines.append("输出 JSON 模板：")
+    lines.append(json.dumps(schema_hint, ensure_ascii=False, indent=2))
+    return "\n".join(lines)
+
+
+async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
+    """
+    逻辑复核节点（文本输入）
+
+    每个学生进行一次纯文本 LLM 复核，输出题目置信度与自白说明。
+    """
+    batch_id = state["batch_id"]
+    student_results = state.get("student_results", []) or []
+    parsed_rubric = state.get("parsed_rubric", {}) or {}
+    api_key = state.get("api_key") or os.getenv("GEMINI_API_KEY")
+
+    if not student_results:
+        return {
+            "logic_review_results": [],
+            "current_stage": "logic_review_completed",
+            "percentage": 85.0,
+            "timestamps": {
+                **state.get("timestamps", {}),
+                "logic_review_at": datetime.now().isoformat(),
+            },
+        }
+
+    rubric_map = _build_rubric_question_map(parsed_rubric)
+    limits = {
+        "max_questions": int(os.getenv("LOGIC_REVIEW_MAX_QUESTIONS", "20")),
+        "max_answer_chars": int(os.getenv("LOGIC_REVIEW_MAX_ANSWER_CHARS", "400")),
+        "max_feedback_chars": int(os.getenv("LOGIC_REVIEW_MAX_FEEDBACK_CHARS", "200")),
+        "max_rubric_chars": int(os.getenv("LOGIC_REVIEW_MAX_RUBRIC_CHARS", "240")),
+        "max_scoring_points": int(os.getenv("LOGIC_REVIEW_MAX_SCORING_POINTS", "4")),
+        "max_evidence_chars": int(os.getenv("LOGIC_REVIEW_MAX_EVIDENCE_CHARS", "120")),
+    }
+
+    if not api_key:
+        updated_results = []
+        for student in student_results:
+            updated = dict(student)
+            updated.setdefault("self_audit", _build_self_audit(updated))
+            updated_results.append(updated)
+        return {
+            "student_results": updated_results,
+            "logic_review_results": [],
+            "current_stage": "logic_review_completed",
+            "percentage": 85.0,
+            "timestamps": {
+                **state.get("timestamps", {}),
+                "logic_review_at": datetime.now().isoformat(),
+            },
+        }
+
+    from src.services.gemini_reasoning import GeminiReasoningClient
+    from src.api.routes.batch_langgraph import broadcast_progress
+
+    reasoning_client = GeminiReasoningClient(api_key=api_key, rubric_registry=None)
+    max_workers = int(os.getenv("LOGIC_REVIEW_MAX_WORKERS", "3"))
+    semaphore = asyncio.Semaphore(max_workers)
+
+    logic_review_results: List[Dict[str, Any]] = []
+    updated_results: List[Optional[Dict[str, Any]]] = [None] * len(student_results)
+
+    async def review_student(index: int, student: Dict[str, Any]) -> None:
+        async with semaphore:
+            student_key = student.get("student_key") or student.get("student_name") or f"Student {index + 1}"
+            agent_id = f"review-worker-{index}"
+
+            await broadcast_progress(batch_id, {
+                "type": "agent_update",
+                "agentId": agent_id,
+                "agentName": student_key,
+                "parentNodeId": "logic_review",
+                "status": "running",
+                "progress": 0,
+                "message": "Logic review running...",
+            })
+
+            question_details = _extract_logic_review_questions(student)
+            if not question_details:
+                updated_student = dict(student)
+                updated_student["self_audit"] = _build_self_audit(updated_student)
+                updated_student["logic_reviewed_at"] = datetime.now().isoformat()
+                updated_results[index] = updated_student
+                review_summary = _build_logic_review_summary(question_details)
+                await broadcast_progress(batch_id, {
+                    "type": "agent_update",
+                    "agentId": agent_id,
+                    "parentNodeId": "logic_review",
+                    "status": "completed",
+                    "progress": 100,
+                    "message": "Logic review skipped (no questions)",
+                    "output": {
+                        "reviewSummary": review_summary,
+                        "selfAudit": updated_student.get("self_audit"),
+                    },
+                })
+                return
+            prompt = _build_logic_review_prompt(student, question_details, rubric_map, limits)
+
+            response_text = ""
+            try:
+                async for chunk in reasoning_client._call_text_api_stream(prompt):
+                    output_text, thinking_text = split_thinking_content(chunk)
+                    if thinking_text:
+                        await broadcast_progress(batch_id, {
+                            "type": "llm_stream_chunk",
+                            "nodeId": "logic_review",
+                            "nodeName": "Logic Review",
+                            "agentId": agent_id,
+                            "agentLabel": student_key,
+                            "streamType": "thinking",
+                            "chunk": thinking_text,
+                        })
+                    if output_text:
+                        await broadcast_progress(batch_id, {
+                            "type": "llm_stream_chunk",
+                            "nodeId": "logic_review",
+                            "nodeName": "Logic Review",
+                            "agentId": agent_id,
+                            "agentLabel": student_key,
+                            "streamType": "output",
+                            "chunk": output_text,
+                        })
+                        response_text += output_text
+                    elif thinking_text:
+                        response_text += thinking_text
+            except Exception as exc:
+                logger.warning(f"[logic_review] LLM failed student={student_key}: {exc}")
+
+            payload: Dict[str, Any] = {}
+            if response_text:
+                try:
+                    json_text = reasoning_client._extract_json_from_text(response_text)
+                    payload = json.loads(json_text)
+                except Exception as exc:
+                    logger.warning(f"[logic_review] parse failed student={student_key}: {exc}")
+
+            question_reviews = (
+                payload.get("question_reviews")
+                or payload.get("questionReviews")
+                or payload.get("questions")
+                or payload.get("reviews")
+                or []
+            )
+            review_map: Dict[str, Dict[str, Any]] = {}
+            for item in _normalize_logic_review_items(question_reviews):
+                qid = _normalize_question_id(item.get("question_id") or item.get("questionId"))
+                if not qid:
+                    continue
+                review_map[qid] = item
+
+            updated_student = dict(student)
+            updated_details = []
+            for q in question_details:
+                qid = _normalize_question_id(q.get("question_id") or q.get("questionId"))
+                if qid and qid in review_map:
+                    updated_details.append(_merge_logic_review_fields(q, review_map[qid]))
+                else:
+                    updated_details.append(dict(q))
+            updated_student["question_details"] = updated_details
+
+            self_audit = _normalize_logic_review_self_audit(
+                payload.get("self_audit") or payload.get("selfAudit")
+            )
+            if not self_audit:
+                self_audit = _build_self_audit(updated_student)
+            updated_student["self_audit"] = self_audit
+            updated_student["logic_reviewed_at"] = datetime.now().isoformat()
+
+            updated_results[index] = updated_student
+            if payload:
+                logic_review_results.append({
+                    "student_key": student_key,
+                    "student_id": updated_student.get("student_id"),
+                    "reviewed_at": updated_student["logic_reviewed_at"],
+                    "question_reviews": list(review_map.values()),
+                    "self_audit": self_audit,
+                })
+
+            review_summary = _build_logic_review_summary(updated_details)
+            await broadcast_progress(batch_id, {
+                "type": "agent_update",
+                "agentId": agent_id,
+                "parentNodeId": "logic_review",
+                "status": "completed",
+                "progress": 100,
+                "message": "Logic review completed",
+                "output": {
+                    "reviewSummary": review_summary,
+                    "selfAudit": self_audit,
+                },
+            })
+
+    await asyncio.gather(*[
+        review_student(idx, student)
+        for idx, student in enumerate(student_results)
+    ])
+
+    final_results = [r for r in updated_results if r is not None]
+    return {
+        "student_results": final_results,
+        "logic_review_results": logic_review_results,
+        "current_stage": "logic_review_completed",
+        "percentage": 85.0,
+        "timestamps": {
+            **state.get("timestamps", {}),
+            "logic_review_at": datetime.now().isoformat(),
+        },
+    }
+
+
 async def review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     """
     结果审核节点
@@ -4035,6 +4447,7 @@ def create_batch_grading_graph(
     graph.add_node("grade_batch", grade_batch_node)
     graph.add_node("cross_page_merge", cross_page_merge_node)
     graph.add_node("index_merge", index_merge_node)
+    graph.add_node("logic_review", logic_review_node)
     graph.add_node("review", review_node)
     graph.add_node("export", export_node)
     
@@ -4059,7 +4472,8 @@ def create_batch_grading_graph(
     
     # cross_page_merge → index_merge → review → export → END
     graph.add_edge("cross_page_merge", "index_merge")
-    graph.add_edge("index_merge", "review")
+    graph.add_edge("index_merge", "logic_review")
+    graph.add_edge("logic_review", "review")
     graph.add_edge("review", "export")
     graph.add_edge("export", END)
     
@@ -4093,6 +4507,7 @@ __all__ = [
     "grade_batch_node",
     "cross_page_merge_node",
     "index_merge_node",
+    "logic_review_node",
     "review_node",
     "export_node",
     # 路由函数

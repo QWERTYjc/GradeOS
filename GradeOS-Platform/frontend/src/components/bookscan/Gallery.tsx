@@ -102,6 +102,10 @@ export default function Gallery({ session, onSubmitBatch, submitLabel, onBoundar
   };
 
   const handleDirectSubmit = async () => {
+    if (isRubricMode) {
+      alert('评分标准已保存，请切换到 Student Exams 并点击 Start Grading 开始批改。');
+      return;
+    }
     if (!currentSession) return;
 
     const imagesToSend = selectedImages.size > 0
@@ -162,11 +166,11 @@ export default function Gallery({ session, onSubmitBatch, submitLabel, onBoundar
             {/* Submit Button */}
             <button
               onClick={handleDirectSubmit}
-              disabled={isSubmitting || (currentSession?.images.length === 0)}
+              disabled={isRubricMode || isSubmitting || (currentSession?.images.length === 0)}
               className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-gradient-to-r from-emerald-500 to-teal-600 text-white rounded-md shadow hover:shadow-lg transition-all whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed font-medium"
             >
               {isSubmitting ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
-              {isSubmitting ? 'Uploading...' : (submitLabel || 'Submit')}
+              {isRubricMode ? 'Rubric Ready' : (isSubmitting ? 'Uploading...' : (submitLabel || 'Submit'))}
             </button>
 
             <div className="w-px h-5 bg-slate-300 mx-1"></div>
