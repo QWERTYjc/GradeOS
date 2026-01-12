@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useRef, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { ChatMessage, Language, ScoreEntry, Subject, StudyPlan } from '@/types';
 import {
@@ -24,6 +25,7 @@ const MOCK_SCORES: ScoreEntry[] = [
 type Tab = 'chat' | 'analysis' | 'data';
 
 export default function StudentAssistant() {
+  const router = useRouter();
   const [activeTab, setActiveTab] = useState<Tab>('chat');
   const [lang, setLang] = useState<Language>('en');
   const [messages, setMessages] = useState<ChatMessage[]>([
@@ -97,6 +99,42 @@ export default function StudentAssistant() {
   return (
     <DashboardLayout>
       <div className="max-w-5xl mx-auto">
+        {/* Enhanced Assistant Promotion Banner */}
+        <div className="mb-6 bg-gradient-to-r from-blue-600 to-cyan-500 rounded-xl p-6 text-white relative overflow-hidden">
+          <div className="relative z-10">
+            <div className="flex items-center justify-between">
+              <div className="flex-1">
+                <h2 className="text-xl font-bold mb-2 flex items-center gap-2">
+                  ✨ Enhanced Student Assistant Available!
+                </h2>
+                <p className="text-blue-100 mb-4 max-w-2xl">
+                  Experience our new comprehensive study companion with advanced features: 
+                  Academic Analysis, Subject Selection Guide, Enhanced AI Chat, and Data Management Hub.
+                </p>
+                <div className="flex flex-wrap gap-2 text-sm">
+                  <span className="bg-white/20 px-3 py-1 rounded-full">📊 Performance Analytics</span>
+                  <span className="bg-white/20 px-3 py-1 rounded-full">🎯 Subject Selection</span>
+                  <span className="bg-white/20 px-3 py-1 rounded-full">🤖 Advanced AI Chat</span>
+                  <span className="bg-white/20 px-3 py-1 rounded-full">📝 Data Hub</span>
+                </div>
+              </div>
+              <div className="ml-6">
+                <button
+                  onClick={() => router.push('/student/student_assistant')}
+                  className="bg-white text-blue-600 px-6 py-3 rounded-xl font-bold shadow-lg hover:shadow-xl transform hover:scale-105 transition-all duration-200 flex items-center gap-2"
+                >
+                  Try Enhanced Version
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+          </div>
+          <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full -translate-y-1/2 translate-x-1/2 blur-2xl"></div>
+          <div className="absolute bottom-0 left-0 w-24 h-24 bg-cyan-300/20 rounded-full translate-y-1/2 -translate-x-1/2 blur-xl"></div>
+        </div>
+
         {/* Tab Navigation */}
         <div className="flex gap-2 mb-6 bg-white p-2 rounded-xl border border-slate-200">
           {tabs.map(tab => (
