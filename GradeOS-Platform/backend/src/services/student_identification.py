@@ -21,6 +21,7 @@ from langchain_core.messages import HumanMessage
 from src.models.region import BoundingBox
 from src.utils.coordinates import normalize_coordinates
 from src.config.models import get_lite_model
+from src.utils.llm_thinking import get_thinking_kwargs
 
 
 logger = logging.getLogger(__name__)
@@ -76,17 +77,20 @@ class StudentIdentificationService:
     def __init__(self, api_key: str, model_name: Optional[str] = None):
         if model_name is None:
             model_name = get_lite_model()
+        thinking_kwargs = get_thinking_kwargs(model_name, enable_thinking=False)
         self.llm = ChatGoogleGenerativeAI(
             model=model_name,
             google_api_key=api_key,
-            temperature=0.1
+            temperature=0.1,
+            **thinking_kwargs,
         )
         self.model_name = model_name
     
     async def analyze_page(
         self,
         image_data: bytes,
-        page_index: int = 0
+        page_index: int = 0,
+        boundary_only: bool = False
     ) -> PageAnalysis:
         """
         分析单页：识别学生信息和题目编号
@@ -96,40 +100,50 @@ class StudentIdentificationService:
         """
         image_b64 = base64.b64encode(image_data).decode('utf-8')
         
-        prompt = """请分析这张试卷图像，提取以下信息：
+        if boundary_only:
+            prompt = """Analyze this exam page ONLY for boundary detection.
+Return JSON only, no extra text.
 
-1. 学生信息（如果有）：
-   - 姓名（手写或印刷）
-   - 学号/考号
-   - 班级
+Extract:
+1. Up to 3 question numbers in order. If none, return [].
+2. The first visible question number (string or null).
+3. Whether this is a cover/instruction page (no answers).
 
-2. 题目编号：
-   - 识别页面上所有可见的题目编号（如 "1", "2", "Question 1", "第一题" 等）
-   - 按顺序列出
-
-3. 页面类型：
-   - 是否为封面/说明页（没有题目内容）
-
-请以 JSON 格式返回：
+Output JSON:
 {
-    "student_info": {
-        "found": true/false,
-        "name": "姓名或null",
-        "student_id": "学号或null",
-        "class_name": "班级或null",
-        "confidence": 0.0-1.0
-    },
-    "questions": {
-        "numbers": ["1", "2", "3"],
-        "first_question": "1"
-    },
-    "is_cover_page": false
+  "questions": {
+    "numbers": ["1", "2", "3"],
+    "first_question": "1"
+  },
+  "is_cover_page": false
 }
 
-注意：
-- 题目编号要标准化（如 "Question 1" -> "1", "第一题" -> "1"）
-- 如果是选择题的选项（A,B,C,D），不要当作题目编号
-- 如果页面只有部分题目（如只有第3题的后半部分），也要识别出来"""
+Normalize question numbers (e.g., "Question 1" -> "1"). Ignore A/B/C/D options.
+"""
+        else:
+            prompt = """Analyze this exam page.
+Extract student info only if obvious, otherwise use null.
+Extract question numbers in order and mark if it is a cover page.
+Return JSON only, no extra text.
+
+Output JSON:
+{
+  "student_info": {
+    "found": true/false,
+    "name": "name or null",
+    "student_id": "id or null",
+    "class_name": "class or null",
+    "confidence": 0.0
+  },
+  "questions": {
+    "numbers": ["1", "2", "3"],
+    "first_question": "1"
+  },
+  "is_cover_page": false
+}
+
+Normalize question numbers (e.g., "Question 1" -> "1"). Ignore A/B/C/D options.
+"""
 
         message = HumanMessage(
             content=[
@@ -184,19 +198,24 @@ class StudentIdentificationService:
             
             # 解析学生信息
             student_info = None
-            si = data.get("student_info", {})
-            if si.get("found") and (si.get("name") or si.get("student_id")):
-                student_info = StudentInfo(
-                    name=si.get("name"),
-                    student_id=si.get("student_id"),
-                    class_name=si.get("class_name"),
-                    confidence=si.get("confidence", 0.0)
-                )
+            if not boundary_only:
+                si = data.get("student_info", {})
+                if si.get("found") and (si.get("name") or si.get("student_id")):
+                    student_info = StudentInfo(
+                        name=si.get("name"),
+                        student_id=si.get("student_id"),
+                        class_name=si.get("class_name"),
+                        confidence=si.get("confidence", 0.0)
+                    )
             
             # 解析题目编号
             questions = data.get("questions", {})
             question_numbers = questions.get("numbers", [])
             first_question = questions.get("first_question")
+            if boundary_only and question_numbers:
+                question_numbers = question_numbers[:3]
+                if not first_question:
+                    first_question = question_numbers[0]
             
             return PageAnalysis(
                 page_index=page_index,
@@ -342,6 +361,38 @@ class StudentIdentificationService:
         else:
             # 使用题目顺序循环检测
             return self._segment_by_question_cycle(page_analyses)
+
+    def segment_from_analyses(
+        self,
+        page_analyses: List[PageAnalysis]
+    ) -> BatchSegmentationResult:
+        """
+        基于已有页面分析结果执行分组（避免重复调用模型）
+
+        Args:
+            page_analyses: 页面分析结果列表
+
+        Returns:
+            BatchSegmentationResult: 分组结果
+        """
+        if not page_analyses:
+            return BatchSegmentationResult(
+                total_pages=0,
+                student_count=0,
+                page_mappings=[],
+                unidentified_pages=[]
+            )
+
+        page_analyses.sort(key=lambda x: x.page_index)
+
+        has_student_info = any(
+            a.student_info and a.student_info.confidence >= 0.6
+            for a in page_analyses
+        )
+
+        if has_student_info:
+            return self._segment_by_student_info(page_analyses)
+        return self._segment_by_question_cycle(page_analyses)
     
     def _segment_by_student_info(
         self,

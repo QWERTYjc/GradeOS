@@ -1,7 +1,0 @@
-{
-  "name": "IntelliLearn - AI Teaching Agent",
-  "description": "A cutting-edge academic diagnostic and learning platform that uses AI to analyze student errors, map knowledge gaps, and generate personalized learning paths.",
-  "requestFramePermissions": [
-    "camera"
-  ]
-}

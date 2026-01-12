@@ -1,0 +1,79 @@
+{
+  "batch_id": "bcb3663c-77a8-4cc3-81ea-b131b67e82c6",
+  "export_time": "2025-12-28T03:56:28.214741",
+  "persisted": false,
+  "has_failures": false,
+  "failed_pages_count": 0,
+  "cross_page_questions": [],
+  "merged_questions": [
+    {
+      "question_id": "1",
+      "score": 10,
+      "max_score": 10,
+      "confidence": 1.0,
+      "feedback": "答案完全正确。",
+      "student_answer": "2+2=4",
+      "is_cross_page": false,
+      "page_indices": [
+        0
+      ],
+      "merge_source": null,
+      "scoring_point_results": []
+    },
+    {
+      "question_id": "2",
+      "score": 8,
+      "max_score": 10,
+      "confidence": 1.0,
+      "feedback": "基本概念正确，但不够完整。光合作用除了利用阳光，还需要水和二氧化碳。 缺少水和二氧化碳的描述，扣2分。",
+      "student_answer": "光合作用是植物利用阳光制造养分的过程",
+      "is_cross_page": false,
+      "page_indices": [
+        0
+      ],
+      "merge_source": null,
+      "scoring_point_results": []
+    }
+  ],
+  "students": [
+    {
+      "student_name": "学生A",
+      "student_id": null,
+      "score": 18,
+      "max_score": 20,
+      "percentage": 90.0,
+      "question_results": [
+        {
+          "question_id": "1",
+          "score": 10,
+          "max_score": 10,
+          "feedback": "答案完全正确。",
+          "student_answer": "2+2=4",
+          "is_correct": false,
+          "is_cross_page": false,
+          "page_indices": [
+            0
+          ],
+          "confidence": 1.0
+        },
+        {
+          "question_id": "2",
+          "score": 8,
+          "max_score": 10,
+          "feedback": "基本概念正确，但不够完整。光合作用除了利用阳光，还需要水和二氧化碳。 缺少水和二氧化碳的描述，扣2分。",
+          "student_answer": "光合作用是植物利用阳光制造养分的过程",
+          "is_correct": false,
+          "is_cross_page": false,
+          "page_indices": [
+            0
+          ],
+          "confidence": 1.0
+        }
+      ],
+      "confidence": 0.8,
+      "needs_confirmation": false,
+      "start_page": 0,
+      "end_page": 0
+    }
+  ]
+}

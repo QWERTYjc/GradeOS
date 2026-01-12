@@ -2,6 +2,9 @@
 数据库连接工具
 
 提供数据库连接池管理，支持统一连接池管理器和传统连接池两种模式。
+支持数据库降级：连接失败时自动切换到无数据库模式。
+
+验证：需求 11.6, 11.7
 """
 
 import os
@@ -13,6 +16,7 @@ from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 
 from src.utils.pool_manager import UnifiedPoolManager, PoolNotInitializedError
+from src.config.deployment_mode import get_deployment_mode, DeploymentMode
 
 
 logger = logging.getLogger(__name__)
@@ -63,7 +67,11 @@ class Database:
     1. 统一连接池模式：使用 UnifiedPoolManager（推荐）
     2. 传统模式：使用独立的 AsyncConnectionPool
     
-    验证：需求 2.1
+    支持数据库降级：
+    - 连接失败时自动降级到无数据库模式
+    - 降级后系统继续运行，使用内存缓存
+    
+    验证：需求 2.1, 11.6, 11.7
     """
     
     def __init__(self, config: Optional[DatabaseConfig] = None):
@@ -71,24 +79,52 @@ class Database:
         self._pool: Optional[AsyncConnectionPool] = None
         self._use_unified_pool = False
         self._unified_pool_manager: Optional[UnifiedPoolManager] = None
+        self._degraded_mode = False  # 降级模式标志
+        self._deployment_config = get_deployment_mode()
+    
+    @property
+    def is_degraded(self) -> bool:
+        """是否处于降级模式"""
+        return self._degraded_mode
+    
+    @property
+    def is_available(self) -> bool:
+        """数据库是否可用"""
+        return not self._degraded_mode and (
+            self._use_unified_pool or self._pool is not None
+        )
     
     async def connect(self, use_unified_pool: bool = True) -> None:
         """
         初始化连接池
         
+        支持数据库降级：
+        - 如果是无数据库模式，直接进入降级模式
+        - 如果连接失败，自动降级到无数据库模式
+        
         Args:
             use_unified_pool: 是否使用统一连接池管理器
+            
+        验证：需求 11.6, 11.7
         """
+        # 检查部署模式
+        if self._deployment_config.is_no_database_mode:
+            logger.info("无数据库模式：跳过数据库连接")
+            self._degraded_mode = True
+            return
+        
         # 尝试使用统一连接池
         if use_unified_pool:
             try:
                 self._unified_pool_manager = await UnifiedPoolManager.get_instance()
                 if self._unified_pool_manager.is_initialized:
                     self._use_unified_pool = True
-                    logger.info("使用统一连接池管理器")
+                    self._degraded_mode = False
+                    logger.debug("使用统一连接池管理器")
                     return
             except Exception as e:
                 logger.warning(f"无法使用统一连接池管理器: {e}")
+                logger.info("尝试降级到传统连接池...")
         
         # 回退到传统连接池
         if self._pool is None:
@@ -103,13 +139,19 @@ class Database:
                 )
                 # Add 3 second timeout for connection
                 await asyncio.wait_for(self._pool.open(), timeout=3.0)
+                self._degraded_mode = False
                 logger.info("使用传统数据库连接池")
             except asyncio.TimeoutError:
-                logger.error("数据库连接超时，启用离线模式")
+                logger.error("数据库连接超时，降级到无数据库模式")
                 self._pool = None
+                self._degraded_mode = True
+                logger.warning("系统将使用内存缓存继续运行")
             except Exception as e:
                 logger.error(f"无法连接到数据库: {e}")
+                logger.warning("降级到无数据库模式")
                 self._pool = None
+                self._degraded_mode = True
+                logger.warning("系统将使用内存缓存继续运行")
     
     async def disconnect(self) -> None:
         """关闭连接池"""
@@ -125,7 +167,18 @@ class Database:
     
     @asynccontextmanager
     async def connection(self):
-        """获取数据库连接"""
+        """
+        获取数据库连接
+        
+        如果处于降级模式，抛出异常提示调用者使用替代方案
+        """
+        # 检查降级模式
+        if self._degraded_mode:
+            raise RuntimeError(
+                "数据库不可用（降级模式）。"
+                "请使用内存缓存或其他替代方案。"
+            )
+        
         # 使用统一连接池
         if self._use_unified_pool and self._unified_pool_manager:
             async with self._unified_pool_manager.pg_connection() as conn:
@@ -136,12 +189,26 @@ class Database:
         if self._pool is None:
             await self.connect(use_unified_pool=False)
         
+        if self._pool is None:
+            raise RuntimeError("数据库连接不可用")
+        
         async with self._pool.connection() as conn:
             yield conn
     
     @asynccontextmanager
     async def transaction(self):
-        """获取事务连接"""
+        """
+        获取事务连接
+        
+        如果处于降级模式，抛出异常提示调用者使用替代方案
+        """
+        # 检查降级模式
+        if self._degraded_mode:
+            raise RuntimeError(
+                "数据库不可用（降级模式）。"
+                "请使用内存缓存或其他替代方案。"
+            )
+        
         # 使用统一连接池
         if self._use_unified_pool and self._unified_pool_manager:
             async with self._unified_pool_manager.pg_transaction() as conn:

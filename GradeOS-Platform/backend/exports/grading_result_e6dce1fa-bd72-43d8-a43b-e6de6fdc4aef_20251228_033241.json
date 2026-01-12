@@ -1,0 +1,106 @@
+{
+  "batch_id": "e6dce1fa-bd72-43d8-a43b-e6de6fdc4aef",
+  "export_time": "2025-12-28T03:32:41.217426",
+  "persisted": false,
+  "has_failures": false,
+  "failed_pages_count": 0,
+  "cross_page_questions": [],
+  "merged_questions": [
+    {
+      "question_id": "1",
+      "score": 15,
+      "max_score": 20,
+      "confidence": 1.0,
+      "feedback": "选择题： 1. 正确(5分)  2. 正确(5分) 3. 正确(5分) 4. 错误，应选A(0分)",
+      "student_answer": "1. B\n2. A\n3. C\n4. D",
+      "is_cross_page": false,
+      "page_indices": [
+        0
+      ],
+      "merge_source": null,
+      "scoring_point_results": []
+    },
+    {
+      "question_id": "2",
+      "score": 20,
+      "max_score": 20,
+      "confidence": 1.0,
+      "feedback": "填空题全部正确，每题5分",
+      "student_answer": "1. 光合作用\n2. 细胞膜\n3. DNA\n4. 线粒体",
+      "is_cross_page": false,
+      "page_indices": [
+        0
+      ],
+      "merge_source": null,
+      "scoring_point_results": []
+    },
+    {
+      "question_id": "3-1",
+      "score": 15,
+      "max_score": 30,
+      "confidence": 1.0,
+      "feedback": "简答题：提到了有丝分裂和减数分裂，给5分。 有丝分裂阶段正确给10分。但是没有详细描述各个阶段的特征以及细胞分裂的意义，总分15。",
+      "student_answer": "细胞分裂包括有丝分裂和减数分裂两种方式。有丝分裂分为前期、中期、后期和末期四个阶段。",
+      "is_cross_page": false,
+      "page_indices": [
+        0
+      ],
+      "merge_source": null,
+      "scoring_point_results": []
+    }
+  ],
+  "students": [
+    {
+      "student_name": "学生A",
+      "student_id": null,
+      "score": 50,
+      "max_score": 70,
+      "percentage": 71.4,
+      "question_results": [
+        {
+          "question_id": "1",
+          "score": 15,
+          "max_score": 20,
+          "feedback": "选择题： 1. 正确(5分)  2. 正确(5分) 3. 正确(5分) 4. 错误，应选A(0分)",
+          "student_answer": "1. B\n2. A\n3. C\n4. D",
+          "is_correct": false,
+          "is_cross_page": false,
+          "page_indices": [
+            0
+          ],
+          "confidence": 1.0
+        },
+        {
+          "question_id": "2",
+          "score": 20,
+          "max_score": 20,
+          "feedback": "填空题全部正确，每题5分",
+          "student_answer": "1. 光合作用\n2. 细胞膜\n3. DNA\n4. 线粒体",
+          "is_correct": false,
+          "is_cross_page": false,
+          "page_indices": [
+            0
+          ],
+          "confidence": 1.0
+        },
+        {
+          "question_id": "3-1",
+          "score": 15,
+          "max_score": 30,
+          "feedback": "简答题：提到了有丝分裂和减数分裂，给5分。 有丝分裂阶段正确给10分。但是没有详细描述各个阶段的特征以及细胞分裂的意义，总分15。",
+          "student_answer": "细胞分裂包括有丝分裂和减数分裂两种方式。有丝分裂分为前期、中期、后期和末期四个阶段。",
+          "is_correct": false,
+          "is_cross_page": false,
+          "page_indices": [
+            0
+          ],
+          "confidence": 1.0
+        }
+      ],
+      "confidence": 0.8,
+      "needs_confirmation": false,
+      "start_page": 0,
+      "end_page": 0
+    }
+  ]
+}

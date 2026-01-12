@@ -10,6 +10,7 @@ import uuid
 import logging
 import tempfile
 import asyncio
+import base64
 from pathlib import Path
 from typing import List, Optional, Dict, Any
 
@@ -17,12 +18,19 @@ from fastapi import APIRouter, HTTPException, UploadFile, File, Form, WebSocket,
 from pydantic import BaseModel, Field
 import fitz
 from PIL import Image
-from io import BytesIO
 import os
 
 from src.models.enums import SubmissionStatus
 from src.orchestration.base import Orchestrator
 from src.api.dependencies import get_orchestrator
+from src.utils.image import to_jpeg_bytes, pil_to_jpeg_bytes
+from src.db.sqlite import (
+    save_grading_history, 
+    save_student_result, 
+    GradingHistory, 
+    StudentGradingResult,
+    update_homework_submission_status
+)
 
 
 logger = logging.getLogger(__name__)
@@ -30,6 +38,16 @@ router = APIRouter(prefix="/batch", tags=["批量提交"])
 
 # 存储活跃的 WebSocket 连接
 active_connections: Dict[str, List[WebSocket]] = {}
+# 缓存图片，避免 images_ready 早于 WebSocket 连接导致前端丢失
+batch_image_cache: Dict[str, Dict[str, dict]] = {}
+
+
+def _safe_to_jpeg_bytes(image_bytes: bytes, label: str) -> bytes:
+    try:
+        return to_jpeg_bytes(image_bytes)
+    except Exception as exc:
+        logger.warning(f"Failed to convert image to JPEG ({label}): {exc}")
+        return image_bytes
 
 
 class BatchSubmissionResponse(BaseModel):
@@ -51,6 +69,24 @@ class BatchStatusResponse(BaseModel):
     results: Optional[dict] = Field(None, description="批改结果")
 
 
+class RubricReviewContextResponse(BaseModel):
+    """前端 rubric review 上下文"""
+    batch_id: str
+    status: Optional[str] = None
+    current_stage: Optional[str] = None
+    parsed_rubric: Optional[dict] = None
+    rubric_images: List[str] = []
+
+
+class ResultsReviewContextResponse(BaseModel):
+    """前端 results review 上下文"""
+    batch_id: str
+    status: Optional[str] = None
+    current_stage: Optional[str] = None
+    student_results: List[dict] = []
+    answer_images: List[str] = []
+
+
 def _pdf_to_images(pdf_path: str, dpi: int = 150) -> List[bytes]:
     """将 PDF 转换为图像列表"""
     pdf_doc = fitz.open(pdf_path)
@@ -62,9 +98,7 @@ def _pdf_to_images(pdf_path: str, dpi: int = 150) -> List[bytes]:
         pix = page.get_pixmap(matrix=mat)
         img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
         
-        img_bytes = BytesIO()
-        img.save(img_bytes, format='PNG')
-        images.append(img_bytes.getvalue())
+        images.append(pil_to_jpeg_bytes(img))
     
     pdf_doc.close()
     return images
@@ -72,6 +106,47 @@ def _pdf_to_images(pdf_path: str, dpi: int = 150) -> List[bytes]:
 
 async def broadcast_progress(batch_id: str, message: dict):
     """向所有连接的 WebSocket 客户端广播进度"""
+    # #region agent log - 假设J: broadcast_progress 被调用
+    msg_type = message.get("type", "unknown")
+    if msg_type in ("images_ready", "rubric_images_ready", "review_required"):
+        cached = batch_image_cache.setdefault(batch_id, {})
+        cached[msg_type] = message
+    if msg_type == "llm_stream_chunk":
+        node_id = message.get("nodeId") or ""
+        if node_id in ("rubric_parse", "rubric_review"):
+            cached = batch_image_cache.setdefault(batch_id, {})
+            stream_cache = cached.setdefault("llm_stream_cache", {})
+            cache_key = f"{node_id}:{message.get('agentId') or 'all'}:{message.get('streamType') or 'output'}"
+            existing = stream_cache.get(cache_key, {})
+            chunk_data = message.get("chunk", "") or ""
+            if isinstance(chunk_data, list):
+                chunk_data = "".join([str(c) for c in chunk_data])
+            else:
+                chunk_data = str(chunk_data)
+            
+            existing_chunk = existing.get("chunk", "") or ""
+            combined = existing_chunk + chunk_data
+            max_chars = 12000
+            if len(combined) > max_chars:
+                combined = combined[-max_chars:]
+            stream_cache[cache_key] = {
+                **message,
+                "chunk": combined,
+            }
+    if msg_type in ("review_completed", "workflow_completed"):
+        cached = batch_image_cache.get(batch_id)
+        if cached and "review_required" in cached:
+            cached.pop("review_required", None)
+        if cached and "llm_stream_cache" in cached:
+            cached.pop("llm_stream_cache", None)
+    if msg_type == "workflow_completed":
+        import json as _json_debug_j
+        from datetime import datetime as _dt_j
+        import traceback as _tb_j
+        stack = ''.join(_tb_j.format_stack()[-5:-1])  # 获取调用栈
+        with open(r'd:\project\aiguru\.cursor\debug.log', 'a', encoding='utf-8') as _f:
+            _f.write(_json_debug_j.dumps({"hypothesisId":"J","location":"batch_langgraph.py:broadcast_progress","message":"broadcast_progress发送workflow_completed","data":{"batch_id":batch_id,"results_count":len(message.get("results",[])),"stack_trace":stack[:500]},"timestamp":int(_dt_j.now().timestamp()*1000),"sessionId":"debug-session"}, ensure_ascii=False) + '\n')
+    # #endregion
     if batch_id in active_connections:
         disconnected = []
         for ws in active_connections[batch_id]:
@@ -89,12 +164,25 @@ async def broadcast_progress(batch_id: str, message: dict):
 @router.post("/submit", response_model=BatchSubmissionResponse)
 async def submit_batch(
     exam_id: Optional[str] = Form(None, description="考试 ID"),
-    rubrics: List[UploadFile] = File(..., description="评分标准 PDF"),
+    rubrics: List[UploadFile] = File(default=[], description="评分标准 PDF（可选）"),
     files: List[UploadFile] = File(..., description="学生作答 PDF"),
     api_key: Optional[str] = Form(None, description="Gemini API Key"),
     auto_identify: bool = Form(True, description="是否自动识别学生身份"),
+    student_boundaries: Optional[str] = Form(None, description="手动设置的学生边界 (JSON List of page indices)"),
+    expected_students: Optional[int] = Form(None, description="预期学生数量（强烈建议提供，用于更准确的分割）"),
+    # 新增：班级批改上下文
+    class_id: Optional[str] = Form(None, description="班级 ID（用于成绩写回）"),
+    homework_id: Optional[str] = Form(None, description="作业 ID（用于成绩写回）"),
+    student_mapping_json: Optional[str] = Form(None, description="学生映射 JSON [{studentId, studentName, startIndex, endIndex}]"),
     orchestrator: Orchestrator = Depends(get_orchestrator)
 ):
+    import datetime
+    print(f"DEBUG: submit_batch called at {datetime.datetime.now()}", flush=True)
+    try:
+        with open("debug_entry.txt", "a") as f:
+            f.write(f"Entered at {datetime.datetime.now()}\n")
+    except Exception:
+        pass
     """
     批量提交试卷并进行批改（使用 LangGraph Orchestrator）
     
@@ -114,8 +202,40 @@ async def submit_batch(
     Returns:
         BatchSubmissionResponse: 批次信息
     """
+    # #region agent log - 假设K: submit_batch 被调用
+    import json as _json_debug_k
+    from datetime import datetime as _dt_k
+    with open(r'd:\project\aiguru\.cursor\debug.log', 'a', encoding='utf-8') as _f:
+        _f.write(_json_debug_k.dumps({"hypothesisId":"K","location":"batch_langgraph.py:submit_batch:entry","message":"submit_batch端点被调用","data":{"files_count":len(files),"rubrics_count":len(rubrics)},"timestamp":int(_dt_k.now().timestamp()*1000),"sessionId":"debug-session"}, ensure_ascii=False) + '\n')
+    # #endregion
+    # 检查 orchestrator 是否可用
+    if not orchestrator:
+        raise HTTPException(
+            status_code=503, 
+            detail="批改服务未初始化，请稍后重试或检查服务配置"
+        )
+    
     if not api_key:
         api_key = os.getenv("GEMINI_API_KEY")
+    
+    if not api_key:
+        raise HTTPException(
+            status_code=400,
+            detail="未提供 API Key，请在请求中提供或配置环境变量 GEMINI_API_KEY"
+        )
+
+
+    
+    # 解析学生边界
+    parsed_boundaries = []
+    if student_boundaries:
+        try:
+            logger.info(f"接收到原始 student_boundaries: {student_boundaries} (type: {type(student_boundaries)})")
+            import json
+            parsed_boundaries = json.loads(student_boundaries)
+            logger.info(f"解析后的 manual_boundaries: {parsed_boundaries}")
+        except Exception as e:
+            logger.warning(f"解析手动学生边界失败: {e}")
 
     if not exam_id:
         exam_id = str(uuid.uuid4())
@@ -135,45 +255,133 @@ async def submit_batch(
         temp_dir = tempfile.mkdtemp()
         temp_path = Path(temp_dir)
         
-        # 保存上传的文件
-        rubric_path = temp_path / "rubric.pdf"
-        answer_path = temp_path / "answer.pdf"
+        # === 处理答题文件（支持图片列表或单个 PDF）===
+        answer_images = []
         
-        rubric_content = await rubrics[0].read()
-        answer_content = await files[0].read()
-        
-        with open(rubric_path, "wb") as f:
-            f.write(rubric_content)
-        with open(answer_path, "wb") as f:
-            f.write(answer_content)
-        
-        # 转换 PDF 为图像
-        logger.info(f"转换 PDF 为图像: batch_id={batch_id}")
-        loop = asyncio.get_event_loop()
-        rubric_images = await loop.run_in_executor(None, _pdf_to_images, str(rubric_path), 150)
-        answer_images = await loop.run_in_executor(None, _pdf_to_images, str(answer_path), 150)
+        for idx, file in enumerate(files):
+            file_name = file.filename or f"file_{idx}"
+            content = await file.read()
+            
+            # 检查文件类型
+            if file_name.lower().endswith(('.png', '.jpg', '.jpeg', '.webp', '.gif')):
+                # 图片文件：直接使用内容
+                answer_images.append(_safe_to_jpeg_bytes(content, file_name))
+                logger.debug(f"读取图片文件: {file_name}, 大小: {len(content)} bytes")
+            elif file_name.lower().endswith('.pdf'):
+                # PDF 文件：转换为图像
+                pdf_path = temp_path / f"answer_{idx}.pdf"
+                with open(pdf_path, "wb") as f:
+                    f.write(content)
+                loop = asyncio.get_event_loop()
+                pdf_images = await loop.run_in_executor(None, _pdf_to_images, str(pdf_path), 150)
+                answer_images.extend(pdf_images)
+                logger.info(f"PDF 文件 {file_name} 转换为 {len(pdf_images)} 页图片")
+            elif file_name.lower().endswith('.txt'):
+                # 文本文件：直接使用内容
+                answer_images.append(content)
+                logger.info(f"文本文件处理完成: {file_name}, 内容长度={len(content)}")
+            else:
+                # 尝试作为图片处理（可能没有扩展名）
+                answer_images.append(_safe_to_jpeg_bytes(content, file_name))
+                logger.warning(f"未知文件类型 {file_name}，尝试作为图片处理")
         
         total_pages = len(answer_images)
+        logger.info(f"答题文件处理完成: batch_id={batch_id}, 总页数={total_pages}")
+        
+        # === 处理评分标准（可选）===
+        # Convert images to base64 and cache them immediately
+        # (Fix: Rubric images not displaying on frontend)
+        if answer_images:
+            try:
+                base64_images = [base64.b64encode(img).decode('utf-8') for img in answer_images]
+                
+                # Cache for direct WebSocket connection
+                batch_image_cache.setdefault(batch_id, {})["images_ready"] = {
+                    "type": "images_ready",
+                    "images": base64_images
+                }
+                
+                # Broadcast (though no clients connected yet usually)
+                await broadcast_progress(batch_id, {
+                    "type": "images_ready",
+                    "images": base64_images
+                })
+                logger.info(f"已缓存 {len(base64_images)} 张图片用于前端显示")
+            except Exception as e:
+                logger.error(f"图片 Base64 转换失败: {e}")
+
+        # === 处理评分标准（可选）===
+        rubric_images = []
+        if rubrics and len(rubrics) > 0:
+            for idx, rubric_file in enumerate(rubrics):
+                rubric_name = rubric_file.filename or f"rubric_{idx}"
+                rubric_content = await rubric_file.read()
+                
+                if rubric_name.lower().endswith(('.png', '.jpg', '.jpeg', '.webp', '.gif')):
+                    rubric_images.append(_safe_to_jpeg_bytes(rubric_content, rubric_name))
+                elif rubric_name.lower().endswith('.pdf'):
+                    rubric_path = temp_path / f"rubric_{idx}.pdf"
+                    with open(rubric_path, "wb") as f:
+                        f.write(rubric_content)
+                    loop = asyncio.get_event_loop()
+                    pdf_rubric_images = await loop.run_in_executor(None, _pdf_to_images, str(rubric_path), 150)
+                    rubric_images.extend(pdf_rubric_images)
+                else:
+                    rubric_images.append(_safe_to_jpeg_bytes(rubric_content, rubric_name))
+            
+            logger.info(f"评分标准处理完成: batch_id={batch_id}, 总页数={len(rubric_images)}")
+            if rubric_images:
+                try:
+                    base64_rubric_images = [base64.b64encode(img).decode("utf-8") for img in rubric_images]
+                    batch_image_cache.setdefault(batch_id, {})["rubric_images_ready"] = {
+                        "type": "rubric_images_ready",
+                        "images": base64_rubric_images
+                    }
+                    await broadcast_progress(batch_id, {
+                        "type": "rubric_images_ready",
+                        "images": base64_rubric_images
+                    })
+                    logger.info(f"已缓存 {len(base64_rubric_images)} 张评分标准图片用于前端显示")
+                except Exception as e:
+                    logger.error(f"评分标准 Base64 转换失败: {e}")
+        else:
+            logger.info(f"未提供评分标准，将使用默认评分: batch_id={batch_id}")
         
         logger.info(
-            f"PDF 转换完成: "
+            f"文件处理完成: "
             f"batch_id={batch_id}, "
             f"rubric_pages={len(rubric_images)}, "
             f"answer_pages={total_pages}"
         )
         
         # 🚀 使用 LangGraph Orchestrator 启动批改流程
+        
+        # 解析学生映射（班级批改模式）
+        student_mapping = []
+        if student_mapping_json:
+            try:
+                import json
+                student_mapping = json.loads(student_mapping_json)
+                logger.info(f"班级批改模式: class_id={class_id}, homework_id={homework_id}, 学生数={len(student_mapping)}")
+            except Exception as e:
+                logger.warning(f"解析学生映射失败: {e}")
+        
         payload = {
             "batch_id": batch_id,
             "exam_id": exam_id,
-            "pdf_path": str(answer_path),
+            "temp_dir": str(temp_path),  # 临时目录（用于清理）
             "rubric_images": rubric_images,
             "answer_images": answer_images,
             "api_key": api_key,
+            # 班级批改上下文（可选）
+            "class_id": class_id,
+            "homework_id": homework_id,
+            "student_mapping": student_mapping,
             "inputs": {
-                "pdf_path": str(answer_path),
                 "rubric": "rubric_content",  # TODO: 解析 rubric
-                "auto_identify": auto_identify
+                "auto_identify": auto_identify,
+                "manual_boundaries": parsed_boundaries,  # 传递人工边界
+                "expected_students": expected_students if expected_students else 2,  # 🔥 默认 2 名学生
             }
         }
         
@@ -195,7 +403,10 @@ async def submit_batch(
             stream_langgraph_progress(
                 batch_id=batch_id,
                 run_id=run_id,
-                orchestrator=orchestrator
+                orchestrator=orchestrator,
+                class_id=class_id,
+                homework_id=homework_id,
+                student_mapping=student_mapping
             )
         )
         
@@ -211,10 +422,91 @@ async def submit_batch(
         raise HTTPException(status_code=500, detail=f"批量提交失败: {str(e)}")
 
 
+@router.get("/rubric/{batch_id}", response_model=RubricReviewContextResponse)
+async def get_rubric_review_context(
+    batch_id: str,
+    orchestrator: Orchestrator = Depends(get_orchestrator)
+):
+    """获取评分标准审核上下文"""
+    if not orchestrator:
+         raise HTTPException(status_code=503, detail="服务未初始化")
+
+    # Reconstruct run_id (assuming idempotency_key=batch_id)
+    run_id = f"batch_grading_{batch_id}"
+    
+    try:
+        # Get state from orchestrator
+        state = await orchestrator.get_state(run_id)
+        
+        # Try to get images from cache first (faster)
+        rubric_images = []
+        cached = batch_image_cache.get(batch_id, {})
+        if "rubric_images_ready" in cached:
+             rubric_images = cached["rubric_images_ready"].get("images", [])
+        
+        # If not in cache, try to get from state
+        if not rubric_images and state.get("rubric_images"):
+             # State stores bytes, need to convert to base64
+             try:
+                 rubric_images = [base64.b64encode(img).decode('utf-8') for img in state["rubric_images"]]
+             except Exception:
+                 pass
+
+        return RubricReviewContextResponse(
+            batch_id=batch_id,
+            status=state.get("status", "unknown"),
+            current_stage=state.get("current_stage"),
+            parsed_rubric=state.get("parsed_rubric"),
+            rubric_images=rubric_images
+        )
+    except Exception as e:
+        logger.error(f"获取 Rubric Review Context 失败: {e}", exc_info=True)
+        raise HTTPException(status_code=404, detail=f"未找到批次 {batch_id} 的信息")
+
+@router.get("/results/{batch_id}", response_model=ResultsReviewContextResponse)
+async def get_results_review_context(
+    batch_id: str,
+    orchestrator: Orchestrator = Depends(get_orchestrator)
+):
+    """获取结果审核上下文"""
+    if not orchestrator:
+         raise HTTPException(status_code=503, detail="服务未初始化")
+
+    run_id = f"batch_grading_{batch_id}"
+    
+    try:
+        state = await orchestrator.get_state(run_id)
+        
+        # Images from cache or state
+        answer_images = []
+        cached = batch_image_cache.get(batch_id, {})
+        if "images_ready" in cached:
+             answer_images = cached["images_ready"].get("images", [])
+        
+        if not answer_images and state.get("answer_images"):
+             try:
+                 answer_images = [base64.b64encode(img).decode('utf-8') for img in state["answer_images"]]
+             except Exception:
+                 pass
+
+        return ResultsReviewContextResponse(
+            batch_id=batch_id,
+            status=state.get("status", "unknown"),
+            current_stage=state.get("current_stage"),
+            student_results=state.get("student_results", []) or [],
+            answer_images=answer_images
+        )
+    except Exception as e:
+        logger.error(f"获取 Results Review Context 失败: {e}", exc_info=True)
+        raise HTTPException(status_code=404, detail=f"未找到批次 {batch_id} 的信息")
+
 async def stream_langgraph_progress(
     batch_id: str,
     run_id: str,
-    orchestrator: Orchestrator
+    orchestrator: Orchestrator,
+    class_id: Optional[str] = None,
+    homework_id: Optional[str] = None,
+    student_mapping: Optional[List[dict]] = None
 ):
     """
     流式监听 LangGraph 执行进度并推送到 WebSocket
@@ -226,6 +518,12 @@ async def stream_langgraph_progress(
         run_id: LangGraph 运行 ID
         orchestrator: LangGraph Orchestrator
     """
+    # #region agent log - 假设G: stream_langgraph_progress 入口
+    import json as _json_debug_g
+    from datetime import datetime as _dt_g
+    with open(r'd:\project\aiguru\.cursor\debug.log', 'a', encoding='utf-8') as _f:
+        _f.write(_json_debug_g.dumps({"hypothesisId":"G","location":"batch_langgraph.py:stream_langgraph_progress:entry","message":"stream_langgraph_progress函数被调用","data":{"batch_id":batch_id,"run_id":run_id},"timestamp":int(_dt_g.now().timestamp()*1000),"sessionId":"debug-session"}, ensure_ascii=False) + '\n')
+    # #endregion
     logger.info(f"开始流式监听 LangGraph 进度: batch_id={batch_id}, run_id={run_id}")
     
     try:
@@ -244,39 +542,156 @@ async def stream_langgraph_progress(
             
             # 将 LangGraph 事件转换为前端 WebSocket 消息
             if event_type == "node_start":
-                await broadcast_progress(batch_id, {
-                    "type": "workflow_update",
-                    "nodeId": _map_node_to_frontend(node_name),
-                    "status": "running",
-                    "message": f"正在执行 {node_name}..."
-                })
+                if node_name != "rubric_review":
+                    await broadcast_progress(batch_id, {
+                        "type": "workflow_update",
+                        "nodeId": _map_node_to_frontend(node_name),
+                        "status": "running",
+                        "message": f"Running {_get_node_display_name(node_name)}..."
+                    })
             
             elif event_type == "node_end":
-                await broadcast_progress(batch_id, {
-                    "type": "workflow_update",
-                    "nodeId": _map_node_to_frontend(node_name),
-                    "status": "completed",
-                    "message": f"{node_name} 完成"
-                })
+                if node_name != "rubric_review":
+                    await broadcast_progress(batch_id, {
+                        "type": "workflow_update",
+                        "nodeId": _map_node_to_frontend(node_name),
+                        "status": "completed",
+                        "message": f"{_get_node_display_name(node_name)} completed"
+                    })
+                
+                # 处理节点输出
+                output = data.get("output", {})
+                if isinstance(output, dict):
+                    interrupt_payload = output.get("__interrupt__")
+                    if interrupt_payload:
+                        review_type = interrupt_payload.get("type") if isinstance(interrupt_payload, dict) else "review_required"
+                        await broadcast_progress(batch_id, {
+                            "type": "review_required",
+                            "reviewType": review_type,
+                            "payload": interrupt_payload,
+                        })
+                    # 评分标准解析完成
+                    if node_name == "rubric_parse" and output.get("parsed_rubric"):
+                        parsed = output["parsed_rubric"]
+                        await broadcast_progress(batch_id, {
+                            "type": "rubric_parsed",
+                            "totalQuestions": parsed.get("total_questions", 0),
+                            "totalScore": parsed.get("total_score", 0),
+                            "generalNotes": parsed.get("general_notes", ""),
+                            "rubricFormat": parsed.get("rubric_format", ""),
+                            "questions": [
+                                {
+                                    "questionId": q.get("question_id", ""),
+                                    "maxScore": q.get("max_score", 0),
+                                    "questionText": q.get("question_text", ""),
+                                    "standardAnswer": q.get("standard_answer", ""),
+                                    "gradingNotes": q.get("grading_notes", ""),
+                                    "sourcePages": q.get("source_pages") or q.get("sourcePages") or [],
+                                  "scoringPoints": [
+                                      {
+                                          "pointId": sp.get("point_id") or sp.get("pointId"),
+                                          "description": sp.get("description", ""),
+                                          "expectedValue": sp.get("expected_value") or sp.get("expectedValue", ""),
+                                          "keywords": sp.get("keywords") or [],
+                                          "score": sp.get("score", 0),
+                                          "isRequired": sp.get("is_required", True),
+                                      }
+                                      for sp in q.get("scoring_points", [])
+                                  ],
+                                    "alternativeSolutions": [
+                                        {
+                                            "description": alt.get("description", ""),
+                                            "scoringCriteria": alt.get("scoring_criteria", ""),
+                                            "note": alt.get("note", ""),
+                                        }
+                                        for alt in q.get("alternative_solutions", [])
+                                    ]
+                                }
+                                for q in parsed.get("questions", [])
+                            ]
+                        })
+                    
+                    # 批改批次完成
+                    if node_name == "grade_batch" and output.get("grading_results"):
+                        results = output["grading_results"]
+                        completed = sum(1 for r in results if r.get("status") == "completed")
+                        
+                        await broadcast_progress(batch_id, {
+                            "type": "batch_complete",
+                            "batchSize": len(results),
+                            "successCount": completed,
+                            "totalScore": sum(r.get("score", 0) for r in results if r.get("status") == "completed"),
+                            "pages": [r.get("page_index") for r in results]
+                        })
+                    
+                    # 索引完成（学生识别）
+                    if node_name == "index" and output.get("student_boundaries"):
+                        boundaries = output["student_boundaries"]
+                        await broadcast_progress(batch_id, {
+                            "type": "students_identified",
+                            "studentCount": len(boundaries),
+                            "students": [
+                                {
+                                    "studentKey": b.get("student_key", ""),
+                                    "startPage": b.get("start_page", 0),
+                                    "endPage": b.get("end_page", 0),
+                                    "confidence": b.get("confidence", 0),
+                                    "needsConfirmation": b.get("needs_confirmation", False)
+                                }
+                                for b in boundaries
+                            ]
+                        })
+                    
+                    # 审核完成
+                    if node_name == "review" and output.get("review_summary"):
+                        await broadcast_progress(batch_id, {
+                            "type": "review_completed",
+                            "summary": output["review_summary"]
+                        })
+                    
+                    # 跨页题目合并完成
+                    if node_name == "cross_page_merge":
+                        cross_page_questions = output.get("cross_page_questions", [])
+                        merged_questions = output.get("merged_questions", [])
+                        if cross_page_questions:
+                            await broadcast_progress(batch_id, {
+                                "type": "cross_page_detected",
+                                "questions": cross_page_questions,
+                                "mergedCount": len(merged_questions),
+                                "crossPageCount": len(cross_page_questions)
+                            })
             
+            elif event_type == "paused":
+                # 处理 Graph 中断/暂停（通常是需要人工审核）
+                data = event.get("data", {})
+                interrupt_value = data.get("interrupt_value")
+                
+                logger.info(f"LangGraph 暂停: batch_id={batch_id}, interrupt_value={interrupt_value}")
+                
+                if interrupt_value:
+                    # 如果有中断 payload，广播 review_required
+                    review_type = interrupt_value.get("type") if isinstance(interrupt_value, dict) else "review_required"
+                    await broadcast_progress(batch_id, {
+                        "type": "review_required",
+                        "reviewType": review_type,
+                        "payload": interrupt_value,
+                    })
+                else:
+                    # 如果没有 payload，至少通知状态变更
+                    await broadcast_progress(batch_id, {
+                        "type": "workflow_update",
+                        "status": "paused",
+                        "message": "Workflow paused (awaiting input)"
+                    })
+
+            elif event_type == "completed":
+                # Graph 执行完成
+                logger.info(f"LangGraph 执行完成: batch_id={batch_id}")
+                # 可以在这里广播 completed 事件，或者依赖 state_update 通过 percentage=100 来通知
+
             elif event_type == "state_update":
                 # 推送状态更新
                 state = data.get("state", {})
-                
-                # 评分标准解析完成
-                if state.get("rubric_parsed"):
-                    await broadcast_progress(batch_id, {
-                        "type": "rubric_parsed",
-                        "totalQuestions": state.get("total_questions", 0),
-                        "totalScore": state.get("total_score", 0)
-                    })
-                
-                # 学生边界识别完成
-                if state.get("student_boundaries"):
-                    await broadcast_progress(batch_id, {
-                        "type": "student_identified",
-                        "boundaries": state["student_boundaries"]
-                    })
                 
                 # 批次进度更新
                 if state.get("progress"):
@@ -288,7 +703,26 @@ async def stream_langgraph_progress(
                         "successCount": progress.get("success_count", 0),
                         "failureCount": progress.get("failure_count", 0)
                     })
+                
+                # 百分比进度
+                if state.get("percentage"):
+                    await broadcast_progress(batch_id, {
+                        "type": "grading_progress",
+                        "percentage": state["percentage"],
+                        "currentStage": state.get("current_stage", "")
+                    })
             
+            elif event_type == "llm_stream":
+                # Real-time LLM token streaming
+                node_name = event.get("node") or data.get("node", "")
+                chunk = data.get("chunk") or data.get("content") or ""
+                await broadcast_progress(batch_id, {
+                    "type": "llm_stream_chunk",
+                    "nodeId": _map_node_to_frontend(node_name) if node_name else None,
+                    "nodeName": _get_node_display_name(node_name) if node_name else None,
+                    "chunk": chunk,
+                })
+
             elif event_type == "error":
                 await broadcast_progress(batch_id, {
                     "type": "workflow_error",
@@ -296,14 +730,114 @@ async def stream_langgraph_progress(
                 })
             
             elif event_type == "completed":
-                # 工作流完成
+                # #region agent log - 假设H: completed 事件
+                import json as _json_debug_h
+                from datetime import datetime as _dt_h
+                with open(r'd:\project\aiguru\.cursor\debug.log', 'a', encoding='utf-8') as _f:
+                    _f.write(_json_debug_h.dumps({"hypothesisId":"H","location":"batch_langgraph.py:event_completed","message":"收到completed事件","data":{"event_type":event_type,"data_keys":list(data.keys()) if isinstance(data, dict) else str(type(data))},"timestamp":int(_dt_h.now().timestamp()*1000),"sessionId":"debug-session"}, ensure_ascii=False) + '\n')
+                # #endregion
+                # 工作流完成 - 获取完整的最终状态
                 final_state = data.get("state", {})
-                results = final_state.get("batch_results", [])
+                
+                # 从 student_results 获取结果
+                student_results = final_state.get("student_results", [])
+                
+                # #region agent log - 假设I: student_results 原始数据
+                import json as _json_debug_i
+                from datetime import datetime as _dt_i
+                with open(r'd:\project\aiguru\.cursor\debug.log', 'a', encoding='utf-8') as _f:
+                    _f.write(_json_debug_i.dumps({"hypothesisId":"I","location":"batch_langgraph.py:student_results_raw","message":"student_results原始数据","data":{"count":len(student_results),"students":[{"key":r.get("student_key"),"score":r.get("total_score")} for r in student_results]},"timestamp":int(_dt_i.now().timestamp()*1000),"sessionId":"debug-session"}, ensure_ascii=False) + '\n')
+                # #endregion
+                
+                # 如果没有 student_results，尝试从 orchestrator 获取最终输出
+                if not student_results:
+                    try:
+                        final_output = await orchestrator.get_final_output(run_id)
+                        if final_output:
+                            student_results = final_output.get("student_results", [])
+                            logger.info(f"从 orchestrator 获取到 {len(student_results)} 个学生结果")
+                    except Exception as e:
+                        logger.warning(f"获取最终输出失败: {e}")
+                
+                formatted_results = _format_results_for_frontend(student_results)
+                class_report = final_state.get("class_report")
+                if not class_report and final_state.get("export_data"):
+                    class_report = final_state.get("export_data", {}).get("class_report")
+                
+                # 🚀 班级批改模式：保存成绩到数据库
+                if class_id and homework_id:
+                    try:
+                        logger.info(f"保存班级批改结果: class_id={class_id}, homework_id={homework_id}")
+                        
+                        # 1. 保存批改历史
+                        history_id = str(uuid.uuid4())
+                        history = GradingHistory(
+                            id=history_id,
+                            batch_id=batch_id,
+                            status="completed",
+                            class_ids=[class_id],
+                            total_students=len(formatted_results),
+                            average_score=class_report.get("average_score") if class_report else None,
+                            result_data={"summary": class_report} if class_report else None
+                        )
+                        save_grading_history(history)
+                        
+                        # 2. 映射学生并保存结果
+                        # student_mapping: [{studentId, studentName, startIndex, endIndex}]
+                        # formatted_results: [{studentId, studentName, score, ...}] (studentId is generic 'student_1')
+                        
+                        student_map_lookup = {} # index -> student_info
+                        if student_mapping:
+                            for idx, mapping in enumerate(student_mapping):
+                                student_map_lookup[idx] = mapping
+                                
+                        for idx, result in enumerate(formatted_results):
+                            # 尝试匹配真实学生
+                            real_student = student_map_lookup.get(idx)
+                            student_id = real_student["studentId"] if real_student else None
+                            student_name = real_student["studentName"] if real_student else result.get("studentName")
+                            
+                            # 保存学生结果
+                            student_result = StudentGradingResult(
+                                id=str(uuid.uuid4()),
+                                grading_history_id=history_id,
+                                student_key=result.get("studentId"), # 原始 key (student_1)
+                                score=result.get("score"),
+                                max_score=result.get("totalScore"), # 假设有 totalScore
+                                class_id=class_id,
+                                student_id=student_id,
+                                summary=result.get("summary"),
+                                result_data=result
+                            )
+                            save_student_result(student_result)
+                            
+                            # 更新作业提交状态
+                            if student_id:
+                                update_homework_submission_status(
+                                    class_id=class_id,
+                                    homework_id=homework_id,
+                                    student_id=student_id,
+                                    status="graded",
+                                    grading_batch_id=batch_id
+                                )
+                                
+                        logger.info(f"班级批改结果已保存: history_id={history_id}")
+                        
+                    except Exception as e:
+                        logger.error(f"保存班级批改结果失败: {e}", exc_info=True)
+
+                # #region agent log - 假设E: WebSocket 消息发送
+                import json as _json_debug_e
+                from datetime import datetime as _dt_e
+                with open(r'd:\project\aiguru\.cursor\debug.log', 'a', encoding='utf-8') as _f:
+                    _f.write(_json_debug_e.dumps({"hypothesisId":"E","location":"batch_langgraph.py:workflow_completed","message":"发送workflow_completed","data":{"student_count":len(formatted_results),"students":[{"name":f.get("studentName"),"score":f.get("score")} for f in formatted_results]},"timestamp":int(_dt_e.now().timestamp()*1000),"sessionId":"debug-session"}, ensure_ascii=False) + '\n')
+                # #endregion
                 
                 await broadcast_progress(batch_id, {
                     "type": "workflow_completed",
-                    "message": f"批改完成，共处理 {len(results)} 名学生",
-                    "results": _format_results_for_frontend(results)
+                    "message": f"Grading completed, processed {len(formatted_results)} students",
+                    "results": formatted_results,
+                    "classReport": class_report
                 })
         
         logger.info(f"LangGraph 进度流式传输完成: batch_id={batch_id}")
@@ -320,36 +854,171 @@ async def stream_langgraph_progress(
 
 
 def _map_node_to_frontend(node_name: str) -> str:
-    """将 LangGraph 节点名称映射到前端节点 ID"""
+    """将 LangGraph 节点名称映射到前端节点 ID
+    
+    前端工作流节点（consoleStore.ts initialNodes）：
+    - intake: 接收文件
+    - rubric_parse: 解析评分标准
+    - grade_batch: 分批并行批改（isParallelContainer）
+    - cross_page_merge: 跨页题目合并
+    - index: 批改前索引
+    - index_merge: 索引聚合
+    - export: 导出结果
+    """
     mapping = {
-        "detect_boundaries": "segment",
-        "grade_student": "grading",
+        # 主要节点（与后端 batch_grading.py 完全对应）
+        "intake": "intake",
+        "rubric_parse": "rubric_parse",
+        "rubric_review": "rubric_review",
+        "grade_batch": "grade_batch",
+        "cross_page_merge": "cross_page_merge",
+        "index": "index",
+        "index_merge": "index_merge",
+        "segment": "index_merge",
+        "review": "logic_review",
+        "logic_review": "logic_review",
+        "export": "export",
+        # 兼容旧名称
+        "detect_boundaries": "index",
+        "grade_student": "grade_batch",
+        "grading": "grade_batch",
         "aggregate": "review",
-        "batch_persist": "persist",
+        "batch_persist": "export",
         "batch_notify": "export"
     }
     return mapping.get(node_name, node_name)
 
 
+def _get_node_display_name(node_name: str) -> str:
+    """获取节点的显示名称（中文）"""
+    display_names = {
+        "intake": "Ingest",
+        "preprocess": "Preprocess",
+        "index": "Index",
+        "rubric_parse": "Rubric Parse",
+        "rubric_review": "Rubric Review",
+        "grading_fanout": "Batch Fanout",
+        "grade_batch": "Batch Grading",
+        "cross_page_merge": "Cross-Page Merge",
+        "logic_review": "Logic Review",
+        "index_merge": "Index Merge",
+        "segment": "Index Merge",
+        "review": "Final Review",
+        "export": "Export"
+    }
+    return display_names.get(node_name, node_name)
+
+
 def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
     """格式化批改结果为前端格式"""
+    # #region agent log - 假设D: _format_results_for_frontend 输入
+    import json as _json_debug_d
+    from datetime import datetime as _dt_d
+    with open(r'd:\project\aiguru\.cursor\debug.log', 'a', encoding='utf-8') as _f:
+        _f.write(_json_debug_d.dumps({"hypothesisId":"D","location":"batch_langgraph.py:_format_results_for_frontend:input","message":"输入的results","data":{"count":len(results),"students":[{"key":r.get("student_key"),"score":r.get("total_score")} for r in results]},"timestamp":int(_dt_d.now().timestamp()*1000),"sessionId":"debug-session"}, ensure_ascii=False) + '\n')
+    # #endregion
     formatted = []
     for r in results:
-        formatted.append({
-            "studentName": r.get("student_id", "Unknown"),
-            "score": r.get("total_score", 0),
-            "maxScore": r.get("max_total_score", 100),
-            "questionResults": [
-                {
+        # 处理 question_details 格式
+        question_results = []
+        
+        # 优先使用 question_details
+        if r.get("question_details"):
+            for q in r.get("question_details", []):
+                scoring_results = q.get("scoring_point_results") or q.get("scoring_results") or []
+                question_results.append({
                     "questionId": str(q.get("question_id", "")),
                     "score": q.get("score", 0),
                     "maxScore": q.get("max_score", 0),
                     "feedback": q.get("feedback", ""),
-                    "confidence": q.get("confidence", 0)
-                }
-                for q in r.get("grading_results", [])
-            ]
+                    "confidence": q.get("confidence", 0),
+                    "confidence_reason": q.get("confidence_reason") or q.get("confidenceReason"),
+                    "self_critique": q.get("self_critique") or q.get("selfCritique"),
+                    "self_critique_confidence": q.get("self_critique_confidence") or q.get("selfCritiqueConfidence"),
+                    "rubric_refs": q.get("rubric_refs") or q.get("rubricRefs"),
+                    "review_summary": q.get("review_summary") or q.get("reviewSummary"),
+                    "review_corrections": q.get("review_corrections") or q.get("reviewCorrections"),
+                    "typo_notes": q.get("typo_notes") or q.get("typoNotes"),
+                    "studentAnswer": q.get("student_answer", ""),
+                    "isCorrect": q.get("is_correct", False),
+                    "scoring_point_results": scoring_results,
+                    "page_indices": q.get("page_indices", []),
+                    "is_cross_page": q.get("is_cross_page", False),
+                    "merge_source": q.get("merge_source")
+                })
+        # 兼容旧格式 grading_results
+        elif r.get("grading_results"):
+            for q in r.get("grading_results", []):
+                scoring_results = q.get("scoring_point_results") or q.get("scoring_results") or []
+                question_results.append({
+                    "questionId": str(q.get("question_id", "")),
+                    "score": q.get("score", 0),
+                    "maxScore": q.get("max_score", 0),
+                    "feedback": q.get("feedback", ""),
+                    "confidence": q.get("confidence", 0),
+                    "confidence_reason": q.get("confidence_reason") or q.get("confidenceReason"),
+                    "self_critique": q.get("self_critique") or q.get("selfCritique"),
+                    "self_critique_confidence": q.get("self_critique_confidence") or q.get("selfCritiqueConfidence"),
+                    "rubric_refs": q.get("rubric_refs") or q.get("rubricRefs"),
+                    "review_summary": q.get("review_summary") or q.get("reviewSummary"),
+                    "review_corrections": q.get("review_corrections") or q.get("reviewCorrections"),
+                    "typo_notes": q.get("typo_notes") or q.get("typoNotes"),
+                    "scoring_point_results": scoring_results,
+                    "page_indices": q.get("page_indices", []),
+                    "is_cross_page": q.get("is_cross_page", False),
+                    "merge_source": q.get("merge_source")
+                })
+        # 从 page_results 提取
+        elif r.get("page_results"):
+            for page in r.get("page_results", []):
+                if page.get("status") == "completed":
+                    # 从页面结果中提取题目详情
+                    for q in page.get("question_details", []):
+                        scoring_results = q.get("scoring_point_results") or q.get("scoring_results") or []
+                        page_indices = q.get("page_indices")
+                        if not page_indices and page.get("page_index") is not None:
+                            page_indices = [page.get("page_index")]
+                        question_results.append({
+                            "questionId": str(q.get("question_id", "")),
+                            "score": q.get("score", 0),
+                            "maxScore": q.get("max_score", 0),
+                            "feedback": q.get("feedback", ""),
+                            "confidence": q.get("confidence", 0),
+                            "confidence_reason": q.get("confidence_reason") or q.get("confidenceReason"),
+                            "self_critique": q.get("self_critique") or q.get("selfCritique"),
+                            "self_critique_confidence": q.get("self_critique_confidence") or q.get("selfCritiqueConfidence"),
+                            "rubric_refs": q.get("rubric_refs") or q.get("rubricRefs"),
+                            "review_summary": q.get("review_summary") or q.get("reviewSummary"),
+                            "review_corrections": q.get("review_corrections") or q.get("reviewCorrections"),
+                            "typo_notes": q.get("typo_notes") or q.get("typoNotes"),
+                            "studentAnswer": q.get("student_answer", ""),
+                            "isCorrect": q.get("is_correct", False),
+                            "scoring_point_results": scoring_results,
+                            "page_indices": page_indices or [],
+                            "is_cross_page": q.get("is_cross_page", False),
+                            "merge_source": q.get("merge_source")
+                        })
+        
+        student_summary = r.get("student_summary") or r.get("studentSummary")
+        self_audit = r.get("self_audit") or r.get("selfAudit")
+        formatted.append({
+            "studentName": r.get("student_key") or r.get("student_id", "Unknown"),
+            "score": r.get("total_score", 0),
+            "maxScore": r.get("max_total_score", 100),
+            "startPage": r.get("start_page"),   # 🔥 新增：学生页面范围
+            "endPage": r.get("end_page"),       # 🔥 新增：学生页面范围
+            "questionResults": question_results,
+            "confidence": r.get("confidence", 0),
+            "needsConfirmation": r.get("needs_confirmation", False),
+            "studentSummary": student_summary,
+            "selfAudit": self_audit
         })
+    # #region agent log - 假设D: _format_results_for_frontend 输出
+    import json as _json_debug_d2
+    from datetime import datetime as _dt_d2
+    with open(r'd:\project\aiguru\.cursor\debug.log', 'a', encoding='utf-8') as _f:
+        _f.write(_json_debug_d2.dumps({"hypothesisId":"D","location":"batch_langgraph.py:_format_results_for_frontend:output","message":"输出的formatted","data":{"count":len(formatted),"students":[{"name":f.get("studentName"),"score":f.get("score")} for f in formatted]},"timestamp":int(_dt_d2.now().timestamp()*1000),"sessionId":"debug-session"}, ensure_ascii=False) + '\n')
+    # #endregion
     return formatted
 
 
@@ -361,6 +1030,23 @@ async def websocket_endpoint(websocket: WebSocket, batch_id: str):
     前端通过此端点接收 LangGraph 的实时执行进度
     """
     await websocket.accept()
+
+    cached_images = batch_image_cache.get(batch_id, {})
+    if cached_images:
+        try:
+            for key, message in cached_images.items():
+                if key == "llm_stream_cache":
+                    continue
+                await websocket.send_json(message)
+            stream_cache = cached_images.get("llm_stream_cache")
+            if isinstance(stream_cache, dict):
+                for stream_message in stream_cache.values():
+                    await websocket.send_json({
+                        "type": "llm_stream_chunk",
+                        **stream_message,
+                    })
+        except Exception as e:
+            logger.warning(f"发送缓存图片失败: {e}")
     
     # 注册连接
     if batch_id not in active_connections:
@@ -368,6 +1054,92 @@ async def websocket_endpoint(websocket: WebSocket, batch_id: str):
     active_connections[batch_id].append(websocket)
     
     logger.info(f"WebSocket 连接建立: batch_id={batch_id}")
+
+    # 连接建立后尝试发送当前状态快照，避免前端错过早期事件导致卡住
+    try:
+        orchestrator = await get_orchestrator()
+        if orchestrator:
+            run_id = f"batch_grading_{batch_id}"
+            run_info = await orchestrator.get_run_info(run_id)
+            if run_info and run_info.state:
+                state = run_info.state or {}
+                current_stage = state.get("current_stage", "")
+                percentage = state.get("percentage", 0)
+                if current_stage or percentage:
+                    await websocket.send_json({
+                        "type": "grading_progress",
+                        "percentage": percentage or 0,
+                        "currentStage": current_stage
+                    })
+                if state.get("student_boundaries"):
+                    boundaries = state.get("student_boundaries", [])
+                    await websocket.send_json({
+                        "type": "students_identified",
+                        "studentCount": len(boundaries),
+                        "students": [
+                            {
+                                "studentKey": b.get("student_key", ""),
+                                "startPage": b.get("start_page", 0),
+                                "endPage": b.get("end_page", 0),
+                                "confidence": b.get("confidence", 0),
+                                "needsConfirmation": b.get("needs_confirmation", False)
+                            }
+                            for b in boundaries
+                        ]
+                    })
+                if state.get("parsed_rubric"):
+                    parsed = state.get("parsed_rubric", {})
+                    await websocket.send_json({
+                        "type": "rubric_parsed",
+                        "totalQuestions": parsed.get("total_questions", 0),
+                        "totalScore": parsed.get("total_score", 0),
+                        "generalNotes": parsed.get("general_notes", ""),
+                        "rubricFormat": parsed.get("rubric_format", ""),
+                        "questions": [
+                            {
+                                "questionId": q.get("question_id", ""),
+                                "maxScore": q.get("max_score", 0),
+                                "questionText": q.get("question_text", ""),
+                                "standardAnswer": q.get("standard_answer", ""),
+                                "gradingNotes": q.get("grading_notes", ""),
+                          "scoringPoints": [
+                              {
+                                  "pointId": sp.get("point_id") or sp.get("pointId"),
+                                  "description": sp.get("description", ""),
+                                  "expectedValue": sp.get("expected_value") or sp.get("expectedValue", ""),
+                                  "keywords": sp.get("keywords") or [],
+                                  "score": sp.get("score", 0),
+                                  "isRequired": sp.get("is_required", True),
+                              }
+                              for sp in q.get("scoring_points", [])
+                          ],
+                                "alternativeSolutions": [
+                                    {
+                                        "description": alt.get("description", ""),
+                                        "scoringCriteria": alt.get("scoring_criteria", ""),
+                                        "note": alt.get("note", ""),
+                                    }
+                                    for alt in q.get("alternative_solutions", [])
+                                ]
+                            }
+                            for q in parsed.get("questions", [])
+                        ]
+                    })
+                if run_info.status and run_info.status.value == "completed":
+                    student_results = state.get("student_results", [])
+                    formatted_results = _format_results_for_frontend(student_results)
+                    class_report = state.get("class_report")
+                    if not class_report and state.get("export_data"):
+                        class_report = state.get("export_data", {}).get("class_report")
+                    await websocket.send_json({
+                        "type": "workflow_completed",
+                        "message": f"Grading completed, processed {len(formatted_results)} students",
+                        "results": formatted_results,
+                        "cross_page_questions": state.get("cross_page_questions", []),
+                        "classReport": class_report
+                    })
+    except Exception as e:
+        logger.warning(f"发送状态快照失败: {e}")
     
     try:
         # 保持连接，等待客户端消息或断开
@@ -398,8 +1170,14 @@ async def get_batch_status(
         BatchStatusResponse: 批次状态
     """
     try:
+        if not orchestrator:
+            raise HTTPException(status_code=503, detail="编排器未初始化")
+        
+        # 构建 run_id（与 start_run 中的格式一致）
+        run_id = f"batch_grading_{batch_id}"
+        
         # 从 LangGraph Orchestrator 查询状态
-        run_info = await orchestrator.get_run_info(batch_id)
+        run_info = await orchestrator.get_run_info(run_id)
         
         if not run_info:
             raise HTTPException(status_code=404, detail="批次不存在")
@@ -411,9 +1189,9 @@ async def get_batch_status(
             exam_id=state.get("exam_id", ""),
             status=run_info.status.value,
             total_students=len(state.get("student_boundaries", [])),
-            completed_students=len(state.get("completed_submissions", [])),
+            completed_students=len(state.get("student_results", [])),
             unidentified_pages=0,
-            results=state.get("batch_results")
+            results=state.get("student_results")
         )
         
     except HTTPException:
@@ -421,6 +1199,106 @@ async def get_batch_status(
     except Exception as e:
         logger.error(f"查询批次状态失败: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"查询失败: {str(e)}")
+
+
+@router.get("/rubric/{batch_id}", response_model=RubricReviewContextResponse)
+async def get_rubric_review_context(
+    batch_id: str,
+    orchestrator: Orchestrator = Depends(get_orchestrator)
+):
+    """获取 rubric review 页面上下文"""
+    try:
+        if not orchestrator:
+            raise HTTPException(status_code=503, detail="编排器未初始化")
+
+        run_id = f"batch_grading_{batch_id}"
+        run_info = await orchestrator.get_run_info(run_id)
+        if not run_info:
+            raise HTTPException(status_code=404, detail="批次不存在")
+
+        state = run_info.state or {}
+        parsed_rubric = state.get("parsed_rubric")
+
+        cached = batch_image_cache.get(batch_id, {})
+        cached_images = cached.get("rubric_images_ready", {}).get("images") if cached else None
+        rubric_images: List[str] = cached_images or []
+
+        if not rubric_images and state.get("rubric_images"):
+            try:
+                rubric_images = [
+                    base64.b64encode(img).decode("utf-8")
+                    for img in state.get("rubric_images", [])
+                    if isinstance(img, (bytes, bytearray))
+                ]
+            except Exception as exc:
+                logger.warning(f"转换 rubric 图像失败: {exc}")
+
+        return RubricReviewContextResponse(
+            batch_id=batch_id,
+            status=run_info.status.value if run_info.status else None,
+            current_stage=state.get("current_stage"),
+            parsed_rubric=parsed_rubric,
+            rubric_images=rubric_images,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error(f"获取 rubric 上下文失败: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"获取失败: {str(exc)}")
+
+
+@router.get("/results-review/{batch_id}", response_model=ResultsReviewContextResponse)
+async def get_results_review_context(
+    batch_id: str,
+    orchestrator: Orchestrator = Depends(get_orchestrator)
+):
+    """获取 results review 页面上下文"""
+    try:
+        if not orchestrator:
+            raise HTTPException(status_code=503, detail="编排器未初始化")
+
+        run_id = f"batch_grading_{batch_id}"
+        run_info = await orchestrator.get_run_info(run_id)
+        if not run_info:
+            raise HTTPException(status_code=404, detail="批次不存在")
+
+        state = run_info.state or {}
+        student_results = state.get("student_results", [])
+        if not student_results:
+            try:
+                final_output = await orchestrator.get_final_output(run_id)
+                if final_output:
+                    student_results = final_output.get("student_results", [])
+            except Exception as exc:
+                logger.warning(f"获取最终输出失败: {exc}")
+
+        cached = batch_image_cache.get(batch_id, {})
+        cached_images = cached.get("images_ready", {}).get("images") if cached else None
+        answer_images: List[str] = cached_images or []
+
+        if not answer_images:
+            raw_images = state.get("processed_images") or state.get("answer_images") or []
+            try:
+                answer_images = [
+                    base64.b64encode(img).decode("utf-8")
+                    for img in raw_images
+                    if isinstance(img, (bytes, bytearray))
+                ]
+            except Exception as exc:
+                logger.warning(f"转换答题图片失败: {exc}")
+
+        return ResultsReviewContextResponse(
+            batch_id=batch_id,
+            status=run_info.status.value if run_info.status else None,
+            current_stage=state.get("current_stage"),
+            student_results=_format_results_for_frontend(student_results),
+            answer_images=answer_images,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error(f"获取 results 上下文失败: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"获取失败: {str(exc)}")
 
 
 @router.get("/results/{batch_id}")
@@ -439,18 +1317,36 @@ async def get_batch_results(
         批改结果
     """
     try:
-        run_info = await orchestrator.get_run_info(batch_id)
+        if not orchestrator:
+            raise HTTPException(status_code=503, detail="编排器未初始化")
+        
+        # 构建 run_id（与 start_run 中的格式一致）
+        run_id = f"batch_grading_{batch_id}"
+        
+        run_info = await orchestrator.get_run_info(run_id)
         
         if not run_info:
             raise HTTPException(status_code=404, detail="批次不存在")
         
         state = run_info.state or {}
-        results = state.get("batch_results", [])
+        
+        # 优先从 student_results 获取结果
+        student_results = state.get("student_results", [])
+        
+        # 如果没有 student_results，尝试从 orchestrator 获取最终输出
+        if not student_results:
+            try:
+                final_output = await orchestrator.get_final_output(run_id)
+                if final_output:
+                    student_results = final_output.get("student_results", [])
+            except Exception as e:
+                logger.warning(f"获取最终输出失败: {e}")
         
         return {
             "batch_id": batch_id,
             "status": run_info.status.value,
-            "results": _format_results_for_frontend(results)
+            "results": _format_results_for_frontend(student_results),
+            "class_report": state.get("class_report")
         }
         
     except HTTPException:
@@ -458,3 +1354,422 @@ async def get_batch_results(
     except Exception as e:
         logger.error(f"获取批改结果失败: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"获取失败: {str(e)}")
+
+
+@router.get("/full-results/{batch_id}")
+async def get_full_batch_results(
+    batch_id: str,
+    orchestrator: Orchestrator = Depends(get_orchestrator)
+):
+    """
+    获取批次完整批改结果（包含跨页题目信息）
+    
+    Args:
+        batch_id: 批次 ID
+        orchestrator: LangGraph Orchestrator
+        
+    Returns:
+        完整批改结果（包含跨页题目信息）
+    """
+    try:
+        if not orchestrator:
+            raise HTTPException(status_code=503, detail="编排器未初始化")
+        
+        run_id = f"batch_grading_{batch_id}"
+        run_info = await orchestrator.get_run_info(run_id)
+        
+        if not run_info:
+            raise HTTPException(status_code=404, detail="批次不存在")
+        
+        state = run_info.state or {}
+        student_results = state.get("student_results", [])
+        cross_page_questions = state.get("cross_page_questions", [])
+        parsed_rubric = state.get("parsed_rubric", {})
+        class_report = state.get("class_report") or state.get("export_data", {}).get("class_report")
+        
+        return {
+            "batch_id": batch_id,
+            "status": run_info.status.value,
+            "results": _format_results_for_frontend(student_results),
+            "cross_page_questions": cross_page_questions,
+            "parsed_rubric": parsed_rubric,
+            "class_report": class_report,
+            "total_students": len(student_results),
+            "total_score": parsed_rubric.get("total_score", 100) if parsed_rubric else 100
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"获取完整批改结果失败: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"获取失败: {str(e)}")
+
+
+@router.get("/cross-page-questions/{batch_id}")
+async def get_cross_page_questions(
+    batch_id: str,
+    orchestrator: Orchestrator = Depends(get_orchestrator)
+):
+    """
+    获取跨页题目信息
+    
+    Args:
+        batch_id: 批次 ID
+        orchestrator: LangGraph Orchestrator
+        
+    Returns:
+        跨页题目信息列表
+    """
+    try:
+        if not orchestrator:
+            raise HTTPException(status_code=503, detail="编排器未初始化")
+        
+        run_id = f"batch_grading_{batch_id}"
+        run_info = await orchestrator.get_run_info(run_id)
+        
+        if not run_info:
+            raise HTTPException(status_code=404, detail="批次不存在")
+        
+        state = run_info.state or {}
+        cross_page_questions = state.get("cross_page_questions", [])
+        
+        return cross_page_questions
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"获取跨页题目信息失败: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"获取失败: {str(e)}")
+
+
+class ConfirmBoundaryRequest(BaseModel):
+    """确认学生边界请求"""
+    batch_id: str = Field(..., description="批次 ID")
+    student_key: str = Field(..., description="学生标识")
+    confirmed_pages: List[int] = Field(..., description="确认的页面索引列表")
+
+
+class RubricReviewRequest(BaseModel):
+    """提交评分标准人工确认结果"""
+    batch_id: str = Field(..., description="批次 ID")
+    action: str = Field(..., description="approve/update/reparse")
+    parsed_rubric: Optional[Dict[str, Any]] = Field(None, description="修正后的评分标准")
+    selected_question_ids: Optional[List[str]] = Field(None, description="仅重修正的问题 ID 列表")
+    notes: Optional[str] = Field(None, description="补充说明")
+
+
+class ResultsReviewRequest(BaseModel):
+    """提交批改结果人工确认结果"""
+    batch_id: str = Field(..., description="批次 ID")
+    action: str = Field(..., description="approve/update/regrade")
+    results: Optional[List[Dict[str, Any]]] = Field(None, description="修正后的结果")
+    regrade_items: Optional[List[Dict[str, Any]]] = Field(
+        None,
+        description="需要重新批改的题目项",
+    )
+    notes: Optional[str] = Field(None, description="补充说明")
+
+
+@router.post("/review/rubric")
+async def submit_rubric_review(
+    request: RubricReviewRequest,
+    orchestrator: Orchestrator = Depends(get_orchestrator)
+):
+    """提交评分标准复核结果，恢复 workflow"""
+    try:
+        if not orchestrator:
+            raise HTTPException(status_code=503, detail="编排器未初始化")
+
+        action = request.action.lower().strip()
+        if action not in ("approve", "update", "override", "reparse"):
+            raise HTTPException(status_code=400, detail="无效的 review action")
+
+        run_id = f"batch_grading_{request.batch_id}"
+        run_info = await orchestrator.get_run_info(run_id)
+        if not run_info:
+            raise HTTPException(status_code=404, detail="批次不存在")
+
+        payload: Dict[str, Any] = {
+            "action": action,
+        }
+        if request.parsed_rubric is not None:
+            payload["parsed_rubric"] = request.parsed_rubric
+        if request.selected_question_ids:
+            payload["selected_question_ids"] = request.selected_question_ids
+        if request.notes:
+            payload["notes"] = request.notes
+
+        success = await orchestrator.send_event(run_id, "review_signal", payload)
+        if not success:
+            raise HTTPException(status_code=409, detail="批次未处于可复核状态")
+
+        cached = batch_image_cache.get(request.batch_id)
+        if cached and "review_required" in cached:
+            cached.pop("review_required", None)
+
+        return {"success": True, "message": "评分标准复核已提交"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"提交评分标准复核失败: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"提交失败: {str(e)}")
+
+
+@router.post("/review/results")
+async def submit_results_review(
+    request: ResultsReviewRequest,
+    orchestrator: Orchestrator = Depends(get_orchestrator)
+):
+    """提交批改结果复核，恢复 workflow"""
+    try:
+        if not orchestrator:
+            raise HTTPException(status_code=503, detail="编排器未初始化")
+
+        action = request.action.lower().strip()
+        if action not in ("approve", "update", "override", "regrade"):
+            raise HTTPException(status_code=400, detail="无效的 review action")
+
+        run_id = f"batch_grading_{request.batch_id}"
+        run_info = await orchestrator.get_run_info(run_id)
+        if not run_info:
+            raise HTTPException(status_code=404, detail="批次不存在")
+
+        payload: Dict[str, Any] = {
+            "action": action,
+        }
+        if request.results is not None:
+            payload["results"] = request.results
+        if request.regrade_items is not None:
+            payload["regrade_items"] = request.regrade_items
+        if request.notes:
+            payload["notes"] = request.notes
+
+        success = await orchestrator.send_event(run_id, "review_signal", payload)
+        if not success:
+            raise HTTPException(status_code=409, detail="批次未处于可复核状态")
+
+        cached = batch_image_cache.get(request.batch_id)
+        if cached and "review_required" in cached:
+            cached.pop("review_required", None)
+
+        return {"success": True, "message": "批改结果复核已提交"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"提交批改复核失败: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"提交失败: {str(e)}")
+
+
+@router.post("/confirm-boundary")
+async def confirm_student_boundary(
+    request: ConfirmBoundaryRequest,
+    orchestrator: Orchestrator = Depends(get_orchestrator)
+):
+    """
+    确认学生边界
+    
+    当 AI 识别的学生边界不准确时，允许用户手动确认
+    
+    Args:
+        request: 确认边界请求
+        orchestrator: LangGraph Orchestrator
+        
+    Returns:
+        确认结果
+    """
+    try:
+        if not orchestrator:
+            raise HTTPException(status_code=503, detail="编排器未初始化")
+        
+        run_id = f"batch_grading_{request.batch_id}"
+        run_info = await orchestrator.get_run_info(run_id)
+        
+        if not run_info:
+            raise HTTPException(status_code=404, detail="批次不存在")
+        
+        # 更新状态中的学生边界
+        state = run_info.state or {}
+        student_boundaries = state.get("student_boundaries", [])
+        
+        # 查找并更新对应学生的边界
+        updated = False
+        for boundary in student_boundaries:
+            if boundary.get("student_key") == request.student_key:
+                boundary["pages"] = request.confirmed_pages
+                boundary["confirmed"] = True
+                updated = True
+                break
+        
+        if not updated:
+            # 如果没有找到，添加新的边界
+            student_boundaries.append({
+                "student_key": request.student_key,
+                "pages": request.confirmed_pages,
+                "confirmed": True
+            })
+        
+        logger.info(f"学生边界已确认: batch_id={request.batch_id}, student_key={request.student_key}")
+        
+        return {
+            "success": True,
+            "message": f"学生 {request.student_key} 的边界已确认"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"确认学生边界失败: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"确认失败: {str(e)}")
+
+
+class RubricReviewRequest(BaseModel):
+    batch_id: str
+    action: str
+    parsed_rubric: Optional[Dict[str, Any]] = None
+    selected_question_ids: Optional[List[str]] = None
+    notes: Optional[str] = None
+
+
+@router.get("/rubric/{batch_id}", response_model=RubricReviewContextResponse)
+async def get_rubric_review_context(
+    batch_id: str,
+    orchestrator: Orchestrator = Depends(get_orchestrator)
+):
+    try:
+        # 尝试从 orchestrator 获取状态
+        state = await orchestrator.get_state(batch_id)
+        if not state:
+            # 尝试从 SQLite 获取持久化状态
+            from src.db.sqlite import get_workflow_state
+            wf_state = get_workflow_state(batch_id)
+            if wf_state and wf_state.state_data:
+                import json
+                state = json.loads(wf_state.state_data)
+            else:
+                raise HTTPException(status_code=404, detail="Batch not found")
+        
+        # 提取评分标准图像并转换为 base64
+        # 注意: state["rubric_images"] 可能是 bytes 列表
+        rubric_images = state.get("rubric_images") or []
+        rubric_images_b64 = []
+        for img_bytes in rubric_images:
+            if isinstance(img_bytes, bytes):
+                rubric_images_b64.append(base64.b64encode(img_bytes).decode('utf-8'))
+            else:
+                conn = str(img_bytes) if img_bytes else ""
+                rubric_images_b64.append(conn)
+
+        return RubricReviewContextResponse(
+            batch_id=batch_id,
+            status=state.get("status", "running"),
+            current_stage=state.get("current_stage", "rubric_review"),
+            parsed_rubric=state.get("parsed_rubric"),
+            rubric_images=rubric_images_b64
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get rubric review context: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/review/rubric")
+async def submit_rubric_review(
+    request: RubricReviewRequest,
+    orchestrator: Orchestrator = Depends(get_orchestrator)
+):
+    try:
+        logger.info(f"Submitting rubric review for batch {request.batch_id}, action={request.action}")
+        
+        # 转换请求为 dict
+        resume_payload = request.model_dump()
+        
+        # 恢复运行
+        await orchestrator.resume_run(
+            request.batch_id,
+            input_data=resume_payload
+        )
+        
+        return {"success": True, "message": "Rubric review submitted"}
+    except Exception as e:
+        logger.error(f"Failed to submit rubric review: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class ResultsReviewRequest(BaseModel):
+    batch_id: str
+    action: str
+    results: Optional[List[Dict[str, Any]]] = None
+    regrade_items: Optional[List[Dict[str, Any]]] = None
+    notes: Optional[str] = None
+
+
+@router.get("/results-review/{batch_id}", response_model=ResultsReviewContextResponse)
+async def get_results_review_context(
+    batch_id: str,
+    orchestrator: Orchestrator = Depends(get_orchestrator)
+):
+    try:
+        # 尝试从 orchestrator 获取状态
+        state = await orchestrator.get_state(batch_id)
+        if not state:
+            # 尝试从 SQLite 获取持久化状态
+            from src.db.sqlite import get_workflow_state
+            wf_state = get_workflow_state(batch_id)
+            if wf_state and wf_state.state_data:
+                import json
+                state = json.loads(wf_state.state_data)
+            else:
+                logger.warning(f"Batch {batch_id} not found in memory or DB")
+                raise HTTPException(status_code=404, detail="Batch not found")
+        
+        # 提取图像并转换为 base64
+        processed_images = state.get("processed_images") or state.get("answer_images") or []
+        answer_images_b64 = []
+        for img_bytes in processed_images:
+            if isinstance(img_bytes, bytes):
+                answer_images_b64.append(base64.b64encode(img_bytes).decode('utf-8'))
+            else:
+                # 可能是已经转换过的或其他格式，暂且转字符串或跳过
+                conn = str(img_bytes) if img_bytes else ""
+                answer_images_b64.append(conn)
+
+        # 格式化学生结果
+        raw_results = state.get("student_results", [])
+        formatted_results = _format_results_for_frontend(raw_results)
+
+        return ResultsReviewContextResponse(
+            batch_id=batch_id,
+            status=state.get("status", "running"),
+            current_stage=state.get("current_stage", "review"),
+            student_results=formatted_results,
+            answer_images=answer_images_b64
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get results review context: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/review/results")
+async def submit_results_review(
+    request: ResultsReviewRequest,
+    orchestrator: Orchestrator = Depends(get_orchestrator)
+):
+    try:
+        logger.info(f"Submitting results review for batch {request.batch_id}, action={request.action}")
+        
+        # 转换请求为 dict
+        resume_payload = request.model_dump()
+        
+        # 恢复运行
+        await orchestrator.resume_run(
+            request.batch_id,
+            input_data=resume_payload
+        )
+        
+        return {"success": True, "message": "Results review submitted"}
+    except Exception as e:
+        logger.error(f"Failed to submit results review: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))

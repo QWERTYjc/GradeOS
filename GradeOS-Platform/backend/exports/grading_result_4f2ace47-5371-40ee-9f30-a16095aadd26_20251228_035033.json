@@ -1,0 +1,106 @@
+{
+  "batch_id": "4f2ace47-5371-40ee-9f30-a16095aadd26",
+  "export_time": "2025-12-28T03:50:33.459188",
+  "persisted": false,
+  "has_failures": false,
+  "failed_pages_count": 0,
+  "cross_page_questions": [],
+  "merged_questions": [
+    {
+      "question_id": "1",
+      "score": 20,
+      "max_score": 20,
+      "confidence": 1.0,
+      "feedback": "全部正确，答案为：1. B  2. A  3. C  4. D",
+      "student_answer": "1. B  2. A  3. C  4. D",
+      "is_cross_page": false,
+      "page_indices": [
+        0
+      ],
+      "merge_source": null,
+      "scoring_point_results": []
+    },
+    {
+      "question_id": "2",
+      "score": 20,
+      "max_score": 20,
+      "confidence": 1.0,
+      "feedback": "全部正确，答案为：1. 光合作用 2. 细胞膜 3. DNA 4. 线粒体",
+      "student_answer": "1. 光合作用\n2. 细胞膜\n3. DNA\n4. 线粒体",
+      "is_cross_page": false,
+      "page_indices": [
+        0
+      ],
+      "merge_source": null,
+      "scoring_point_results": []
+    },
+    {
+      "question_id": "3",
+      "score": 28,
+      "max_score": 30,
+      "confidence": 1.0,
+      "feedback": "答案基本正确，但只描述了有丝分裂的过程，缺少减数分裂过程的描述，扣2分。",
+      "student_answer": "细胞分裂包括有丝分裂和减数分裂两种方式。有丝分裂分为前期、中期、后期和末期四个阶段。在前期，染色质凝缩成染色体；中期，染色体排列在赤道板上；后期，着丝点分裂，姐妹染色单体分开；末期，细胞质分裂，形成两个子细胞。",
+      "is_cross_page": false,
+      "page_indices": [
+        0
+      ],
+      "merge_source": null,
+      "scoring_point_results": []
+    }
+  ],
+  "students": [
+    {
+      "student_name": "学生A",
+      "student_id": null,
+      "score": 68,
+      "max_score": 70,
+      "percentage": 97.1,
+      "question_results": [
+        {
+          "question_id": "1",
+          "score": 20,
+          "max_score": 20,
+          "feedback": "全部正确，答案为：1. B  2. A  3. C  4. D",
+          "student_answer": "1. B  2. A  3. C  4. D",
+          "is_correct": false,
+          "is_cross_page": false,
+          "page_indices": [
+            0
+          ],
+          "confidence": 1.0
+        },
+        {
+          "question_id": "2",
+          "score": 20,
+          "max_score": 20,
+          "feedback": "全部正确，答案为：1. 光合作用 2. 细胞膜 3. DNA 4. 线粒体",
+          "student_answer": "1. 光合作用\n2. 细胞膜\n3. DNA\n4. 线粒体",
+          "is_correct": false,
+          "is_cross_page": false,
+          "page_indices": [
+            0
+          ],
+          "confidence": 1.0
+        },
+        {
+          "question_id": "3",
+          "score": 28,
+          "max_score": 30,
+          "feedback": "答案基本正确，但只描述了有丝分裂的过程，缺少减数分裂过程的描述，扣2分。",
+          "student_answer": "细胞分裂包括有丝分裂和减数分裂两种方式。有丝分裂分为前期、中期、后期和末期四个阶段。在前期，染色质凝缩成染色体；中期，染色体排列在赤道板上；后期，着丝点分裂，姐妹染色单体分开；末期，细胞质分裂，形成两个子细胞。",
+          "is_correct": false,
+          "is_cross_page": false,
+          "page_indices": [
+            0
+          ],
+          "confidence": 1.0
+        }
+      ],
+      "confidence": 0.8,
+      "needs_confirmation": false,
+      "start_page": 0,
+      "end_page": 0
+    }
+  ]
+}

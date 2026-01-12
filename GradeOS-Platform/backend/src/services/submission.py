@@ -12,6 +12,7 @@ from src.models.enums import FileType, SubmissionStatus
 from src.repositories.submission import SubmissionRepository
 from src.services.storage import StorageService
 from src.utils.pdf import convert_pdf_to_images, PDFProcessingError
+from src.utils.image import to_jpeg_bytes
 from src.utils.validation import validate_file, FileValidationError
 from src.orchestration.base import Orchestrator
 
@@ -122,7 +123,15 @@ class SubmissionService:
             
             elif request.file_type == FileType.IMAGE:
                 # 直接使用图像
-                images_data = [request.file_data]
+                try:
+                    images_data = [to_jpeg_bytes(request.file_data)]
+                except Exception as e:
+                    logger.error(
+                        f"JPEG conversion failed: "
+                        f"submission_id={submission_id}, "
+                        f"error={str(e)}"
+                    )
+                    raise SubmissionServiceError(f"JPEG conversion failed: {str(e)}") from e
                 logger.info(
                     f"使用图像文件: "
                     f"submission_id={submission_id}"
@@ -144,7 +153,7 @@ class SubmissionService:
                 file_paths = await self.storage.save_files(
                     images_data,
                     submission_id,
-                    extension="png"
+                    extension="jpg"
                 )
                 logger.info(
                     f"文件保存完成: "

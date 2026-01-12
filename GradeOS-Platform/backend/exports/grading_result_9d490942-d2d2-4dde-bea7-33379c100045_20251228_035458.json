@@ -1,0 +1,106 @@
+{
+  "batch_id": "9d490942-d2d2-4dde-bea7-33379c100045",
+  "export_time": "2025-12-28T03:54:58.472039",
+  "persisted": false,
+  "has_failures": false,
+  "failed_pages_count": 0,
+  "cross_page_questions": [],
+  "merged_questions": [
+    {
+      "question_id": "1",
+      "score": 8,
+      "max_score": 10,
+      "confidence": 1.0,
+      "feedback": "定义描述基本正确，缺少光合作用的场所（叶绿体），扣2分。",
+      "student_answer": "光合作用是植物利用光能将二氧化碳和水转化为有机物和氧气的过程。",
+      "is_cross_page": false,
+      "page_indices": [
+        0
+      ],
+      "merge_source": null,
+      "scoring_point_results": []
+    },
+    {
+      "question_id": "2",
+      "score": 15,
+      "max_score": 15,
+      "confidence": 1.0,
+      "feedback": "三个阶段描述完整，场所和产物描述正确，给满分。",
+      "student_answer": "细胞呼吸分为三个阶段：\n1. 糖酵解：在细胞质中进行，葡萄糖分解为丙酮酸\n2. 柠檬酸循环：在线粒体基质中进行\n3. 电子传递链：在线粒体内膜上进行，产生大量ATP",
+      "is_cross_page": false,
+      "page_indices": [
+        0
+      ],
+      "merge_source": null,
+      "scoring_point_results": []
+    },
+    {
+      "question_id": "3",
+      "score": 20,
+      "max_score": 25,
+      "confidence": 1.0,
+      "feedback": "半保留复制的概念提及正确，得2分。解旋酶的作用描述正确，得6分。DNA聚合酶的作用描述基本正确，但缺少模板链、方向等重要信息，得7分。 连接酶描述正确，得5分。缺少引物相关描述，扣5分。",
+      "student_answer": "DNA复制是半保留复制，过程如下：\n1. 解旋酶解开双螺旋\n2. DNA聚合酶合成新链\n3. 连接酶连接冈崎片段",
+      "is_cross_page": false,
+      "page_indices": [
+        0
+      ],
+      "merge_source": null,
+      "scoring_point_results": []
+    }
+  ],
+  "students": [
+    {
+      "student_name": "学生A",
+      "student_id": null,
+      "score": 43,
+      "max_score": 50,
+      "percentage": 86.0,
+      "question_results": [
+        {
+          "question_id": "1",
+          "score": 8,
+          "max_score": 10,
+          "feedback": "定义描述基本正确，缺少光合作用的场所（叶绿体），扣2分。",
+          "student_answer": "光合作用是植物利用光能将二氧化碳和水转化为有机物和氧气的过程。",
+          "is_correct": false,
+          "is_cross_page": false,
+          "page_indices": [
+            0
+          ],
+          "confidence": 1.0
+        },
+        {
+          "question_id": "2",
+          "score": 15,
+          "max_score": 15,
+          "feedback": "三个阶段描述完整，场所和产物描述正确，给满分。",
+          "student_answer": "细胞呼吸分为三个阶段：\n1. 糖酵解：在细胞质中进行，葡萄糖分解为丙酮酸\n2. 柠檬酸循环：在线粒体基质中进行\n3. 电子传递链：在线粒体内膜上进行，产生大量ATP",
+          "is_correct": false,
+          "is_cross_page": false,
+          "page_indices": [
+            0
+          ],
+          "confidence": 1.0
+        },
+        {
+          "question_id": "3",
+          "score": 20,
+          "max_score": 25,
+          "feedback": "半保留复制的概念提及正确，得2分。解旋酶的作用描述正确，得6分。DNA聚合酶的作用描述基本正确，但缺少模板链、方向等重要信息，得7分。 连接酶描述正确，得5分。缺少引物相关描述，扣5分。",
+          "student_answer": "DNA复制是半保留复制，过程如下：\n1. 解旋酶解开双螺旋\n2. DNA聚合酶合成新链\n3. 连接酶连接冈崎片段",
+          "is_correct": false,
+          "is_cross_page": false,
+          "page_indices": [
+            0
+          ],
+          "confidence": 1.0
+        }
+      ],
+      "confidence": 0.8,
+      "needs_confirmation": false,
+      "start_page": 0,
+      "end_page": 0
+    }
+  ]
+}

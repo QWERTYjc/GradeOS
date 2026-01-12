@@ -9,6 +9,7 @@ from langchain_core.messages import HumanMessage
 from ..models.region import BoundingBox, QuestionRegion, SegmentationResult
 from ..utils.coordinates import normalize_coordinates
 from ..config.models import get_lite_model
+from ..utils.llm_thinking import get_thinking_kwargs
 
 
 class LayoutAnalysisService:
@@ -24,10 +25,12 @@ class LayoutAnalysisService:
         """
         if model_name is None:
             model_name = get_lite_model()
+        thinking_kwargs = get_thinking_kwargs(model_name, enable_thinking=False)
         self.llm = ChatGoogleGenerativeAI(
             model=model_name,
             google_api_key=api_key,
-            temperature=0.1
+            temperature=0.1,
+            **thinking_kwargs,
         )
         self.model_name = model_name
         

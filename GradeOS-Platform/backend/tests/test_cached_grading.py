@@ -64,10 +64,7 @@ async def test_cached_grading():
     # ===== 步骤 2: 解析批改标准 =====
     print("\n📋 步骤 2: 解析批改标准...")
     rubric_parser = RubricParserService(api_key=API_KEY)
-    parsed_rubric = await rubric_parser.parse_rubric(
-        rubric_images,
-        expected_total_score=TOTAL_SCORE
-    )
+    parsed_rubric = await rubric_parser.parse_rubric(rubric_images)
     
     print(f"   ✅ 解析完成: {parsed_rubric.total_questions} 题，{parsed_rubric.total_score} 分")
     

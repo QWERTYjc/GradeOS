@@ -1,32 +1,182 @@
-"""批量批改 Graph 编译
-
-实现批量试卷批改流程，支持：
-- 图像预处理
-- 评分标准解析
-- 固定分批并行批改（不预先分割学生）
-- 批改后学生边界检测（基于批改结果智能判断）
-- 结果审核
-- 导出结果
-
-工作流：
-接收文件 → 图像预处理 → 解析评分标准 → 固定分批批改 → 学生分割 → 结果审核 → 导出结果
-
-验证：需求 5.1, 5.4
-"""
-
 import logging
 import os
-from typing import Optional, List, Dict, Any, Literal
+import asyncio
+import json
+from typing import Optional, List, Dict, Any, Literal, Tuple
 from datetime import datetime
+from dataclasses import dataclass, field
 
 from langgraph.graph import StateGraph, END
-from langgraph.types import Send
+from langgraph.types import Send, interrupt
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
 from src.graphs.state import BatchGradingGraphState
 
 
 logger = logging.getLogger(__name__)
+
+
+# ==================== 批次配置 ====================
+
+
+@dataclass
+class BatchConfig:
+    """
+    批次配置类
+    
+    支持配置批次大小和并发数量。
+    
+    Requirements: 3.1, 10.1
+    """
+    batch_size: int = 1000  # 每批处理的页面数量 (解除限制)
+    max_concurrent_workers: int = 5  # 最大并发 Worker 数量
+    max_retries: int = 2  # 批次失败最大重试次数
+    retry_delay: float = 1.0  # 重试延迟（秒）
+    
+    @classmethod
+    def from_env(cls) -> "BatchConfig":
+        """从环境变量加载配置"""
+        return cls(
+            batch_size=int(os.getenv("GRADING_BATCH_SIZE", "1000")),
+            max_concurrent_workers=int(os.getenv("GRADING_MAX_WORKERS", "5")),
+            max_retries=int(os.getenv("GRADING_MAX_RETRIES", "2")),
+            retry_delay=float(os.getenv("GRADING_RETRY_DELAY", "1.0")),
+        )
+
+
+# 全局批次配置
+_batch_config: Optional[BatchConfig] = None
+
+
+def get_batch_config() -> BatchConfig:
+    """获取批次配置"""
+    global _batch_config
+    if _batch_config is None:
+        _batch_config = BatchConfig.from_env()
+    return _batch_config
+
+
+def set_batch_config(config: BatchConfig) -> None:
+    """设置批次配置"""
+    global _batch_config
+    _batch_config = config
+    logger.info(
+        f"批次配置已更新: batch_size={config.batch_size}, "
+        f"max_workers={config.max_concurrent_workers}, "
+        f"max_retries={config.max_retries}"
+    )
+
+
+# ==================== 进度报告 ====================
+
+
+@dataclass
+class BatchProgress:
+    """
+    批次进度信息
+    
+    Requirements: 3.4
+    """
+    batch_id: str
+    total_batches: int
+    completed_batches: int = 0
+    failed_batches: int = 0
+    in_progress_batches: int = 0
+    total_pages: int = 0
+    processed_pages: int = 0
+    failed_pages: int = 0
+    current_stage: str = "initialized"
+    percentage: float = 0.0
+    batch_details: Dict[int, Dict[str, Any]] = field(default_factory=dict)
+    timestamps: Dict[str, str] = field(default_factory=dict)
+    
+    def update_batch_status(
+        self, 
+        batch_index: int, 
+        status: str, 
+        pages_processed: int = 0,
+        pages_failed: int = 0,
+        error: Optional[str] = None
+    ) -> None:
+        """更新单个批次状态"""
+        self.batch_details[batch_index] = {
+            "status": status,
+            "pages_processed": pages_processed,
+            "pages_failed": pages_failed,
+            "error": error,
+            "updated_at": datetime.now().isoformat()
+        }
+        
+        # 重新计算统计
+        self.completed_batches = sum(
+            1 for d in self.batch_details.values() if d["status"] == "completed"
+        )
+        self.failed_batches = sum(
+            1 for d in self.batch_details.values() if d["status"] == "failed"
+        )
+        self.in_progress_batches = sum(
+            1 for d in self.batch_details.values() if d["status"] == "in_progress"
+        )
+        self.processed_pages = sum(
+            d["pages_processed"] for d in self.batch_details.values()
+        )
+        self.failed_pages = sum(
+            d["pages_failed"] for d in self.batch_details.values()
+        )
+        
+        # 计算百分比（批改阶段占 15%-80%）
+        if self.total_batches > 0:
+            batch_progress = self.completed_batches / self.total_batches
+            self.percentage = 15.0 + batch_progress * 65.0
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """序列化为字典"""
+        return {
+            "batch_id": self.batch_id,
+            "total_batches": self.total_batches,
+            "completed_batches": self.completed_batches,
+            "failed_batches": self.failed_batches,
+            "in_progress_batches": self.in_progress_batches,
+            "total_pages": self.total_pages,
+            "processed_pages": self.processed_pages,
+            "failed_pages": self.failed_pages,
+            "current_stage": self.current_stage,
+            "percentage": self.percentage,
+            "batch_details": self.batch_details,
+            "timestamps": self.timestamps,
+        }
+
+
+# 进度报告回调类型
+ProgressCallback = Optional[callable]
+
+
+# ==================== 批次任务状态 ====================
+
+
+@dataclass
+class BatchTaskState:
+    """
+    单个批次任务的状态
+    
+    用于跟踪批次执行状态和支持重试。
+    
+    Requirements: 3.3, 9.3
+    """
+    batch_id: str
+    batch_index: int
+    total_batches: int
+    page_indices: List[int]
+    images: List[str]
+    rubric: str
+    parsed_rubric: Dict[str, Any]
+    api_key: str
+    page_index_contexts: Dict[int, Dict[str, Any]] = field(default_factory=dict)
+    retry_count: int = 0
+    max_retries: int = 2
+    status: str = "pending"  # pending, in_progress, completed, failed
+    error: Optional[str] = None
+    results: List[Dict[str, Any]] = field(default_factory=list)
 
 
 # ==================== 节点实现 ====================
@@ -67,18 +217,51 @@ async def preprocess_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     """
     图像预处理节点
     
-    对图像进行预处理（去噪、增强、旋转校正等）。
+    对图像进行预处理：
+    1. 转换为 JPEG 格式
+    2. 压缩质量控制
+    3. 去噪、增强、旋转校正等（TODO）
     """
     batch_id = state["batch_id"]
     answer_images = state.get("answer_images", [])
     
     logger.info(f"[preprocess] 开始图像预处理: batch_id={batch_id}, 页数={len(answer_images)}")
     
-    # TODO: 实际的图像预处理逻辑
-    # 目前直接传递原始图像
-    processed_images = answer_images
+    # 转换为 JPEG 格式
+    processed_images = []
+    for idx, img_bytes in enumerate(answer_images):
+        try:
+            from PIL import Image
+            import io
+            
+            # 打开图像
+            img = Image.open(io.BytesIO(img_bytes))
+            
+            # 转换为 RGB（JPEG 不支持 RGBA 和 P 模式）
+            if img.mode in ('RGBA', 'P', 'LA'):
+                # 创建白色背景
+                background = Image.new('RGB', img.size, (255, 255, 255))
+                if img.mode == 'P':
+                    img = img.convert('RGBA')
+                if img.mode in ('RGBA', 'LA'):
+                    background.paste(img, mask=img.split()[-1])  # 使用 alpha 通道作为 mask
+                    img = background
+                else:
+                    img = img.convert('RGB')
+            elif img.mode != 'RGB':
+                img = img.convert('RGB')
+            
+            # 保存为 JPEG
+            output = io.BytesIO()
+            img.save(output, format='JPEG', quality=85, optimize=True)
+            processed_images.append(output.getvalue())
+            
+            logger.debug(f"[preprocess] 页面 {idx} 转换为 JPEG: {len(img_bytes)} -> {len(output.getvalue())} bytes")
+        except Exception as e:
+            logger.warning(f"[preprocess] 页面 {idx} JPEG 转换失败: {e}，使用原图")
+            processed_images.append(img_bytes)
     
-    logger.info(f"[preprocess] 图像预处理完成: batch_id={batch_id}")
+    logger.info(f"[preprocess] 图像预处理完成: batch_id={batch_id}, JPEG转换={len(processed_images)}/{len(answer_images)}")
     
     return {
         "processed_images": processed_images,
@@ -91,12 +274,535 @@ async def preprocess_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     }
 
 
+def _coerce_int(value: Any) -> Optional[int]:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _sanitize_pages(raw_pages: Any, total_pages: int) -> List[int]:
+    if not isinstance(raw_pages, (list, tuple)):
+        return []
+    cleaned = []
+    for item in raw_pages:
+        idx = _coerce_int(item)
+        if idx is None:
+            continue
+        if 0 <= idx < total_pages:
+            cleaned.append(idx)
+    return sorted(set(cleaned))
+
+
+def _normalize_manual_boundaries(raw: Any, total_pages: int) -> List[Dict[str, Any]]:
+    if not raw:
+        return []
+
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except Exception:
+            return []
+
+    if isinstance(raw, dict):
+        for key in ("boundaries", "students", "start_pages", "start_indices"):
+            if key in raw:
+                raw = raw[key]
+                break
+        else:
+            raw = []
+
+    if (
+        isinstance(raw, list)
+        and raw
+        and all(not isinstance(x, (list, dict)) for x in raw)
+    ):
+        start_indices = _sanitize_pages(raw, total_pages)
+        if 0 not in start_indices:
+            start_indices.insert(0, 0)
+        groups = []
+        for idx, start in enumerate(start_indices):
+            end = (
+                start_indices[idx + 1] - 1
+                if idx + 1 < len(start_indices)
+                else total_pages - 1
+            )
+            if end < start:
+                continue
+            groups.append({
+                "pages": list(range(start, end + 1)),
+                "start_page": start,
+                "end_page": end,
+            })
+        return groups
+
+    if not isinstance(raw, list):
+        return []
+
+    groups = []
+    for entry in raw:
+        if isinstance(entry, list):
+            pages = _sanitize_pages(entry, total_pages)
+            if pages:
+                groups.append({"pages": pages})
+            continue
+        if not isinstance(entry, dict):
+            continue
+
+        pages = (
+            entry.get("pages")
+            or entry.get("page_indices")
+            or entry.get("pageIndices")
+        )
+        if pages is None:
+            start = entry.get("start_page") or entry.get("startPage") or entry.get("start")
+            end = entry.get("end_page") or entry.get("endPage") or entry.get("end")
+            start_idx = _coerce_int(start) if start is not None else None
+            end_idx = _coerce_int(end) if end is not None else None
+            if start_idx is not None and end_idx is not None:
+                pages = list(range(start_idx, end_idx + 1))
+
+        pages = _sanitize_pages(pages, total_pages) if pages is not None else []
+        if not pages:
+            continue
+
+        group = {"pages": pages}
+        student_key = entry.get("student_key") or entry.get("studentKey")
+        if student_key:
+            group["student_key"] = str(student_key)
+        student_id = entry.get("student_id") or entry.get("studentId")
+        if student_id:
+            group["student_id"] = str(student_id)
+        student_name = entry.get("student_name") or entry.get("studentName") or entry.get("name")
+        if student_name:
+            group["student_name"] = str(student_name)
+        class_name = entry.get("class_name") or entry.get("className")
+        if class_name:
+            group["class_name"] = str(class_name)
+        groups.append(group)
+
+    return groups
+
+
+async def index_node(state: BatchGradingGraphState) -> Dict[str, Any]:
+    """
+    索引层节点（批改前）
+
+    使用 LLM 生成每页题目信息并识别学生，用于后续批改上下文对齐。
+    """
+    batch_id = state["batch_id"]
+    processed_images = state.get("processed_images", [])
+    api_key = state.get("api_key") or os.getenv("GEMINI_API_KEY")
+
+    logger.info(
+        f"[index] 开始索引: batch_id={batch_id}, 页数={len(processed_images)}"
+    )
+
+    if not processed_images:
+        logger.warning(f"[index] 无待索引页面: batch_id={batch_id}")
+        return {
+            "index_results": {
+                "model": None,
+                "total_pages": 0,
+                "pages": [],
+                "students": [],
+                "unidentified_pages": [],
+            },
+            "page_index_contexts": {},
+            "student_page_map": {},
+            "indexed_students": [],
+            "index_unidentified_pages": [],
+            "student_boundaries": [],
+            "current_stage": "index_completed",
+            "percentage": 12.0,
+            "timestamps": {
+                **state.get("timestamps", {}),
+                "index_at": datetime.now().isoformat(),
+            },
+        }
+
+    inputs = state.get("inputs") or {}
+    manual_raw = inputs.get("manual_boundaries") or inputs.get("student_boundaries")
+    manual_groups = _normalize_manual_boundaries(manual_raw, len(processed_images))
+    if manual_groups:
+        total_pages = len(processed_images)
+        assigned_pages = set()
+        page_index_contexts: Dict[int, Dict[str, Any]] = {}
+        student_page_map: Dict[int, str] = {}
+        indexed_students: List[Dict[str, Any]] = []
+        student_boundaries: List[Dict[str, Any]] = []
+
+        def build_student_key(idx: int, group: Dict[str, Any]) -> str:
+            return (
+                group.get("student_key")
+                or group.get("student_id")
+                or group.get("student_name")
+                or f"Student {idx + 1}"
+            )
+
+        for idx, group in enumerate(manual_groups):
+            pages = [p for p in group.get("pages", []) if p not in assigned_pages]
+            if not pages:
+                continue
+            for page_idx in pages:
+                assigned_pages.add(page_idx)
+
+            start_page = min(pages)
+            end_page = max(pages)
+            student_key = build_student_key(idx, group)
+            student_info = None
+            if group.get("student_id") or group.get("student_name"):
+                student_info = {
+                    "name": group.get("student_name"),
+                    "student_id": group.get("student_id"),
+                    "class_name": group.get("class_name"),
+                    "confidence": 1.0,
+                    "is_placeholder": False,
+                }
+
+            student_boundaries.append({
+                "student_key": student_key,
+                "start_page": start_page,
+                "end_page": end_page,
+                "confidence": 1.0,
+                "needs_confirmation": False,
+                "detection_method": "manual",
+            })
+
+            indexed_students.append({
+                "student_key": student_key,
+                "student_id": group.get("student_id"),
+                "student_name": group.get("student_name"),
+                "start_page": start_page,
+                "end_page": end_page,
+                "pages": sorted(pages),
+                "confidence": 1.0,
+                "needs_confirmation": False,
+                "detection_method": "manual",
+            })
+
+            for page_idx in pages:
+                student_page_map[page_idx] = student_key
+                page_index_contexts[page_idx] = {
+                    "page_index": page_idx,
+                    "question_numbers": [],
+                    "first_question": None,
+                    "continuation_of": None,
+                    "student_key": student_key,
+                    "student_info": student_info,
+                    "is_cover_page": False,
+                    "index_notes": ["manual_boundary"],
+                    "is_first_page": page_idx == start_page,
+                }
+
+        missing_pages = [i for i in range(total_pages) if i not in assigned_pages]
+        if missing_pages:
+            missing_pages.sort()
+            ranges: List[Tuple[int, int]] = []
+            start = missing_pages[0]
+            prev = missing_pages[0]
+            for page_idx in missing_pages[1:]:
+                if page_idx == prev + 1:
+                    prev = page_idx
+                    continue
+                ranges.append((start, prev))
+                start = page_idx
+                prev = page_idx
+            ranges.append((start, prev))
+
+            for idx, (start_page, end_page) in enumerate(ranges):
+                student_key = f"Unassigned {idx + 1}"
+                student_boundaries.append({
+                    "student_key": student_key,
+                    "start_page": start_page,
+                    "end_page": end_page,
+                    "confidence": 0.0,
+                    "needs_confirmation": True,
+                    "detection_method": "manual_fallback",
+                })
+                indexed_students.append({
+                    "student_key": student_key,
+                    "student_id": None,
+                    "student_name": None,
+                    "start_page": start_page,
+                    "end_page": end_page,
+                    "pages": list(range(start_page, end_page + 1)),
+                    "confidence": 0.0,
+                    "needs_confirmation": True,
+                    "detection_method": "manual_fallback",
+                })
+                for page_idx in range(start_page, end_page + 1):
+                    student_page_map[page_idx] = student_key
+                    page_index_contexts[page_idx] = {
+                        "page_index": page_idx,
+                        "question_numbers": [],
+                        "first_question": None,
+                        "continuation_of": None,
+                        "student_key": student_key,
+                        "student_info": None,
+                        "is_cover_page": False,
+                        "index_notes": ["manual_boundary_missing"],
+                        "is_first_page": page_idx == start_page,
+                    }
+
+        index_pages = [
+            page_index_contexts[idx] for idx in sorted(page_index_contexts.keys())
+        ]
+        index_results = {
+            "model": "manual",
+            "total_pages": total_pages,
+            "pages": index_pages,
+            "students": indexed_students,
+            "unidentified_pages": missing_pages,
+        }
+
+        logger.info(
+            f"[index] using manual boundaries: batch_id={batch_id}, "
+            f"groups={len(student_boundaries)}, missing_pages={len(missing_pages)}"
+        )
+
+        return {
+            "index_results": index_results,
+            "page_index_contexts": page_index_contexts,
+            "student_page_map": student_page_map,
+            "indexed_students": indexed_students,
+            "index_unidentified_pages": missing_pages,
+            "student_boundaries": student_boundaries,
+            "current_stage": "index_completed",
+            "percentage": 12.0,
+            "timestamps": {
+                **state.get("timestamps", {}),
+                "index_at": datetime.now().isoformat(),
+            },
+        }
+
+    if not api_key:
+        logger.warning(f"[index] 缺少 API key，跳过索引: batch_id={batch_id}")
+        return {
+            "index_results": {
+                "model": None,
+                "total_pages": len(processed_images),
+                "pages": [],
+                "students": [],
+                "unidentified_pages": list(range(len(processed_images))),
+            },
+            "page_index_contexts": {},
+            "student_page_map": {},
+            "indexed_students": [],
+            "index_unidentified_pages": list(range(len(processed_images))),
+            "student_boundaries": [],
+            "current_stage": "index_completed",
+            "percentage": 12.0,
+            "timestamps": {
+                **state.get("timestamps", {}),
+                "index_at": datetime.now().isoformat(),
+            },
+        }
+
+    try:
+        from src.config.models import get_index_model
+        from src.services.student_identification import StudentIdentificationService
+
+        model_name = get_index_model()
+        id_service = StudentIdentificationService(api_key=api_key, model_name=model_name)
+
+        max_concurrency = int(os.getenv("INDEX_MAX_CONCURRENCY", "5"))
+        boundary_only = os.getenv("INDEX_BOUNDARY_ONLY", "true").strip().lower() in ("1", "true", "yes")
+        semaphore = asyncio.Semaphore(max_concurrency)
+
+        async def analyze_page(image_data: bytes, page_index: int):
+            async with semaphore:
+                return await id_service.analyze_page(
+                    image_data,
+                    page_index,
+                    boundary_only=boundary_only,
+                )
+
+        tasks = [
+            analyze_page(image_data, page_index)
+            for page_index, image_data in enumerate(processed_images)
+        ]
+        page_analyses = await asyncio.gather(*tasks)
+        page_analyses.sort(key=lambda x: x.page_index)
+
+        segmentation_result = id_service.segment_from_analyses(page_analyses)
+
+        def student_info_to_dict(info):
+            if not info:
+                return None
+            return {
+                "name": info.name,
+                "student_id": info.student_id,
+                "class_name": info.class_name,
+                "confidence": info.confidence,
+                "is_placeholder": getattr(info, "is_placeholder", False),
+            }
+
+        # page_index -> student mapping
+        page_student_map = {}
+        for mapping in segmentation_result.page_mappings:
+            student_info = mapping.student_info
+            student_key = student_info.student_id or student_info.name or f"unknown_{mapping.page_index}"
+            page_student_map[mapping.page_index] = {
+                "student_key": student_key,
+                "student_info": student_info,
+                "is_first_page": mapping.is_first_page,
+            }
+
+        page_index_contexts = {}
+        index_pages = []
+        student_groups = {}
+        last_question = None
+
+        for analysis in page_analyses:
+            index_notes = []
+            continuation_of = None
+
+            if analysis.is_cover_page:
+                index_notes.append("cover_page")
+            else:
+                if analysis.question_numbers:
+                    last_question = analysis.question_numbers[-1]
+                elif last_question:
+                    continuation_of = last_question
+                    index_notes.append("continuation_assumed")
+                else:
+                    index_notes.append("no_question_numbers_detected")
+
+            mapping = page_student_map.get(analysis.page_index)
+            student_info = mapping["student_info"] if mapping else analysis.student_info
+            student_key = None
+            if mapping:
+                student_key = mapping["student_key"]
+            elif student_info and (student_info.student_id or student_info.name):
+                student_key = student_info.student_id or student_info.name
+            else:
+                student_key = "UNKNOWN"
+
+            context = {
+                "page_index": analysis.page_index,
+                "question_numbers": analysis.question_numbers,
+                "first_question": analysis.first_question,
+                "continuation_of": continuation_of,
+                "student_key": student_key,
+                "student_info": student_info_to_dict(student_info),
+                "is_cover_page": analysis.is_cover_page,
+                "index_notes": index_notes,
+                "is_first_page": mapping["is_first_page"] if mapping else False,
+            }
+
+            page_index_contexts[analysis.page_index] = context
+            index_pages.append(context)
+
+            if not analysis.is_cover_page:
+                group = student_groups.setdefault(
+                    student_key,
+                    {"student_key": student_key, "student_info": student_info, "pages": []}
+                )
+                group["pages"].append(analysis.page_index)
+
+        indexed_students = []
+        student_boundaries = []
+        for student_key, group in student_groups.items():
+            pages = sorted(group["pages"])
+            if not pages:
+                continue
+            info = group.get("student_info")
+            info_dict = student_info_to_dict(info)
+            confidence = info.confidence if info else 0.0
+            needs_confirmation = (
+                info is None or
+                getattr(info, "is_placeholder", False) or
+                confidence < 0.7
+            )
+            start_page = pages[0]
+            end_page = pages[-1]
+
+            student_boundaries.append({
+                "student_key": student_key,
+                "start_page": start_page,
+                "end_page": end_page,
+                "confidence": confidence,
+                "needs_confirmation": needs_confirmation,
+                "detection_method": "index",
+            })
+
+            indexed_students.append({
+                "student_key": student_key,
+                "student_id": info.student_id if info else None,
+                "student_name": info.name if info else None,
+                "start_page": start_page,
+                "end_page": end_page,
+                "pages": pages,
+                "confidence": confidence,
+                "needs_confirmation": needs_confirmation,
+            })
+
+        index_results = {
+            "model": model_name,
+            "total_pages": len(processed_images),
+            "pages": index_pages,
+            "students": indexed_students,
+            "unidentified_pages": segmentation_result.unidentified_pages,
+        }
+
+        logger.info(
+            f"[index] 索引完成: batch_id={batch_id}, "
+            f"识别学生数={len(indexed_students)}, 未识别页数={len(segmentation_result.unidentified_pages)}"
+        )
+
+        return {
+            "index_results": index_results,
+            "page_index_contexts": page_index_contexts,
+            "student_page_map": {
+                page_index: context["student_key"]
+                for page_index, context in page_index_contexts.items()
+            },
+            "indexed_students": indexed_students,
+            "index_unidentified_pages": segmentation_result.unidentified_pages,
+            "student_boundaries": student_boundaries,
+            "current_stage": "index_completed",
+            "percentage": 12.0,
+            "timestamps": {
+                **state.get("timestamps", {}),
+                "index_at": datetime.now().isoformat(),
+            },
+        }
+    except Exception as e:
+        logger.error(f"[index] 索引失败: {e}", exc_info=True)
+        return {
+            "index_results": {
+                "model": None,
+                "total_pages": len(processed_images),
+                "pages": [],
+                "students": [],
+                "unidentified_pages": list(range(len(processed_images))),
+                "error": str(e),
+            },
+            "page_index_contexts": {},
+            "student_page_map": {},
+            "indexed_students": [],
+            "index_unidentified_pages": list(range(len(processed_images))),
+            "student_boundaries": [],
+            "current_stage": "index_completed",
+            "percentage": 12.0,
+            "errors": state.get("errors", []) + [{
+                "node": "index",
+                "error": str(e),
+                "timestamp": datetime.now().isoformat(),
+            }],
+        }
+
+
 async def rubric_parse_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     """
     解析评分标准节点
     
     使用专门的 RubricParserService 解析评分标准图像，
     支持分批处理多页评分标准，提取完整的题目结构和评分细则。
+    
+    **关键**: 解析后的评分标准会注册到 RubricRegistry，供后续批改时通过
+    GradingSkills.get_rubric_for_question 动态获取指定题目的评分标准。
     """
     batch_id = state["batch_id"]
     rubric_images = state.get("rubric_images", [])
@@ -105,11 +811,28 @@ async def rubric_parse_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     
     logger.info(f"[rubric_parse] 开始解析评分标准: batch_id={batch_id}, 评分标准页数={len(rubric_images)}")
     
+    # 🔍 诊断日志：检查 rubric_images 是否传入
+    if rubric_images:
+        logger.info(f"[rubric_parse] 📸 rubric_images 详情: 共 {len(rubric_images)} 页")
+        for i, img in enumerate(rubric_images):
+            if isinstance(img, bytes):
+                logger.info(f"[rubric_parse]   - 第 {i+1} 页: {len(img)} bytes")
+            else:
+                logger.warning(f"[rubric_parse]   - 第 {i+1} 页: 类型异常 {type(img)}")
+    else:
+        logger.warning(f"[rubric_parse] ⚠️ rubric_images 为空！请检查前端是否正确上传了批改标准")
+    
     parsed_rubric = {
         "total_questions": 0,
         "total_score": 0,
         "questions": []
     }
+    
+    # 创建 RubricRegistry 用于存储解析后的评分标准
+    from src.services.rubric_registry import RubricRegistry
+    from src.models.grading_models import QuestionRubric, ScoringPoint, AlternativeSolution
+    
+    rubric_registry = RubricRegistry(total_score=105.0)  # 预期总分
     
     try:
         if rubric_images and api_key:
@@ -118,10 +841,132 @@ async def rubric_parse_node(state: BatchGradingGraphState) -> Dict[str, Any]:
             
             parser = RubricParserService(api_key=api_key)
             
-            # 解析评分标准（内部会分批处理，每批最多4页）
+            # 流式输出回调 - 发送 llm_stream_chunk 事件到前端
+            async def stream_callback(stream_type: str, chunk: str) -> None:
+                from src.api.routes.batch_langgraph import broadcast_progress
+                
+                # Default values
+                batch_idx = 0
+                phase = "parse"
+                real_type = stream_type
+
+                # Parsing logic for "batch_idx:phase:type"
+                parts = stream_type.split(":")
+                if len(parts) >= 3:
+                     try:
+                         batch_idx = int(parts[0])
+                         phase = parts[1]
+                         real_type = ":".join(parts[2:])
+                     except:
+                         pass
+                elif len(parts) == 2:
+                     # e.g. "0:output" (fallback if phase missing)
+                     try:
+                         batch_idx = int(parts[0])
+                         real_type = parts[1]
+                     except:
+                         pass
+                
+                # Determine Target Node and Agent
+                target_node = "rubric_parse"
+                target_agent = f"rubric-batch-{batch_idx}"
+                node_name = "Rubric Parse"
+                
+                if phase == "review":
+                    target_node = "rubric_review"
+                    target_agent = f"rubric-review-batch-{batch_idx}"
+                    node_name = "Rubric Review"
+                
+                await broadcast_progress(batch_id, {
+                    "type": "llm_stream_chunk",
+                    "nodeId": target_node,
+                    "agentId": target_agent,
+                    "nodeName": node_name,
+                    "streamType": real_type,
+                    "chunk": chunk,
+                })
+            
+            # 进度回调 - 发送 agent_update 事件到前端
+            async def progress_callback(
+                batch_index: int,
+                total_batches: int,
+                status: str,
+                message: Optional[str]
+            ) -> None:
+                from src.api.routes.batch_langgraph import broadcast_progress
+                
+                # Logic for status == "reviewing"
+                if status == "reviewing":
+                     # Complete Parse
+                     await broadcast_progress(batch_id, {
+                        "type": "agent_update",
+                        "agentId": f"rubric-batch-{batch_index}",
+                        "parentNodeId": "rubric_parse",
+                        "status": "completed",
+                        "progress": 100,
+                        "message": "Parsing completed"
+                    })
+                    # Start Review
+                     await broadcast_progress(batch_id, {
+                        "type": "agent_update",
+                        "agentId": f"rubric-review-batch-{batch_index}",
+                        "parentNodeId": "rubric_review",
+                        "agentName": f"Batch {batch_index + 1}",
+                        "status": "running",
+                        "progress": 0,
+                        "message": message or "Reviewing..."
+                    })
+                     return
+                
+                # Logic for status == "completed"
+                if status == "completed":
+                    # Ensure Review is completed (Parse was completed when Review started)
+                     await broadcast_progress(batch_id, {
+                        "type": "agent_update",
+                        "agentId": f"rubric-review-batch-{batch_index}",
+                        "parentNodeId": "rubric_review",
+                        "status": "completed",
+                        "progress": 100,
+                        "message": message
+                    })
+                     # Also ensure Parse is marked completed (idempotent)
+                     await broadcast_progress(batch_id, {
+                        "type": "agent_update",
+                        "agentId": f"rubric-batch-{batch_index}",
+                        "parentNodeId": "rubric_parse",
+                        "status": "completed",
+                        "progress": 100
+                    })
+                     return
+
+                status_map = {
+                    "running": "running",
+                    "reviewing": "running", 
+                    "completed": "completed",
+                    "failed": "failed",
+                }
+                progress_map = {
+                    "running": 35,
+                    "reviewing": 70,
+                    "completed": 100,
+                    "failed": 100,
+                }
+                
+                # Default emit to Rubric Parse (for running/failed)
+                await broadcast_progress(batch_id, {
+                    "type": "agent_update",
+                    "agentId": f"rubric-batch-{batch_index}",
+                    "parentNodeId": "rubric_parse",
+                    "status": status_map.get(status, "running"),
+                    "progress": progress_map.get(status, 0),
+                    "message": message or f"Batch {batch_index + 1}/{total_batches}",
+                })
+            
+            # 解析评分标准（内部会分批处理）
             result = await parser.parse_rubric(
                 rubric_images=rubric_images,
-                expected_total_score=105  # 预期总分，用于验证
+                progress_callback=progress_callback,
+                stream_callback=stream_callback,
             )
             
             # 转换为字典格式
@@ -133,15 +978,20 @@ async def rubric_parse_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                 "questions": [
                     {
                         "id": q.question_id,
+                        "question_id": q.question_id,
                         "max_score": q.max_score,
                         "question_text": q.question_text,
                         "standard_answer": q.standard_answer,
+                        "source_pages": getattr(q, "source_pages", []),
                         "criteria": [sp.description for sp in q.scoring_points],
                         "scoring_points": [
                             {
+                                "point_id": sp.point_id,
                                 "description": sp.description,
                                 "score": sp.score,
-                                "is_required": sp.is_required
+                                "is_required": sp.is_required,
+                                "keywords": sp.keywords or [],
+                                "expected_value": sp.expected_value,
                             }
                             for sp in q.scoring_points
                         ],
@@ -158,6 +1008,13 @@ async def rubric_parse_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                     for q in result.questions
                 ]
             }
+            
+            # 🔥 关键：将解析的评分标准注册到 RubricRegistry
+            # 这样后续批改时可以通过 GradingSkills.get_rubric_for_question 获取
+            rubric_registry.register_rubrics(result.questions)
+            logger.info(
+                f"[rubric_parse] 已注册 {len(result.questions)} 道题目到 RubricRegistry"
+            )
             
             # 同时生成格式化的评分标准上下文（供批改使用）
             rubric_context = parser.format_rubric_context(result)
@@ -187,6 +1044,51 @@ async def rubric_parse_node(state: BatchGradingGraphState) -> Dict[str, Any]:
         f"题目数={parsed_rubric.get('total_questions', 0)}, "
         f"总分={parsed_rubric.get('total_score', 0)}"
     )
+
+    try:
+        from src.api.routes.batch_langgraph import broadcast_progress
+        await broadcast_progress(batch_id, {
+            "type": "rubric_parsed",
+            "totalQuestions": parsed_rubric.get("total_questions", 0),
+            "totalScore": parsed_rubric.get("total_score", 0),
+            "generalNotes": parsed_rubric.get("general_notes", ""),
+            "rubricFormat": parsed_rubric.get("rubric_format", ""),
+            "questions": [
+                {
+                    "questionId": q.get("question_id", ""),
+                    "maxScore": q.get("max_score", 0),
+                    "questionText": q.get("question_text", ""),
+                    "standardAnswer": q.get("standard_answer", ""),
+                    "gradingNotes": q.get("grading_notes", ""),
+                    "sourcePages": q.get("source_pages") or q.get("sourcePages") or [],
+                    "scoringPoints": [
+                        {
+                            "pointId": sp.get("point_id") or sp.get("pointId"),
+                            "description": sp.get("description", ""),
+                            "expectedValue": sp.get("expected_value") or sp.get("expectedValue", ""),
+                            "keywords": sp.get("keywords") or [],
+                            "score": sp.get("score", 0),
+                            "isRequired": sp.get("is_required", True),
+                        }
+                        for sp in q.get("scoring_points", [])
+                    ],
+                    "alternativeSolutions": [
+                        {
+                            "description": alt.get("description", ""),
+                            "scoringCriteria": alt.get("scoring_criteria", ""),
+                            "note": alt.get("note", ""),
+                        }
+                        for alt in q.get("alternative_solutions", [])
+                    ],
+                }
+                for q in parsed_rubric.get("questions", [])
+            ],
+        })
+    except Exception as exc:
+        logger.warning(f"[rubric_parse] failed to emit rubric_parsed: {exc}")
+    
+    # 注意：不序列化 RubricRegistry，因为 grade_batch_node 会从 parsed_rubric 重建
+    # 这样可以避免类型转换问题
     
     return {
         "parsed_rubric": parsed_rubric,
@@ -199,39 +1101,203 @@ async def rubric_parse_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     }
 
 
+async def rubric_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
+    """
+    Rubric review node with interrupt.
+    """
+    batch_id = state["batch_id"]
+    parsed_rubric = state.get("parsed_rubric", {})
+    api_key = state.get("api_key") or os.getenv("GEMINI_API_KEY")
+
+    if not parsed_rubric or not parsed_rubric.get("questions"):
+        logger.info(f"[rubric_review] skip (no rubric): batch_id={batch_id}")
+        return {
+            "current_stage": "rubric_review_skipped",
+            "percentage": 18.0,
+            "timestamps": {
+                **state.get("timestamps", {}),
+                "rubric_review_at": datetime.now().isoformat()
+            }
+        }
+
+    review_request = {
+        "type": "rubric_review_required",
+        "batch_id": batch_id,
+        "message": "Rubric review required",
+        "requested_at": datetime.now().isoformat(),
+        "parsed_rubric": parsed_rubric,
+    }
+    try:
+        from src.api.routes.batch_langgraph import broadcast_progress
+        await broadcast_progress(batch_id, {
+            "type": "review_required",
+            "reviewType": review_request["type"],
+            "payload": review_request,
+        })
+    except Exception as exc:
+        logger.warning(f"[rubric_review] failed to emit review_required: {exc}")
+    review_response = interrupt(review_request)
+
+    action = (review_response or {}).get("action", "approve").lower()
+    updated_rubric = parsed_rubric
+
+    if action in ("update", "override"):
+        updated_payload = (review_response or {}).get("parsed_rubric") or {}
+        updated_rubric = _normalize_parsed_rubric_input(updated_payload, parsed_rubric)
+    elif action == "reparse":
+        selected_ids = (review_response or {}).get("selected_question_ids") or []
+        notes = (review_response or {}).get("notes") or ""
+        if selected_ids and api_key:
+            try:
+                from src.services.rubric_parser import RubricParserService
+                parser = RubricParserService(api_key=api_key)
+                selected_questions = [
+                    q for q in parsed_rubric.get("questions", [])
+                    if q.get("question_id") in selected_ids or q.get("id") in selected_ids
+                ]
+                revised = await parser.revise_questions(selected_questions, notes=notes)
+                revised_map = {
+                    (q.get("question_id") or q.get("id")): q
+                    for q in revised
+                    if isinstance(q, dict)
+                }
+                updated_questions = []
+                for q in parsed_rubric.get("questions", []):
+                    qid = q.get("question_id") or q.get("id")
+                    if qid in revised_map:
+                        normalized = _normalize_parsed_rubric_input({
+                            "questions": [revised_map[qid]],
+                        }, parsed_rubric)
+                        if normalized.get("questions"):
+                            updated_questions.append(normalized["questions"][0])
+                            continue
+                    updated_questions.append(q)
+                updated_rubric = {
+                    **parsed_rubric,
+                    "questions": updated_questions,
+                }
+            except Exception as exc:
+                logger.warning(f"[rubric_review] reparse failed: {exc}", exc_info=True)
+
+    if updated_rubric.get("questions"):
+        updated_rubric["total_questions"] = len(updated_rubric["questions"])
+        updated_rubric["total_score"] = sum(q.get("max_score", 0) for q in updated_rubric["questions"])
+        updated_rubric["rubric_context"] = _format_rubric_context_from_dict(updated_rubric)
+
+    return {
+        "parsed_rubric": updated_rubric,
+        "rubric_review_result": review_response,
+        "current_stage": "rubric_review_completed",
+        "percentage": 20.0,
+        "timestamps": {
+            **state.get("timestamps", {}),
+            "rubric_review_at": datetime.now().isoformat()
+        }
+    }
+
+
 def grading_fanout_router(state: BatchGradingGraphState) -> List[Send]:
     """
     批改扇出路由
     
     将所有页面分批，每批并行批改。
     不预先分割学生，而是批改所有页面。
+    支持可配置的批次大小。
+    
+    **关键**: 使用深拷贝确保 Worker 之间不共享可变状态 (Requirement 3.2)
+    
+    Requirements: 3.1, 3.2, 10.1
     """
+    import copy
+    
     batch_id = state["batch_id"]
     processed_images = state.get("processed_images", [])
     rubric = state.get("rubric", "")
     parsed_rubric = state.get("parsed_rubric", {})
+    page_index_contexts = state.get("page_index_contexts", {})
     api_key = state.get("api_key", "")
+    student_boundaries = state.get("student_boundaries", [])
     
     if not processed_images:
         logger.warning(f"[grading_fanout] 没有待批改的图像: batch_id={batch_id}")
-        return [Send("segment", state)]
+        return [Send("index_merge", state)]
     
-    # 固定分批：每批处理 BATCH_SIZE 页
-    BATCH_SIZE = 10
+    # 获取批次配置 (Requirements: 3.1, 10.1)
+    config = get_batch_config()
+    max_retries = config.max_retries
     total_pages = len(processed_images)
-    num_batches = (total_pages + BATCH_SIZE - 1) // BATCH_SIZE
+    
+    # 🔥 优先按学生边界动态分配批次
+    if student_boundaries and len(student_boundaries) > 0:
+        num_batches = len(student_boundaries)
+        logger.info(
+            f"[grading_fanout] 按学生边界创建批改任务: batch_id={batch_id}, "
+            f"学生数={num_batches}, 总页数={total_pages}"
+        )
+        
+        sends = []
+        for batch_idx, boundary in enumerate(student_boundaries):
+            student_key = boundary.get("student_key", f"student_{batch_idx}")
+            start_page = boundary.get("start_page", 0)
+            end_page = boundary.get("end_page", total_pages - 1)
+            
+            page_indices = list(range(start_page, end_page + 1))
+            batch_images = [processed_images[i] for i in page_indices if i < len(processed_images)]
+            
+            if not batch_images:
+                logger.warning(f"[grading_fanout] 学生 {student_key} 没有图像，跳过")
+                continue
+            
+            batch_contexts = {
+                idx: page_index_contexts.get(idx)
+                for idx in page_indices
+                if idx in page_index_contexts
+            }
+
+            task_state = {
+                "batch_id": batch_id,
+                "batch_index": batch_idx,
+                "total_batches": num_batches,
+                "student_key": student_key,
+                "page_indices": page_indices,
+                "images": batch_images,
+                "rubric": rubric,
+                "parsed_rubric": copy.deepcopy(parsed_rubric),
+                "page_index_contexts": copy.deepcopy(batch_contexts),
+                "api_key": api_key,
+                "retry_count": 0,
+                "max_retries": max_retries,
+            }
+            
+            sends.append(Send("grade_batch", task_state))
+            logger.info(f"[grading_fanout] 创建学生批次: student={student_key}, pages={start_page}-{end_page}")
+        
+        if sends:
+            return sends
+        logger.warning(f"[grading_fanout] 没有有效的学生批次")
+    
+    # 回退：按固定批次大小分配
+    batch_size = config.batch_size
+    num_batches = (total_pages + batch_size - 1) // batch_size
     
     logger.info(
         f"[grading_fanout] 创建批改任务: batch_id={batch_id}, "
-        f"总页数={total_pages}, 批次数={num_batches}"
+        f"总页数={total_pages}, 批次数={num_batches}, "
+        f"批次大小={batch_size}, 最大重试={max_retries}"
     )
     
     sends = []
     for batch_idx in range(num_batches):
-        start_idx = batch_idx * BATCH_SIZE
-        end_idx = min(start_idx + BATCH_SIZE, total_pages)
+        start_idx = batch_idx * batch_size
+        end_idx = min(start_idx + batch_size, total_pages)
         batch_images = processed_images[start_idx:end_idx]
         
+        batch_contexts = {
+            idx: page_index_contexts.get(idx)
+            for idx in range(start_idx, end_idx)
+            if idx in page_index_contexts
+        }
+
         task_state = {
             "batch_id": batch_id,
             "batch_index": batch_idx,
@@ -239,8 +1305,11 @@ def grading_fanout_router(state: BatchGradingGraphState) -> List[Send]:
             "page_indices": list(range(start_idx, end_idx)),
             "images": batch_images,
             "rubric": rubric,
-            "parsed_rubric": parsed_rubric,
-            "api_key": api_key
+            "parsed_rubric": copy.deepcopy(parsed_rubric),
+            "page_index_contexts": copy.deepcopy(batch_contexts),
+            "api_key": api_key,
+            "retry_count": 0,
+            "max_retries": max_retries,
         }
         
         sends.append(Send("grade_batch", task_state))
@@ -248,12 +1317,547 @@ def grading_fanout_router(state: BatchGradingGraphState) -> List[Send]:
     return sends
 
 
+def _normalize_question_id(value: Any) -> str:
+    if value is None:
+        return ""
+    text = str(value).strip()
+    if not text:
+        return ""
+    for token in ["第", "题目", "题", "Q", "q"]:
+        text = text.replace(token, "")
+    return text.strip().rstrip(".:：")
+
+
+def _is_placeholder_evidence(text: Optional[str]) -> bool:
+    if not text:
+        return True
+    content = text.strip()
+    if not content:
+        return True
+    placeholders = [
+        "未找到",
+        "未识别",
+        "不清晰",
+        "无法辨认",
+        "N/A",
+        "null",
+        "None",
+        "【原文引用】未找到",
+    ]
+    return any(p in content for p in placeholders)
+
+
+def _trim_text(value: Any, max_len: int) -> str:
+    if value is None:
+        return ""
+    text = str(value)
+    if max_len <= 0:
+        return ""
+    if len(text) <= max_len:
+        return text
+    if max_len <= 3:
+        return text[:max_len]
+    return text[: max_len - 3].rstrip() + "..."
+
+
+def _trim_list(items: Any, max_items: int) -> List[Any]:
+    if items is None:
+        return []
+    if isinstance(items, list):
+        values = items
+    elif isinstance(items, tuple):
+        values = list(items)
+    else:
+        values = [items]
+    if max_items <= 0:
+        return []
+    return values[:max_items]
+
+
+def _compact_evidence(evidence: Dict[str, Any], limits: Dict[str, int]) -> Dict[str, Any]:
+    if not isinstance(evidence, dict):
+        return evidence
+    max_qnums = limits.get("max_question_numbers", 6)
+    qnums = evidence.get("question_numbers")
+    if isinstance(qnums, list):
+        evidence["question_numbers"] = qnums[:max_qnums]
+    evidence["page_summary"] = _trim_text(
+        evidence.get("page_summary", ""),
+        limits.get("max_page_summary_chars", 100),
+    )
+    answers = evidence.get("answers")
+    if isinstance(answers, list):
+        for answer in answers:
+            if not isinstance(answer, dict):
+                continue
+            answer["answer_text"] = _trim_text(
+                answer.get("answer_text", ""),
+                limits.get("max_answer_chars", 160),
+            )
+            snippets = answer.get("evidence_snippets", [])
+            snippets = _trim_list(snippets, limits.get("max_snippets", 1))
+            answer["evidence_snippets"] = [
+                _trim_text(snippet, limits.get("max_snippet_chars", 90))
+                for snippet in snippets
+                if snippet
+            ]
+            flags = answer.get("uncertainty_flags", [])
+            answer["uncertainty_flags"] = _trim_list(
+                flags,
+                limits.get("max_uncertainty_flags", 3),
+            )
+    return evidence
+
+
+def _compact_score_result(result: Dict[str, Any], limits: Dict[str, int]) -> Dict[str, Any]:
+    if not isinstance(result, dict):
+        return result
+    result["page_summary"] = _trim_text(
+        result.get("page_summary", ""),
+        limits.get("max_page_summary_chars", 100),
+    )
+    q_details = result.get("question_details")
+    if isinstance(q_details, list):
+        for q in q_details:
+            if not isinstance(q, dict):
+                continue
+            q["feedback"] = _trim_text(
+                q.get("feedback", ""),
+                limits.get("max_feedback_chars", 120),
+            )
+            q["student_answer"] = _trim_text(
+                q.get("student_answer", ""),
+                limits.get("max_student_answer_chars", 120),
+            )
+            typo_notes = q.get("typo_notes") or q.get("typoNotes") or []
+            typo_notes = _trim_list(typo_notes, limits.get("max_typo_notes", 3))
+            q["typo_notes"] = [
+                _trim_text(note, limits.get("max_typo_chars", 24))
+                for note in typo_notes
+                if note
+            ]
+            sprs = q.get("scoring_point_results") or q.get("scoring_results") or []
+            if isinstance(sprs, list):
+                for spr in sprs:
+                    if not isinstance(spr, dict):
+                        continue
+                    spr["evidence"] = _trim_text(
+                        spr.get("evidence", ""),
+                        limits.get("max_evidence_chars", 90),
+                    )
+                    spr["reason"] = _trim_text(
+                        spr.get("reason", ""),
+                        limits.get("max_reason_chars", 120),
+                    )
+                    spr["decision"] = _trim_text(
+                        spr.get("decision", ""),
+                        limits.get("max_decision_chars", 24),
+                    )
+    return result
+
+
+def _build_rubric_question_map(parsed_rubric: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    question_map: Dict[str, Dict[str, Any]] = {}
+    for q in parsed_rubric.get("questions", []):
+        qid = _normalize_question_id(q.get("question_id") or q.get("id"))
+        if not qid:
+            continue
+        scoring_points = []
+        for idx, sp in enumerate(q.get("scoring_points", [])):
+            point_id = sp.get("point_id") or sp.get("pointId") or f"{qid}.{idx + 1}"
+            scoring_points.append({
+                "point_id": point_id,
+                "description": sp.get("description", ""),
+                "score": sp.get("score", 0),
+                "is_required": sp.get("is_required", True),
+                "expected_value": sp.get("expected_value") or sp.get("expectedValue") or "",
+                "keywords": sp.get("keywords") or [],
+            })
+        question_map[qid] = {
+            "question_id": qid,
+            "max_score": q.get("max_score", 0),
+            "question_text": q.get("question_text", ""),
+            "standard_answer": q.get("standard_answer", ""),
+            "grading_notes": q.get("grading_notes", ""),
+            "scoring_points": scoring_points,
+        }
+    return question_map
+
+
+def _normalize_parsed_rubric_input(
+    raw_rubric: Dict[str, Any],
+    fallback: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    fallback = fallback or {}
+    raw_questions = raw_rubric.get("questions") or []
+    normalized_questions = []
+
+    for q in raw_questions:
+        qid = (
+            q.get("question_id")
+            or q.get("questionId")
+            or q.get("id")
+            or ""
+        )
+        max_score = q.get("max_score", q.get("maxScore"))
+        question_text = q.get("question_text") or q.get("questionText") or ""
+        standard_answer = q.get("standard_answer") or q.get("standardAnswer") or ""
+        grading_notes = q.get("grading_notes") or q.get("gradingNotes") or ""
+        source_pages = q.get("source_pages") or q.get("sourcePages") or []
+        if not isinstance(source_pages, list):
+            source_pages = []
+
+        scoring_points_raw = q.get("scoring_points") or q.get("scoringPoints") or []
+        scoring_points = []
+        for idx, sp in enumerate(scoring_points_raw):
+            if isinstance(sp, dict):
+                point_id = sp.get("point_id") or sp.get("pointId") or f"{qid}.{idx + 1}"
+                keywords = sp.get("keywords") or []
+                if isinstance(keywords, str):
+                    keywords = [keywords]
+                scoring_points.append({
+                    "point_id": point_id,
+                    "description": sp.get("description", ""),
+                    "score": float(sp.get("score", sp.get("maxScore", 0)) or 0),
+                    "is_required": sp.get("is_required", sp.get("isRequired", True)),
+                    "keywords": keywords,
+                    "expected_value": sp.get("expected_value") or sp.get("expectedValue") or "",
+                })
+            elif isinstance(sp, str):
+                scoring_points.append({
+                    "point_id": f"{qid}.{idx + 1}",
+                    "description": sp,
+                    "score": 0,
+                    "is_required": True,
+                    "keywords": [],
+                    "expected_value": "",
+                })
+
+        if max_score is None:
+            max_score = sum(sp.get("score", 0) for sp in scoring_points)
+        max_score = float(max_score or 0)
+
+        alternative_solutions_raw = q.get("alternative_solutions") or q.get("alternativeSolutions") or []
+        alternative_solutions = []
+        for alt in alternative_solutions_raw:
+            if isinstance(alt, dict):
+                alternative_solutions.append({
+                    "description": alt.get("description", ""),
+                    "scoring_criteria": alt.get("scoring_criteria") or alt.get("scoringCriteria") or "",
+                    "note": alt.get("note", ""),
+                })
+            elif isinstance(alt, str):
+                alternative_solutions.append({
+                    "description": alt,
+                    "scoring_criteria": "",
+                    "note": "",
+                })
+
+        criteria = q.get("criteria")
+        if not criteria:
+            criteria = [sp.get("description", "") for sp in scoring_points]
+
+        normalized_questions.append({
+            "id": qid,
+            "question_id": qid,
+            "max_score": max_score,
+            "question_text": question_text,
+            "standard_answer": standard_answer,
+            "criteria": criteria,
+            "scoring_points": scoring_points,
+            "alternative_solutions": alternative_solutions,
+            "grading_notes": grading_notes,
+            "source_pages": source_pages,
+        })
+
+    total_score = raw_rubric.get("total_score") or raw_rubric.get("totalScore")
+    if total_score is None:
+        total_score = sum(q.get("max_score", 0) for q in normalized_questions)
+
+    return {
+        "total_questions": int(raw_rubric.get("total_questions") or raw_rubric.get("totalQuestions") or len(normalized_questions)),
+        "total_score": float(total_score or 0),
+        "rubric_format": raw_rubric.get("rubric_format") or raw_rubric.get("rubricFormat") or fallback.get("rubric_format", "standard"),
+        "general_notes": raw_rubric.get("general_notes") or raw_rubric.get("generalNotes") or fallback.get("general_notes", ""),
+        "questions": normalized_questions,
+        "rubric_context": raw_rubric.get("rubric_context") or fallback.get("rubric_context"),
+        "raw_text": raw_rubric.get("raw_text") or fallback.get("raw_text"),
+    }
+
+
+def _format_rubric_context_from_dict(parsed_rubric: Dict[str, Any]) -> str:
+    def ensure_str(value: Any) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, list):
+            return " ".join(str(item) for item in value)
+        return str(value)
+
+    lines = [
+        "=" * 60,
+        "RUBRIC SUMMARY",
+        "=" * 60,
+        f"Questions: {parsed_rubric.get('total_questions', 0)}",
+        f"Total Score: {parsed_rubric.get('total_score', 0)}",
+        f"Format: {ensure_str(parsed_rubric.get('rubric_format', 'standard'))}",
+        "",
+    ]
+
+    general_notes = ensure_str(parsed_rubric.get("general_notes", ""))
+    if general_notes:
+        lines.append(f"General Notes: {general_notes}")
+        lines.append("")
+
+    for q in parsed_rubric.get("questions", []):
+        lines.append("-" * 40)
+        lines.append(f"Question {ensure_str(q.get('question_id', ''))} max_score: {q.get('max_score', 0)}")
+
+        question_text = ensure_str(q.get("question_text", ""))
+        if question_text:
+            preview = question_text[:100] if len(question_text) > 100 else question_text
+            lines.append(f"Question text: {preview}")
+
+        standard_answer = ensure_str(q.get("standard_answer", ""))
+        if standard_answer:
+            preview = standard_answer[:200] if len(standard_answer) > 200 else standard_answer
+            lines.append(f"Standard answer: {preview}")
+
+        scoring_points = q.get("scoring_points", [])
+        if scoring_points:
+            lines.append("Scoring points:")
+            for sp in scoring_points:
+                required = "required" if sp.get("is_required", True) else "optional"
+                keywords = sp.get("keywords") or []
+                keywords_str = f" keywords:{keywords}" if keywords else ""
+                expected_value = ensure_str(sp.get("expected_value", ""))
+                expected_value_str = f" expected:{expected_value}" if expected_value else ""
+                lines.append(
+                    f"  [{sp.get('point_id', '')}] {sp.get('score', 0)}?/{required} - "
+                    f"{ensure_str(sp.get('description', ''))}{keywords_str}{expected_value_str}"
+                )
+
+        alternative_solutions = q.get("alternative_solutions", [])
+        if alternative_solutions:
+            lines.append("Alternative solutions:")
+            for alt in alternative_solutions:
+                lines.append(f"  - {ensure_str(alt.get('description', ''))}")
+                lines.append(f"    criteria: {ensure_str(alt.get('scoring_criteria', ''))}")
+
+        grading_notes = ensure_str(q.get("grading_notes", ""))
+        if grading_notes:
+            lines.append(f"Notes: {grading_notes}")
+
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+def _finalize_scoring_result(
+    raw_result: Dict[str, Any],
+    evidence: Dict[str, Any],
+    rubric_map: Dict[str, Dict[str, Any]],
+    page_index: int,
+) -> Dict[str, Any]:
+    raw_questions = raw_result.get("question_details") or []
+    raw_by_id = {}
+    for q in raw_questions:
+        qid = _normalize_question_id(q.get("question_id"))
+        if qid:
+            raw_by_id[qid] = q
+
+    answer_map = {}
+    for answer in evidence.get("answers", []):
+        qid = _normalize_question_id(answer.get("question_id"))
+        if qid:
+            answer_map[qid] = answer
+
+    question_ids = list(answer_map.keys())
+    if not question_ids:
+        question_ids = [
+            _normalize_question_id(q.get("question_id"))
+            for q in raw_questions
+            if q.get("question_id")
+        ]
+    if not question_ids:
+        question_ids = list(rubric_map.keys())
+    seen = set()
+    question_ids = [qid for qid in question_ids if qid and not (qid in seen or seen.add(qid))]
+
+    question_details = []
+    for qid in question_ids:
+        rubric = rubric_map.get(qid, {})
+        expected_points = rubric.get("scoring_points", [])
+        raw_question = raw_by_id.get(qid, {})
+        raw_scoring = raw_question.get("scoring_point_results") or raw_question.get("scoring_results") or []
+        raw_scoring_by_id = {
+            _normalize_question_id(spr.get("point_id") or spr.get("pointId")): spr
+            for spr in raw_scoring
+            if spr.get("point_id") or spr.get("pointId")
+        }
+
+        scoring_point_results = []
+        review_corrections = []
+        missing_points = 0
+        missing_evidence = 0
+        for idx, sp in enumerate(expected_points):
+            point_id = _normalize_question_id(sp.get("point_id")) or f"{qid}.{idx + 1}"
+            existing = raw_scoring_by_id.get(point_id, {})
+            awarded = existing.get("awarded", existing.get("score", 0))
+            max_points = sp.get("score", existing.get("max_points", 0))
+            if awarded is None:
+                awarded = 0
+            if max_points is None:
+                max_points = 0
+            if awarded > max_points:
+                review_corrections.append({
+                    "point_id": point_id,
+                    "review_reason": "Score exceeds max; capped to max.",
+                })
+                awarded = max_points
+            if awarded < 0:
+                review_corrections.append({
+                    "point_id": point_id,
+                    "review_reason": "Score below zero; clamped to 0.",
+                })
+                awarded = 0
+
+            evidence_text = existing.get("evidence")
+            if _is_placeholder_evidence(evidence_text):
+                missing_evidence += 1
+                if not evidence_text:
+                    evidence_text = "【原文引用】未找到"
+            if not existing:
+                missing_points += 1
+                review_corrections.append({
+                    "point_id": point_id,
+                    "review_reason": "Missing scoring point; added with 0 score.",
+                })
+
+            scoring_point_results.append({
+                "point_id": point_id,
+                "rubric_reference": f"[{point_id}] {sp.get('description', '')}",
+                "decision": "得分" if awarded > 0 else "未得分",
+                "awarded": awarded,
+                "max_points": max_points,
+                "evidence": evidence_text,
+                "reason": existing.get("reason", ""),
+                "scoring_point": {
+                    "description": sp.get("description", ""),
+                    "score": max_points,
+                    "is_required": sp.get("is_required", True),
+                },
+            })
+
+        if not scoring_point_results and raw_scoring:
+            for spr in raw_scoring:
+                scoring_point_results.append({
+                    "point_id": spr.get("point_id") or spr.get("pointId") or "",
+                    "rubric_reference": spr.get("rubric_reference") or spr.get("rubricReference") or "",
+                    "decision": spr.get("decision") or spr.get("result") or "",
+                    "awarded": spr.get("awarded", spr.get("score", 0)),
+                    "max_points": spr.get("max_points", spr.get("maxScore", 0)),
+                    "evidence": spr.get("evidence", ""),
+                    "reason": spr.get("reason", ""),
+                    "scoring_point": spr.get("scoring_point"),
+                })
+
+        sum_awarded = sum(r.get("awarded", 0) for r in scoring_point_results)
+        max_score = rubric.get("max_score", raw_question.get("max_score", 0))
+        if not max_score:
+            max_score = sum(r.get("max_points", 0) for r in scoring_point_results)
+        score = raw_question.get("score")
+        score_adjusted = False
+        if score is None:
+            score = sum_awarded
+        if abs(sum_awarded - score) > 0.25:
+            score = sum_awarded
+            score_adjusted = True
+        if score > max_score:
+            score = max_score
+            score_adjusted = True
+        if score_adjusted:
+            review_corrections.append({
+                "point_id": qid,
+                "review_reason": "Total mismatch; recalculated from point scores.",
+            })
+
+        typo_notes = raw_question.get("typo_notes") or raw_question.get("typoNotes") or []
+        if isinstance(typo_notes, str):
+            typo_notes = [typo_notes]
+        if not isinstance(typo_notes, list):
+            typo_notes = []
+
+        total_points = max(1, len(expected_points)) if expected_points else max(1, len(scoring_point_results))
+        coverage = min(1.0, len(scoring_point_results) / total_points)
+        evidence_ok = min(1.0, (total_points - missing_evidence) / total_points)
+        consistency = 1.0 if not score_adjusted else 0.6
+        confidence = 0.2 + coverage * 0.5 + evidence_ok * 0.2 + consistency * 0.1
+        answer_confidence = answer_map.get(qid, {}).get("confidence")
+        if isinstance(answer_confidence, (int, float)):
+            confidence = max(0.0, min(1.0, confidence * max(0.4, min(1.0, answer_confidence))))
+        confidence = max(0.0, min(1.0, confidence))
+
+        issues = []
+        if missing_points:
+            issues.append(f"Scoring coverage incomplete (missing {missing_points} points)")
+        if missing_evidence:
+            issues.append("Insufficient evidence for some points")
+        if score_adjusted:
+            issues.append("Point sum mismatched; adjusted total")
+        review_summary = "; ".join(issues) if issues else "Logic consistent; no obvious issues"
+
+        question_details.append({
+            "question_id": qid,
+            "score": score,
+            "max_score": max_score,
+            "confidence": confidence,
+            "confidence_reason": f"coverage={coverage:.2f}, evidence={evidence_ok:.2f}, consistency={consistency:.2f}",
+            "feedback": raw_question.get("feedback", ""),
+            "student_answer": raw_question.get("student_answer") or answer_map.get(qid, {}).get("answer_text", ""),
+            "self_critique": raw_question.get("self_critique") or review_summary,
+            "self_critique_confidence": raw_question.get("self_critique_confidence", confidence),
+            "typo_notes": typo_notes,
+            "rubric_refs": [sp.get("point_id") for sp in expected_points if sp.get("point_id")] if expected_points else [],
+            "scoring_point_results": scoring_point_results,
+            "review_summary": review_summary,
+            "review_corrections": review_corrections,
+            "page_indices": [page_index],
+            "is_correct": max_score > 0 and score >= max_score,
+        })
+
+    page_confidence = (
+        sum(q.get("confidence", 0) for q in question_details) / len(question_details)
+        if question_details else 0.0
+    )
+    return {
+        "question_details": question_details,
+        "score": sum(q.get("score", 0) for q in question_details),
+        "max_score": sum(q.get("max_score", 0) for q in question_details),
+        "page_confidence": page_confidence,
+    }
+
+
 async def grade_batch_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """
     批量批改节点
     
     批改一批页面，返回每页的批改结果。
-    直接使用 GeminiReasoningClient.grade_page 进行批改。
+    
+    **核心流程**:
+    1. 从 parsed_rubric 重建 RubricRegistry
+    2. 创建 GradingSkills 实例
+    3. 批改时识别题目编号
+    4. 使用 GradingSkills.get_rubric_for_question 获取该题目的评分标准
+    5. 基于指定评分标准进行批改
+    
+    特性：
+    - Worker 独立性：每个 Worker 独立获取评分标准，不共享可变状态 (Req 3.2)
+    - Agent Skill 集成：使用 GradingSkills 动态获取题目评分标准 (Req 5.1)
+    - 批次失败重试：单批次失败不影响其他批次，支持重试 (Req 3.3, 9.3)
+    - 进度报告：实时报告批次处理进度 (Req 3.4)
+    - 错误隔离：单页失败不影响其他页面，记录错误并继续处理 (Req 9.2)
+    
+    Requirements: 3.2, 3.3, 3.4, 5.1, 9.2, 9.3
     """
     batch_id = state["batch_id"]
     batch_index = state["batch_index"]
@@ -261,94 +1865,462 @@ async def grade_batch_node(state: Dict[str, Any]) -> Dict[str, Any]:
     page_indices = state["page_indices"]
     images = state["images"]
     rubric = state.get("rubric", "")
+    page_index_contexts = state.get("page_index_contexts", {})
     api_key = state.get("api_key") or os.getenv("GEMINI_API_KEY")
+    retry_count = state.get("retry_count", 0)
+    max_retries = state.get("max_retries", 2)
     
     logger.info(
         f"[grade_batch] 开始批改批次 {batch_index + 1}/{total_batches}: "
-        f"batch_id={batch_id}, 页面={page_indices}"
+        f"batch_id={batch_id}, 页面={page_indices}, 重试次数={retry_count}"
     )
     
     page_results = []
+    batch_error = None
+    output_limits = {
+        "max_answer_chars": int(os.getenv("GRADING_MAX_ANSWER_CHARS", "160")),
+        "max_student_answer_chars": int(os.getenv("GRADING_MAX_STUDENT_ANSWER_CHARS", "120")),
+        "max_snippet_chars": int(os.getenv("GRADING_MAX_SNIPPET_CHARS", "90")),
+        "max_snippets": int(os.getenv("GRADING_MAX_SNIPPETS", "1")),
+        "max_page_summary_chars": int(os.getenv("GRADING_MAX_PAGE_SUMMARY_CHARS", "100")),
+        "max_feedback_chars": int(os.getenv("GRADING_MAX_FEEDBACK_CHARS", "120")),
+        "max_evidence_chars": int(os.getenv("GRADING_MAX_EVIDENCE_CHARS", "90")),
+        "max_reason_chars": int(os.getenv("GRADING_MAX_REASON_CHARS", "120")),
+        "max_decision_chars": int(os.getenv("GRADING_MAX_DECISION_CHARS", "24")),
+        "max_typo_notes": int(os.getenv("GRADING_MAX_TYPO_NOTES", "3")),
+        "max_typo_chars": int(os.getenv("GRADING_MAX_TYPO_CHARS", "24")),
+        "max_question_numbers": int(os.getenv("GRADING_MAX_QUESTION_NUMBERS", "6")),
+        "max_uncertainty_flags": int(os.getenv("GRADING_MAX_UNCERTAINTY_FLAGS", "3")),
+    }
+    second_pass_threshold = float(os.getenv("GRADING_SECOND_PASS_CONFIDENCE", "0.65"))
+    second_pass_max_ratio = float(os.getenv("GRADING_SECOND_PASS_MAX_RATIO", "0.2"))
+    second_pass_budget_fraction = float(os.getenv("GRADING_SECOND_PASS_BUDGET_FRACTION", "0.25"))
+    budget_per_page = float(os.getenv("GRADING_BUDGET_PER_PAGE_USD", "0.01"))
+    cost_per_m_input = float(os.getenv("GRADING_COST_PER_M_INPUT_TOKENS", "0.5"))
+    cost_per_m_output = float(os.getenv("GRADING_COST_PER_M_OUTPUT_TOKENS", "3.0"))
+    strict_est_input_tokens = int(os.getenv("GRADING_STRICT_EST_INPUT_TOKENS", "1200"))
+    strict_est_output_tokens = int(os.getenv("GRADING_STRICT_EST_OUTPUT_TOKENS", "600"))
+    fast_pass_only = os.getenv("GRADING_FAST_PASS_ONLY", "false").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    max_second_passes = int(len(page_indices) * max(0.0, second_pass_max_ratio))
+    if second_pass_max_ratio > 0 and max_second_passes == 0:
+        max_second_passes = 1
+    second_pass_used = 0
+    second_pass_lock = asyncio.Lock()
+    est_second_pass_cost = (
+        (strict_est_input_tokens / 1_000_000.0) * cost_per_m_input
+        + (strict_est_output_tokens / 1_000_000.0) * cost_per_m_output
+    )
+    budget_allows_second_pass = (
+        budget_per_page > 0
+        and est_second_pass_cost <= budget_per_page * second_pass_budget_fraction
+    )
     
     try:
         if not api_key:
             raise ValueError("API key 未配置")
         
+        # Worker 独立性保证 (Requirement 3.2)
+        # 每个 Worker 独立创建实例，不共享可变状态
         from src.services.gemini_reasoning import GeminiReasoningClient
+        from src.utils.error_handling import execute_with_isolation, get_error_manager
+        from src.services.rubric_registry import RubricRegistry
+        # 注意：已移除 Agent Skill，直接使用 rubric_registry
+        from src.models.grading_models import QuestionRubric, ScoringPoint
         
-        reasoning_client = GeminiReasoningClient(api_key=api_key)
+        # 独立获取评分标准副本（不共享可变状态）
+        parsed_rubric = state.get("parsed_rubric", {})
+        import copy
+        local_parsed_rubric = copy.deepcopy(parsed_rubric)
+        rubric_map = _build_rubric_question_map(local_parsed_rubric)
         
-        for i, (page_idx, image) in enumerate(zip(page_indices, images)):
-            try:
-                # 直接使用 grade_page 方法批改单页，传递解析后的评分标准
-                parsed_rubric = state.get("parsed_rubric", {})
-                result = await reasoning_client.grade_page(
-                    image=image,
-                    rubric=rubric,
-                    max_score=10.0,
-                    parsed_rubric=parsed_rubric
-                )
+        # 🔍 调试日志：确认 parsed_rubric 内容
+        logger.info(
+            f"[grade_batch] 接收到 parsed_rubric: "
+            f"total_questions={local_parsed_rubric.get('total_questions', 0)}, "
+            f"total_score={local_parsed_rubric.get('total_score', 0)}, "
+            f"questions_count={len(local_parsed_rubric.get('questions', []))}"
+        )
+        
+        # 🔥 关键：从 parsed_rubric 重建 RubricRegistry (Requirement 5.1)
+        rubric_registry = RubricRegistry(
+            total_score=local_parsed_rubric.get("total_score", 100.0)
+        )
+        
+        # 将解析的题目注册到 Registry
+        questions_data = local_parsed_rubric.get("questions", [])
+        if questions_data:
+            question_rubrics = []
+            for q in questions_data:
+                # 构建 ScoringPoint 列表
+                scoring_points = [
+                    ScoringPoint(
+                        description=sp.get("description", ""),
+                        score=sp.get("score", 0),
+                        is_required=sp.get("is_required", True)
+                    )
+                    for sp in q.get("scoring_points", [])
+                ]
                 
-                page_results.append({
+                # 构建 QuestionRubric
+                question_rubric = QuestionRubric(
+                    question_id=str(q.get("id", "")),
+                    question_text=q.get("question_text", ""),
+                    max_score=q.get("max_score", 0),
+                    scoring_points=scoring_points,
+                    standard_answer=q.get("standard_answer", ""),
+                    grading_notes=q.get("grading_notes", ""),
+                    alternative_solutions=[]  # 简化处理
+                )
+                question_rubrics.append(question_rubric)
+            
+            rubric_registry.register_rubrics(question_rubrics)
+            logger.info(
+                f"[grade_batch] 已重建 RubricRegistry，注册 {len(question_rubrics)} 道题目"
+            )
+        
+        # 创建 GeminiReasoningClient（已移除 Agent Skill）
+        reasoning_client = GeminiReasoningClient(
+            api_key=api_key,
+            rubric_registry=rubric_registry,
+        )
+        # 错误隔离：单页失败不影响其他页面 (Requirement 9.2)
+        error_manager = get_error_manager()
+
+        async def allow_second_pass() -> bool:
+            nonlocal second_pass_used
+            async with second_pass_lock:
+                if second_pass_used >= max_second_passes:
+                    return False
+                second_pass_used += 1
+                return True
+
+        async def grade_single_page(page_data):
+            """批改单页（带错误隔离和 Agent Skill 集成）"""
+            page_idx, image = page_data
+            
+            # Visualization Callbacks
+            from src.api.routes.batch_langgraph import broadcast_progress
+            
+            async def stream_callback(stream_type: str, chunk: str) -> None:
+                await broadcast_progress(batch_id, {
+                    "type": "llm_stream_chunk",
+                    "nodeId": "grade_batch",
+                    "nodeName": "Batch Grading",
+                    "agentId": f"worker-{page_idx}",
+                    "streamType": stream_type,
+                    "chunk": chunk
+                })
+            
+            async def progress_callback(status: str, message: str = "") -> None:
+                await broadcast_progress(batch_id, {
+                    "type": "agent_update",
+                    "parentNodeId": "grade_batch",
+                    "agentId": f"worker-{page_idx}",
+                    "agentName": f"Page {page_idx}",
+                    "status": status,
+                    "message": message
+                })
+
+            # Signal Start
+            await progress_callback("running", "Start grading...")
+            
+            try:
+                page_context = page_index_contexts.get(page_idx) if page_index_contexts else None
+
+                def make_stream_callback(stage: str):
+                    async def _callback(stream_type: str, chunk: str) -> None:
+                        await stream_callback(f"{stage}:{stream_type}", chunk)
+                    return _callback
+
+                await progress_callback("running", "Extracting evidence...")
+                evidence = await reasoning_client.extract_answer_evidence(
+                    image=image,
+                    parsed_rubric=local_parsed_rubric,
+                    page_context=page_context,
+                    stream_callback=make_stream_callback("extract"),
+                )
+                evidence = _compact_evidence(evidence, output_limits)
+
+                if evidence.get("is_cover_page"):
+                    evidence["is_blank_page"] = True
+                    evidence["answers"] = []
+
+                question_numbers = evidence.get("question_numbers", [])
+                if page_context:
+                    if not question_numbers and page_context.get("question_numbers"):
+                        question_numbers = page_context.get("question_numbers", [])
+                    if not question_numbers and page_context.get("continuation_of"):
+                        question_numbers = [page_context["continuation_of"]]
+
+                is_blank = evidence.get("is_blank_page") or evidence.get("is_cover_page")
+                if is_blank and not evidence.get("answers"):
+                    page_result = {
+                        "page_index": page_idx,
+                        "status": "completed",
+                        "score": 0.0,
+                        "max_score": 0.0,
+                        "confidence": 0.0,
+                        "feedback": "",
+                        "question_id": f"Q{page_idx}",
+                        "question_numbers": question_numbers,
+                        "question_details": [],
+                        "page_summary": evidence.get("page_summary", ""),
+                        "student_info": evidence.get("student_info") or (page_context or {}).get("student_info"),
+                        "is_blank_page": True,
+                        "revision_count": 0,
+                        "batch_index": batch_index,
+                    }
+                    await progress_callback("completed", "Blank/cover page")
+                    return page_result
+
+                await progress_callback("running", "Scoring from evidence...")
+                score_result = await reasoning_client.score_from_evidence(
+                    evidence=evidence,
+                    parsed_rubric=local_parsed_rubric,
+                    page_context=page_context,
+                    mode="fast",
+                    stream_callback=make_stream_callback("score"),
+                )
+                score_result = _compact_score_result(score_result, output_limits)
+                if not question_numbers:
+                    question_numbers = score_result.get("question_numbers", [])
+
+                finalized = _finalize_scoring_result(
+                    raw_result=score_result,
+                    evidence=evidence,
+                    rubric_map=rubric_map,
+                    page_index=page_idx,
+                )
+
+                needs_second_pass = finalized.get("page_confidence", 0.0) < second_pass_threshold
+                did_second_pass = False
+                skip_reason = None
+
+                if needs_second_pass and not fast_pass_only and budget_allows_second_pass:
+                    if await allow_second_pass():
+                        await progress_callback("running", "Rescoring (low confidence)...")
+                        strict_result = await reasoning_client.score_from_evidence(
+                            evidence=evidence,
+                            parsed_rubric=local_parsed_rubric,
+                            page_context=page_context,
+                            mode="strict",
+                            stream_callback=make_stream_callback("rescore"),
+                        )
+                        strict_result = _compact_score_result(strict_result, output_limits)
+                        if not question_numbers:
+                            question_numbers = strict_result.get("question_numbers", [])
+                        finalized = _finalize_scoring_result(
+                            raw_result=strict_result,
+                            evidence=evidence,
+                            rubric_map=rubric_map,
+                            page_index=page_idx,
+                        )
+                        score_result = strict_result
+                        did_second_pass = True
+                    else:
+                        skip_reason = "second_pass_limit_reached"
+                elif needs_second_pass:
+                    skip_reason = "second_pass_skipped_budget" if not budget_allows_second_pass else "second_pass_disabled"
+
+                if skip_reason:
+                    flags = score_result.get("flags") or []
+                    if skip_reason not in flags:
+                        flags.append(skip_reason)
+                    score_result["flags"] = flags
+
+                student_info = score_result.get("student_info") or evidence.get("student_info")
+                if not student_info and page_context:
+                    student_info = page_context.get("student_info")
+
+                page_result = {
                     "page_index": page_idx,
                     "status": "completed",
-                    "score": result.get("score", 0.0),
-                    "max_score": result.get("max_score", 10.0),
-                    "confidence": result.get("confidence", 0.0),
-                    "feedback": result.get("feedback", ""),
+                    "score": finalized.get("score", 0.0),
+                    "max_score": finalized.get("max_score", 0.0),
+                    "confidence": finalized.get("page_confidence", 0.0),
+                    "feedback": score_result.get("feedback", ""),
                     "question_id": f"Q{page_idx}",
-                    "question_numbers": result.get("question_numbers", []),
-                    "question_details": result.get("question_details", []),
-                    "page_summary": result.get("page_summary", ""),
-                    "student_info": result.get("student_info"),
-                    "revision_count": 0
-                })
-                
-                # 更详细的日志
-                q_nums = result.get("question_numbers", [])
-                logger.info(
-                    f"[grade_batch] 页面 {page_idx} 批改完成: "
-                    f"score={result.get('score', 0)}, 题目={q_nums}"
-                )
+                    "question_numbers": question_numbers,
+                    "question_details": finalized.get("question_details", []),
+                    "page_summary": score_result.get("page_summary") or evidence.get("page_summary", ""),
+                    "student_info": student_info,
+                    "is_blank_page": False,
+                    "revision_count": 1 if did_second_pass else 0,
+                    "batch_index": batch_index,
+                    "flags": score_result.get("flags") or [],
+                }
+
+                # Detailed logging
+                is_blank = page_result.get("is_blank_page", False)
+
+                if is_blank:
+                    logger.info(f"[grade_batch] Page {page_idx} is blank/cover")
+                else:
+                    logger.info(
+                        f"[grade_batch] Page {page_idx} graded: "
+                        f"score={page_result.get('score', 0)}/{page_result.get('max_score', 0)}, "
+                        f"questions={question_numbers}, confidence={page_result.get('confidence', 0):.2f}"
+                    )
+
+                # Signal Completion
+                await progress_callback("completed", f"Score: {page_result.get('score', 0)}")
+
+                return page_result
                 
             except Exception as e:
-                logger.error(f"[grade_batch] 页面 {page_idx} 批改失败: {e}")
+                # Signal Failure
+                await progress_callback("failed", str(e))
+                # 记录错误到全局错误管理器 (Requirement 9.5)
+                error_manager.add_error(
+                    exc=e,
+                    context={
+                        "batch_id": batch_id,
+                        "batch_index": batch_index,
+                        "page_index": page_idx,
+                        "function": "grade_single_page",
+                    },
+                    batch_id=batch_id,
+                    page_index=page_idx,
+                )
+                
+                logger.error(
+                    f"[grade_batch] 页面 {page_idx} 批改失败: {e}. "
+                    f"错误已隔离，继续处理其他页面。"
+                )
+                
+                # 返回失败结果（不中断批次）
+                return {
+                    "page_index": page_idx,
+                    "status": "failed",
+                    "error": str(e),
+                    "score": 0,
+                    "max_score": 0,
+                    "batch_index": batch_index,
+                }
+        
+        # 使用错误隔离批量处理所有页面 (Requirement 9.2)
+        page_data_list = list(zip(page_indices, images))
+        
+        # 并发处理所有页面（带错误隔离）
+        from src.utils.error_handling import execute_batch_with_isolation
+        
+        isolated_results = await execute_batch_with_isolation(
+            func=grade_single_page,
+            items=page_data_list,
+            error_log_context={
+                "batch_id": batch_id,
+                "batch_index": batch_index,
+            }
+        )
+        
+        # 收集结果
+        for isolated_result in isolated_results:
+            if isolated_result.is_success():
+                page_results.append(isolated_result.get_result())
+            else:
+                # 失败的页面也添加到结果中（标记为失败）
+                page_idx = page_data_list[isolated_result.index][0]
                 page_results.append({
                     "page_index": page_idx,
                     "status": "failed",
-                    "error": str(e)
+                    "error": str(isolated_result.get_error()),
+                    "score": 0,
+                    "max_score": 0,
+                    "batch_index": batch_index,
                 })
     
     except Exception as e:
+        batch_error = str(e)
         logger.error(f"[grade_batch] 批次 {batch_index} 批改失败: {e}", exc_info=True)
+        
+        # 记录批次级错误
+        from src.utils.error_handling import get_error_manager
+        error_manager = get_error_manager()
+        error_manager.add_error(
+            exc=e,
+            context={
+                "batch_id": batch_id,
+                "batch_index": batch_index,
+                "function": "grade_batch_node",
+                "retry_count": retry_count,
+            },
+            batch_id=batch_id,
+            retry_count=retry_count,
+        )
+        
+        # 批次失败重试逻辑 (Requirements: 3.3, 9.3)
+        if retry_count < max_retries:
+            logger.info(
+                f"[grade_batch] 批次 {batch_index} 将进行重试 "
+                f"({retry_count + 1}/{max_retries})"
+            )
+            # 返回重试标记，让调度器重新调度
+            return {
+                "grading_results": [],
+                "batch_retry_needed": {
+                    "batch_index": batch_index,
+                    "retry_count": retry_count + 1,
+                    "error": batch_error,
+                }
+            }
+        
         # 所有页面标记为失败
         for page_idx in page_indices:
             page_results.append({
                 "page_index": page_idx,
                 "status": "failed",
-                "error": str(e)
+                "error": batch_error,
+                "score": 0,
+                "max_score": 0,
+                "batch_index": batch_index,
             })
+    
+    success_count = sum(1 for r in page_results if r['status'] == 'completed')
+    failed_count = sum(1 for r in page_results if r['status'] == 'failed')
+    total_score = sum(r.get('score', 0) for r in page_results if r['status'] == 'completed')
+    
+    # 进度报告 (Requirement 3.4)
+    progress_info = {
+        "batch_index": batch_index,
+        "total_batches": total_batches,
+        "pages_processed": success_count,
+        "pages_failed": failed_count,
+        "total_score": total_score,
+        "status": "completed" if failed_count == 0 else "partial",
+        "timestamp": datetime.now().isoformat(),
+    }
     
     logger.info(
         f"[grade_batch] 批次 {batch_index + 1}/{total_batches} 完成: "
-        f"成功={sum(1 for r in page_results if r['status'] == 'completed')}"
+        f"成功={success_count}/{len(page_results)}, 失败={failed_count}, 总分={total_score}"
     )
     
     # 返回结果（使用 add reducer 聚合）
     return {
-        "grading_results": page_results
+        "grading_results": page_results,
+        "batch_progress": progress_info,
     }
 
 
-async def segment_node(state: BatchGradingGraphState) -> Dict[str, Any]:
+async def cross_page_merge_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     """
-    学生分割节点
+    跨页题目合并节点
     
-    基于批改结果智能判断学生边界。
-    这是在批改完成后进行的，利用批改结果中的题目信息和学生标识。
+    在索引聚合之前执行，负责：
+    1. 检测跨页题目
+    2. 合并跨页题目的评分结果
+    3. 确保满分不重复计算
+    
+    Requirements: 2.1, 4.2, 4.3
     """
     batch_id = state["batch_id"]
     grading_results = state.get("grading_results", [])
+    
+    logger.info(f"[cross_page_merge] 开始跨页题目合并: batch_id={batch_id}")
     
     # 去重：由于并行聚合可能导致重复，按 page_index 去重
     seen_pages = set()
@@ -363,9 +2335,396 @@ async def segment_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     unique_results.sort(key=lambda x: x.get("page_index", 0))
     grading_results = unique_results
     
+    try:
+        # 将字典格式转换为 PageGradingResult 对象
+        from src.models.grading_models import PageGradingResult, QuestionResult, ScoringPoint, ScoringPointResult
+        
+        page_results = []
+        for result in grading_results:
+            # 转换 question_details 为 QuestionResult 对象
+            question_results = []
+            for q in result.get("question_details", []):
+                # 构建得分点结果
+                scoring_point_results = []
+                for sp in q.get("scoring_point_results", []):
+                    scoring_point = ScoringPoint(
+                        description=sp.get("description", ""),
+                        score=sp.get("score", 0.0),
+                        is_required=sp.get("is_required", False)
+                    )
+                    scoring_point_result = ScoringPointResult(
+                        scoring_point=scoring_point,
+                        awarded=sp.get("awarded", 0.0),
+                        evidence=sp.get("evidence", "")
+                    )
+                    scoring_point_results.append(scoring_point_result)
+                
+                question_result = QuestionResult(
+                    question_id=q.get("question_id", ""),
+                    score=q.get("score", 0.0),
+                    max_score=q.get("max_score", 0.0),
+                    confidence=q.get("confidence", 1.0),
+                    feedback=q.get("feedback", ""),
+                    scoring_point_results=scoring_point_results,
+                    page_indices=[result.get("page_index", 0)],
+                    is_cross_page=False,
+                    merge_source=None,
+                    student_answer=q.get("student_answer", "")
+                )
+                question_results.append(question_result)
+            
+            page_result = PageGradingResult(
+                page_index=result.get("page_index", 0),
+                question_results=question_results,
+                student_info=result.get("student_info"),
+                is_blank_page=result.get("is_blank_page", False),
+                raw_response=result.get("page_summary", "")
+            )
+            page_results.append(page_result)
+        
+        # 使用 ResultMerger 进行跨页合并
+        from src.services.result_merger import ResultMerger
+        
+        merger = ResultMerger()
+        merged_questions, cross_page_questions = merger.merge_cross_page_questions(page_results)
+        
+        # 将合并后的结果转换回字典格式
+        merged_question_dicts = []
+        for q in merged_questions:
+            merged_question_dicts.append({
+                "question_id": q.question_id,
+                "score": q.score,
+                "max_score": q.max_score,
+                "confidence": q.confidence,
+                "feedback": q.feedback,
+                "student_answer": q.student_answer,
+                "is_cross_page": q.is_cross_page,
+                "page_indices": q.page_indices,
+                "merge_source": q.merge_source,
+                "scoring_point_results": [
+                    {
+                        "description": spr.scoring_point.description,
+                        "score": spr.scoring_point.score,
+                        "is_required": spr.scoring_point.is_required,
+                        "awarded": spr.awarded,
+                        "evidence": spr.evidence
+                    }
+                    for spr in q.scoring_point_results
+                ]
+            })
+        
+        # 转换跨页题目信息
+        cross_page_info = []
+        for cpq in cross_page_questions:
+            cross_page_info.append({
+                "question_id": cpq.question_id,
+                "page_indices": cpq.page_indices,
+                "confidence": cpq.confidence,
+                "merge_reason": cpq.merge_reason
+            })
+        
+        logger.info(
+            f"[cross_page_merge] 跨页合并完成: batch_id={batch_id}, "
+            f"检测到 {len(cross_page_questions)} 个跨页题目, "
+            f"合并后共 {len(merged_questions)} 道题目"
+        )
+        
+        return {
+            "merged_questions": merged_question_dicts,
+            "cross_page_questions": cross_page_info,
+            "current_stage": "cross_page_merge_completed",
+            "percentage": 75.0,
+            "timestamps": {
+                **state.get("timestamps", {}),
+                "cross_page_merge_at": datetime.now().isoformat()
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"[cross_page_merge] 跨页合并失败: {e}", exc_info=True)
+        
+        # 降级处理：不进行跨页合并，直接传递原始结果
+        return {
+            "merged_questions": [],
+            "cross_page_questions": [],
+            "current_stage": "cross_page_merge_completed",
+            "percentage": 75.0,
+            "errors": state.get("errors", []) + [{
+                "node": "cross_page_merge",
+                "error": str(e),
+                "timestamp": datetime.now().isoformat()
+            }]
+        }
+
+
+async def index_merge_node(state: BatchGradingGraphState) -> Dict[str, Any]:
+    """
+    索引对齐聚合节点
+
+    使用索引阶段生成的学生边界聚合批改结果，替代批改后学生分割。
+    """
+    batch_id = state["batch_id"]
+    grading_results = state.get("grading_results", [])
+    merged_questions = state.get("merged_questions", [])
+    student_boundaries = state.get("student_boundaries", []) or []
+    indexed_students = state.get("indexed_students", []) or []
+    student_page_map = state.get("student_page_map", {}) or {}
+
+    # 去重：由于并行聚合可能导致重复，按 page_index 去重
+    seen_pages = set()
+    unique_results = []
+    for result in grading_results:
+        page_idx = result.get("page_index")
+        if page_idx is not None and page_idx not in seen_pages:
+            seen_pages.add(page_idx)
+            unique_results.append(result)
+
+    # 按页码排序
+    unique_results.sort(key=lambda x: x.get("page_index", 0))
+    grading_results = unique_results
+
+    # 过滤空白页
+    non_blank_results = [r for r in grading_results if not r.get("is_blank_page", False)]
+
+    if not student_boundaries and indexed_students:
+        student_boundaries = [
+            {
+                "student_key": s.get("student_key"),
+                "start_page": s.get("start_page", 0),
+                "end_page": s.get("end_page", 0),
+                "confidence": s.get("confidence", 0.0),
+                "needs_confirmation": s.get("needs_confirmation", False),
+                "detection_method": "index",
+            }
+            for s in indexed_students
+        ]
+
+    if not student_boundaries and student_page_map:
+        grouped = {}
+        for page_index, student_key in student_page_map.items():
+            grouped.setdefault(student_key, []).append(page_index)
+        for student_key, pages in grouped.items():
+            pages_sorted = sorted(pages)
+            student_boundaries.append({
+                "student_key": student_key,
+                "start_page": pages_sorted[0],
+                "end_page": pages_sorted[-1],
+                "confidence": 0.0,
+                "needs_confirmation": True,
+                "detection_method": "index",
+            })
+
+    if not student_boundaries:
+        # 无索引边界时降级为单学生
+        fallback_key = "学生A"
+        fallback_end = max(0, len(grading_results) - 1)
+        student_boundaries = [{
+            "student_key": fallback_key,
+            "start_page": 0,
+            "end_page": fallback_end,
+            "confidence": 0.0,
+            "needs_confirmation": True,
+            "detection_method": "fallback",
+        }]
+
+    logger.info(
+        f"[index_merge] 开始聚合: batch_id={batch_id}, "
+        f"批改结果数={len(grading_results)}（去重后），非空白页={len(non_blank_results)}, "
+        f"边界数={len(student_boundaries)}, 合并后题目数={len(merged_questions)}"
+    )
+
+    try:
+        student_info_by_key = {
+            s.get("student_key"): s for s in indexed_students
+        }
+
+        student_results = []
+        for boundary in student_boundaries:
+            student_pages = [
+                r for r in grading_results
+                if boundary["start_page"] <= r.get("page_index", -1) <= boundary["end_page"]
+            ]
+
+            if merged_questions:
+                student_questions = []
+                for q in merged_questions:
+                    q_pages = q.get("page_indices", [])
+                    if any(boundary["start_page"] <= p <= boundary["end_page"] for p in q_pages):
+                        student_questions.append(q)
+
+                total_score = sum(q.get("score", 0) for q in student_questions)
+                max_total_score = sum(q.get("max_score", 0) for q in student_questions)
+                all_question_details = student_questions
+            else:
+                valid_pages = [
+                    r for r in student_pages
+                    if r.get("status") == "completed" and not r.get("is_blank_page", False)
+                ]
+                total_score = sum(r.get("score", 0) for r in valid_pages)
+                max_total_score = sum(r.get("max_score", 0) for r in valid_pages)
+
+                all_question_details = []
+                for page in valid_pages:
+                    for q in page.get("question_details", []):
+                        all_question_details.append({
+                            "question_id": q.get("question_id", ""),
+                            "score": q.get("score", 0),
+                            "max_score": q.get("max_score", 0),
+                            "confidence": q.get("confidence", 0),
+                            "confidence_reason": q.get("confidence_reason") or q.get("confidenceReason"),
+                            "feedback": q.get("feedback", ""),
+                            "student_answer": q.get("student_answer", ""),
+                            "is_correct": q.get("is_correct", False),
+                            "self_critique": q.get("self_critique") or q.get("selfCritique"),
+                            "self_critique_confidence": q.get("self_critique_confidence") or q.get("selfCritiqueConfidence"),
+                            "rubric_refs": q.get("rubric_refs") or q.get("rubricRefs"),
+                            "scoring_point_results": q.get("scoring_point_results") or q.get("scoring_results") or [],
+                            "review_summary": q.get("review_summary") or q.get("reviewSummary"),
+                            "review_corrections": q.get("review_corrections") or q.get("reviewCorrections") or [],
+                            "typo_notes": q.get("typo_notes") or q.get("typoNotes") or [],
+                            "page_indices": q.get("page_indices") or q.get("pageIndices") or [page.get("page_index")],
+                            "is_cross_page": q.get("is_cross_page", False) or q.get("isCrossPage", False),
+                            "merge_source": q.get("merge_source") or q.get("mergeSource"),
+                        })
+
+            student_key = boundary["student_key"]
+            info = student_info_by_key.get(student_key, {})
+
+            student_results.append({
+                "student_key": student_key,
+                "student_id": info.get("student_id"),
+                "student_name": info.get("student_name"),
+                "start_page": boundary["start_page"],
+                "end_page": boundary["end_page"],
+                "total_score": total_score,
+                "max_total_score": max_total_score,
+                "page_results": student_pages,
+                "question_details": all_question_details,
+                "confidence": boundary.get("confidence", 0.0),
+                "needs_confirmation": boundary.get("needs_confirmation", False),
+            })
+
+        logger.info(
+            f"[index_merge] 聚合完成: batch_id={batch_id}, 学生数={len(student_boundaries)}"
+        )
+
+        return {
+            "student_boundaries": student_boundaries,
+            "student_results": student_results,
+            "current_stage": "index_merge_completed",
+            "percentage": 80.0,
+            "timestamps": {
+                **state.get("timestamps", {}),
+                "index_merge_at": datetime.now().isoformat()
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"[index_merge] 聚合失败: {e}", exc_info=True)
+
+        # 降级处理：将所有页面视为一个学生
+        if merged_questions:
+            total_score = sum(q.get("score", 0) for q in merged_questions)
+            max_total_score = sum(q.get("max_score", 0) for q in merged_questions)
+            all_question_details = merged_questions
+        else:
+            valid_results = [
+                r for r in grading_results
+                if r.get("status") == "completed" and not r.get("is_blank_page", False)
+            ]
+            total_score = sum(r.get("score", 0) for r in valid_results)
+            max_total_score = sum(r.get("max_score", 0) for r in valid_results)
+
+            all_question_details = []
+            for page in valid_results:
+                for q in page.get("question_details", []):
+                    all_question_details.append({
+                        "question_id": q.get("question_id", ""),
+                        "score": q.get("score", 0),
+                        "max_score": q.get("max_score", 0),
+                        "confidence": q.get("confidence", 0),
+                        "confidence_reason": q.get("confidence_reason") or q.get("confidenceReason"),
+                        "feedback": q.get("feedback", ""),
+                        "student_answer": q.get("student_answer", ""),
+                        "is_correct": q.get("is_correct", False),
+                        "self_critique": q.get("self_critique") or q.get("selfCritique"),
+                        "self_critique_confidence": q.get("self_critique_confidence") or q.get("selfCritiqueConfidence"),
+                        "rubric_refs": q.get("rubric_refs") or q.get("rubricRefs"),
+                        "scoring_point_results": q.get("scoring_point_results") or q.get("scoring_results") or [],
+                        "review_summary": q.get("review_summary") or q.get("reviewSummary"),
+                        "review_corrections": q.get("review_corrections") or q.get("reviewCorrections") or [],
+                        "typo_notes": q.get("typo_notes") or q.get("typoNotes") or [],
+                        "page_indices": q.get("page_indices") or q.get("pageIndices") or [page.get("page_index")],
+                        "is_cross_page": q.get("is_cross_page", False) or q.get("isCrossPage", False),
+                        "merge_source": q.get("merge_source") or q.get("mergeSource"),
+                    })
+
+        fallback_student_key = "学生A"
+        fallback_student_id = "FALLBACK_001"
+
+        fallback_end = max(0, len(grading_results) - 1)
+        return {
+            "student_boundaries": [{
+                "student_key": fallback_student_key,
+                "start_page": 0,
+                "end_page": fallback_end,
+                "confidence": 0.0,
+                "needs_confirmation": True
+            }],
+            "student_results": [{
+                "student_key": fallback_student_key,
+                "student_id": fallback_student_id,
+                "total_score": total_score,
+                "max_total_score": max_total_score,
+                "page_results": grading_results,
+                "question_details": all_question_details,
+                "confidence": 0.0,
+                "needs_confirmation": True
+            }],
+            "current_stage": "index_merge_completed",
+            "percentage": 80.0,
+            "errors": state.get("errors", []) + [{
+                "node": "index_merge",
+                "error": str(e),
+                "timestamp": datetime.now().isoformat()
+            }]
+        }
+
+
+async def segment_node(state: BatchGradingGraphState) -> Dict[str, Any]:
+    """
+    学生分割节点
+    
+    基于批改结果智能判断学生边界。
+    这是在批改完成后进行的，利用批改结果中的题目信息和学生标识。
+    使用合并后的题目结果（如果有）。
+    
+    Requirements: 4.1, 4.3
+    """
+    batch_id = state["batch_id"]
+    grading_results = state.get("grading_results", [])
+    merged_questions = state.get("merged_questions", [])
+    
+    # 去重：由于并行聚合可能导致重复，按 page_index 去重
+    seen_pages = set()
+    unique_results = []
+    for result in grading_results:
+        page_idx = result.get("page_index")
+        if page_idx is not None and page_idx not in seen_pages:
+            seen_pages.add(page_idx)
+            unique_results.append(result)
+    
+    # 按页码排序
+    unique_results.sort(key=lambda x: x.get("page_index", 0))
+    grading_results = unique_results
+    
+    # 过滤掉空白页
+    non_blank_results = [r for r in grading_results if not r.get("is_blank_page", False)]
+    
     logger.info(
         f"[segment] 开始学生分割: batch_id={batch_id}, "
-        f"批改结果数={len(grading_results)}（去重后）"
+        f"批改结果数={len(grading_results)}（去重后），非空白页={len(non_blank_results)}, "
+        f"合并后题目数={len(merged_questions)}"
     )
     
     try:
@@ -396,8 +2755,40 @@ async def segment_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                 if boundary["start_page"] <= r.get("page_index", -1) <= boundary["end_page"]
             ]
             
-            total_score = sum(r.get("score", 0) for r in student_pages if r.get("status") == "completed")
-            max_total_score = sum(r.get("max_score", 0) for r in student_pages if r.get("status") == "completed")
+            # 如果有合并后的题目结果，使用它们
+            if merged_questions:
+                # 筛选属于该学生的题目（基于页面范围）
+                student_questions = []
+                for q in merged_questions:
+                    # 检查题目的页面索引是否在学生范围内
+                    q_pages = q.get("page_indices", [])
+                    if any(boundary["start_page"] <= p <= boundary["end_page"] for p in q_pages):
+                        student_questions.append(q)
+                
+                # 计算总分（使用合并后的题目，避免重复计算）
+                total_score = sum(q.get("score", 0) for q in student_questions)
+                max_total_score = sum(q.get("max_score", 0) for q in student_questions)
+                
+                all_question_details = student_questions
+            else:
+                # 降级：使用原始页面结果
+                valid_pages = [r for r in student_pages if r.get("status") == "completed" and not r.get("is_blank_page", False)]
+                
+                total_score = sum(r.get("score", 0) for r in valid_pages)
+                max_total_score = sum(r.get("max_score", 0) for r in valid_pages)
+                
+                # 收集所有题目详情
+                all_question_details = []
+                for page in valid_pages:
+                    for q in page.get("question_details", []):
+                        all_question_details.append({
+                            "question_id": q.get("question_id", ""),
+                            "score": q.get("score", 0),
+                            "max_score": q.get("max_score", 0),
+                            "feedback": q.get("feedback", ""),
+                            "student_answer": q.get("student_answer", ""),
+                            "is_correct": q.get("is_correct", False)
+                        })
             
             student_results.append({
                 "student_key": boundary["student_key"],
@@ -406,6 +2797,7 @@ async def segment_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                 "total_score": total_score,
                 "max_total_score": max_total_score,
                 "page_results": student_pages,
+                "question_details": all_question_details,
                 "confidence": boundary["confidence"],
                 "needs_confirmation": boundary["needs_confirmation"]
             })
@@ -430,8 +2822,29 @@ async def segment_node(state: BatchGradingGraphState) -> Dict[str, Any]:
         logger.error(f"[segment] 学生分割失败: {e}", exc_info=True)
         
         # 降级处理：将所有页面视为一个学生
-        total_score = sum(r.get("score", 0) for r in grading_results if r.get("status") == "completed")
-        max_total_score = sum(r.get("max_score", 0) for r in grading_results if r.get("status") == "completed")
+        if merged_questions:
+            # 使用合并后的题目
+            total_score = sum(q.get("score", 0) for q in merged_questions)
+            max_total_score = sum(q.get("max_score", 0) for q in merged_questions)
+            all_question_details = merged_questions
+        else:
+            # 使用原始页面结果
+            valid_results = [r for r in grading_results if r.get("status") == "completed" and not r.get("is_blank_page", False)]
+            total_score = sum(r.get("score", 0) for r in valid_results)
+            max_total_score = sum(r.get("max_score", 0) for r in valid_results)
+            
+            # 收集所有题目详情
+            all_question_details = []
+            for page in valid_results:
+                for q in page.get("question_details", []):
+                    all_question_details.append({
+                        "question_id": q.get("question_id", ""),
+                        "score": q.get("score", 0),
+                        "max_score": q.get("max_score", 0),
+                        "feedback": q.get("feedback", ""),
+                        "student_answer": q.get("student_answer", ""),
+                        "is_correct": q.get("is_correct", False)
+                    })
         
         # 使用唯一的学生标识
         fallback_student_key = "学生A"
@@ -451,6 +2864,7 @@ async def segment_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                 "total_score": total_score,
                 "max_total_score": max_total_score,
                 "page_results": grading_results,
+                "question_details": all_question_details,
                 "confidence": 0.0,
                 "needs_confirmation": True
             }],
@@ -462,6 +2876,774 @@ async def segment_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                 "timestamp": datetime.now().isoformat()
             }]
         }
+
+
+def _apply_student_result_overrides(
+    student_results: List[Dict[str, Any]],
+    overrides: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    if not overrides:
+        return student_results
+
+    overrides_by_key = {}
+    for override in overrides:
+        key = (
+            override.get("studentKey")
+            or override.get("student_key")
+            or override.get("studentName")
+            or override.get("student_name")
+        )
+        if key:
+            overrides_by_key[key] = override
+
+    for student in student_results:
+        student_key = student.get("student_key") or student.get("student_id") or student.get("student_name")
+        override = overrides_by_key.get(student_key)
+        if not override:
+            continue
+
+        question_overrides = {}
+        for q in override.get("questionResults", []) or override.get("question_results", []):
+            qid = _normalize_question_id(q.get("questionId") or q.get("question_id"))
+            if qid:
+                question_overrides[qid] = q
+
+        if student.get("question_details"):
+            for q in student.get("question_details", []):
+                qid = _normalize_question_id(q.get("question_id"))
+                if not qid or qid not in question_overrides:
+                    continue
+                update = question_overrides[qid]
+                if update.get("score") is not None:
+                    q["score"] = float(update.get("score", q.get("score", 0)))
+                if update.get("feedback") is not None:
+                    q["feedback"] = update.get("feedback", q.get("feedback", ""))
+
+        if student.get("page_results"):
+            for page in student.get("page_results", []):
+                if not page.get("question_details"):
+                    continue
+                for q in page.get("question_details", []):
+                    qid = _normalize_question_id(q.get("question_id"))
+                    if not qid or qid not in question_overrides:
+                        continue
+                    update = question_overrides[qid]
+                    if update.get("score") is not None:
+                        q["score"] = float(update.get("score", q.get("score", 0)))
+                    if update.get("feedback") is not None:
+                        q["feedback"] = update.get("feedback", q.get("feedback", ""))
+                page["score"] = sum(q.get("score", 0) for q in page.get("question_details", []))
+
+        if student.get("question_details"):
+            student["total_score"] = sum(q.get("score", 0) for q in student.get("question_details", []))
+        elif student.get("page_results"):
+            student["total_score"] = sum(p.get("score", 0) for p in student.get("page_results", []))
+
+    return student_results
+
+
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        if value is None:
+            return default
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _resolve_student_key_for_page(
+    student_results: List[Dict[str, Any]],
+    page_index: int,
+) -> str:
+    for student in student_results:
+        start_page = student.get("start_page")
+        end_page = student.get("end_page")
+        if start_page is None or end_page is None:
+            continue
+        if start_page <= page_index <= end_page:
+            return (
+                student.get("student_key")
+                or student.get("student_id")
+                or student.get("student_name")
+                or ""
+            )
+    return ""
+
+
+def _find_question_pages(
+    student_results: List[Dict[str, Any]],
+    student_key: str,
+    question_id: str,
+    total_pages: int,
+) -> List[int]:
+    normalized_qid = _normalize_question_id(question_id)
+    for student in student_results:
+        key = (
+            student.get("student_key")
+            or student.get("student_id")
+            or student.get("student_name")
+            or ""
+        )
+        if student_key and key != student_key:
+            continue
+        for question in student.get("question_details", []) or []:
+            qid = _normalize_question_id(question.get("question_id") or question.get("questionId"))
+            if qid != normalized_qid:
+                continue
+            pages = _sanitize_pages(
+                question.get("page_indices") or question.get("pageIndices") or [],
+                total_pages,
+            )
+            if pages:
+                return pages
+        for page in student.get("page_results", []) or []:
+            page_index = page.get("page_index")
+            if page_index is None:
+                continue
+            for question in page.get("question_details", []) or []:
+                qid = _normalize_question_id(question.get("question_id") or question.get("questionId"))
+                if qid == normalized_qid:
+                    return [page_index]
+    return []
+
+
+def _select_best_question_result(
+    current: Optional[Dict[str, Any]],
+    candidate: Optional[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    if not candidate:
+        return current
+    if not current:
+        return candidate
+    current_conf = _safe_float(current.get("confidence", 0))
+    candidate_conf = _safe_float(candidate.get("confidence", 0))
+    if candidate_conf > current_conf + 1e-6:
+        return candidate
+    if candidate_conf < current_conf - 1e-6:
+        return current
+    current_score = _safe_float(current.get("score", 0))
+    candidate_score = _safe_float(candidate.get("score", 0))
+    if candidate_score > current_score:
+        return candidate
+    if candidate_score < current_score:
+        return current
+    current_feedback = current.get("feedback", "") or ""
+    candidate_feedback = candidate.get("feedback", "") or ""
+    if len(candidate_feedback) > len(current_feedback):
+        return candidate
+    return current
+
+
+def _apply_question_result_update(
+    question: Dict[str, Any],
+    update: Dict[str, Any],
+) -> None:
+    if update.get("score") is not None:
+        question["score"] = _safe_float(update.get("score", question.get("score", 0)))
+    if update.get("max_score") is not None:
+        question["max_score"] = _safe_float(update.get("max_score", question.get("max_score", 0)))
+    if update.get("feedback") is not None:
+        question["feedback"] = update.get("feedback", question.get("feedback", ""))
+    if update.get("confidence") is not None:
+        question["confidence"] = _safe_float(update.get("confidence", question.get("confidence", 0)))
+    scoring_points = update.get("scoring_point_results") or update.get("scoring_results")
+    if scoring_points is not None:
+        question["scoring_point_results"] = scoring_points
+    if update.get("student_answer"):
+        question["student_answer"] = update.get("student_answer", question.get("student_answer", ""))
+    if update.get("page_indices"):
+        question["page_indices"] = update.get("page_indices", question.get("page_indices", []))
+
+
+def _apply_regrade_updates(
+    student_results: List[Dict[str, Any]],
+    updates_by_student: Dict[str, Dict[str, Dict[str, Any]]],
+) -> List[Dict[str, Any]]:
+    if not updates_by_student:
+        return student_results
+
+    for student in student_results:
+        student_key = (
+            student.get("student_key")
+            or student.get("student_id")
+            or student.get("student_name")
+            or ""
+        )
+        question_updates = updates_by_student.get(student_key)
+        if not question_updates:
+            continue
+
+        if student.get("question_details"):
+            for q in student.get("question_details", []):
+                qid = _normalize_question_id(q.get("question_id") or q.get("questionId"))
+                update = question_updates.get(qid)
+                if update:
+                    _apply_question_result_update(q, update)
+
+        if student.get("page_results"):
+            for page in student.get("page_results", []):
+                page_questions = page.get("question_details") or []
+                updated = False
+                for q in page_questions:
+                    qid = _normalize_question_id(q.get("question_id") or q.get("questionId"))
+                    update = question_updates.get(qid)
+                    if update:
+                        _apply_question_result_update(q, update)
+                        updated = True
+                if updated:
+                    page["score"] = sum(q.get("score", 0) for q in page_questions)
+
+        if student.get("question_details"):
+            student["total_score"] = sum(
+                _safe_float(q.get("score", 0))
+                for q in student.get("question_details", [])
+            )
+        elif student.get("page_results"):
+            student["total_score"] = sum(
+                _safe_float(p.get("score", 0))
+                for p in student.get("page_results", [])
+            )
+
+    return student_results
+
+
+async def _regrade_selected_questions(
+    state: BatchGradingGraphState,
+    student_results: List[Dict[str, Any]],
+    regrade_items: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    if not regrade_items:
+        return student_results
+
+    api_key = state.get("api_key") or os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        logger.warning("[review] regrade skipped: missing API key")
+        return student_results
+
+    processed_images = state.get("processed_images") or state.get("answer_images") or []
+    total_pages = len(processed_images)
+    if total_pages == 0:
+        logger.warning("[review] regrade skipped: missing images")
+        return student_results
+
+    parsed_rubric = state.get("parsed_rubric", {})
+    questions_data = parsed_rubric.get("questions", []) if isinstance(parsed_rubric, dict) else []
+
+    try:
+        from src.services.gemini_reasoning import GeminiReasoningClient
+        from src.services.rubric_registry import RubricRegistry
+        from src.models.grading_models import QuestionRubric, ScoringPoint
+    except Exception as exc:
+        logger.warning(f"[review] regrade skipped: {exc}")
+        return student_results
+
+    rubric_registry = RubricRegistry(total_score=parsed_rubric.get("total_score", 100.0))
+    question_rubrics = []
+    for q in questions_data:
+        qid = q.get("question_id") or q.get("id") or ""
+        if not qid:
+            continue
+        scoring_points = [
+            ScoringPoint(
+                description=sp.get("description", ""),
+                score=sp.get("score", 0),
+                is_required=sp.get("is_required", True),
+            )
+            for sp in q.get("scoring_points", [])
+        ]
+        question_rubrics.append(QuestionRubric(
+            question_id=str(qid),
+            question_text=q.get("question_text", ""),
+            max_score=q.get("max_score", 0),
+            scoring_points=scoring_points,
+            standard_answer=q.get("standard_answer", ""),
+            grading_notes=q.get("grading_notes", ""),
+            alternative_solutions=[],
+        ))
+    if question_rubrics:
+        rubric_registry.register_rubrics(question_rubrics)
+
+    reasoning_client = GeminiReasoningClient(
+        api_key=api_key,
+        rubric_registry=rubric_registry,
+    )
+
+    student_page_map = state.get("student_page_map") or {}
+    resolved_items: List[Dict[str, Any]] = []
+
+    for item in regrade_items:
+        if not isinstance(item, dict):
+            continue
+        question_id = _normalize_question_id(item.get("question_id") or item.get("questionId"))
+        if not question_id:
+            continue
+        student_key = (
+            item.get("student_key")
+            or item.get("studentKey")
+            or item.get("studentName")
+            or item.get("student_name")
+            or ""
+        )
+        raw_pages = (
+            item.get("page_indices")
+            or item.get("pageIndices")
+            or item.get("page_index")
+            or item.get("pageIndex")
+        )
+        if raw_pages is not None and not isinstance(raw_pages, (list, tuple)):
+            raw_pages = [raw_pages]
+        pages = _sanitize_pages(raw_pages, total_pages)
+        if not pages:
+            pages = _find_question_pages(student_results, student_key, question_id, total_pages)
+        if not student_key and pages:
+            student_key = student_page_map.get(pages[0]) or _resolve_student_key_for_page(
+                student_results, pages[0]
+            )
+        if not student_key or not pages:
+            logger.warning(
+                f"[review] regrade skipped item: question={question_id}, student={student_key or 'unknown'}"
+            )
+            continue
+        for page_index in pages:
+            resolved_items.append({
+                "student_key": student_key,
+                "question_id": question_id,
+                "page_index": page_index,
+                "notes": item.get("notes") or item.get("note") or "",
+            })
+
+    if not resolved_items:
+        return student_results
+
+    updates_by_student: Dict[str, Dict[str, Dict[str, Any]]] = {}
+    for item in resolved_items:
+        page_index = item["page_index"]
+        if not (0 <= page_index < total_pages):
+            continue
+        image = processed_images[page_index]
+        try:
+            result = await reasoning_client.grade_with_detailed_scoring_points(
+                image=image,
+                question_id=item["question_id"],
+                page_index=page_index,
+                reviewer_notes=item.get("notes") or "",
+            )
+            result_dict = result.to_dict()
+            student_key = item["student_key"]
+            qid = _normalize_question_id(item["question_id"])
+            bucket = updates_by_student.setdefault(student_key, {})
+            bucket[qid] = _select_best_question_result(bucket.get(qid), result_dict)
+        except Exception as exc:
+            logger.warning(
+                f"[review] regrade failed: question={item['question_id']} page={page_index} error={exc}"
+            )
+
+    return _apply_regrade_updates(student_results, updates_by_student)
+
+
+def _extract_scoring_points(question: Dict[str, Any]) -> List[Dict[str, Any]]:
+    qid = _normalize_question_id(question.get("question_id") or question.get("questionId"))
+    raw_points = question.get("scoring_point_results") or question.get("scoring_results") or []
+    points: List[Dict[str, Any]] = []
+    for spr in raw_points:
+        if not isinstance(spr, dict):
+            continue
+        scoring_point = spr.get("scoring_point") or spr.get("scoringPoint") or {}
+        description = (
+            scoring_point.get("description")
+            or spr.get("description")
+            or spr.get("rubric_reference")
+            or spr.get("rubricReference")
+            or ""
+        )
+        point_id = (
+            spr.get("point_id")
+            or spr.get("pointId")
+            or scoring_point.get("point_id")
+            or ""
+        )
+        awarded = _safe_float(spr.get("awarded", spr.get("score", 0)))
+        max_points = _safe_float(
+            spr.get("max_points")
+            or spr.get("maxPoints")
+            or scoring_point.get("score")
+            or 0
+        )
+        points.append({
+            "question_id": qid,
+            "point_id": str(point_id) if point_id is not None else "",
+            "description": description,
+            "score": awarded,
+            "max_score": max_points,
+            "evidence": spr.get("evidence") or "",
+            "rubric_reference": spr.get("rubric_reference") or spr.get("rubricReference") or "",
+        })
+    return points
+
+
+def _build_student_summary(student: Dict[str, Any]) -> Dict[str, Any]:
+    total_score = _safe_float(student.get("total_score", 0))
+    max_total_score = _safe_float(student.get("max_total_score", 0))
+    percentage = (total_score / max_total_score * 100) if max_total_score > 0 else 0.0
+
+    knowledge_points: List[Dict[str, Any]] = []
+    weak_points: List[Dict[str, Any]] = []
+
+    question_details = student.get("question_details") or []
+    for question in question_details:
+        for point in _extract_scoring_points(question):
+            max_score = point.get("max_score", 0) or 0
+            ratio = (point.get("score", 0) / max_score) if max_score > 0 else 0.0
+            if ratio >= 0.85:
+                mastery = "mastered"
+            elif ratio >= 0.6:
+                mastery = "partial"
+            else:
+                mastery = "weak"
+            enriched = {
+                **point,
+                "mastery_level": mastery,
+                "ratio": ratio,
+            }
+            knowledge_points.append(enriched)
+            if mastery == "weak":
+                weak_points.append(enriched)
+
+    if not knowledge_points:
+        for question in question_details:
+            qid = _normalize_question_id(question.get("question_id") or question.get("questionId"))
+            score = _safe_float(question.get("score", 0))
+            max_score = _safe_float(question.get("max_score", 0))
+            ratio = (score / max_score) if max_score > 0 else 0.0
+            mastery = "partial" if ratio >= 0.6 else "weak"
+            knowledge_points.append({
+                "question_id": qid,
+                "point_id": "",
+                "description": question.get("feedback", "") or f"Question {qid}",
+                "score": score,
+                "max_score": max_score,
+                "mastery_level": mastery,
+                "ratio": ratio,
+                "evidence": "",
+                "rubric_reference": "",
+            })
+            if mastery == "weak":
+                weak_points.append(knowledge_points[-1])
+
+    suggestion_candidates = []
+    for point in weak_points:
+        label = point.get("description") or f"Question {point.get('question_id', '')}"
+        if label:
+            suggestion_candidates.append(f"建议复习：{label}")
+    if not suggestion_candidates:
+        for point in knowledge_points:
+            if point.get("ratio", 0) < 0.7:
+                label = point.get("description") or f"Question {point.get('question_id', '')}"
+                if label:
+                    suggestion_candidates.append(f"建议复习：{label}")
+
+    improvement_suggestions = []
+    seen = set()
+    for item in suggestion_candidates:
+        if item not in seen:
+            improvement_suggestions.append(item)
+            seen.add(item)
+        if len(improvement_suggestions) >= 5:
+            break
+
+    overall_parts = [f"整体得分 {total_score}/{max_total_score}（{percentage:.1f}%）。"]
+    if percentage >= 85:
+        overall_parts.append("整体表现优秀。")
+    elif percentage >= 70:
+        overall_parts.append("整体表现良好。")
+    elif percentage >= 60:
+        overall_parts.append("整体达到及格水平。")
+    else:
+        overall_parts.append("整体表现需重点提升。")
+
+    if weak_points:
+        weak_labels = []
+        for point in weak_points[:3]:
+            label = point.get("description") or f"Question {point.get('question_id', '')}"
+            if label:
+                weak_labels.append(label)
+        if weak_labels:
+            overall_parts.append(f"薄弱点集中在：{'，'.join(weak_labels)}。")
+    else:
+        overall_parts.append("暂无明显薄弱点。")
+
+    return {
+        "overall": " ".join(overall_parts),
+        "percentage": percentage,
+        "knowledge_points": knowledge_points,
+        "improvement_suggestions": improvement_suggestions,
+        "generated_at": datetime.now().isoformat(),
+    }
+
+
+def _build_self_audit(student: Dict[str, Any]) -> Dict[str, Any]:
+    question_details = student.get("question_details") or []
+    issues: List[Dict[str, Any]] = []
+    confidence_values: List[float] = []
+
+    for question in question_details:
+        qid = _normalize_question_id(question.get("question_id") or question.get("questionId"))
+        confidence = _safe_float(question.get("confidence", 0), 0.0)
+        if confidence:
+            confidence_values.append(confidence)
+
+        if confidence and confidence < 0.7:
+            issues.append({
+                "issue_type": "low_confidence",
+                "message": f"题目 {qid} 评分置信度较低",
+                "question_id": qid,
+            })
+
+        review_corrections = question.get("review_corrections") or []
+        if review_corrections:
+            issues.append({
+                "issue_type": "logic_review_adjusted",
+                "message": f"题目 {qid} 存在逻辑复核修正记录",
+                "question_id": qid,
+            })
+
+        if not question.get("self_critique"):
+            issues.append({
+                "issue_type": "missing_self_critique",
+                "message": f"题目 {qid} 缺少自白说明",
+                "question_id": qid,
+            })
+
+        scoring_points = question.get("scoring_point_results") or question.get("scoring_results") or []
+        if not scoring_points:
+            issues.append({
+                "issue_type": "missing_scoring_points",
+                "message": f"题目 {qid} 缺少评分点明细",
+                "question_id": qid,
+            })
+        else:
+            missing_evidence = False
+            missing_rubric_ref = False
+            for spr in scoring_points:
+                if not isinstance(spr, dict):
+                    continue
+                evidence = spr.get("evidence")
+                if _is_placeholder_evidence(evidence):
+                    missing_evidence = True
+                rubric_ref = spr.get("rubric_reference") or spr.get("rubricReference")
+                if not rubric_ref:
+                    missing_rubric_ref = True
+            if missing_evidence:
+                issues.append({
+                    "issue_type": "missing_evidence",
+                    "message": f"题目 {qid} 部分评分点证据不足",
+                    "question_id": qid,
+                })
+            if missing_rubric_ref and not question.get("rubric_refs"):
+                issues.append({
+                    "issue_type": "missing_rubric_ref",
+                    "message": f"题目 {qid} 部分评分点缺少标准引用",
+                    "question_id": qid,
+                })
+
+        typo_notes = question.get("typo_notes") or question.get("typoNotes") or []
+        if typo_notes:
+            issues.append({
+                "issue_type": "typo_detected",
+                "message": f"题目 {qid} 发现错别字标注",
+                "question_id": qid,
+            })
+
+    avg_confidence = (
+        sum(confidence_values) / len(confidence_values)
+        if confidence_values else 0.7
+    )
+    penalty = min(0.4, 0.05 * len(issues))
+    audit_confidence = max(0.1, min(1.0, avg_confidence - penalty))
+
+    if issues:
+        issue_labels = [issue.get("message", "") for issue in issues[:3] if issue.get("message")]
+        summary = f"发现 {len(issues)} 项可疑点，建议复核：{'；'.join(issue_labels)}。"
+    else:
+        summary = "未发现明显可疑点，结果一致性良好。"
+
+    return {
+        "summary": summary,
+        "confidence": audit_confidence,
+        "issues": issues,
+        "generated_at": datetime.now().isoformat(),
+    }
+
+
+
+def _safe_float(value: Any) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _build_class_report(student_results: List[Dict[str, Any]]) -> Dict[str, Any]:
+    total_students = len(student_results)
+    if total_students == 0:
+        return {
+            "total_students": 0,
+            "generated_at": datetime.now().isoformat(),
+        }
+
+    total_scores = []
+    total_percentages = []
+    distribution = {"A": 0, "B": 0, "C": 0, "D": 0, "E": 0}
+    knowledge_aggregate: Dict[str, Dict[str, Any]] = {}
+
+    for student in student_results:
+        total_score = _safe_float(student.get("total_score", 0))
+        max_score = _safe_float(student.get("max_total_score", 0))
+        percentage = (total_score / max_score * 100) if max_score > 0 else 0.0
+        total_scores.append(total_score)
+        total_percentages.append(percentage)
+
+        if percentage >= 85:
+            distribution["A"] += 1
+        elif percentage >= 70:
+            distribution["B"] += 1
+        elif percentage >= 60:
+            distribution["C"] += 1
+        elif percentage >= 50:
+            distribution["D"] += 1
+        else:
+            distribution["E"] += 1
+
+        summary = student.get("student_summary") or _build_student_summary(student)
+        for point in summary.get("knowledge_points", []):
+            key = point.get("point_id") or point.get("description") or ""
+            if not key:
+                continue
+            entry = knowledge_aggregate.setdefault(key, {
+                "point_id": point.get("point_id") or "",
+                "description": point.get("description") or "",
+                "total_score": 0.0,
+                "total_max_score": 0.0,
+            })
+            entry["total_score"] += _safe_float(point.get("score", 0))
+            entry["total_max_score"] += _safe_float(point.get("max_score", 0))
+
+    average_score = sum(total_scores) / total_students if total_students else 0.0
+    average_percentage = sum(total_percentages) / total_students if total_students else 0.0
+    pass_rate = (
+        sum(1 for pct in total_percentages if pct >= 60) / total_students
+        if total_students else 0.0
+    )
+
+    weak_points = []
+    strong_points = []
+    for entry in knowledge_aggregate.values():
+        max_score = entry.get("total_max_score", 0) or 0
+        ratio = (entry.get("total_score", 0) / max_score) if max_score > 0 else 0.0
+        record = {
+            "point_id": entry.get("point_id"),
+            "description": entry.get("description"),
+            "mastery_ratio": ratio,
+        }
+        if ratio < 0.6:
+            weak_points.append(record)
+        elif ratio >= 0.85:
+            strong_points.append(record)
+
+    weak_points.sort(key=lambda x: x.get("mastery_ratio", 0))
+    strong_points.sort(key=lambda x: x.get("mastery_ratio", 0), reverse=True)
+
+    summary_parts = [
+        f"班级平均分 {average_score:.1f}，平均得分率 {average_percentage:.1f}%。",
+        f"及格率 {pass_rate * 100:.1f}%。",
+    ]
+    if weak_points:
+        weak_labels = [p.get("description", "") for p in weak_points[:3] if p.get("description")]
+        if weak_labels:
+            summary_parts.append(f"主要薄弱知识点：{'，'.join(weak_labels)}。")
+    if strong_points:
+        strong_labels = [p.get("description", "") for p in strong_points[:3] if p.get("description")]
+        if strong_labels:
+            summary_parts.append(f"优势知识点：{'，'.join(strong_labels)}。")
+
+    return {
+        "total_students": total_students,
+        "average_score": average_score,
+        "average_percentage": average_percentage,
+        "pass_rate": pass_rate,
+        "score_distribution": distribution,
+        "weak_points": weak_points[:10],
+        "strong_points": strong_points[:10],
+        "summary": " ".join(summary_parts),
+        "generated_at": datetime.now().isoformat(),
+    }
+
+
+
+def _apply_student_result_overrides(
+    student_results: List[Dict[str, Any]],
+    overrides: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """应用学生结果覆盖"""
+    if not overrides:
+        return student_results
+
+    # 构建覆盖映射
+    override_map = {}
+    for item in overrides:
+        key = item.get("student_key") or item.get("studentKey")
+        if key:
+            override_map[key] = item
+
+    updated_results = []
+    for student in student_results:
+        student_key = student.get("student_key")
+        if student_key not in override_map:
+            updated_results.append(student)
+            continue
+
+        override = override_map[student_key]
+        updated_student = student.copy()
+        
+        # 构建题目覆盖映射
+        q_override_map = {}
+        for q in override.get("questionResults") or override.get("question_results") or []:
+            qid = _normalize_question_id(q.get("questionId") or q.get("question_id"))
+            if qid:
+                q_override_map[qid] = q
+
+        # 更新 question_details
+        current_details = student.get("question_details") or []
+        updated_details = []
+        for q in current_details:
+            qid = _normalize_question_id(q.get("question_id"))
+            if qid in q_override_map:
+                logger.info(f"[review] applying override for student={student_key} question={qid}")
+                q_override = q_override_map[qid]
+                updated_q = q.copy()
+                
+                # 更新分数
+                if "score" in q_override:
+                    updated_q["score"] = float(q_override["score"])
+                
+                # 更新反馈
+                if "feedback" in q_override:
+                    updated_q["feedback"] = q_override["feedback"]
+                
+                updated_details.append(updated_q)
+            else:
+                updated_details.append(q)
+        
+        updated_student["question_details"] = updated_details
+        
+        # 重新计算总分
+        updated_student["total_score"] = sum(
+            float(q.get("score", 0)) for q in updated_details
+        )
+        
+        updated_results.append(updated_student)
+
+    return updated_results
 
 
 async def review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
@@ -502,9 +3684,39 @@ async def review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
         f"学生数={review_summary['total_students']}, "
         f"待确认边界={review_summary['boundaries_need_confirmation']}"
     )
+
+    review_request = {
+        "type": "results_review_required",
+        "batch_id": batch_id,
+        "summary": review_summary,
+        "message": "Results review required",
+        "requested_at": datetime.now().isoformat()
+    }
+    try:
+        from src.api.routes.batch_langgraph import broadcast_progress
+        await broadcast_progress(batch_id, {
+            "type": "review_required",
+            "reviewType": review_request["type"],
+            "payload": review_request,
+        })
+    except Exception as exc:
+        logger.warning(f"[review] failed to emit review_required: {exc}")
+    review_response = interrupt(review_request)
+
+    action = (review_response or {}).get("action", "approve").lower()
+    regrade_items = (review_response or {}).get("regrade_items") or (review_response or {}).get("regradeItems") or []
+
+    updated_results = student_results
+    if action == "regrade" and regrade_items:
+        updated_results = await _regrade_selected_questions(state, updated_results, regrade_items)
+
+    overrides = (review_response or {}).get("results") or (review_response or {}).get("student_results") or []
+    updated_results = _apply_student_result_overrides(updated_results, overrides)
     
     return {
         "review_summary": review_summary,
+        "review_result": review_response,
+        "student_results": updated_results,
         "current_stage": "review_completed",
         "percentage": 90.0,
         "timestamps": {
@@ -519,11 +3731,28 @@ async def export_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     导出结果节点
     
     持久化结果并准备导出数据。
+    支持无数据库模式下导出结果为 JSON 文件。
+    支持部分结果保存：不可恢复错误时保存已完成结果。
+    
+    Requirements: 9.4, 11.4
     """
     batch_id = state["batch_id"]
     student_results = state.get("student_results", [])
+    cross_page_questions = state.get("cross_page_questions", [])
+    merged_questions = state.get("merged_questions", [])
+    grading_results = state.get("grading_results", [])
     
-    logger.info(f"[export] 开始导出结果: batch_id={batch_id}")
+    logger.info(f"[export] 开始导出结果: batch_id={batch_id}, 学生数={len(student_results)}")
+    
+    # 检查是否有失败的页面
+    failed_pages = [r for r in grading_results if r.get("status") == "failed"]
+    has_failures = len(failed_pages) > 0
+    
+    if has_failures:
+        logger.warning(
+            f"[export] 检测到 {len(failed_pages)} 个失败页面，"
+            f"将保存部分结果"
+        )
     
     # 尝试持久化到数据库
     persisted = False
@@ -543,37 +3772,179 @@ async def export_node(state: BatchGradingGraphState) -> Dict[str, Any]:
         "batch_id": batch_id,
         "export_time": datetime.now().isoformat(),
         "persisted": persisted,
+        "has_failures": has_failures,
+        "failed_pages_count": len(failed_pages),
+        "cross_page_questions": cross_page_questions,
+        "merged_questions": merged_questions,
         "students": []
     }
     
+    # 添加失败页面信息（用于部分结果保存）
+    if has_failures:
+        export_data["failed_pages"] = [
+            {
+                "page_index": p.get("page_index"),
+                "error": p.get("error"),
+                "batch_index": p.get("batch_index"),
+            }
+            for p in failed_pages
+        ]
+    
     for student in student_results:
+        # 计算百分比
+        total_score = student.get("total_score", 0)
+        max_score = student.get("max_total_score", 0)
+        percentage = (total_score / max_score * 100) if max_score > 0 else 0
+
+        summary = student.get("student_summary") or _build_student_summary(student)
+        audit = student.get("self_audit") or _build_self_audit(student)
+        student["student_summary"] = summary
+        student["self_audit"] = audit
+        
+        # 收集题目结果
+        question_results = []
+        
+        # 优先使用 question_details
+        if student.get("question_details"):
+            for q in student["question_details"]:
+                question_results.append({
+                    "question_id": q.get("question_id", ""),
+                    "score": q.get("score", 0),
+                    "max_score": q.get("max_score", 0),
+                    "feedback": q.get("feedback", ""),
+                    "student_answer": q.get("student_answer", ""),
+                    "is_correct": q.get("is_correct", False),
+                    "is_cross_page": q.get("is_cross_page", False),
+                    "page_indices": q.get("page_indices", []),
+                    "confidence": q.get("confidence", 1.0)
+                })
+        # 否则从 page_results 提取
+        elif student.get("page_results"):
+            for page in student["page_results"]:
+                if page.get("status") == "completed" and not page.get("is_blank_page", False):
+                    for q in page.get("question_details", []):
+                        question_results.append({
+                            "question_id": q.get("question_id", ""),
+                            "score": q.get("score", 0),
+                            "max_score": q.get("max_score", 0),
+                            "feedback": q.get("feedback", ""),
+                            "student_answer": q.get("student_answer", ""),
+                            "is_correct": q.get("is_correct", False)
+                        })
+        
         export_data["students"].append({
             "student_name": student["student_key"],
-            "score": student.get("total_score", 0),
-            "max_score": student.get("max_total_score", 0),
-            "percentage": (
-                student.get("total_score", 0) / student.get("max_total_score", 1) * 100
-                if student.get("max_total_score", 0) > 0 else 0
-            ),
-            "question_results": [
-                {
-                    "question_id": r.get("question_id", f"Q{r.get('page_index', 0)}"),
-                    "score": r.get("score", 0),
-                    "max_score": r.get("max_score", 0),
-                    "feedback": r.get("feedback", "")
-                }
-                for r in student.get("page_results", [])
-                if r.get("status") == "completed"
-            ]
+            "student_id": student.get("student_id"),
+            "score": total_score,
+            "max_score": max_score,
+            "percentage": round(percentage, 1),
+            "question_results": question_results,
+            "confidence": student.get("confidence", 0),
+            "needs_confirmation": student.get("needs_confirmation", False),
+            "start_page": student.get("start_page", 0),
+            "end_page": student.get("end_page", 0),
+            "student_summary": summary,
+            "self_audit": audit,
         })
+
+    class_report = _build_class_report(student_results)
+    export_data["class_report"] = class_report
+    
+    # 导出为 JSON 文件 (Requirements: 9.4, 11.4)
+    # 无数据库模式或有失败时都导出
+    if not persisted or has_failures:
+        try:
+            import json
+            import os
+            
+            # 创建导出目录
+            export_dir = os.getenv("EXPORT_DIR", "./exports")
+            os.makedirs(export_dir, exist_ok=True)
+            
+            # 生成文件名
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            
+            # 如果有失败，标记为部分结果 (Requirement 9.4)
+            if has_failures:
+                filename = f"partial_result_{batch_id}_{timestamp}.json"
+                logger.info(
+                    f"[export] 保存部分结果（{len(failed_pages)} 个页面失败）: {filename}"
+                )
+            else:
+                filename = f"grading_result_{batch_id}_{timestamp}.json"
+            
+            filepath = os.path.join(export_dir, filename)
+            
+            # 写入 JSON 文件
+            with open(filepath, 'w', encoding='utf-8') as f:
+                json.dump(export_data, f, ensure_ascii=False, indent=2)
+            
+            export_data["json_file"] = filepath
+            
+            if has_failures:
+                logger.warning(
+                    f"[export] 部分结果已保存: {filepath}. "
+                    f"完成={len(grading_results) - len(failed_pages)}/{len(grading_results)} 页"
+                )
+            else:
+                logger.info(f"[export] 结果已导出为 JSON: {filepath}")
+            
+        except Exception as e:
+            logger.error(f"[export] JSON 导出失败: {e}", exc_info=True)
+            export_data["json_export_error"] = str(e)
+            
+            # 记录错误
+            from src.utils.error_handling import get_error_manager
+            error_manager = get_error_manager()
+            error_manager.add_error(
+                exc=e,
+                context={
+                    "batch_id": batch_id,
+                    "function": "export_node",
+                    "export_type": "json",
+                },
+                batch_id=batch_id,
+            )
+    
+    # 导出错误日志（如果有错误）
+    try:
+        from src.utils.error_handling import get_error_manager
+        error_manager = get_error_manager()
+        
+        batch_errors = error_manager.get_errors_by_batch(batch_id)
+        if batch_errors:
+            import os
+            
+            export_dir = os.getenv("EXPORT_DIR", "./exports")
+            os.makedirs(export_dir, exist_ok=True)
+            
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            error_log_file = os.path.join(
+                export_dir,
+                f"error_log_{batch_id}_{timestamp}.json"
+            )
+            
+            error_manager.export_to_file(error_log_file)
+            export_data["error_log_file"] = error_log_file
+            
+            logger.info(
+                f"[export] 错误日志已导出: {error_log_file} "
+                f"({len(batch_errors)} 个错误)"
+            )
+    except Exception as e:
+        logger.error(f"[export] 错误日志导出失败: {e}", exc_info=True)
     
     logger.info(
         f"[export] 导出完成: batch_id={batch_id}, "
-        f"学生数={len(export_data['students'])}"
+        f"学生数={len(export_data['students'])}, "
+        f"跨页题目数={len(cross_page_questions)}, "
+        f"失败页面数={len(failed_pages)}"
     )
     
     return {
         "export_data": export_data,
+        "student_results": student_results,
+        "class_report": class_report,
         "current_stage": "completed",
         "percentage": 100.0,
         "timestamps": {
@@ -587,18 +3958,21 @@ async def export_node(state: BatchGradingGraphState) -> Dict[str, Any]:
 # ==================== Graph 编译 ====================
 
 def create_batch_grading_graph(
-    checkpointer: Optional[AsyncPostgresSaver] = None
+    checkpointer: Optional[AsyncPostgresSaver] = None,
+    batch_config: Optional[BatchConfig] = None,
 ) -> StateGraph:
     """创建批量批改 Graph
     
     工作流：
     1. intake: 接收文件
     2. preprocess: 图像预处理
-    3. rubric_parse: 解析评分标准
-    4. grade_batch (并行): 固定分批批改所有页面
-    5. segment: 基于批改结果进行学生分割
-    6. review: 结果审核
-    7. export: 导出结果
+    3. index: 批改前索引（题目信息 + 学生识别）
+    4. rubric_parse: 解析评分标准
+    5. grade_batch (并行): 可配置分批批改所有页面
+    6. cross_page_merge: 跨页题目合并
+    7. index_merge: 基于索引聚合学生结果
+    8. review: 结果审核
+    9. export: 导出结果
     
     流程图：
     ```
@@ -606,13 +3980,17 @@ def create_batch_grading_graph(
       ↓
     preprocess
       ↓
+    index
+      ↓
     rubric_parse
       ↓
     ┌─────────────────┐
-    │ grade_batch (N) │  ← 并行批改
+    │ grade_batch (N) │  ← 并行批改（可配置批次大小）
     └─────────────────┘
       ↓
-    segment  ← 批改后学生分割
+    cross_page_merge  ← 跨页题目合并
+      ↓
+    index_merge  ← 基于索引聚合
       ↓
     review
       ↓
@@ -621,22 +3999,42 @@ def create_batch_grading_graph(
     END
     ```
     
+    特性：
+    - 可配置批次大小 (Requirements: 3.1, 10.1)
+    - Worker 独立性保证 (Requirements: 3.2)
+    - 批次失败重试 (Requirements: 3.3, 9.3)
+    - 实时进度报告 (Requirements: 3.4)
+    - 跨页题目合并 (Requirements: 2.1, 4.2, 4.3)
+    
     Args:
         checkpointer: PostgreSQL Checkpointer（可选）
+        batch_config: 批次配置（可选，默认从环境变量加载）
         
     Returns:
         编译后的 Graph
     """
-    logger.info("创建批量批改 Graph")
+    # 设置批次配置
+    if batch_config:
+        set_batch_config(batch_config)
+    
+    config = get_batch_config()
+    logger.info(
+        f"创建批量批改 Graph: batch_size={config.batch_size}, "
+        f"max_workers={config.max_concurrent_workers}, "
+        f"max_retries={config.max_retries}"
+    )
     
     graph = StateGraph(BatchGradingGraphState)
     
     # 添加节点
     graph.add_node("intake", intake_node)
     graph.add_node("preprocess", preprocess_node)
+    graph.add_node("index", index_node)
     graph.add_node("rubric_parse", rubric_parse_node)
+    graph.add_node("rubric_review", rubric_review_node)
     graph.add_node("grade_batch", grade_batch_node)
-    graph.add_node("segment", segment_node)
+    graph.add_node("cross_page_merge", cross_page_merge_node)
+    graph.add_node("index_merge", index_merge_node)
     graph.add_node("review", review_node)
     graph.add_node("export", export_node)
     
@@ -645,20 +4043,23 @@ def create_batch_grading_graph(
     
     # 线性流程：intake → preprocess → rubric_parse
     graph.add_edge("intake", "preprocess")
-    graph.add_edge("preprocess", "rubric_parse")
-    
-    # rubric_parse 后扇出到并行批改
+    graph.add_edge("preprocess", "index")
+    graph.add_edge("index", "rubric_parse")
+    graph.add_edge("rubric_parse", "rubric_review")
+
+    # rubric_review 后扇出到并行批改
     graph.add_conditional_edges(
-        "rubric_parse",
+        "rubric_review",
         grading_fanout_router,
-        ["grade_batch", "segment"]
+        ["grade_batch", "cross_page_merge", "index_merge"]
     )
     
-    # 并行批改后聚合到 segment
-    graph.add_edge("grade_batch", "segment")
+    # 并行批改后聚合到 cross_page_merge
+    graph.add_edge("grade_batch", "cross_page_merge")
     
-    # segment → review → export → END
-    graph.add_edge("segment", "review")
+    # cross_page_merge → index_merge → review → export → END
+    graph.add_edge("cross_page_merge", "index_merge")
+    graph.add_edge("index_merge", "review")
     graph.add_edge("review", "export")
     graph.add_edge("export", END)
     
@@ -672,3 +4073,30 @@ def create_batch_grading_graph(
     logger.info("批量批改 Graph 已编译")
     
     return compiled_graph
+
+
+# ==================== 导出 ====================
+
+__all__ = [
+    # 配置类
+    "BatchConfig",
+    "get_batch_config",
+    "set_batch_config",
+    # 进度类
+    "BatchProgress",
+    "BatchTaskState",
+    # 节点函数
+    "intake_node",
+    "preprocess_node",
+    "index_node",
+    "rubric_parse_node",
+    "grade_batch_node",
+    "cross_page_merge_node",
+    "index_merge_node",
+    "review_node",
+    "export_node",
+    # 路由函数
+    "grading_fanout_router",
+    # Graph 创建
+    "create_batch_grading_graph",
+]

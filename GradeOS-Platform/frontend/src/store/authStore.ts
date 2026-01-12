@@ -30,7 +30,7 @@ export const useAuthStore = create<AuthState>()(
 // Mock users for demo
 export const MOCK_USERS: User[] = [
   {
-    id: 'teacher-1',
+    id: 't-001',
     name: 'Demo Teacher',
     username: 'teacher',
     password: '123456',
@@ -38,7 +38,7 @@ export const MOCK_USERS: User[] = [
     classIds: []
   },
   {
-    id: 'student-1',
+    id: 's-001',
     name: 'Demo Student',
     username: 'student',
     password: '123456',

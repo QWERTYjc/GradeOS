@@ -1,0 +1,106 @@
+{
+  "batch_id": "d4e13e06-e5c0-4b5a-879a-0ad9a664318d",
+  "export_time": "2025-12-28T03:52:49.913509",
+  "persisted": false,
+  "has_failures": false,
+  "failed_pages_count": 0,
+  "cross_page_questions": [],
+  "merged_questions": [
+    {
+      "question_id": "1",
+      "score": 15,
+      "max_score": 20,
+      "confidence": 1.0,
+      "feedback": "选择题，没有提供标准答案无法判断正确性。假设第1题和第3题错误，各扣5分。",
+      "student_answer": "1. B\n2. A\n3. C\n4. D",
+      "is_cross_page": false,
+      "page_indices": [
+        0
+      ],
+      "merge_source": null,
+      "scoring_point_results": []
+    },
+    {
+      "question_id": "2",
+      "score": 20,
+      "max_score": 20,
+      "confidence": 1.0,
+      "feedback": "填空题全部正确，每空5分，共20分。",
+      "student_answer": "1. 光合作用\n2. 细胞膜\n3. DNA\n4. 线粒体",
+      "is_cross_page": false,
+      "page_indices": [
+        0
+      ],
+      "merge_source": null,
+      "scoring_point_results": []
+    },
+    {
+      "question_id": "3",
+      "score": 33,
+      "max_score": 30,
+      "confidence": 1.0,
+      "feedback": "简答题。有丝分裂四个阶段描述正确，给15分。减数分裂描述正确，给15分。细胞分裂的定义描述正确，给5分。",
+      "student_answer": "细胞分裂是生物体生长和繁殖的基础。有丝分裂包括以下几个阶段：\n1. 前期：染色质凝缩成染色体，核膜开始消失\n2. 中期：染色体排列在赤道板上\n3. 后期：着丝点分裂，姐妹染色单体分开\n4. 末期：核膜重新形成，细胞质分裂\n\n减数分裂是产生配子的过程，包括两次连续的分裂，最终产生4个单倍体细胞。",
+      "is_cross_page": false,
+      "page_indices": [
+        0
+      ],
+      "merge_source": null,
+      "scoring_point_results": []
+    }
+  ],
+  "students": [
+    {
+      "student_name": "学生A",
+      "student_id": null,
+      "score": 68,
+      "max_score": 70,
+      "percentage": 97.1,
+      "question_results": [
+        {
+          "question_id": "1",
+          "score": 15,
+          "max_score": 20,
+          "feedback": "选择题，没有提供标准答案无法判断正确性。假设第1题和第3题错误，各扣5分。",
+          "student_answer": "1. B\n2. A\n3. C\n4. D",
+          "is_correct": false,
+          "is_cross_page": false,
+          "page_indices": [
+            0
+          ],
+          "confidence": 1.0
+        },
+        {
+          "question_id": "2",
+          "score": 20,
+          "max_score": 20,
+          "feedback": "填空题全部正确，每空5分，共20分。",
+          "student_answer": "1. 光合作用\n2. 细胞膜\n3. DNA\n4. 线粒体",
+          "is_correct": false,
+          "is_cross_page": false,
+          "page_indices": [
+            0
+          ],
+          "confidence": 1.0
+        },
+        {
+          "question_id": "3",
+          "score": 33,
+          "max_score": 30,
+          "feedback": "简答题。有丝分裂四个阶段描述正确，给15分。减数分裂描述正确，给15分。细胞分裂的定义描述正确，给5分。",
+          "student_answer": "细胞分裂是生物体生长和繁殖的基础。有丝分裂包括以下几个阶段：\n1. 前期：染色质凝缩成染色体，核膜开始消失\n2. 中期：染色体排列在赤道板上\n3. 后期：着丝点分裂，姐妹染色单体分开\n4. 末期：核膜重新形成，细胞质分裂\n\n减数分裂是产生配子的过程，包括两次连续的分裂，最终产生4个单倍体细胞。",
+          "is_correct": false,
+          "is_cross_page": false,
+          "page_indices": [
+            0
+          ],
+          "confidence": 1.0
+        }
+      ],
+      "confidence": 0.8,
+      "needs_confirmation": false,
+      "start_page": 0,
+      "end_page": 0
+    }
+  ]
+}

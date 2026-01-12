@@ -26,6 +26,7 @@ export default function DashboardLayout({ children }: Props) {
     { href: '/teacher/dashboard', label: '班级管理', icon: '📚', desc: '管理班级和学生' },
     { href: '/teacher/homework', label: '作业管理', icon: '📝', desc: '发布和批改作业' },
     { href: '/console', label: 'AI批改', icon: '🤖', desc: '智能批改控制台' },
+    { href: '/teacher/grading/history', label: '批改历史', icon: '🗂️', desc: '导入记录与结果回溯' },
     { href: '/teacher/statistics', label: '数据统计', icon: '📊', desc: '班级学情分析' },
   ];
 

@@ -1,0 +1,94 @@
+{
+  "batch_id": "test_batch_002",
+  "export_time": "2025-12-28T00:59:24.946764",
+  "persisted": false,
+  "has_failures": false,
+  "failed_pages_count": 0,
+  "cross_page_questions": [
+    {
+      "question_id": "1",
+      "page_indices": [
+        0,
+        1
+      ],
+      "confidence": 0.875,
+      "merge_reason": "连续页面出现相同题号"
+    }
+  ],
+  "merged_questions": [
+    {
+      "question_id": "1",
+      "score": 10.0,
+      "max_score": 10.0,
+      "confidence": 0.875,
+      "feedback": "部分正确 | 继续答题",
+      "student_answer": "答案内容...\n---\n答案继续...",
+      "is_cross_page": true,
+      "page_indices": [
+        0,
+        1
+      ],
+      "merge_source": [
+        "page_0",
+        "page_1"
+      ],
+      "scoring_point_results": []
+    },
+    {
+      "question_id": "2",
+      "score": 8.0,
+      "max_score": 10.0,
+      "confidence": 0.95,
+      "feedback": "很好",
+      "student_answer": "答案2...",
+      "is_cross_page": false,
+      "page_indices": [
+        2
+      ],
+      "merge_source": null,
+      "scoring_point_results": []
+    }
+  ],
+  "students": [
+    {
+      "student_name": "学生A",
+      "student_id": "001",
+      "score": 18.0,
+      "max_score": 20.0,
+      "percentage": 90.0,
+      "question_results": [
+        {
+          "question_id": "1",
+          "score": 10.0,
+          "max_score": 10.0,
+          "feedback": "部分正确 | 继续答题",
+          "student_answer": "答案内容...\n---\n答案继续...",
+          "is_correct": false,
+          "is_cross_page": true,
+          "page_indices": [
+            0,
+            1
+          ],
+          "confidence": 0.875
+        },
+        {
+          "question_id": "2",
+          "score": 8.0,
+          "max_score": 10.0,
+          "feedback": "很好",
+          "student_answer": "答案2...",
+          "is_correct": false,
+          "is_cross_page": false,
+          "page_indices": [
+            2
+          ],
+          "confidence": 0.95
+        }
+      ],
+      "confidence": 0.9,
+      "needs_confirmation": false,
+      "start_page": 0,
+      "end_page": 2
+    }
+  ]
+}

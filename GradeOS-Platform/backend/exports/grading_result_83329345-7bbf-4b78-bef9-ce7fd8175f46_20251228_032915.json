@@ -1,0 +1,23 @@
+{
+  "batch_id": "83329345-7bbf-4b78-bef9-ce7fd8175f46",
+  "export_time": "2025-12-28T03:29:15.992434",
+  "persisted": false,
+  "has_failures": false,
+  "failed_pages_count": 0,
+  "cross_page_questions": [],
+  "merged_questions": [],
+  "students": [
+    {
+      "student_name": "学生A",
+      "student_id": null,
+      "score": 0.0,
+      "max_score": 10.0,
+      "percentage": 0.0,
+      "question_results": [],
+      "confidence": 0.55,
+      "needs_confirmation": true,
+      "start_page": 0,
+      "end_page": 0
+    }
+  ]
+}

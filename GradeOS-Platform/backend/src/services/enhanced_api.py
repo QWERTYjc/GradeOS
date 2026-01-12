@@ -366,8 +366,8 @@ class EnhancedAPIService:
                 await pubsub.close()
                 
             except PoolNotInitializedError:
-                logger.warning("Redis 连接池未初始化，等待重试...")
-                await asyncio.sleep(5)
+                logger.debug("Redis连接不可用，将禁用实时状态推送功能")
+                break
             except Exception as e:
                 logger.warning(f"Pub/Sub 监听器错误: {e}")
                 await asyncio.sleep(1)

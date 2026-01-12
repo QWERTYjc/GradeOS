@@ -1,7 +1,0 @@
-{
-  "name": "Student Assistant - Academic & Elective Guide",
-  "description": "A high-tech, clean, and professional web assistant for students focusing on score analysis, elective subject selection, and light psychological care with a peer-to-peer communication style.",
-  "requestFramePermissions": [
-    "camera"
-  ]
-}

@@ -1,0 +1,4 @@
+---
+inclusion: always
+---
+应用采取streamlit前后端一体化技术栈，以main.py为核心，

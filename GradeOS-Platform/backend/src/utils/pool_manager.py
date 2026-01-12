@@ -71,29 +71,33 @@ class PoolConfig:
         # 优先使用 DATABASE_URL，否则从分离的环境变量构建
         pg_dsn = os.getenv("DATABASE_URL", "")
         if not pg_dsn:
-            pg_host = os.getenv("DB_HOST", "localhost")
-            pg_port = os.getenv("DB_PORT", "5432")
-            pg_database = os.getenv("DB_NAME", "ai_grading")
-            pg_user = os.getenv("DB_USER", "postgres")
-            pg_password = os.getenv("DB_PASSWORD", "postgres")
-            
-            pg_dsn = (
-                f"postgresql://{pg_user}:{pg_password}@"
-                f"{pg_host}:{pg_port}/{pg_database}"
-            )
+            # 只有当显式设置了 DB_HOST 时才构建 DSN，否则保持为空
+            pg_host = os.getenv("DB_HOST")
+            if pg_host:
+                pg_port = os.getenv("DB_PORT", "5432")
+                pg_database = os.getenv("DB_NAME", "ai_grading")
+                pg_user = os.getenv("DB_USER", "postgres")
+                pg_password = os.getenv("DB_PASSWORD", "postgres")
+                
+                pg_dsn = (
+                    f"postgresql://{pg_user}:{pg_password}@"
+                    f"{pg_host}:{pg_port}/{pg_database}"
+                )
         
         # 优先使用 REDIS_URL，否则从分离的环境变量构建
         redis_url = os.getenv("REDIS_URL", "")
         if not redis_url:
-            redis_host = os.getenv("REDIS_HOST", "localhost")
-            redis_port = os.getenv("REDIS_PORT", "6379")
-            redis_password = os.getenv("REDIS_PASSWORD", "")
-            redis_db = os.getenv("REDIS_DB", "0")
-            
-            if redis_password:
-                redis_url = f"redis://:{redis_password}@{redis_host}:{redis_port}/{redis_db}"
-            else:
-                redis_url = f"redis://{redis_host}:{redis_port}/{redis_db}"
+            # 只有当显式设置了 REDIS_HOST 时才构建 URL
+            redis_host = os.getenv("REDIS_HOST")
+            if redis_host:
+                redis_port = os.getenv("REDIS_PORT", "6379")
+                redis_password = os.getenv("REDIS_PASSWORD", "")
+                redis_db = os.getenv("REDIS_DB", "0")
+                
+                if redis_password:
+                    redis_url = f"redis://:{redis_password}@{redis_host}:{redis_port}/{redis_db}"
+                else:
+                    redis_url = f"redis://{redis_host}:{redis_port}/{redis_db}"
         
         return cls(
             pg_dsn=pg_dsn,
@@ -236,7 +240,7 @@ class UnifiedPoolManager:
             await self._init_redis_pool()
             
             self._initialized = True
-            logger.info(
+            logger.debug(
                 f"统一连接池初始化完成: "
                 f"PostgreSQL(min={config.pg_min_size}, max={config.pg_max_size}), "
                 f"Redis(max={config.redis_max_connections})"
@@ -251,7 +255,7 @@ class UnifiedPoolManager:
     async def _init_pg_pool(self) -> None:
         """初始化 PostgreSQL 连接池"""
         if not self._config or not self._config.pg_dsn:
-            logger.warning("PostgreSQL DSN 未配置，跳过 PostgreSQL 连接池初始化")
+            logger.info("PostgreSQL DSN 未配置，跳过 PostgreSQL 连接池初始化")
             return
         
         self._pg_pool = AsyncConnectionPool(
@@ -265,12 +269,12 @@ class UnifiedPoolManager:
             open=False,
         )
         await asyncio.wait_for(self._pg_pool.open(), timeout=3.0)
-        logger.info("PostgreSQL 连接池初始化完成")
+        logger.debug("PostgreSQL 连接池初始化完成")
     
     async def _init_redis_pool(self) -> None:
         """初始化 Redis 连接池"""
         if not self._config or not self._config.redis_url:
-            logger.warning("Redis URL 未配置，跳过 Redis 连接池初始化")
+            logger.debug("Redis URL 未配置，跳过 Redis 连接池初始化")
             return
         
         try:
@@ -287,7 +291,7 @@ class UnifiedPoolManager:
             await asyncio.wait_for(self._redis_client.ping(), timeout=2.0)
             logger.info("Redis 连接池初始化完成")
         except Exception as e:
-            logger.warning(f"Redis 连接失败，将在降级模式下运行: {e}")
+            logger.debug(f"Redis 连接失败 (将在降级模式下运行): {e}")
             self._redis_client = None
     
     async def _cleanup(self) -> None:
@@ -476,7 +480,7 @@ class UnifiedPoolManager:
             try:
                 async with self._pg_pool.connection(timeout=2.0) as conn:
                     await conn.execute("SELECT 1")
-                
+                logger.debug("PostgreSQL 连接池初始化完成")   
                 pool_stats = self._pg_pool.get_stats()
                 result["postgresql"] = {
                     "status": "healthy",

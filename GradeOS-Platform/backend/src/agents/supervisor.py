@@ -14,6 +14,7 @@ from src.models.enums import QuestionType
 from src.models.state import ContextPack, GradingState
 from src.agents.base import BaseGradingAgent
 from src.agents.pool import AgentPool, AgentNotFoundError
+from src.utils.llm_thinking import get_thinking_kwargs
 from src.config.models import get_lite_model
 
 
@@ -50,10 +51,12 @@ class SupervisorAgent:
         """
         if model_name is None:
             model_name = get_lite_model()
+        thinking_kwargs = get_thinking_kwargs(model_name, enable_thinking=True)
         self.llm = ChatGoogleGenerativeAI(
             model=model_name,
             google_api_key=api_key,
-            temperature=0.1  # 低温度确保分类一致性
+            temperature=0.1,  # low temperature for consistent classification
+            **thinking_kwargs,
         )
         self.agent_pool = agent_pool or AgentPool()
         self._api_key = api_key

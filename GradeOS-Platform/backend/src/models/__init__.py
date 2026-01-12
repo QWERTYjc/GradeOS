@@ -29,6 +29,20 @@ from .calibration import (
     CalibrationProfileCreateRequest,
     CalibrationProfileUpdateRequest,
 )
+# 批改工作流优化数据模型
+from .grading_models import (
+    ScoringPoint as WorkflowScoringPoint,
+    AlternativeSolution,
+    QuestionRubric,
+    ScoringPointResult,
+    QuestionResult,
+    StudentInfo,
+    PageGradingResult,
+    StudentResult,
+    CrossPageQuestion,
+    BatchGradingResult,
+    ErrorLog,
+)
 
 __all__ = [
     # 枚举
@@ -70,4 +84,16 @@ __all__ = [
     "CalibrationProfile",
     "CalibrationProfileCreateRequest",
     "CalibrationProfileUpdateRequest",
+    # 批改工作流优化数据模型
+    "WorkflowScoringPoint",
+    "AlternativeSolution",
+    "QuestionRubric",
+    "ScoringPointResult",
+    "QuestionResult",
+    "StudentInfo",
+    "PageGradingResult",
+    "StudentResult",
+    "CrossPageQuestion",
+    "BatchGradingResult",
+    "ErrorLog",
 ]

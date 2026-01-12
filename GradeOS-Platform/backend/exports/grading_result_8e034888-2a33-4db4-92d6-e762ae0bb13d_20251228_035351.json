@@ -1,0 +1,106 @@
+{
+  "batch_id": "8e034888-2a33-4db4-92d6-e762ae0bb13d",
+  "export_time": "2025-12-28T03:53:51.911604",
+  "persisted": false,
+  "has_failures": false,
+  "failed_pages_count": 0,
+  "cross_page_questions": [],
+  "merged_questions": [
+    {
+      "question_id": "1",
+      "score": 20,
+      "max_score": 20,
+      "confidence": 1.0,
+      "feedback": "答案正确，满分。",
+      "student_answer": "A, B, C, D",
+      "is_cross_page": false,
+      "page_indices": [
+        0
+      ],
+      "merge_source": null,
+      "scoring_point_results": []
+    },
+    {
+      "question_id": "2",
+      "score": 20,
+      "max_score": 20,
+      "confidence": 1.0,
+      "feedback": "答案正确，满分。",
+      "student_answer": "(1) 叶绿体\n(2) 核糖体\n(3) RNA\n(4) 高尔基体",
+      "is_cross_page": false,
+      "page_indices": [
+        0
+      ],
+      "merge_source": null,
+      "scoring_point_results": []
+    },
+    {
+      "question_id": "3",
+      "score": 28,
+      "max_score": 30,
+      "confidence": 1.0,
+      "feedback": "基本描述正确，但有缺失和不够准确的地方。间期只写了DNA复制不完整，应该包括细胞生长和DNA复制准备。前期描述不够详细，染色质螺旋化成染色体也应该提到。中期描述为染色体排列，应该更准确的描述为染色体的着丝点排列在赤道板上。 后期和末期描述正确. 因此扣除2分",
+      "student_answer": "有丝分裂是细胞增殖的主要方式。过程包括：\n- 间期：DNA复制\n- 前期：染色体出现\n- 中期：染色体排列\n- 后期：染色体分离\n- 末期：细胞分裂完成",
+      "is_cross_page": false,
+      "page_indices": [
+        0
+      ],
+      "merge_source": null,
+      "scoring_point_results": []
+    }
+  ],
+  "students": [
+    {
+      "student_name": "学生A",
+      "student_id": null,
+      "score": 68,
+      "max_score": 70,
+      "percentage": 97.1,
+      "question_results": [
+        {
+          "question_id": "1",
+          "score": 20,
+          "max_score": 20,
+          "feedback": "答案正确，满分。",
+          "student_answer": "A, B, C, D",
+          "is_correct": false,
+          "is_cross_page": false,
+          "page_indices": [
+            0
+          ],
+          "confidence": 1.0
+        },
+        {
+          "question_id": "2",
+          "score": 20,
+          "max_score": 20,
+          "feedback": "答案正确，满分。",
+          "student_answer": "(1) 叶绿体\n(2) 核糖体\n(3) RNA\n(4) 高尔基体",
+          "is_correct": false,
+          "is_cross_page": false,
+          "page_indices": [
+            0
+          ],
+          "confidence": 1.0
+        },
+        {
+          "question_id": "3",
+          "score": 28,
+          "max_score": 30,
+          "feedback": "基本描述正确，但有缺失和不够准确的地方。间期只写了DNA复制不完整，应该包括细胞生长和DNA复制准备。前期描述不够详细，染色质螺旋化成染色体也应该提到。中期描述为染色体排列，应该更准确的描述为染色体的着丝点排列在赤道板上。 后期和末期描述正确. 因此扣除2分",
+          "student_answer": "有丝分裂是细胞增殖的主要方式。过程包括：\n- 间期：DNA复制\n- 前期：染色体出现\n- 中期：染色体排列\n- 后期：染色体分离\n- 末期：细胞分裂完成",
+          "is_correct": false,
+          "is_cross_page": false,
+          "page_indices": [
+            0
+          ],
+          "confidence": 1.0
+        }
+      ],
+      "confidence": 0.8,
+      "needs_confirmation": false,
+      "start_page": 0,
+      "end_page": 0
+    }
+  ]
+}

@@ -21,14 +21,16 @@ from fastapi.middleware.cors import CORSMiddleware
 import redis.asyncio as redis
 
 from src.api.routes import unified_api
+from src.api.routes import batch_langgraph
 # 暂时注释掉其他路由以避免导入错误
 # from src.api.routes import submissions, rubrics, reviews, batch
 from src.api.middleware.rate_limit import RateLimitMiddleware
 from src.api.dependencies import init_orchestrator, close_orchestrator, get_orchestrator
-from src.utils.database import init_db_pool, close_db_pool
+from src.utils.database import init_db_pool, close_db_pool, db
 from src.utils.pool_manager import UnifiedPoolManager, PoolConfig
 from src.services.enhanced_api import EnhancedAPIService, QueryParams
 from src.services.tracing import TracingService
+from src.config.deployment_mode import get_deployment_mode, DeploymentMode
 
 
 # 配置日志
@@ -52,41 +54,68 @@ tracing_service: Optional[TracingService] = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """应用生命周期管理"""
+    """
+    应用生命周期管理
+    
+    支持两种部署模式：
+    1. 数据库模式：完整功能
+    2. 无数据库模式：轻量级部署
+    
+    验证：需求 11.1, 11.6, 11.7, 11.8
+    """
     global redis_client, pool_manager, enhanced_api_service, tracing_service
     
     # 启动时初始化
     logger.info("初始化应用...")
     
-    # 初始化统一连接池
-    try:
-        pool_manager = await UnifiedPoolManager.get_instance()
-        await pool_manager.initialize()
-        logger.info("统一连接池已初始化")
-        
-        # 获取 Redis 客户端
-        redis_client = pool_manager.get_redis_client()
-        
-        # 初始化全局数据库实例
-        await init_db_pool(use_unified_pool=True)
-        logger.info("全局数据库实例已初始化")
-    except Exception as e:
-        logger.error(f"初始化失败: {e}")
-        # 如果初始化失败，回退到离线模式
-        logger.warning("回退到离线模式")
+    # 检测部署模式
+    deployment_config = get_deployment_mode()
+    logger.info(f"部署模式: {deployment_config.mode.value}")
+    
+    # 显示功能可用性
+    features = deployment_config.get_feature_availability()
+    logger.info(f"功能可用性: {features}")
+    
+    # 根据部署模式初始化
+    if deployment_config.is_database_mode:
+        # 数据库模式：初始化完整功能
+        try:
+            pool_manager = await UnifiedPoolManager.get_instance()
+            await pool_manager.initialize()
+            logger.debug("统一连接池已初始化")
+            
+            # 获取 Redis 客户端 (可能为空)
+            try:
+                redis_client = pool_manager.get_redis_client()
+            except Exception:
+                redis_client = None
+            
+            # 初始化全局数据库实例
+            await init_db_pool(use_unified_pool=True)
+            
+            logger.info("全局服务初始化完成")
+        except Exception as e:
+            logger.error(f"初始化部分服务失败 (但这可能不影响本地运行): {e}")
+            redis_client = None
+            pool_manager = None
+    else:
+        # 无数据库模式：仅初始化必要组件
+        logger.info("无数据库模式：跳过数据库和 Redis 初始化")
+        logger.info("系统将使用内存缓存和 LLM API 运行")
         redis_client = None
         pool_manager = None
+        # 强制设置 OFFLINE_MODE 环境变量，防止后续组件自动尝试连接
+        os.environ["OFFLINE_MODE"] = "true"
     
-    # 初始化追踪服务
-    if pool_manager:
+    # 初始化追踪服务（仅在数据库模式下）
+    if pool_manager and not db.is_degraded:
         tracing_service = TracingService(
-            pool_manager=pool_manager,
-            alert_threshold_ms=500
+            pool_manager=pool_manager
         )
         logger.info("追踪服务已初始化")
     
-    # 初始化增强 API 服务
-    if pool_manager:
+    # 初始化增强 API 服务（仅在数据库模式下）
+    if pool_manager and not db.is_degraded:
         enhanced_api_service = EnhancedAPIService(
             pool_manager=pool_manager,
             tracing_service=tracing_service
@@ -94,12 +123,14 @@ async def lifespan(app: FastAPI):
         await enhanced_api_service.start()
         logger.info("增强 API 服务已启动")
     
-    # 初始化编排器
+    # 初始化编排器（两种模式都需要）
     try:
         await init_orchestrator()
         logger.info("LangGraph 编排器已初始化")
     except Exception as e:
         logger.warning(f"编排器初始化失败: {e}")
+    
+    logger.info("应用启动完成")
     
     yield
     
@@ -182,6 +213,16 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 # 注册路由
 app.include_router(unified_api.router, prefix="/api", tags=["GradeOS统一API"])
+app.include_router(batch_langgraph.router, prefix="/api", tags=["批量批改"])
+logger.info("DEBUG: batch_langgraph router included with prefix=/api (router has internal /batch prefix)")
+
+# Phase 6: 班级系统集成 API (延迟导入避免循环依赖)
+try:
+    from src.api.routes import class_integration
+    app.include_router(class_integration.router, tags=["班级系统集成"])
+except ImportError as e:
+    logger.warning(f"班级系统集成 API 导入失败: {e}")
+
 # app.include_router(submissions.router)
 # app.include_router(rubrics.router)
 # app.include_router(reviews.router)
@@ -191,11 +232,22 @@ app.include_router(unified_api.router, prefix="/api", tags=["GradeOS统一API"])
 # 健康检查端点
 @app.get("/health", tags=["health"])
 async def health_check():
-    """健康检查"""
+    """
+    健康检查
+    
+    返回系统状态和部署模式信息
+    """
+    deployment_config = get_deployment_mode()
+    features = deployment_config.get_feature_availability()
+    
     return {
         "status": "healthy",
         "service": "ai-grading-api",
-        "version": "1.0.0"
+        "version": "1.0.0",
+        "deployment_mode": deployment_config.mode.value,
+        "database_available": db.is_available if hasattr(db, 'is_available') else False,
+        "degraded_mode": db.is_degraded if hasattr(db, 'is_degraded') else False,
+        "features": features
     }
 
 

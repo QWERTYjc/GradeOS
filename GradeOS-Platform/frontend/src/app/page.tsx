@@ -8,6 +8,11 @@ import WorkflowGraph from '@/components/landing/WorkflowGraph';
 import DemoDock from '@/components/landing/DemoDock';
 import { CheckCircle, Zap, Shield, BarChart, Users, BookOpen } from 'lucide-react';
 import Link from 'next/link';
+import { Space_Grotesk, Unbounded } from 'next/font/google';
+import clsx from 'clsx';
+
+const spaceGrotesk = Space_Grotesk({ subsets: ['latin'], variable: '--font-space' });
+const unbounded = Unbounded({ subsets: ['latin'], variable: '--font-display' });
 
 const features = [
   {
@@ -44,12 +49,18 @@ const features = [
 
 export default function LandingPage() {
   return (
-    <main className="relative bg-white text-ink min-h-screen selection:bg-azure selection:text-white overflow-x-hidden">
+    <main
+      className={clsx(
+        'landing-shell relative text-ink min-h-screen selection:bg-azure selection:text-white overflow-x-hidden',
+        spaceGrotesk.variable,
+        unbounded.variable
+      )}
+    >
       {/* Background Layer */}
       <ParticleField />
 
       {/* Navbar */}
-      <nav className="fixed top-0 left-0 right-0 h-16 flex items-center justify-between px-6 md:px-12 z-50 bg-white/80 backdrop-blur-md border-b border-gray-100">
+      <nav className="landing-nav fixed top-0 left-0 right-0 h-16 flex items-center justify-between px-6 md:px-12 z-50">
         <div className="flex items-center gap-2 font-bold text-xl tracking-tight">
           <div className="w-8 h-8 bg-gradient-to-br from-blue-600 to-cyan-500 rounded-lg flex items-center justify-center text-white text-sm font-bold">G</div>
           GradeOS
@@ -81,7 +92,7 @@ export default function LandingPage() {
             viewport={{ once: true }}
             className="mb-12 text-center"
           >
-            <h2 className="text-3xl font-bold mb-4">透明、可观测的批改流水线</h2>
+            <h2 className="landing-display text-3xl font-bold mb-4">透明、可观测的批改流水线</h2>
             <p className="text-gray-500 max-w-2xl mx-auto">
               拒绝黑盒。每一个步骤、每一次重试、每一条日志都清晰可见。
             </p>
@@ -93,22 +104,24 @@ export default function LandingPage() {
 
       {/* Features Grid */}
       <section id="features" className="py-24 px-4 md:px-12 bg-white">
-        <div className="max-w-7xl mx-auto">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+        <div className="max-w-6xl mx-auto">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-10 gap-y-8">
             {features.map((f, i) => (
               <motion.div
                 key={i}
                 initial={{ opacity: 0, y: 20 }}
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true }}
-                transition={{ delay: i * 0.1 }}
-                className="p-6 rounded-2xl bg-white border border-gray-100 hover:border-blue-200 hover:shadow-xl hover:shadow-blue-500/5 transition-all group"
+                transition={{ delay: i * 0.08 }}
+                className="landing-feature-row"
               >
-                <div className="w-12 h-12 bg-blue-50 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-                  <f.icon className="text-azure" size={24} />
+                <div className="landing-feature-icon">
+                  <f.icon className="text-azure" size={22} />
                 </div>
-                <h3 className="text-lg font-bold mb-2">{f.title}</h3>
-                <p className="text-sm text-gray-500 leading-relaxed">{f.desc}</p>
+                <div>
+                  <h3 className="text-lg font-semibold text-slate-900">{f.title}</h3>
+                  <p className="text-sm text-slate-500 leading-relaxed mt-2">{f.desc}</p>
+                </div>
               </motion.div>
             ))}
           </div>
@@ -124,7 +137,7 @@ export default function LandingPage() {
             viewport={{ once: true }}
             className="mb-12 text-center"
           >
-            <h2 className="text-3xl font-bold mb-4">亲身体验智能批改</h2>
+            <h2 className="landing-display text-3xl font-bold mb-4">亲身体验智能批改</h2>
             <p className="text-gray-500 max-w-2xl mx-auto">
               上传一份作业，体验从识别到生成评语的全过程。
             </p>
