@@ -81,7 +81,7 @@ class BatchStatusResponse(BaseModel):
     total_students: int = Field(0, description="识别到的学生数")
     completed_students: int = Field(0, description="已完成批改的学生数")
     unidentified_pages: int = Field(0, description="未识别学生的页数")
-    results: Optional[dict] = Field(None, description="批改结果")
+    results: Optional[List[dict]] = Field(None, description="批改结果")
 
 
 class RubricReviewContextResponse(BaseModel):

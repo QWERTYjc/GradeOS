@@ -1,0 +1,55 @@
+{
+  "properties": {
+    "batch_id": {
+      "type": "string",
+      "title": "Batch Id"
+    },
+    "exam_id": {
+      "type": "string",
+      "title": "Exam Id"
+    },
+    "status": {
+      "type": "string",
+      "title": "Status"
+    },
+    "total_students": {
+      "type": "integer",
+      "title": "Total Students",
+      "description": "识别到的学生数",
+      "default": 0
+    },
+    "completed_students": {
+      "type": "integer",
+      "title": "Completed Students",
+      "description": "已完成批改的学生数",
+      "default": 0
+    },
+    "unidentified_pages": {
+      "type": "integer",
+      "title": "Unidentified Pages",
+      "description": "未识别学生的页数",
+      "default": 0
+    },
+    "results": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Results",
+      "description": "批改结果"
+    }
+  },
+  "type": "object",
+  "required": [
+    "batch_id",
+    "exam_id",
+    "status"
+  ],
+  "title": "BatchStatusResponse",
+  "description": "批量状态查询响应"
+}

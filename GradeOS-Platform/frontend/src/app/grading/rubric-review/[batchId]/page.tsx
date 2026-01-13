@@ -416,22 +416,25 @@ export default function RubricReviewPage({ params }: { params: Promise<{ batchId
       const isSelected = selectedIds.has(q.questionId);
       const isExpanded = expandedIds.has(q.questionId);
       return (
-        <div key={q.questionId} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div key={q.questionId} className="border-b border-slate-100 pb-6 last:border-0">
           <div className="flex items-center justify-between">
-            <div>
-              <div className="text-sm font-semibold text-slate-800">
-                题号 {q.questionId} · {q.maxScore} 分
+            <div className="flex items-center gap-3">
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-slate-100 text-sm font-bold text-slate-700">
+                {q.questionId}
               </div>
-              <div className="text-xs text-slate-400">可勾选有问题并添加备注</div>
+              <div>
+                <div className="text-xs font-semibold text-slate-500">满分 {q.maxScore}</div>
+              </div>
             </div>
-            <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+
+            <label className="flex items-center gap-2 cursor-pointer rounded-full px-2 py-1 hover:bg-rose-50 transition-colors">
               <input
                 type="checkbox"
                 checked={isSelected}
                 onChange={() => toggleSelected(q.questionId)}
-                className="h-4 w-4 rounded border-slate-300 text-slate-900"
+                className="h-4 w-4 rounded border-slate-300 text-rose-500 focus:ring-rose-500"
               />
-              有问题
+              <span className={clsx("text-xs font-medium", isSelected ? "text-rose-500" : "text-slate-400")}>标记问题</span>
             </label>
           </div>
 
@@ -629,148 +632,151 @@ export default function RubricReviewPage({ params }: { params: Promise<{ batchId
   }
 
   return (
-    <div className="min-h-screen w-full bg-gradient-to-br from-slate-50 via-sky-50 to-amber-50">
-      <div className="mx-auto max-w-[1400px] px-6 py-8">
-        <header className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+    <div className="flex h-screen w-full flex-col overflow-hidden bg-slate-50">
+      {/* Header */}
+      <header className="flex flex-none items-center justify-between border-b border-slate-200 bg-white px-6 py-4">
+        <div className="flex items-center gap-4">
           <div>
-            <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Rubric Review</p>
-            <h1 className="text-3xl font-semibold text-slate-900">
-              批改标准解析确认
-            </h1>
-            <div className="mt-2 text-sm text-slate-500">
-              Batch: {batchId} · Status: {status || "running"}
+            <h1 className="text-xl font-bold text-slate-900">批改标准解析确认</h1>
+            <div className="flex items-center gap-2 text-xs text-slate-500">
+              <span className="font-mono">Batch: {batchId}</span>
+              <span>·</span>
+              <span>{status || "running"}</span>
             </div>
           </div>
-          <div className="flex flex-wrap gap-3">
-            <button
-              onClick={() => router.push(`/console?batchId=${batchId}`)}
-              className="rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-600 hover:border-slate-400"
-            >
-              回到批改流程
-            </button>
-            <button
-              onClick={handleApprove}
-              disabled={isSubmitting}
-              className="rounded-full bg-emerald-500 px-5 py-2 text-sm font-semibold text-white shadow hover:bg-emerald-600 disabled:opacity-60"
-            >
-              确认无误
-            </button>
-            <button
-              onClick={handleSubmitUpdate}
-              disabled={isSubmitting}
-              className="rounded-full bg-slate-900 px-5 py-2 text-sm font-semibold text-white shadow hover:bg-slate-800 disabled:opacity-60"
-            >
-              提交修正
-            </button>
+          {/* Stream Log Indicator */}
+          <div className="h-8 max-w-[400px] overflow-hidden rounded-lg bg-slate-50 px-3 py-2 text-[10px] text-slate-400">
+            {streamText ? (
+              <span className="animate-pulse text-emerald-600">AI: {streamText.slice(-60)}</span>
+            ) : (
+              "Waiting for activity..."
+            )}
           </div>
-        </header>
-
-        {error && (
-          <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-600">
-            {error}
-          </div>
-        )}
-        {successMessage && (
-          <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
-            {successMessage}
-          </div>
-        )}
-
-        <div className="mt-6 grid gap-6 lg:grid-cols-[1.1fr_1fr]">
-          <section className="rounded-3xl border border-slate-200 bg-white/70 p-4 shadow-xl backdrop-blur">
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <h2 className="text-lg font-semibold text-slate-800">批改标准原图</h2>
-                <p className="text-xs text-slate-500">{rubricImages.length} pages</p>
-              </div>
-              <div className="flex items-center gap-2 text-xs text-slate-400">
-                <span>Workflow Preview</span>
-                <span className="inline-flex h-2 w-2 rounded-full bg-emerald-500"></span>
-              </div>
-            </div>
-            <div className="flex flex-col gap-3">
-              <div className="rounded-2xl border border-slate-200 bg-white p-3">
-                <div className="flex flex-wrap gap-3">
-                  {workflowSteps.map((step, idx) => (
-                    <div
-                      key={step.id}
-                      className={clsx(
-                        "flex items-center gap-2 rounded-full border px-3 py-1 text-xs",
-                        idx <= stepIndex
-                          ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                          : "border-slate-200 bg-slate-50 text-slate-400"
-                      )}
-                    >
-                      <span className="h-2 w-2 rounded-full bg-current opacity-70"></span>
-                      {step.label}
-                    </div>
-                  ))}
-                </div>
-                <div className="mt-3 text-xs text-slate-500">当前阶段：{currentStage || "waiting for review"}</div>
-              </div>
-
-              <div className="max-h-[640px] overflow-y-auto space-y-4 pr-2">
-                {rubricImages.length === 0 ? (
-                  <div className="rounded-2xl border border-dashed border-slate-200 p-6 text-center text-sm text-slate-400">
-                    No rubric images available.
-                  </div>
-                ) : (
-                  rubricImageItems
-                )}
-              </div>
-            </div>
-          </section>
-
-          <section className="rounded-3xl border border-slate-200 bg-white/80 p-6 shadow-xl backdrop-blur">
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h2 className="text-lg font-semibold text-slate-800">解析结果</h2>
-                  <p className="text-xs text-slate-500">
-                    {rubricDraft.totalQuestions} 题 · {rubricDraft.totalScore} 分
-                  </p>
-                </div>
-                <button
-                  onClick={handleReparse}
-                  disabled={isSubmitting || selectedIds.size === 0}
-                  className="rounded-full border border-slate-300 bg-white px-4 py-2 text-xs font-semibold text-slate-600 hover:border-slate-400 disabled:opacity-50"
-                >
-                  重新验证所选
-                </button>
-              </div>
-
-              <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                <label className="text-xs font-semibold text-slate-500">总体备注 / 扣分规则</label>
-                <textarea
-                  value={rubricDraft.generalNotes}
-                  onChange={(e) => setRubricDraft({ ...rubricDraft, generalNotes: e.target.value })}
-                  className="mt-2 w-full rounded-xl border border-slate-200 p-3 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300"
-                  rows={3}
-                />
-              </div>
-
-              <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                <label className="text-xs font-semibold text-slate-500">问题说明（用于重解析）</label>
-                <textarea
-                  value={globalNote}
-                  onChange={(e) => setGlobalNote(e.target.value)}
-                  className="mt-2 w-full rounded-xl border border-slate-200 p-3 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300"
-                  rows={3}
-                  placeholder="说明哪些解析项有问题、希望如何修正。"
-                />
-              </div>
-
-              <div className="max-h-[620px] overflow-y-auto space-y-4 pr-2">
-                {questionCards}
-              </div>
-            </div>
-          </section>
         </div>
 
-        <div className="mt-8 rounded-3xl border border-slate-200 bg-white/80 p-6 shadow-xl">
-          <h3 className="text-sm font-semibold text-slate-700">实时解析流</h3>
-          <div className="mt-3 max-h-[240px] overflow-y-auto whitespace-pre-wrap rounded-2xl border border-slate-200 bg-slate-50 p-4 text-xs text-slate-600">
-            {streamText || "Waiting for AI streams..."}
+        <div className="flex gap-3">
+          <button
+            onClick={() => router.push(`/console?batchId=${batchId}`)}
+            className="rounded-lg border border-slate-200 px-4 py-2 text-xs font-medium text-slate-600 hover:bg-slate-50"
+          >
+            返回
+          </button>
+          <button
+            onClick={handleApprove}
+            disabled={isSubmitting}
+            className="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
+          >
+            确认无误
+          </button>
+          <button
+            onClick={handleSubmitUpdate}
+            disabled={isSubmitting}
+            className="rounded-lg bg-slate-900 px-4 py-2 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-60"
+          >
+            提交修正
+          </button>
+        </div>
+      </header>
+
+      {/* Main Content Split View */}
+      <div className="flex flex-1 overflow-hidden">
+        {/* Left Pane: Images */}
+        <div className="flex w-1/2 flex-col border-r border-slate-200 bg-slate-100/50">
+          <div className="flex flex-none items-center justify-between border-b border-slate-200 px-4 py-3 bg-white/50 backdrop-blur-sm">
+            <h2 className="text-sm font-semibold text-slate-700">标准原件 ({rubricImages.length} 页)</h2>
+            <div className="flex gap-2">
+              {workflowSteps.map((step, idx) => (
+                <div
+                  key={step.id}
+                  className={clsx(
+                    "h-1.5 w-1.5 rounded-full",
+                    idx <= stepIndex ? "bg-emerald-500" : "bg-slate-300"
+                  )}
+                  title={step.label}
+                />
+              ))}
+            </div>
+          </div>
+
+          <div className="flex-1 overflow-y-auto p-8">
+            <div className="mx-auto max-w-3xl space-y-6">
+              {rubricImages.length === 0 ? (
+                <div className="flex h-64 items-center justify-center rounded-xl border border-dashed border-slate-300 text-sm text-slate-400">
+                  无图片数据
+                </div>
+              ) : (
+                rubricImages.map((img, idx) => (
+                  <div key={idx} className="relative overflow-hidden rounded-sm shadow-sm transition-shadow hover:shadow-md bg-white">
+                    <img
+                      src={img}
+                      alt={`Page ${idx + 1}`}
+                      className="w-full object-contain"
+                      loading="lazy"
+                    />
+                    <div className="absolute top-2 left-2 rounded bg-black/50 px-2 py-0.5 text-[10px] text-white">
+                      P{idx + 1}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Right Pane: Rubric Form */}
+        <div className="flex w-1/2 flex-col bg-white">
+          <div className="flex flex-none flex-col gap-4 border-b border-slate-100 px-6 py-4">
+            {/* Messages */}
+            {(error || successMessage) && (
+              <div className={clsx(
+                "rounded-md px-3 py-2 text-xs",
+                error ? "bg-rose-50 text-rose-600" : "bg-emerald-50 text-emerald-600"
+              )}>
+                {error || successMessage}
+              </div>
+            )}
+
+            {/* Global Controls */}
+            <div className="flex items-center justify-between">
+              <div className="text-sm text-slate-500">
+                共 {rubricDraft.totalQuestions} 题，总分 <span className="font-semibold text-slate-900">{rubricDraft.totalScore}</span>
+              </div>
+              <button
+                onClick={handleReparse}
+                disabled={isSubmitting || selectedIds.size === 0}
+                className="text-xs font-semibold text-emerald-600 hover:text-emerald-700 disabled:text-slate-300"
+              >
+                重新解析选中项 ({selectedIds.size})
+              </button>
+            </div>
+
+            {/* Global Notes for Reparse */}
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="mb-1 block text-[10px] font-medium uppercase text-slate-400">总体备注</label>
+                <input
+                  value={rubricDraft.generalNotes}
+                  onChange={(e) => setRubricDraft({ ...rubricDraft, generalNotes: e.target.value })}
+                  className="w-full rounded border border-slate-200 bg-slate-50 px-2 py-1.5 text-xs focus:border-emerald-500 focus:outline-none"
+                  placeholder="扣分规则等..."
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-[10px] font-medium uppercase text-slate-400">重解析说明</label>
+                <input
+                  value={globalNote}
+                  onChange={(e) => setGlobalNote(e.target.value)}
+                  className="w-full rounded border border-slate-200 bg-slate-50 px-2 py-1.5 text-xs focus:border-emerald-500 focus:outline-none"
+                  placeholder="告诉AI哪里解析错了..."
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="flex-1 overflow-y-auto bg-slate-50/30 p-6">
+            <div className="space-y-6">
+              {questionCards}
+            </div>
           </div>
         </div>
       </div>

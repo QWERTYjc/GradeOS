@@ -1128,15 +1128,6 @@ async def rubric_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
         "requested_at": datetime.now().isoformat(),
         "parsed_rubric": parsed_rubric,
     }
-    try:
-        from src.api.routes.batch_langgraph import broadcast_progress
-        await broadcast_progress(batch_id, {
-            "type": "review_required",
-            "reviewType": review_request["type"],
-            "payload": review_request,
-        })
-    except Exception as exc:
-        logger.warning(f"[rubric_review] failed to emit review_required: {exc}")
     review_response = interrupt(review_request)
 
     action = (review_response or {}).get("action", "approve").lower()
@@ -4104,15 +4095,6 @@ async def review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
         "message": "Results review required",
         "requested_at": datetime.now().isoformat()
     }
-    try:
-        from src.api.routes.batch_langgraph import broadcast_progress
-        await broadcast_progress(batch_id, {
-            "type": "review_required",
-            "reviewType": review_request["type"],
-            "payload": review_request,
-        })
-    except Exception as exc:
-        logger.warning(f"[review] failed to emit review_required: {exc}")
     review_response = interrupt(review_request)
 
     action = (review_response or {}).get("action", "approve").lower()

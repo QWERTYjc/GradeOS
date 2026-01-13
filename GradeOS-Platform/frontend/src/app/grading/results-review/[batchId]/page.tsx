@@ -291,240 +291,237 @@ export default function ResultsReviewPage({ params }: { params: Promise<{ batchI
   const totalMax = currentStudent.questionResults.reduce((sum, q) => sum + (q.maxScore || 0), 0);
 
   return (
-    <div className="min-h-screen w-full bg-gradient-to-br from-slate-50 via-sky-50 to-amber-50">
-      <div className="mx-auto max-w-[1400px] px-6 py-8">
-        <header className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+    <div className="flex h-screen w-full flex-col overflow-hidden bg-slate-50">
+      {/* Header */}
+      <header className="flex flex-none items-center justify-between border-b border-slate-200 bg-white px-6 py-4">
+        <div className="flex items-center gap-4">
           <div>
-            <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Results Review</p>
-            <h1 className="text-3xl font-semibold text-slate-900">批改结果确认</h1>
-            <div className="mt-2 text-sm text-slate-500">
-              Batch: {batchId} · Status: {status || "running"} · Stage: {currentStage || "review"}
+            <h1 className="text-xl font-bold text-slate-900">批改结果确认</h1>
+            <div className="flex items-center gap-2 text-xs text-slate-500">
+              <span className="font-mono">Batch: {batchId}</span>
+              <span>·</span>
+              <span>{status || "running"}</span>
             </div>
           </div>
-          <div className="flex flex-wrap gap-3">
-            <button
-              onClick={() => router.push(`/console?batchId=${batchId}`)}
-              className="rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-600 hover:border-slate-400"
-            >
-              回到批改流程
-            </button>
-            <button
-              onClick={handleApprove}
-              disabled={isSubmitting}
-              className="rounded-full bg-emerald-500 px-5 py-2 text-sm font-semibold text-white shadow hover:bg-emerald-600 disabled:opacity-60"
-            >
-              确认无误
-            </button>
-            <button
-              onClick={handleSubmitUpdate}
-              disabled={isSubmitting}
-              className="rounded-full bg-slate-900 px-5 py-2 text-sm font-semibold text-white shadow hover:bg-slate-800 disabled:opacity-60"
-            >
-              提交修正
-            </button>
-          </div>
-        </header>
+        </div>
+        <div className="flex gap-3">
+          <button
+            onClick={() => router.push(`/console?batchId=${batchId}`)}
+            className="rounded-lg border border-slate-200 px-4 py-2 text-xs font-medium text-slate-600 hover:bg-slate-50"
+          >
+            返回
+          </button>
+          <button
+            onClick={handleApprove}
+            disabled={isSubmitting}
+            className="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
+          >
+            确认无误
+          </button>
+          <button
+            onClick={handleSubmitUpdate}
+            disabled={isSubmitting}
+            className="rounded-lg bg-slate-900 px-4 py-2 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-60"
+          >
+            提交修正
+          </button>
+        </div>
+      </header>
 
-        {error && (
-          <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-600">
-            {error}
-          </div>
-        )}
-        {successMessage && (
-          <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
-            {successMessage}
-          </div>
-        )}
-
-        <div className="mt-6 grid gap-6 lg:grid-cols-[1.1fr_1fr]">
-          <section className="rounded-3xl border border-slate-200 bg-white/70 p-4 shadow-xl backdrop-blur">
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <h2 className="text-lg font-semibold text-slate-800">学生作答原图</h2>
-                <p className="text-xs text-slate-500">{pageIndices.length} pages</p>
-              </div>
-              <div className="text-xs text-slate-400">
-                当前学生：{currentStudent.studentName}
-              </div>
+      {/* Main Content Split View */}
+      <div className="flex flex-1 overflow-hidden">
+        {/* Left Pane: Images */}
+        <div className="flex w-1/2 flex-col border-r border-slate-200 bg-slate-100/50">
+          <div className="flex flex-none items-center justify-between border-b border-slate-200 px-4 py-3 bg-white/50 backdrop-blur-sm">
+            <h2 className="text-sm font-semibold text-slate-700">学生作答 ({pageIndices.length} 页)</h2>
+            <div className="text-xs text-slate-500 font-medium">
+              {currentStudent.studentName}
             </div>
-            <div className="max-h-[760px] overflow-y-auto space-y-4 pr-2">
-              {pageIndices.length === 0 && (
-                <div className="rounded-2xl border border-dashed border-slate-200 p-6 text-center text-sm text-slate-400">
-                  未找到该学生答题页
+          </div>
+
+          <div className="flex-1 overflow-y-auto p-8">
+            <div className="mx-auto max-w-3xl space-y-6">
+              {pageIndices.length === 0 ? (
+                <div className="flex h-64 items-center justify-center rounded-xl border border-dashed border-slate-300 text-sm text-slate-400">
+                  无图片数据
                 </div>
-              )}
-              {pageIndices.map((pageIndex) => (
-                <div key={pageIndex} className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
-                  <div className="mb-2 text-xs font-semibold text-slate-500">Page {pageIndex + 1}</div>
-                  <div className="aspect-[3/4] overflow-hidden rounded-xl bg-slate-50">
+              ) : (
+                pageIndices.map((pageIndex) => (
+                  <div key={pageIndex} className="relative overflow-hidden rounded-sm shadow-sm transition-shadow hover:shadow-md bg-white">
                     {answerImages[pageIndex] ? (
-                      <img src={answerImages[pageIndex]} alt={`Answer page ${pageIndex + 1}`} className="h-full w-full object-contain" />
+                      <img
+                        src={answerImages[pageIndex]}
+                        alt={`Page ${pageIndex + 1}`}
+                        className="w-full object-contain"
+                        loading="lazy"
+                      />
                     ) : (
-                      <div className="flex h-full items-center justify-center text-xs text-slate-400">No image</div>
+                      <div className="flex h-[800px] w-full items-center justify-center bg-slate-100 text-slate-400">No Image</div>
                     )}
+                    <div className="absolute top-2 left-2 rounded bg-black/50 px-2 py-0.5 text-[10px] text-white">
+                      P{pageIndex + 1}
+                    </div>
                   </div>
-                </div>
-              ))}
+                ))
+              )}
             </div>
-          </section>
+          </div>
+        </div>
 
-          <section className="rounded-3xl border border-slate-200 bg-white/80 p-6 shadow-xl backdrop-blur">
-            <div className="space-y-4">
+        {/* Right Pane: Results Form */}
+        <div className="flex w-1/2 flex-col bg-white">
+          <div className="flex flex-none flex-col gap-4 border-b border-slate-100 px-6 py-4">
+            {/* Messages */}
+            {(error || successMessage) && (
+              <div className={clsx(
+                "rounded-md px-3 py-2 text-xs",
+                error ? "bg-rose-50 text-rose-600" : "bg-emerald-50 text-emerald-600"
+              )}>
+                {error || successMessage}
+              </div>
+            )}
+
+            {/* Student Selector & Score */}
+            <div className="space-y-3">
               <div className="flex items-center justify-between">
-                <div>
-                  <h2 className="text-lg font-semibold text-slate-800">批改结果</h2>
-                  <p className="text-xs text-slate-500">
-                    合计 {totalScore}/{totalMax} · 当前学生 {selectedStudentIndex + 1}/{resultsDraft.length}
-                  </p>
+                <div className="text-sm text-slate-500">
+                  得分 <span className="text-lg font-bold text-slate-900">{totalScore}</span> <span className="text-slate-400">/ {totalMax}</span>
                 </div>
                 <button
                   onClick={handleRegrade}
                   disabled={isSubmitting || selectedQuestionKeys.size === 0}
-                  className="rounded-full border border-slate-300 bg-white px-4 py-2 text-xs font-semibold text-slate-600 hover:border-slate-400 disabled:opacity-50"
+                  className="text-xs font-semibold text-emerald-600 hover:text-emerald-700 disabled:text-slate-300"
                 >
-                  重新批改所选
+                  重新批改选中项
                 </button>
               </div>
 
-              <div className="flex flex-wrap gap-2">
+              <div className="flex flex-wrap gap-2 pb-2">
                 {resultsDraft.map((student, idx) => (
                   <button
                     key={`${student.studentName}-${idx}`}
                     onClick={() => setSelectedStudentIndex(idx)}
                     className={clsx(
-                      "rounded-full px-3 py-1 text-xs font-semibold",
+                      "rounded px-2.5 py-1 text-xs font-medium transition-colors",
                       idx === selectedStudentIndex
-                        ? "bg-emerald-500 text-white"
-                        : "border border-slate-200 text-slate-600"
+                        ? "bg-slate-900 text-white"
+                        : "bg-slate-100 text-slate-500 hover:bg-slate-200"
                     )}
                   >
                     {student.studentName}
                   </button>
                 ))}
               </div>
+            </div>
 
-              <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                <label className="text-xs font-semibold text-slate-500">问题说明（用于重新批改）</label>
-                <textarea
-                  value={globalNote}
-                  onChange={(e) => setGlobalNote(e.target.value)}
-                  className="mt-2 w-full rounded-xl border border-slate-200 p-3 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300"
-                  rows={3}
-                  placeholder="说明哪些题目有问题、需要关注的证据或评分点。"
-                />
-              </div>
+            {/* Global Notes */}
+            <div>
+              <input
+                value={globalNote}
+                onChange={(e) => setGlobalNote(e.target.value)}
+                className="w-full rounded border border-slate-200 bg-slate-50 px-3 py-2 text-xs focus:border-emerald-500 focus:outline-none"
+                placeholder="说明需要重新批改的原因（全局备注）..."
+              />
+            </div>
+          </div>
 
-              <div className="max-h-[620px] overflow-y-auto space-y-4 pr-2">
-                {currentStudent.questionResults.map((q) => {
-                  const key = `${selectedStudentIndex}:${q.questionId}`;
-                  const isSelected = selectedQuestionKeys.has(key);
-                  const isExpanded = expandedQuestionKeys.has(key);
-                  return (
-                    <div key={q.questionId} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <div className="text-sm font-semibold text-slate-800">
-                            题号 {q.questionId} · {q.score}/{q.maxScore} 分
-                          </div>
-                          {q.pageIndices && q.pageIndices.length > 0 && (
-                            <div className="text-xs text-slate-400">页码：{q.pageIndices.map((p) => p + 1).join(", ")}</div>
-                          )}
-                        </div>
-                        <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
-                          <input
-                            type="checkbox"
-                            checked={isSelected}
-                            onChange={() => toggleSelected(selectedStudentIndex, q.questionId)}
-                            className="h-4 w-4 rounded border-slate-300 text-slate-900"
-                          />
-                          有问题
-                        </label>
-                      </div>
-
-                      <div className="mt-4 grid gap-3">
-                        <div className="grid gap-3 lg:grid-cols-2">
-                          <div>
-                            <label className="text-[11px] uppercase tracking-[0.2em] text-slate-400">得分</label>
-                            <input
-                              value={q.score}
-                              onChange={(e) => updateQuestion(selectedStudentIndex, q.questionId, "score", Number(e.target.value))}
-                              type="number"
-                              className="mt-2 w-full rounded-xl border border-slate-200 p-3 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300"
-                            />
-                          </div>
-                          <div>
-                            <label className="text-[11px] uppercase tracking-[0.2em] text-slate-400">满分</label>
-                            <div className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
-                              {q.maxScore}
+          <div className="flex-1 overflow-y-auto bg-slate-50/30 p-6">
+            <div className="space-y-0 divide-y divide-slate-100 border border-slate-100 bg-white shadow-sm rounded-lg overflow-hidden">
+              {currentStudent.questionResults.map((q) => {
+                const key = `${selectedStudentIndex}:${q.questionId}`;
+                const isSelected = selectedQuestionKeys.has(key);
+                const isExpanded = expandedQuestionKeys.has(key);
+                return (
+                  <div key={q.questionId} className={clsx("bg-white transition-colors hover:bg-slate-50/50", isSelected && "bg-rose-50/30")}>
+                    <div className="p-4">
+                      <div className="flex items-start justify-between gap-4">
+                        {/* Question Header */}
+                        <div className="flex flex-1 flex-col gap-1">
+                          <div className="flex items-center gap-2">
+                            <span className="flex h-6 w-6 items-center justify-center rounded bg-slate-100 text-[10px] font-bold text-slate-600">
+                              {q.questionId}
+                            </span>
+                            <div className="flex items-baseline gap-1 text-sm font-medium text-slate-900">
+                              <input
+                                value={q.score}
+                                onChange={(e) => updateQuestion(selectedStudentIndex, q.questionId, "score", Number(e.target.value))}
+                                type="number"
+                                className="w-12 rounded border-none bg-transparent p-0 text-right font-bold hover:bg-slate-100 focus:ring-0"
+                              />
+                              <span className="text-slate-400 text-xs">/ {q.maxScore}</span>
                             </div>
                           </div>
+                          {/* Feedback */}
+                          <div className="mt-2 text-sm text-slate-600">
+                            <textarea
+                              value={q.feedback}
+                              onChange={(e) => updateQuestion(selectedStudentIndex, q.questionId, "feedback", e.target.value)}
+                              className="w-full resize-none bg-transparent text-sm leading-relaxed focus:outline-none focus:ring-0"
+                              rows={Math.max(2, Math.ceil(q.feedback.length / 50))}
+                            />
+                          </div>
                         </div>
-                        <div>
-                          <label className="text-[11px] uppercase tracking-[0.2em] text-slate-400">评语</label>
-                          <textarea
-                            value={q.feedback}
-                            onChange={(e) => updateQuestion(selectedStudentIndex, q.questionId, "feedback", e.target.value)}
-                            className="mt-2 w-full rounded-xl border border-slate-200 p-3 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300"
-                            rows={2}
-                          />
-                        </div>
-                        <div>
-                          <label className="text-[11px] uppercase tracking-[0.2em] text-slate-400">问题备注</label>
-                          <textarea
-                            value={q.reviewNote}
-                            onChange={(e) => updateQuestion(selectedStudentIndex, q.questionId, "reviewNote", e.target.value)}
-                            className="mt-2 w-full rounded-xl border border-slate-200 p-3 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300"
-                            rows={2}
-                            placeholder="说明该题需要重新批改的原因。"
-                          />
+
+                        {/* Controls */}
+                        <div className="flex flex-col items-end gap-2">
+                          <label className="flex cursor-pointer items-center gap-1.5 rounded-full px-2 py-1 hover:bg-rose-100/50">
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={() => toggleSelected(selectedStudentIndex, q.questionId)}
+                              className="h-3.5 w-3.5 rounded border-slate-300 text-rose-500 focus:ring-rose-500"
+                            />
+                            <span className={clsx("text-[10px] font-medium", isSelected ? "text-rose-500" : "text-slate-400")}>
+                              标记
+                            </span>
+                          </label>
+                          <button
+                            onClick={() => toggleExpanded(selectedStudentIndex, q.questionId)}
+                            className="text-[10px] font-medium text-slate-400 hover:text-slate-600"
+                          >
+                            {isExpanded ? "收起详情" : "详情"}
+                          </button>
                         </div>
                       </div>
 
-                      <div className="mt-4">
-                        <button
-                          onClick={() => toggleExpanded(selectedStudentIndex, q.questionId)}
-                          className="text-xs font-semibold text-slate-600 hover:text-slate-800"
-                        >
-                          {isExpanded ? "收起评分依据" : "展开评分依据"}
-                        </button>
-                        {isExpanded && (
-                          <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3 space-y-3">
-                            {q.scoringPointResults && q.scoringPointResults.length > 0 ? (
-                              q.scoringPointResults.map((spr, idx) => (
-                                <div key={`${q.questionId}-spr-${idx}`} className="rounded-lg border border-slate-200 bg-white p-2 text-xs text-slate-600">
-                                  <div className="flex items-center justify-between">
-                                    <span className="font-semibold text-slate-700">
-                                      {spr.pointId || `评分点 ${idx + 1}`}
-                                    </span>
-                                    <span>
-                                      {spr.awarded ?? 0}/{spr.maxPoints ?? 0}
-                                    </span>
-                                  </div>
-                                  {spr.description && <div className="mt-1">{spr.description}</div>}
-                                  {spr.evidence && <div className="mt-1 text-[11px] text-slate-500">证据：{spr.evidence}</div>}
-                                  {spr.rubricReference && (
-                                    <div className="mt-1 text-[11px] text-slate-500">引用标准：{spr.rubricReference}</div>
-                                  )}
-                                  {spr.decision && (
-                                    <div className="mt-1 text-[11px] text-slate-500">判断：{spr.decision}</div>
-                                  )}
-                                </div>
-                              ))
-                            ) : (
-                              <div className="text-xs text-slate-400">暂无评分依据</div>
-                            )}
-                            {q.typoNotes && q.typoNotes.length > 0 && (
-                              <div className="text-xs text-rose-600">错别字：{q.typoNotes.join("、")}</div>
-                            )}
+                      {/* Expanded Details */}
+                      {isExpanded && (
+                        <div className="mt-4 border-t border-slate-100 pt-3">
+                          {/* Review Note */}
+                          <div className="mb-3">
+                            <label className="mb-1 block text-[10px] font-medium uppercase text-slate-400">修正说明</label>
+                            <textarea
+                              value={q.reviewNote}
+                              onChange={(e) => updateQuestion(selectedStudentIndex, q.questionId, "reviewNote", e.target.value)}
+                              className="w-full rounded border border-slate-200 bg-slate-50 px-2 py-1.5 text-xs focus:border-emerald-500 focus:outline-none"
+                              rows={2}
+                              placeholder="需重改的原因..."
+                            />
                           </div>
-                        )}
-                      </div>
+
+                          {/* Scoring Points */}
+                          <div className="grid gap-2 text-xs text-slate-600">
+                            {q.scoringPointResults?.map((spr, idx) => (
+                              <div key={idx} className="flex gap-2 rounded bg-slate-50 p-2">
+                                <div className={clsx("h-1.5 w-1.5 flex-none rounded-full mt-1.5", spr.awarded ? "bg-emerald-400" : "bg-slate-300")} />
+                                <div className="flex-1 space-y-1">
+                                  <div className="flex justify-between font-medium">
+                                    <span>{spr.description || "评分点"}</span>
+                                    <span>{spr.awarded}/{spr.maxPoints}</span>
+                                  </div>
+                                  {spr.evidence && <div className="text-slate-500">引证: {spr.evidence}</div>}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
-                  );
-                })}
-              </div>
+                  </div>
+                );
+              })}
             </div>
-          </section>
+          </div>
         </div>
       </div>
     </div>
