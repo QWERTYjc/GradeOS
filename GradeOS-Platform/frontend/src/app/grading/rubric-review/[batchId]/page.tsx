@@ -314,6 +314,7 @@ export default function RubricReviewPage({ params }: { params: Promise<{ batchId
     try {
       await gradingApi.submitRubricReview({ batch_id: batchId, action: "approve" });
       setSuccessMessage("已确认解析结果，批改流程继续进行。");
+      router.push(`/console?batchId=${batchId}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "提交失败");
     } finally {

@@ -331,6 +331,16 @@ export default function ConsolePage() {
         };
     }, [searchParams, examSessionId]);
 
+    useEffect(() => {
+        const batchId = searchParams.get('batchId');
+        if (!batchId) {
+            return;
+        }
+        useConsoleStore.getState().setSubmissionId(batchId);
+        useConsoleStore.getState().connectWs(batchId);
+        useConsoleStore.getState().setStatus('RUNNING');
+    }, [searchParams]);
+
     // Provider Methods
     const createNewSession = (name?: string) => {
         const newSession: Session = {
