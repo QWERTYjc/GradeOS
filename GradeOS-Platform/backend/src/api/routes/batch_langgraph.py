@@ -46,6 +46,13 @@ batch_image_cache: Dict[str, Dict[str, dict]] = {}
 DEBUG_LOG_PATH = os.getenv("GRADEOS_DEBUG_LOG_PATH")
 
 
+def _is_ws_connected(websocket: WebSocket) -> bool:
+    return (
+        websocket.client_state == WebSocketState.CONNECTED
+        and websocket.application_state == WebSocketState.CONNECTED
+    )
+
+
 def _write_debug_log(payload: Dict[str, Any]) -> None:
     if not DEBUG_LOG_PATH:
         return
@@ -173,7 +180,7 @@ async def broadcast_progress(batch_id: str, message: dict):
     if batch_id in active_connections:
         disconnected = []
         for ws in active_connections[batch_id]:
-            if ws.client_state != WebSocketState.CONNECTED:
+            if not _is_ws_connected(ws):
                 disconnected.append(ws)
                 continue
             try:
@@ -955,6 +962,30 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
                     "is_cross_page": q.get("is_cross_page", False),
                     "merge_source": q.get("merge_source")
                 })
+        # å…¼å®¹ export_data çš„ question_results
+        elif r.get("question_results"):
+            for q in r.get("question_results", []):
+                scoring_results = q.get("scoring_point_results") or q.get("scoring_results") or []
+                question_results.append({
+                    "questionId": str(q.get("question_id", "")),
+                    "score": q.get("score", 0),
+                    "maxScore": q.get("max_score", 0),
+                    "feedback": q.get("feedback", ""),
+                    "confidence": q.get("confidence", 0),
+                    "confidence_reason": q.get("confidence_reason") or q.get("confidenceReason"),
+                    "self_critique": q.get("self_critique") or q.get("selfCritique"),
+                    "self_critique_confidence": q.get("self_critique_confidence") or q.get("selfCritiqueConfidence"),
+                    "rubric_refs": q.get("rubric_refs") or q.get("rubricRefs"),
+                    "review_summary": q.get("review_summary") or q.get("reviewSummary"),
+                    "review_corrections": q.get("review_corrections") or q.get("reviewCorrections"),
+                    "typo_notes": q.get("typo_notes") or q.get("typoNotes"),
+                    "studentAnswer": q.get("student_answer", ""),
+                    "isCorrect": q.get("is_correct", False),
+                    "scoring_point_results": scoring_results,
+                    "page_indices": q.get("page_indices", []),
+                    "is_cross_page": q.get("is_cross_page", False),
+                    "merge_source": q.get("merge_source"),
+                })
         # 从 page_results 提取
         elif r.get("page_results"):
             for page in r.get("page_results", []):
@@ -989,9 +1020,9 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
         student_summary = r.get("student_summary") or r.get("studentSummary")
         self_audit = r.get("self_audit") or r.get("selfAudit")
         formatted.append({
-            "studentName": r.get("student_key") or r.get("student_id", "Unknown"),
-            "score": r.get("total_score", 0),
-            "maxScore": r.get("max_total_score", 100),
+            "studentName": r.get("student_key") or r.get("student_name") or r.get("student_id", "Unknown"),
+            "score": r.get("total_score", r.get("score", 0)),
+            "maxScore": r.get("max_total_score", r.get("max_score", 100)),
             "startPage": r.get("start_page"),   # 🔥 新增：学生页面范围
             "endPage": r.get("end_page"),       # 🔥 新增：学生页面范围
             "questionResults": question_results,
@@ -1138,7 +1169,7 @@ async def websocket_endpoint(websocket: WebSocket, batch_id: str):
     try:
         # 保持连接，等待客户端消息或断开
         while True:
-            if websocket.client_state != WebSocketState.CONNECTED:
+            if not _is_ws_connected(websocket):
                 break
             data = await websocket.receive_text()
             logger.debug(f"收到 WebSocket 消息: batch_id={batch_id}, data={data}")
@@ -1230,14 +1261,14 @@ async def get_rubric_review_context(
 
         if not rubric_images and state.get("rubric_images"):
             try:
-                rubric_images = [
-                    base64.b64encode(img).decode("utf-8")
-                    for img in state.get("rubric_images", [])
-                    if isinstance(img, (bytes, bytearray))
-                ]
+                rubric_images = []
+                for img in state.get("rubric_images", []):
+                    if isinstance(img, (bytes, bytearray)):
+                        rubric_images.append(base64.b64encode(img).decode("utf-8"))
+                    elif isinstance(img, str) and img:
+                        rubric_images.append(img)
             except Exception as exc:
-                logger.warning(f"转换 rubric 图像失败: {exc}")
-
+                logger.warning(f"Failed to convert rubric images: {exc}")
         return RubricReviewContextResponse(
             batch_id=batch_id,
             status=run_info.status.value if run_info.status else None,
@@ -1277,6 +1308,11 @@ async def get_results_review_context(
             except Exception as exc:
                 logger.warning(f"获取最终输出失败: {exc}")
 
+        if not student_results:
+            export_students = (state.get("export_data") or {}).get("students", [])
+            if export_students:
+                student_results = export_students
+
         cached = batch_image_cache.get(batch_id, {})
         cached_images = cached.get("images_ready", {}).get("images") if cached else None
         answer_images: List[str] = cached_images or []
@@ -1284,14 +1320,14 @@ async def get_results_review_context(
         if not answer_images:
             raw_images = state.get("processed_images") or state.get("answer_images") or []
             try:
-                answer_images = [
-                    base64.b64encode(img).decode("utf-8")
-                    for img in raw_images
-                    if isinstance(img, (bytes, bytearray))
-                ]
+                answer_images = []
+                for img in raw_images:
+                    if isinstance(img, (bytes, bytearray)):
+                        answer_images.append(base64.b64encode(img).decode("utf-8"))
+                    elif isinstance(img, str) and img:
+                        answer_images.append(img)
             except Exception as exc:
-                logger.warning(f"转换答题图片失败: {exc}")
-
+                logger.warning(f"Failed to convert answer images: {exc}")
         return ResultsReviewContextResponse(
             batch_id=batch_id,
             status=run_info.status.value if run_info.status else None,
