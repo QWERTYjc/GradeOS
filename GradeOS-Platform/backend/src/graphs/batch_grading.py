@@ -1109,9 +1109,21 @@ async def rubric_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     batch_id = state["batch_id"]
     parsed_rubric = state.get("parsed_rubric", {})
     api_key = state.get("api_key") or os.getenv("GEMINI_API_KEY")
+    enable_review = state.get("inputs", {}).get("enable_review", True)
 
     if not parsed_rubric or not parsed_rubric.get("questions"):
         logger.info(f"[rubric_review] skip (no rubric): batch_id={batch_id}")
+        return {
+            "current_stage": "rubric_review_skipped",
+            "percentage": 18.0,
+            "timestamps": {
+                **state.get("timestamps", {}),
+                "rubric_review_at": datetime.now().isoformat()
+            }
+        }
+
+    if not enable_review:
+        logger.info(f"[rubric_review] skip (review disabled): batch_id={batch_id}")
         return {
             "current_stage": "rubric_review_skipped",
             "percentage": 18.0,
@@ -4058,6 +4070,7 @@ async def review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     batch_id = state["batch_id"]
     student_results = state.get("student_results", [])
     student_boundaries = state.get("student_boundaries", [])
+    enable_review = state.get("inputs", {}).get("enable_review", True)
     
     logger.info(f"[review] 开始结果审核: batch_id={batch_id}")
     
@@ -4087,6 +4100,20 @@ async def review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
         f"学生数={review_summary['total_students']}, "
         f"待确认边界={review_summary['boundaries_need_confirmation']}"
     )
+
+    if not enable_review:
+        logger.info(f"[review] skip (review disabled): batch_id={batch_id}")
+        return {
+            "review_summary": review_summary,
+            "review_result": {"action": "skip"},
+            "student_results": student_results,
+            "current_stage": "review_completed",
+            "percentage": 90.0,
+            "timestamps": {
+                **state.get("timestamps", {}),
+                "review_at": datetime.now().isoformat()
+            }
+        }
 
     review_request = {
         "type": "results_review_required",

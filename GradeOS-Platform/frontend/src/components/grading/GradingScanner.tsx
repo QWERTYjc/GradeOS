@@ -49,6 +49,7 @@ export default function GradingScanner() {
   const [isParsing, setIsParsing] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [interactionEnabled, setInteractionEnabled] = useState(false);
   const examInputRef = useRef<HTMLInputElement>(null);
   const rubricInputRef = useRef<HTMLInputElement>(null);
 
@@ -85,7 +86,7 @@ export default function GradingScanner() {
     setStatus('UPLOADING');
     addLog(`Starting upload: ${examFiles.length} exams, ${rubricFiles.length} rubrics`, 'INFO');
     try {
-      const submission = await api.createSubmission(examFiles, rubricFiles);
+      const submission = await api.createSubmission(examFiles, rubricFiles, [], undefined, undefined, interactionEnabled);
       addLog(`Upload complete. Submission ID: ${submission.id}`, 'SUCCESS');
       setSubmissionId(submission.id);
       setTimeout(() => {
@@ -183,6 +184,18 @@ export default function GradingScanner() {
           ) : (
             '暂无预览页面'
           )}
+        </div>
+
+        <div className="flex items-center justify-center">
+          <label className="flex items-center gap-2 rounded-full border border-gray-200 bg-white px-4 py-2 text-xs font-medium text-gray-600">
+            <input
+              type="checkbox"
+              checked={interactionEnabled}
+              onChange={(event) => setInteractionEnabled(event.target.checked)}
+              className="h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-gray-400"
+            />
+            启用人工交互（批改前）
+          </label>
         </div>
 
         <div className="flex flex-wrap items-center justify-center gap-3">

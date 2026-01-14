@@ -20,9 +20,20 @@ interface GalleryProps {
   onBoundariesChange?: (boundaries: number[]) => void;
   isRubricMode?: boolean;
   studentNameMapping?: StudentNameMapping[]; // 班级批改模式下的学生名称映射
+  interactionEnabled?: boolean;
+  onInteractionToggle?: (enabled: boolean) => void;
 }
 
-export default function Gallery({ session, onSubmitBatch, submitLabel, onBoundariesChange, isRubricMode = false, studentNameMapping = [] }: GalleryProps) {
+export default function Gallery({
+  session,
+  onSubmitBatch,
+  submitLabel,
+  onBoundariesChange,
+  isRubricMode = false,
+  studentNameMapping = [],
+  interactionEnabled = false,
+  onInteractionToggle
+}: GalleryProps) {
   const context = useContext(AppContext);
   const [selectedImages, setSelectedImages] = useState<Set<string>>(new Set());
   const [editingImageId, setEditingImageId] = useState<string | null>(null);
@@ -174,6 +185,18 @@ export default function Gallery({ session, onSubmitBatch, submitLabel, onBoundar
             </button>
 
             <div className="w-px h-5 bg-slate-300 mx-1"></div>
+
+            {!isRubricMode && onInteractionToggle && (
+              <label className="flex items-center gap-2 rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-600 shadow-sm">
+                <input
+                  type="checkbox"
+                  checked={interactionEnabled}
+                  onChange={(event) => onInteractionToggle(event.target.checked)}
+                  className="h-3.5 w-3.5 rounded border-slate-300 text-slate-900 focus:ring-slate-500"
+                />
+                启用人工交互（批改前）
+              </label>
+            )}
 
             {/* Split Mode (Boundary) - Integrated */}
             {!isRubricMode && (

@@ -1,8 +1,11 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { CheckCircle2, ArrowRight, AlertTriangle } from 'lucide-react';
+import clsx from 'clsx';
 import { useConsoleStore } from '@/store/consoleStore';
+import { gradingApi } from '@/services/api';
 
 const RUBRIC_REVIEW_TYPES = new Set([
   'rubric_review_required',
@@ -14,28 +17,101 @@ const RESULTS_REVIEW_TYPES = new Set([
   'results_review',
 ]);
 
+const REVIEW_LABELS: Record<string, string> = {
+  rubric_review_required: '批改标准交互',
+  rubric_review: '批改标准交互',
+  results_review_required: '批改结果交互',
+  results_review: '批改结果交互',
+};
+
 export default function ReviewOverlay() {
   const router = useRouter();
-  const { pendingReview, submissionId, setPendingReview } = useConsoleStore();
-  const lastNavigateRef = useRef<string | null>(null);
+  const { pendingReview, submissionId, setPendingReview, setStatus } = useConsoleStore();
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!pendingReview || !submissionId) return;
-    const reviewType = pendingReview.reviewType || '';
-    const navKey = `${submissionId}:${reviewType}`;
-    if (RUBRIC_REVIEW_TYPES.has(reviewType)) {
-      if (lastNavigateRef.current === navKey) return;
-      lastNavigateRef.current = navKey;
-      setPendingReview(null);
-      router.push(`/grading/rubric-review/${submissionId}`);
-      return;
+  const reviewType = pendingReview?.reviewType || '';
+  const isRubricReview = RUBRIC_REVIEW_TYPES.has(reviewType);
+  const isResultsReview = RESULTS_REVIEW_TYPES.has(reviewType);
+  const reviewLabel = REVIEW_LABELS[reviewType] || '人工交互';
+  const reviewMessage = pendingReview?.message || '需要人工介入确认。';
+
+  const reviewRoute = useMemo(() => {
+    if (!submissionId) return '';
+    if (isRubricReview) return `/grading/rubric-review/${submissionId}`;
+    if (isResultsReview) return `/grading/results-review/${submissionId}`;
+    return '';
+  }, [submissionId, isRubricReview, isResultsReview]);
+
+  if (!pendingReview || !submissionId) {
+    return null;
+  }
+
+  const handleNavigate = () => {
+    if (reviewRoute) {
+      router.push(reviewRoute);
     }
-    if (!RESULTS_REVIEW_TYPES.has(reviewType)) return;
-    if (lastNavigateRef.current === navKey) return;
-    lastNavigateRef.current = navKey;
-    setPendingReview(null);
-    router.push(`/grading/results-review/${submissionId}`);
-  }, [pendingReview, submissionId, router, setPendingReview]);
+  };
 
-  return null;
+  const handleSkip = async () => {
+    if (!submissionId) return;
+    setIsSubmitting(true);
+    setError(null);
+    try {
+      if (isRubricReview) {
+        await gradingApi.submitRubricReview({ batch_id: submissionId, action: 'approve' });
+      } else if (isResultsReview) {
+        await gradingApi.submitResultsReview({ batch_id: submissionId, action: 'approve' });
+      }
+      setPendingReview(null);
+      setStatus('RUNNING');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '提交失败');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="fixed bottom-6 right-6 z-50 w-[320px] rounded-2xl border border-blue-100 bg-white/90 p-4 shadow-xl backdrop-blur">
+      <div className="flex items-start gap-3">
+        <div className="rounded-full bg-blue-50 p-2 text-blue-600">
+          <AlertTriangle className="h-4 w-4" />
+        </div>
+        <div className="flex-1">
+          <div className="text-sm font-semibold text-slate-900">{reviewLabel}</div>
+          <p className="mt-1 text-xs text-slate-500">{reviewMessage}</p>
+        </div>
+      </div>
+
+      {error && (
+        <div className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-600">
+          {error}
+        </div>
+      )}
+
+      <div className="mt-4 flex gap-2">
+        <button
+          type="button"
+          onClick={handleNavigate}
+          className="flex-1 rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600 transition hover:border-slate-300"
+        >
+          前往交互
+          <ArrowRight className="ml-2 inline h-3.5 w-3.5" />
+        </button>
+        <button
+          type="button"
+          onClick={handleSkip}
+          disabled={isSubmitting}
+          className={clsx(
+            'flex-1 rounded-full px-3 py-2 text-xs font-semibold text-white transition',
+            isSubmitting ? 'bg-slate-300' : 'bg-slate-900 hover:bg-slate-800'
+          )}
+        >
+          {isSubmitting ? '处理中...' : '继续流程'}
+          <CheckCircle2 className="ml-2 inline h-3.5 w-3.5" />
+        </button>
+      </div>
+    </div>
+  );
 }

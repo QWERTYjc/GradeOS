@@ -4,7 +4,7 @@ import React, { useMemo } from 'react';
 import { useConsoleStore, WorkflowNode, GradingAgent } from '@/store/consoleStore';
 import clsx from 'clsx';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Check, Loader2, AlertCircle, Clock, Cpu, GitMerge, Undo2, BookOpen } from 'lucide-react';
+import { Check, Loader2, AlertCircle, Clock, Cpu, GitMerge, Undo2, BookOpen, UserCheck } from 'lucide-react';
 
 const transition = { type: 'spring', stiffness: 400, damping: 30 };
 
@@ -222,11 +222,15 @@ const NodeCard: React.FC<{
 
     const isCrossPageMerge = node.id === 'cross_page_merge';
     const isLogicReview = node.id === 'logic_review';
+    const isRubricReview = node.id === 'rubric_review';
+    const isResultsReview = node.id === 'review';
     const nodeIcon = isCrossPageMerge
         ? <GitMerge className="w-5 h-5" />
         : isLogicReview
             ? <Undo2 className="w-5 h-5" />
-            : styles.icon;
+            : isRubricReview || isResultsReview
+                ? <UserCheck className="w-5 h-5" />
+                : styles.icon;
 
     return (
         <motion.div
@@ -301,11 +305,14 @@ export const WorkflowGraph: React.FC = () => {
         setSelectedNodeId,
         setSelectedAgentId,
         status,
-        batchProgress
+        batchProgress,
+        interactionEnabled
     } = useConsoleStore();
 
     const visibleNodes = useMemo(() => {
-        const filteredNodes = workflowNodes;
+        const filteredNodes = interactionEnabled
+            ? workflowNodes
+            : workflowNodes.filter((node) => node.id !== 'rubric_review' && node.id !== 'review');
         if (status === 'IDLE' || status === 'UPLOADING') {
             return filteredNodes.map((node) => ({
                 ...node,
@@ -320,7 +327,7 @@ export const WorkflowGraph: React.FC = () => {
             ...node,
             isVisualCompleted: index < lastActiveIndex && node.status === 'pending'
         }));
-    }, [workflowNodes, status]);
+    }, [workflowNodes, status, interactionEnabled]);
 
     return (
         <div className="w-full h-full flex items-center justify-center overflow-x-auto py-12 px-8 scrollbar-hide">

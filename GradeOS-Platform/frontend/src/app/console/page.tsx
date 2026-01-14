@@ -88,12 +88,23 @@ interface ScannerContainerProps {
 
     // Actions
     onSubmitBatch: (images: ScannedImage[], boundaries: number[]) => Promise<void>;
+    interactionEnabled: boolean;
+    onInteractionToggle: (enabled: boolean) => void;
 
     // 班级批改模式下的学生映射
     studentNameMapping?: Array<{ studentId: string; studentName: string; startIndex: number; endIndex: number }>;
 }
 
-const ScannerContainer = ({ activeTab, onTabChange, examSessionId, rubricSessionId, onSubmitBatch, studentNameMapping = [] }: ScannerContainerProps) => {
+const ScannerContainer = ({
+    activeTab,
+    onTabChange,
+    examSessionId,
+    rubricSessionId,
+    onSubmitBatch,
+    interactionEnabled,
+    onInteractionToggle,
+    studentNameMapping = []
+}: ScannerContainerProps) => {
     const { setCurrentSessionId, sessions } = useContext(AppContext)!;
     const [viewMode, setViewMode] = useState<ScanViewMode>('exams');
     const [studentBoundaries, setStudentBoundaries] = useState<number[]>([]);
@@ -191,6 +202,8 @@ const ScannerContainer = ({ activeTab, onTabChange, examSessionId, rubricSession
                         onBoundariesChange={viewMode === 'exams' ? setStudentBoundaries : undefined}
                         isRubricMode={viewMode === 'rubrics'}
                         studentNameMapping={viewMode === 'exams' ? studentNameMapping : undefined}
+                        interactionEnabled={interactionEnabled}
+                        onInteractionToggle={onInteractionToggle}
                     />
                 )}
             </div>
@@ -204,6 +217,8 @@ export default function ConsolePage() {
     const selectedAgentId = useConsoleStore((state) => state.selectedAgentId);
     const selectedNodeId = useConsoleStore((state) => state.selectedNodeId);
     const llmThoughtsCount = useConsoleStore((state) => state.llmThoughts.length);
+    const interactionEnabled = useConsoleStore((state) => state.interactionEnabled);
+    const setInteractionEnabled = useConsoleStore((state) => state.setInteractionEnabled);
 
     // Initial Sessions State
     const [sessions, setSessions] = useState<Session[]>([]);
@@ -470,7 +485,14 @@ export default function ConsolePage() {
             } : undefined;
 
             // 2. Upload to backend with optional class context
-            const response = await api.createSubmission(examFiles, rubricFiles, boundaries, undefined, classContextPayload);
+            const response = await api.createSubmission(
+                examFiles,
+                rubricFiles,
+                boundaries,
+                undefined,
+                classContextPayload,
+                interactionEnabled
+            );
 
             useConsoleStore.getState().setSubmissionId(response.id);
             useConsoleStore.getState().connectWs(response.id);
@@ -516,6 +538,8 @@ export default function ConsolePage() {
                                     examSessionId={examSessionId}
                                     rubricSessionId={rubricSessionId}
                                     onSubmitBatch={handleSubmitBatch}
+                                    interactionEnabled={interactionEnabled}
+                                    onInteractionToggle={setInteractionEnabled}
                                     studentNameMapping={useConsoleStore.getState().classContext.studentImageMapping}
                                 />
                             </motion.div>
