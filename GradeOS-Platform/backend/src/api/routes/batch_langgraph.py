@@ -207,6 +207,7 @@ async def submit_batch(
     class_id: Optional[str] = Form(None, description="班级 ID（用于成绩写回）"),
     homework_id: Optional[str] = Form(None, description="作业 ID（用于成绩写回）"),
     student_mapping_json: Optional[str] = Form(None, description="学生映射 JSON [{studentId, studentName, startIndex, endIndex}]"),
+    enable_review: bool = Form(True, description="是否启用人工交互"),
     orchestrator: Orchestrator = Depends(get_orchestrator)
 ):
     """
@@ -412,6 +413,7 @@ async def submit_batch(
                 "auto_identify": auto_identify,
                 "manual_boundaries": parsed_boundaries,  # 传递人工边界
                 "expected_students": expected_students if expected_students else 2,  # 🔥 默认 2 名学生
+                "enable_review": enable_review,
             }
         }
         
@@ -498,22 +500,20 @@ async def stream_langgraph_progress(
             
             # 将 LangGraph 事件转换为前端 WebSocket 消息
             if event_type == "node_start":
-                if node_name not in ("rubric_review", "review"):
-                    await broadcast_progress(batch_id, {
-                        "type": "workflow_update",
-                        "nodeId": _map_node_to_frontend(node_name),
-                        "status": "running",
-                        "message": f"Running {_get_node_display_name(node_name)}..."
-                    })
+                await broadcast_progress(batch_id, {
+                    "type": "workflow_update",
+                    "nodeId": _map_node_to_frontend(node_name),
+                    "status": "running",
+                    "message": f"Running {_get_node_display_name(node_name)}..."
+                })
             
             elif event_type == "node_end":
-                if node_name not in ("rubric_review", "review"):
-                    await broadcast_progress(batch_id, {
-                        "type": "workflow_update",
-                        "nodeId": _map_node_to_frontend(node_name),
-                        "status": "completed",
-                        "message": f"{_get_node_display_name(node_name)} completed"
-                    })
+                await broadcast_progress(batch_id, {
+                    "type": "workflow_update",
+                    "nodeId": _map_node_to_frontend(node_name),
+                    "status": "completed",
+                    "message": f"{_get_node_display_name(node_name)} completed"
+                })
                 
                 # 处理节点输出
                 output = data.get("output", {})
@@ -525,6 +525,7 @@ async def stream_langgraph_progress(
                             "type": "review_required",
                             "reviewType": review_type,
                             "payload": interrupt_payload,
+                            "nodeId": _map_node_to_frontend("rubric_review") if "rubric" in review_type else _map_node_to_frontend("review"),
                         })
                     # 评分标准解析完成
                     if node_name == "rubric_parse" and output.get("parsed_rubric"):
@@ -631,6 +632,7 @@ async def stream_langgraph_progress(
                         "type": "review_required",
                         "reviewType": review_type,
                         "payload": interrupt_value,
+                        "nodeId": _map_node_to_frontend("rubric_review") if "rubric" in review_type else _map_node_to_frontend("review"),
                     })
                 else:
                     # 如果没有 payload，至少通知状态变更
@@ -1661,5 +1663,3 @@ async def confirm_student_boundary(
     except Exception as e:
         logger.error(f"确认学生边界失败: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"确认失败: {str(e)}")
-
-

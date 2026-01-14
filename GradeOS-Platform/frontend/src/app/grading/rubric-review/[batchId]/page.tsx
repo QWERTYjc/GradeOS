@@ -43,10 +43,12 @@ type ParsedRubricDraft = {
 
 const workflowSteps = [
   { id: "rubric_parse", label: "Rubric Parse" },
+  { id: "rubric_review", label: "Rubric Review" },
   { id: "grade_batch", label: "Batch Grading" },
   { id: "cross_page_merge", label: "Cross-Page Merge" },
   { id: "index_merge", label: "Result Merge" },
   { id: "logic_review", label: "Logic Review" },
+  { id: "review", label: "Results Review" },
   { id: "export", label: "Export" },
 ];
 
@@ -379,13 +381,14 @@ export default function RubricReviewPage({ params }: { params: Promise<{ batchId
     if (!currentStage) return 0;
     const mapping: Record<string, string> = {
       rubric_parse_completed: "rubric_parse",
-      rubric_review_completed: "rubric_parse",
-      rubric_review_skipped: "rubric_parse",
+      rubric_review_completed: "rubric_review",
+      rubric_review_skipped: "rubric_review",
       grade_batch_completed: "grade_batch",
       cross_page_merge_completed: "cross_page_merge",
       index_merge_completed: "index_merge",
       logic_review_completed: "logic_review",
       logic_review_skipped: "logic_review",
+      review_completed: "review",
       completed: "export",
     };
     const stepId = mapping[currentStage] || "rubric_parse";
@@ -417,45 +420,46 @@ export default function RubricReviewPage({ params }: { params: Promise<{ batchId
       const isSelected = selectedIds.has(q.questionId);
       const isExpanded = expandedIds.has(q.questionId);
       return (
-        <div key={q.questionId} className="border-b border-slate-100 pb-6 last:border-0">
-          <div className="flex items-center justify-between">
+        <div key={q.questionId} className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="flex items-start justify-between gap-4">
             <div className="flex items-center gap-3">
-              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-slate-100 text-sm font-bold text-slate-700">
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-slate-100 text-sm font-bold text-slate-700">
                 {q.questionId}
               </div>
               <div>
                 <div className="text-xs font-semibold text-slate-500">满分 {q.maxScore}</div>
+                <div className="text-sm font-semibold text-slate-800">题目 {q.questionId}</div>
               </div>
             </div>
 
-            <label className="flex items-center gap-2 cursor-pointer rounded-full px-2 py-1 hover:bg-rose-50 transition-colors">
+            <label className="flex items-center gap-2 cursor-pointer rounded-full border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-500 hover:border-rose-200 hover:bg-rose-50 transition-colors">
               <input
                 type="checkbox"
                 checked={isSelected}
                 onChange={() => toggleSelected(q.questionId)}
                 className="h-4 w-4 rounded border-slate-300 text-rose-500 focus:ring-rose-500"
               />
-              <span className={clsx("text-xs font-medium", isSelected ? "text-rose-500" : "text-slate-400")}>标记问题</span>
+              <span className={clsx(isSelected ? "text-rose-500" : "text-slate-500")}>标记问题</span>
             </label>
           </div>
 
-          <div className="mt-4 grid gap-3">
+          <div className="mt-5 grid gap-4">
             <div>
               <label className="text-[11px] uppercase tracking-[0.2em] text-slate-400">题目内容</label>
               <textarea
                 value={q.questionText}
                 onChange={(e) => updateQuestion(q.questionId, "questionText", e.target.value)}
-                className="mt-2 w-full rounded-xl border border-slate-200 p-3 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300"
+                className="mt-2 w-full rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300"
                 rows={2}
               />
             </div>
-            <div className="grid gap-3 lg:grid-cols-2">
+            <div className="grid gap-4 lg:grid-cols-2">
               <div>
                 <label className="text-[11px] uppercase tracking-[0.2em] text-slate-400">标准答案</label>
                 <textarea
                   value={q.standardAnswer}
                   onChange={(e) => updateQuestion(q.questionId, "standardAnswer", e.target.value)}
-                  className="mt-2 w-full rounded-xl border border-slate-200 p-3 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300"
+                  className="mt-2 w-full rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300"
                   rows={2}
                 />
               </div>
@@ -465,7 +469,7 @@ export default function RubricReviewPage({ params }: { params: Promise<{ batchId
                   value={q.maxScore}
                   onChange={(e) => updateQuestion(q.questionId, "maxScore", Number(e.target.value))}
                   type="number"
-                  className="mt-2 w-full rounded-xl border border-slate-200 p-3 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300"
+                  className="mt-2 w-full rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300"
                 />
               </div>
             </div>
@@ -474,7 +478,7 @@ export default function RubricReviewPage({ params }: { params: Promise<{ batchId
               <textarea
                 value={q.gradingNotes}
                 onChange={(e) => updateQuestion(q.questionId, "gradingNotes", e.target.value)}
-                className="mt-2 w-full rounded-xl border border-slate-200 p-3 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300"
+                className="mt-2 w-full rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300"
                 rows={2}
               />
             </div>
@@ -483,7 +487,7 @@ export default function RubricReviewPage({ params }: { params: Promise<{ batchId
               <textarea
                 value={q.reviewNote}
                 onChange={(e) => updateQuestion(q.questionId, "reviewNote", e.target.value)}
-                className="mt-2 w-full rounded-xl border border-slate-200 p-3 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300"
+                className="mt-2 w-full rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300"
                 rows={2}
                 placeholder="说明这题解析哪里有问题，便于重解析。"
               />
@@ -726,7 +730,7 @@ export default function RubricReviewPage({ params }: { params: Promise<{ batchId
 
         {/* Right Pane: Rubric Form */}
         <div className="flex w-1/2 flex-col bg-white">
-          <div className="flex flex-none flex-col gap-4 border-b border-slate-100 px-6 py-4">
+          <div className="flex flex-none flex-col gap-4 border-b border-slate-100 bg-white px-6 py-5">
             {/* Messages */}
             {(error || successMessage) && (
               <div className={clsx(
@@ -752,13 +756,13 @@ export default function RubricReviewPage({ params }: { params: Promise<{ batchId
             </div>
 
             {/* Global Notes for Reparse */}
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
               <div>
                 <label className="mb-1 block text-[10px] font-medium uppercase text-slate-400">总体备注</label>
                 <input
                   value={rubricDraft.generalNotes}
                   onChange={(e) => setRubricDraft({ ...rubricDraft, generalNotes: e.target.value })}
-                  className="w-full rounded border border-slate-200 bg-slate-50 px-2 py-1.5 text-xs focus:border-emerald-500 focus:outline-none"
+                  className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs focus:border-emerald-500 focus:outline-none"
                   placeholder="扣分规则等..."
                 />
               </div>
@@ -767,15 +771,15 @@ export default function RubricReviewPage({ params }: { params: Promise<{ batchId
                 <input
                   value={globalNote}
                   onChange={(e) => setGlobalNote(e.target.value)}
-                  className="w-full rounded border border-slate-200 bg-slate-50 px-2 py-1.5 text-xs focus:border-emerald-500 focus:outline-none"
+                  className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs focus:border-emerald-500 focus:outline-none"
                   placeholder="告诉AI哪里解析错了..."
                 />
               </div>
             </div>
           </div>
 
-          <div className="flex-1 overflow-y-auto bg-slate-50/30 p-6">
-            <div className="space-y-6">
+          <div className="flex-1 overflow-y-auto bg-slate-50 p-8">
+            <div className="space-y-8">
               {questionCards}
             </div>
           </div>

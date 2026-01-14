@@ -337,6 +337,9 @@ export interface ConsoleState {
     logs: LogEntry[];
     workflowNodes: WorkflowNode[];
     finalResults: StudentResult[];
+    interactionEnabled: boolean;
+    nodeStatusTimestamps: Record<string, number>;
+    nodeStatusTimers: Record<string, ReturnType<typeof setTimeout>>;
 
     // 新增：自我成长系统状态
     parsedRubric: ParsedRubric | null;
@@ -398,6 +401,7 @@ export interface ConsoleState {
     // 新增：班级批改上下文方法
     setClassContext: (context: Partial<ClassContext>) => void;
     clearClassContext: () => void;
+    setInteractionEnabled: (enabled: boolean) => void;
 }
 
 /**
@@ -406,22 +410,29 @@ export interface ConsoleState {
  * 基于 LangGraph 架构的批改流程（与后端 batch_grading.py 完全对应）：
  * 1. index - 批改前索引（题目信息 + 学生识别）
  * 2. rubric_parse - 解析评分标准
- * 3. grade_batch - 可配置分批并行批改（支持批次失败重试、Worker 独立性）
- * 4. cross_page_merge - 跨页题目合并（检测并合并跨页题目，避免重复计分）
- * 5. index_merge - 索引聚合（基于索引聚合学生结果）
- * 6. export - 导出结果（支持 JSON 导出、部分结果保存）
+ * 3. rubric_review - 评分标准人工交互（可选）
+ * 4. grade_batch - 可配置分批并行批改（支持批次失败重试、Worker 独立性）
+ * 5. cross_page_merge - 跨页题目合并（检测并合并跨页题目，避免重复计分）
+ * 6. index_merge - 索引聚合（基于索引聚合学生结果）
+ * 7. logic_review - 逻辑复核
+ * 8. review - 批改结果人工交互（可选）
+ * 9. export - 导出结果（支持 JSON 导出、部分结果保存）
  * 
  * 后端 LangGraph Graph 流程：
- * index -> rubric_parse -> grade_batch -> cross_page_merge -> index_merge -> logic_review -> export -> END
+ * index -> rubric_parse -> rubric_review -> grade_batch -> cross_page_merge -> index_merge -> logic_review -> review -> export -> END
  */
 const initialNodes: WorkflowNode[] = [
     { id: 'rubric_parse', label: 'Rubric Parse', status: 'pending', isParallelContainer: true, children: [] },
+    { id: 'rubric_review', label: 'Rubric Review', status: 'pending' },
     { id: 'grade_batch', label: 'Batch Grading', status: 'pending', isParallelContainer: true, children: [] },
     { id: 'cross_page_merge', label: 'Cross-Page Merge', status: 'pending' },
     { id: 'index_merge', label: 'Result Merge', status: 'pending' },
     { id: 'logic_review', label: 'Logic Review', status: 'pending', isParallelContainer: true, children: [] },
+    { id: 'review', label: 'Results Review', status: 'pending' },
     { id: 'export', label: 'Export', status: 'pending' },
 ];
+
+const NODE_MIN_TRANSITION_MS = 2200;
 
 const normalizeStudentSummary = (summary: any): StudentSummary | undefined => {
     if (!summary || typeof summary !== 'object') return undefined;
@@ -542,6 +553,9 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
     logs: [],
     workflowNodes: initialNodes,
     finalResults: [],
+    interactionEnabled: false,
+    nodeStatusTimestamps: {},
+    nodeStatusTimers: {},
 
     // 自我成长系统状态初始值
     parsedRubric: null,
@@ -575,6 +589,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
     setCurrentTab: (tab) => set({ currentTab: tab }),
     setStatus: (status) => set({ status }),
     setSubmissionId: (id) => set({ submissionId: id }),
+    setInteractionEnabled: (enabled) => set({ interactionEnabled: enabled }),
     addLog: (message, level = 'INFO') => set((state) => ({
         logs: [...state.logs, {
             timestamp: new Date().toISOString(),
@@ -583,26 +598,61 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
         }]
     })),
 
-    updateNodeStatus: (nodeId, status, message) => set((state) => {
+    updateNodeStatus: (nodeId, status, message) => {
+        const state = get();
         const targetIndex = state.workflowNodes.findIndex(n => n.id === nodeId);
-        if (targetIndex === -1) return {};
+        if (targetIndex === -1) return;
 
-        return {
-            workflowNodes: state.workflowNodes.map((n, index) => {
-                // 当前节点：更新状态
-                if (index === targetIndex) {
-                    return { ...n, status, message: message || n.message };
-                }
-                // 之前的节点：如果当前节点开始运行或完成，之前的必须全是 completed
-                if (index < targetIndex && (status === 'running' || status === 'completed')) {
-                    if (n.status === 'pending' || n.status === 'running') {
-                        return { ...n, status: 'completed' };
+        const targetNode = state.workflowNodes[targetIndex];
+        const isStatusChange = targetNode.status !== status;
+        const now = Date.now();
+        const lastUpdate = state.nodeStatusTimestamps[nodeId] || 0;
+        const shouldDelay = isStatusChange && (status === 'running' || status === 'completed');
+        const delay = shouldDelay ? Math.max(0, NODE_MIN_TRANSITION_MS - (now - lastUpdate)) : 0;
+
+        const applyUpdate = () => {
+            set((current) => {
+                const updatedNodes = current.workflowNodes.map((n, index) => {
+                    if (index === targetIndex) {
+                        return { ...n, status, message: message || n.message };
                     }
-                }
-                return n;
-            })
+                    if (index < targetIndex && (status === 'running' || status === 'completed')) {
+                        if (n.status === 'pending' || n.status === 'running') {
+                            return { ...n, status: 'completed' };
+                        }
+                    }
+                    return n;
+                });
+                const nextTimers = { ...current.nodeStatusTimers };
+                delete nextTimers[nodeId];
+                return {
+                    workflowNodes: updatedNodes,
+                    nodeStatusTimestamps: {
+                        ...current.nodeStatusTimestamps,
+                        [nodeId]: Date.now(),
+                    },
+                    nodeStatusTimers: nextTimers,
+                };
+            });
         };
-    }),
+
+        if (delay > 0) {
+            const existingTimer = state.nodeStatusTimers[nodeId];
+            if (existingTimer) {
+                clearTimeout(existingTimer);
+            }
+            const timer = setTimeout(applyUpdate, delay);
+            set((current) => ({
+                nodeStatusTimers: {
+                    ...current.nodeStatusTimers,
+                    [nodeId]: timer,
+                },
+            }));
+            return;
+        }
+
+        applyUpdate();
+    },
 
     setParallelAgents: (nodeId, agents) => set((state) => ({
         workflowNodes: state.workflowNodes.map((n) =>
@@ -619,7 +669,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
         const targetNodeId = parentNodeId || (
             isWorker || isBatch ? 'grade_batch' :
                 isReview ? 'logic_review' :
-                    isRubricReview ? 'rubric_parse' :
+                    isRubricReview ? 'rubric_review' :
                         isRubricBatch ? 'rubric_parse' :
                             null
         );
@@ -700,34 +750,40 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
 
     setFinalResults: (results) => set({ finalResults: results }),
 
-    reset: () => set({
-        status: 'IDLE',
-        currentTab: 'process',
-        submissionId: null,
-        selectedNodeId: null,
-        selectedAgentId: null,
-        isMonitorOpen: false,
-        logs: [],
-        finalResults: [],
-        workflowNodes: initialNodes.map(n => ({
-            ...n,
-            status: 'pending' as NodeStatus,
-            message: undefined,
-            children: n.isParallelContainer ? [] : undefined
-        })),
-        // 重置自我成长系统状态
-        parsedRubric: null,
-        batchProgress: null,
-        studentBoundaries: [],
-        // 重置跨页题目信息
-        crossPageQuestions: [],
-        // 重置 LLM 思考和图片
-        llmThoughts: [],
-        uploadedImages: [],
-        rubricImages: [],
-        pendingReview: null,
-        classReport: null,
-    }),
+    reset: () => {
+        Object.values(get().nodeStatusTimers).forEach((timer) => clearTimeout(timer));
+        set({
+            status: 'IDLE',
+            currentTab: 'process',
+            submissionId: null,
+            selectedNodeId: null,
+            selectedAgentId: null,
+            isMonitorOpen: false,
+            logs: [],
+            finalResults: [],
+            interactionEnabled: false,
+            workflowNodes: initialNodes.map(n => ({
+                ...n,
+                status: 'pending' as NodeStatus,
+                message: undefined,
+                children: n.isParallelContainer ? [] : undefined
+            })),
+            nodeStatusTimestamps: {},
+            nodeStatusTimers: {},
+            // 重置自我成长系统状态
+            parsedRubric: null,
+            batchProgress: null,
+            studentBoundaries: [],
+            // 重置跨页题目信息
+            crossPageQuestions: [],
+            // 重置 LLM 思考和图片
+            llmThoughts: [],
+            uploadedImages: [],
+            rubricImages: [],
+            pendingReview: null,
+            classReport: null,
+        });
+    },
 
     setSelectedNodeId: (id) => set({ selectedNodeId: id, selectedAgentId: null }),
     setSelectedAgentId: (id) => set((state) => {
@@ -1178,6 +1234,8 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
             });
             // 同时更新状态提示
             get().setStatus('REVIEWING');
+            const reviewNodeId = (reviewData.type || '').includes('rubric') ? 'rubric_review' : 'review';
+            get().updateNodeStatus(reviewNodeId, 'running', 'Waiting for interaction');
             get().addLog(`Review required: ${reviewData.type}`, 'WARNING');
         });
 
@@ -1327,17 +1385,26 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
             if (currentStage) {
                 const stageToNode: Record<string, string> = {
                     rubric_parse_completed: 'rubric_parse',
-                    rubric_review_completed: 'rubric_parse',
-                    rubric_review_skipped: 'rubric_parse',
+                    rubric_review_completed: 'rubric_review',
+                    rubric_review_skipped: 'rubric_review',
                     grade_batch_completed: 'grade_batch',
                     cross_page_merge_completed: 'cross_page_merge',
                     index_merge_completed: 'index_merge',
                     logic_review_completed: 'logic_review',
                     logic_review_skipped: 'logic_review',
-                    review_completed: 'logic_review',
+                    review_completed: 'review',
                     completed: 'export'
                 };
-                const orderedNodes = ['rubric_parse', 'grade_batch', 'cross_page_merge', 'index_merge', 'logic_review', 'export'];
+                const orderedNodes = [
+                    'rubric_parse',
+                    'rubric_review',
+                    'grade_batch',
+                    'cross_page_merge',
+                    'index_merge',
+                    'logic_review',
+                    'review',
+                    'export'
+                ];
                 const stageNode = stageToNode[currentStage];
                 if (stageNode) {
                     const stageIndex = orderedNodes.indexOf(stageNode);
@@ -1374,6 +1441,8 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
             if (summary) {
                 get().addLog(`Review completed: ${summary.total_students} students, ${summary.low_confidence_count} low-confidence results`, 'INFO');
             }
+            get().setStatus('RUNNING');
+            get().setPendingReview(null);
         });
 
         // 处理工作流错误（对应设计文档 EventType.ERROR）

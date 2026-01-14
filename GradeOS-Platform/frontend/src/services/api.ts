@@ -417,7 +417,8 @@ export const gradingApi = {
       classId?: string;
       homeworkId?: string;
       studentMapping?: Array<{ studentId: string; studentName: string; startIndex: number; endIndex: number }>;
-    }
+    },
+    enableReview: boolean = true
   ): Promise<Submission> => {
     const formData = new FormData();
 
@@ -447,6 +448,7 @@ export const gradingApi = {
     if (classContext?.studentMapping && classContext.studentMapping.length > 0) {
       formData.append('student_mapping_json', JSON.stringify(classContext.studentMapping));
     }
+    formData.append('enable_review', enableReview ? 'true' : 'false');
 
     // 使用正确的批改 API 端点
     const response = await fetch(`${API_BASE}/batch/submit`, {
@@ -557,8 +559,9 @@ export const api = {
       classId?: string;
       homeworkId?: string;
       studentMapping?: Array<{ studentId: string; studentName: string; startIndex: number; endIndex: number }>;
-    }
-  ) => gradingApi.createSubmission(examFiles, rubricFiles, studentBoundaries || [], expectedStudents, classContext),
+    },
+    enableReview: boolean = true
+  ) => gradingApi.createSubmission(examFiles, rubricFiles, studentBoundaries || [], expectedStudents, classContext, enableReview),
   getSubmission: gradingApi.getSubmission,
   getResults: gradingApi.getResults,
   getRubricReviewContext: gradingApi.getRubricReviewContext,
