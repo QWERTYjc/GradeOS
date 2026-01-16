@@ -42,7 +42,15 @@ const renderPdfToImages = async (file: File, maxPages = 80): Promise<string[]> =
 
 export default function GradingScanner() {
   const { setCurrentView } = useGradingScan();
-  const { setStatus, setSubmissionId, addLog, connectWs, setUploadedImages } = useConsoleStore();
+  const {
+    setStatus,
+    setSubmissionId,
+    addLog,
+    connectWs,
+    setUploadedImages,
+    gradingMode,
+    setGradingMode
+  } = useConsoleStore();
   const uploadedImages = useConsoleStore((state) => state.uploadedImages);
   const [examFiles, setExamFiles] = useState<File[]>([]);
   const [rubricFiles, setRubricFiles] = useState<File[]>([]);
@@ -86,7 +94,15 @@ export default function GradingScanner() {
     setStatus('UPLOADING');
     addLog(`Starting upload: ${examFiles.length} exams, ${rubricFiles.length} rubrics`, 'INFO');
     try {
-      const submission = await api.createSubmission(examFiles, rubricFiles, [], undefined, undefined, interactionEnabled);
+      const submission = await api.createSubmission(
+        examFiles,
+        rubricFiles,
+        [],
+        undefined,
+        undefined,
+        interactionEnabled,
+        gradingMode
+      );
       addLog(`Upload complete. Submission ID: ${submission.id}`, 'SUCCESS');
       setSubmissionId(submission.id);
       setTimeout(() => {
@@ -195,6 +211,22 @@ export default function GradingScanner() {
               className="h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-gray-400"
             />
             启用人工交互（批改前）
+          </label>
+        </div>
+
+        <div className="flex items-center justify-center">
+          <label className="flex items-center gap-2 rounded-full border border-gray-200 bg-white px-4 py-2 text-xs font-medium text-gray-600">
+            <span className="text-[10px] uppercase tracking-wide text-gray-400">Mode</span>
+            <select
+              value={gradingMode}
+              onChange={(event) => setGradingMode(event.target.value)}
+              className="bg-transparent text-xs text-gray-700 focus:outline-none"
+            >
+              <option value="auto">Auto</option>
+              <option value="standard">Standard (Rubric)</option>
+              <option value="assist_teacher">Assist (Teacher)</option>
+              <option value="assist_student">Assist (Student)</option>
+            </select>
           </label>
         </div>
 

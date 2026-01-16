@@ -23,9 +23,25 @@ const normalizeEvidenceText = (text?: string) => {
     return text.replace(/^【原文引用】\s*/, '').trim();
 };
 
-const QuestionDetail: React.FC<{ question: QuestionResult }> = ({ question }) => {
+const QuestionDetail: React.FC<{ question: QuestionResult; gradingMode?: string }> = ({ question, gradingMode }) => {
     const percentage = question.maxScore > 0 ? (question.score / question.maxScore) * 100 : 0;
     const questionLabel = question.questionId === 'unknown' ? '未识别' : question.questionId;
+    const normalizedType = (question.questionType || '').toLowerCase();
+    const isChoice = ['choice', 'single_choice', 'multiple_choice', 'mcq'].includes(normalizedType);
+    const isAssist = (gradingMode || '').startsWith('assist')
+        || (question.maxScore <= 0 && !(question.scoringPointResults?.length || question.scoringPoints?.length));
+    const showScoringDetails = !isAssist && !isChoice;
+    const scoreLabel = isAssist ? 'Assist' : (question.maxScore > 0 ? `${question.score} / ${question.maxScore}` : 'N/A');
+    const scoreClass = isAssist || question.maxScore <= 0
+        ? 'text-slate-400'
+        : (percentage >= 60 ? 'text-green-600' : 'text-red-600');
+    const typeMeta = (() => {
+        if (!normalizedType) return null;
+        if (normalizedType === 'choice') return { label: 'Choice', className: 'border-blue-200 text-blue-600' };
+        if (normalizedType === 'objective') return { label: 'Objective', className: 'border-emerald-200 text-emerald-600' };
+        if (normalizedType === 'subjective') return { label: 'Subjective', className: 'border-amber-200 text-amber-600' };
+        return { label: normalizedType, className: 'border-slate-200 text-slate-500' };
+    })();
 
     return (
         <div className="border-l-2 border-slate-200 pl-4 py-3 space-y-2">
@@ -38,12 +54,22 @@ const QuestionDetail: React.FC<{ question: QuestionResult }> = ({ question }) =>
                             跨页
                         </span>
                     )}
+                    {typeMeta && (
+                        <span className={clsx(
+                            "text-[10px] px-2 py-0.5 rounded-sm border uppercase tracking-wide",
+                            typeMeta.className
+                        )}>
+                            {typeMeta.label}
+                        </span>
+                    )}
+                    {isAssist && (
+                        <span className="text-[10px] px-2 py-0.5 rounded-sm border border-slate-200 text-slate-500 uppercase tracking-wide">
+                            Assist
+                        </span>
+                    )}
                 </div>
-                <span className={clsx(
-                    'text-sm font-semibold',
-                    percentage >= 60 ? 'text-green-600' : 'text-red-600'
-                )}>
-                    {question.score} / {question.maxScore}
+                <span className={clsx('text-sm font-semibold', scoreClass)}>
+                    {scoreLabel}
                 </span>
             </div>
 
@@ -54,7 +80,15 @@ const QuestionDetail: React.FC<{ question: QuestionResult }> = ({ question }) =>
                 </div>
             )}
 
-            {question.scoringPointResults && question.scoringPointResults.length > 0 ? (
+            {question.studentAnswer && (
+                <div className="text-[11px] text-slate-500">
+                    <span className="font-semibold mr-1">Answer:</span>
+                    <MathText className="text-slate-600" text={question.studentAnswer} />
+                </div>
+            )}
+
+            {showScoringDetails ? (
+                question.scoringPointResults && question.scoringPointResults.length > 0 ? (
                 <div className="mt-2 space-y-2">
                     <div className="text-[10px] uppercase tracking-[0.3em] font-bold text-slate-400 mb-1">评分步骤</div>
                     {question.scoringPointResults.map((spr, idx) => (
@@ -171,19 +205,24 @@ const QuestionDetail: React.FC<{ question: QuestionResult }> = ({ question }) =>
                         </div>
                     ))}
                 </div>
+                ) : (
+                    <div className="mt-2 text-xs text-amber-600">
+                        评分步骤缺失：模型未返回逐条评分结果
+                    </div>
+                )
             ) : (
-                <div className="mt-2 text-xs text-amber-600">
-                    评分步骤缺失：模型未返回逐条评分结果
+                <div className="mt-2 text-xs text-slate-500">
+                    {isAssist ? 'Assist mode: no scoring details.' : 'Choice question: no analysis.'}
                 </div>
             )}
 
-            {question.reviewSummary && (
+            {showScoringDetails && question.reviewSummary && (
                 <div className="mt-2 px-2 py-2 bg-indigo-50/70 border-l-2 border-indigo-300">
                     <div className="text-[10px] font-bold text-indigo-600 mb-0.5">逻辑复核</div>
                     <p className="text-slate-600 text-[11px] leading-relaxed"><MathText className="text-slate-600" text={question.reviewSummary} /></p>
                 </div>
             )}
-            {!question.reviewSummary && question.reviewCorrections && question.reviewCorrections.length > 0 && (
+            {showScoringDetails && !question.reviewSummary && question.reviewCorrections && question.reviewCorrections.length > 0 && (
                 <div className="mt-2 px-2 py-2 bg-indigo-50/70 border-l-2 border-indigo-300">
                     <div className="text-[10px] font-bold text-indigo-600 mb-0.5">逻辑复核</div>
                     <ul className="text-slate-600 text-[11px] leading-relaxed space-y-1">
@@ -196,13 +235,13 @@ const QuestionDetail: React.FC<{ question: QuestionResult }> = ({ question }) =>
                 </div>
             )}
 
-            {question.feedback && (
+            {question.feedback && (!isChoice || isAssist) && (
                 <p className="mt-2 text-xs text-sky-700/80 pb-2 border-b border-slate-200/60 italic">
                     <span className="font-semibold mr-1">总结:</span>
                     <MathText className="text-sky-700/80" text={question.feedback} />
                 </p>
             )}
-            {question.rubricRefs && question.rubricRefs.length > 0 ? (
+            {showScoringDetails && (question.rubricRefs && question.rubricRefs.length > 0 ? (
                 <div className="text-[11px] text-slate-500">
                     <span className="font-semibold mr-1">引用标准:</span>
                     <MathText className="text-slate-500" text={question.rubricRefs.join(", ")} />
@@ -211,16 +250,16 @@ const QuestionDetail: React.FC<{ question: QuestionResult }> = ({ question }) =>
                 <div className="text-[11px] text-amber-600">
                     <span className="font-semibold mr-1">引用标准缺失:</span>模型未返回 rubric ref
                 </div>
-            )}
+            ))}
 
-            {question.typoNotes && question.typoNotes.length > 0 && (
+            {showScoringDetails && question.typoNotes && question.typoNotes.length > 0 && (
                 <div className="mt-2 text-[11px] text-rose-700">
                     <span className="font-semibold mr-1">Typos:</span>
                     <MathText className="text-rose-700" text={question.typoNotes.join(", ")} />
                 </div>
             )}
 
-            {question.selfCritique ? (
+            {showScoringDetails && (question.selfCritique ? (
                 <div className="mt-2 px-2 py-2 bg-slate-50/80 border-l-2 border-slate-300">
                     <div className="text-[10px] font-bold text-slate-500 mb-0.5">
                         自白
@@ -244,9 +283,9 @@ const QuestionDetail: React.FC<{ question: QuestionResult }> = ({ question }) =>
                     </div>
                     <p className="text-slate-600 text-[11px] leading-relaxed">模型未返回自白内容。</p>
                 </div>
-            )}
+            ))}
 
-            {question.confidence !== undefined && question.confidence < 0.8 && (
+            {!isAssist && question.confidence !== undefined && question.confidence < 0.8 && (
                 <div className="mt-1 text-xs text-yellow-600 flex items-center gap-1">
                     <AlertCircle className="w-3 h-3" />
                     置信度较低 ({(question.confidence * 100).toFixed(0)}%)，建议人工复核
@@ -255,7 +294,7 @@ const QuestionDetail: React.FC<{ question: QuestionResult }> = ({ question }) =>
                     )}
                 </div>
             )}
-            {question.confidence === undefined && (
+            {!isAssist && question.confidence === undefined && (
                 <div className="mt-1 text-xs text-slate-400">置信度：模型未提供</div>
             )}
 
@@ -270,13 +309,18 @@ const QuestionDetail: React.FC<{ question: QuestionResult }> = ({ question }) =>
 };
 
 const ResultCard: React.FC<ResultCardProps> = ({ result, rank, onExpand, isExpanded }) => {
-    const percentage = (result.score / result.maxScore) * 100;
+    const isAssist = (result.gradingMode || '').startsWith('assist') || result.maxScore <= 0;
+    const percentage = !isAssist && result.maxScore > 0 ? (result.score / result.maxScore) * 100 : 0;
 
     let barColor = 'from-slate-400 to-slate-500';
     let toneClass = 'result-chip-muted';
     let gradeLabel = '待提升';
 
-    if (percentage >= 85) {
+    if (isAssist) {
+        barColor = 'from-slate-300 to-slate-400';
+        toneClass = 'result-chip-muted';
+        gradeLabel = 'Assist';
+    } else if (percentage >= 85) {
         barColor = 'from-emerald-400 to-emerald-600';
         toneClass = 'result-chip-elite';
         gradeLabel = '优秀';
@@ -343,8 +387,8 @@ const ResultCard: React.FC<ResultCardProps> = ({ result, rank, onExpand, isExpan
             </div>
 
             <div className="result-score">
-                <span className="result-score-value">{result.score}</span>
-                <span className="result-score-max">/ {result.maxScore}</span>
+                <span className="result-score-value">{isAssist ? 'N/A' : result.score}</span>
+                <span className="result-score-max">{isAssist ? '' : `/ ${result.maxScore}`}</span>
             </div>
 
             <div className="result-bar">
@@ -354,7 +398,7 @@ const ResultCard: React.FC<ResultCardProps> = ({ result, rank, onExpand, isExpan
                 />
             </div>
 
-            <div className="result-percent">{percentage.toFixed(1)}%</div>
+            <div className="result-percent">{isAssist ? 'Assist' : `${percentage.toFixed(1)}%`}</div>
 
             {result.questionResults && result.questionResults.length > 0 && (
                 <button
@@ -411,6 +455,8 @@ const normalizeQuestionResults = (questionResults?: QuestionResult[]) => {
         const mergedTypoNotes = new Set<string>();
         const selfCritiqueConfidenceValues: number[] = [];
         const confidenceValues: number[] = [];
+        let mergedQuestionType = '';
+        let mergedStudentAnswer = '';
         let mergedScore = 0;
         let mergedMaxScore = 0;
         let mergedFeedback = '';
@@ -420,6 +466,12 @@ const normalizeQuestionResults = (questionResults?: QuestionResult[]) => {
             mergedMaxScore = Math.max(mergedMaxScore, item.maxScore || 0);
             if (item.feedback && !mergedFeedback) {
                 mergedFeedback = item.feedback;
+            }
+            if (item.questionType && !mergedQuestionType) {
+                mergedQuestionType = item.questionType;
+            }
+            if (item.studentAnswer && !mergedStudentAnswer) {
+                mergedStudentAnswer = item.studentAnswer;
             }
             if (typeof item.confidence === 'number') {
                 confidenceValues.push(item.confidence);
@@ -470,6 +522,8 @@ const normalizeQuestionResults = (questionResults?: QuestionResult[]) => {
             score: mergedScore,
             maxScore: mergedMaxScore || Math.max(...items.map((item) => item.maxScore || 0)),
             feedback: mergedFeedback || items[0].feedback,
+            questionType: mergedQuestionType || items[0].questionType,
+            studentAnswer: mergedStudentAnswer || items[0].studentAnswer,
             confidence: confidenceValues.length > 0 ? Math.min(...confidenceValues) : undefined,
             confidenceReason: mergedConfidenceReasons.size > 0 ? Array.from(mergedConfidenceReasons).join('；') : undefined,
             selfCritique: mergedSelfCritique.size > 0 ? Array.from(mergedSelfCritique).join('；') : undefined,
@@ -525,11 +579,14 @@ export const ResultsView: React.FC = () => {
             studentName: agent.label,
             score: agent.output?.score || 0,
             maxScore: agent.output?.maxScore || 100,
+            gradingMode: (agent.output as any)?.gradingMode,
             questionResults: agent.output?.questionResults?.map(q => ({
                 questionId: q.questionId,
                 score: q.score,
                 maxScore: q.maxScore,
                 feedback: (q as any).feedback || '',
+                studentAnswer: (q as any).studentAnswer || (q as any).student_answer,
+                questionType: (q as any).questionType || (q as any).question_type,
                 confidence: (q as any).confidence,
                 confidenceReason: (q as any).confidenceReason || (q as any).confidence_reason,
                 selfCritique: (q as any).selfCritique || (q as any).self_critique,
@@ -557,24 +614,39 @@ export const ResultsView: React.FC = () => {
     const detailViewStudent = detailViewIndex !== null ? sortedResults[detailViewIndex] : null;
 
     const totalStudents = sortedResults.length;
-    const avgScore = totalStudents > 0
-        ? sortedResults.reduce((sum, r) => sum + r.score, 0) / totalStudents
+    const scoredResults = sortedResults.filter(
+        (r) => !(r.gradingMode || '').startsWith('assist') && r.maxScore > 0
+    );
+    const scoredCount = scoredResults.length;
+    const avgScore = scoredCount > 0
+        ? scoredResults.reduce((sum, r) => sum + r.score, 0) / scoredCount
         : 0;
-    const highestScore = sortedResults.length > 0 ? sortedResults[0].score : 0;
-    const passCount = sortedResults.filter(r => (r.score / r.maxScore) >= 0.6).length;
+    const highestScore = scoredCount > 0
+        ? Math.max(...scoredResults.map((r) => r.score))
+        : 0;
+    const passCount = scoredResults.filter(r => (r.score / r.maxScore) >= 0.6).length;
     const needsConfirmCount = sortedResults.filter(r => r.needsConfirmation).length;
     const totalCrossPageQuestions = crossPageQuestions.length;
+    const hasScores = scoredCount > 0;
 
     const handleExportCSV = () => {
         const headers = ['排名', '学生', '得分', '满分', '得分率', '等级'];
         const rows = sortedResults.map((r, idx) => {
-            const percentage = (r.score / r.maxScore) * 100;
-            let grade = '待提升';
-            if (percentage >= 85) grade = '优秀';
-            else if (percentage >= 70) grade = '良好';
-            else if (percentage >= 60) grade = '及格';
-            else grade = '不及格';
-            return [idx + 1, r.studentName, r.score, r.maxScore, `${percentage.toFixed(1)}%`, grade];
+            const isAssist = (r.gradingMode || '').startsWith('assist') || r.maxScore <= 0;
+            const percentage = !isAssist && r.maxScore > 0 ? (r.score / r.maxScore) * 100 : 0;
+            let grade = isAssist ? 'Assist' : '待提升';
+            if (!isAssist && percentage >= 85) grade = '优秀';
+            else if (!isAssist && percentage >= 70) grade = '良好';
+            else if (!isAssist && percentage >= 60) grade = '及格';
+            else if (!isAssist) grade = '不及格';
+            return [
+                idx + 1,
+                r.studentName,
+                isAssist ? 'N/A' : r.score,
+                isAssist ? '' : r.maxScore,
+                isAssist ? 'N/A' : `${percentage.toFixed(1)}%`,
+                grade
+            ];
         });
 
         const csvContent = [headers, ...rows].map(row => row.join(',')).join('\n');
@@ -598,12 +670,15 @@ export const ResultsView: React.FC = () => {
 
     // === Split View (Detail Mode) ===
     if (detailViewStudent) {
-        const percentage = (detailViewStudent.score / detailViewStudent.maxScore) * 100;
-        let gradeLabel = '待提升';
-        let gradeColor = 'text-red-600';
-        if (percentage >= 85) { gradeLabel = '优秀'; gradeColor = 'text-emerald-600'; }
-        else if (percentage >= 70) { gradeLabel = '良好'; gradeColor = 'text-blue-600'; }
-        else if (percentage >= 60) { gradeLabel = '及格'; gradeColor = 'text-yellow-600'; }
+        const isAssist = (detailViewStudent.gradingMode || '').startsWith('assist') || detailViewStudent.maxScore <= 0;
+        const percentage = !isAssist && detailViewStudent.maxScore > 0
+            ? (detailViewStudent.score / detailViewStudent.maxScore) * 100
+            : 0;
+        let gradeLabel = isAssist ? 'Assist' : '待提升';
+        let gradeColor = isAssist ? 'text-slate-500' : 'text-red-600';
+        if (!isAssist && percentage >= 85) { gradeLabel = '优秀'; gradeColor = 'text-emerald-600'; }
+        else if (!isAssist && percentage >= 70) { gradeLabel = '良好'; gradeColor = 'text-blue-600'; }
+        else if (!isAssist && percentage >= 60) { gradeLabel = '及格'; gradeColor = 'text-yellow-600'; }
 
         const hasBoundary = detailViewStudent.startPage !== undefined && detailViewStudent.endPage !== undefined;
         const startPage = detailViewStudent.startPage ?? 0;
@@ -646,7 +721,10 @@ export const ResultsView: React.FC = () => {
                                 </span>
                             </h2>
                             <div className="text-xs text-gray-400 mt-0.5 flex items-center gap-2">
-                                <span>总分: <b className="text-gray-700">{detailViewStudent.score}</b>/{detailViewStudent.maxScore}</span>
+                                <span>
+                                    总分: <b className="text-gray-700">{isAssist ? 'N/A' : detailViewStudent.score}</b>
+                                    {isAssist ? '' : `/${detailViewStudent.maxScore}`}
+                                </span>
                                 <span className="w-1 h-1 bg-gray-300 rounded-full"></span>
                                 <span>页面: {startPage + 1} - {endPage + 1}</span>
                             </div>
@@ -721,11 +799,13 @@ export const ResultsView: React.FC = () => {
                                 <div className="text-center">
                                     <div className={clsx(
                                         "text-5xl font-black mb-2 bg-gradient-to-br bg-clip-text text-transparent",
-                                        percentage >= 85 ? "from-emerald-400 to-green-600" :
-                                            percentage >= 60 ? "from-yellow-400 to-amber-600" :
-                                                "from-red-400 to-rose-600"
+                                        isAssist
+                                            ? "from-slate-400 to-slate-600"
+                                            : percentage >= 85 ? "from-emerald-400 to-green-600" :
+                                                percentage >= 60 ? "from-yellow-400 to-amber-600" :
+                                                    "from-red-400 to-rose-600"
                                     )}>
-                                        {detailViewStudent.score}
+                                        {isAssist ? 'N/A' : detailViewStudent.score}
                                     </div>
                                     <div className="text-sm text-gray-400 font-medium uppercase tracking-wider">Total Score</div>
                                 </div>
@@ -789,7 +869,7 @@ export const ResultsView: React.FC = () => {
                                 </h3>
                                 {detailViewStudent.questionResults?.map((q, idx) => (
                                     <div key={idx} className="border border-slate-200 bg-white/80">
-                                        <QuestionDetail question={q} />
+                                        <QuestionDetail question={q} gradingMode={detailViewStudent.gradingMode} />
                                     </div>
                                 ))}
                             </div>
@@ -902,18 +982,18 @@ export const ResultsView: React.FC = () => {
                 </div>
                 <div className="metric-tile">
                     <BarChartOutlined />
-                    <div className="metric-value">{avgScore.toFixed(1)}</div>
+                    <div className="metric-value">{hasScores ? avgScore.toFixed(1) : 'N/A'}</div>
                     <div className="metric-label">平均分</div>
                 </div>
                 <div className="metric-tile">
                     <CrownOutlined />
-                    <div className="metric-value">{highestScore}</div>
+                    <div className="metric-value">{hasScores ? highestScore : 'N/A'}</div>
                     <div className="metric-label">最高分</div>
                 </div>
                 <div className="metric-tile">
                     <CheckCircleOutlined />
                     <div className="metric-value">
-                        {totalStudents > 0 ? ((passCount / totalStudents) * 100).toFixed(0) : 0}%
+                        {hasScores ? ((passCount / scoredCount) * 100).toFixed(0) : 'N/A'}{hasScores ? '%' : ''}
                     </div>
                     <div className="metric-label">及格率</div>
                 </div>

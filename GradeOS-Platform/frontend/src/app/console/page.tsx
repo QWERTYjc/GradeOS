@@ -90,6 +90,8 @@ interface ScannerContainerProps {
     onSubmitBatch: (images: ScannedImage[], boundaries: number[]) => Promise<void>;
     interactionEnabled: boolean;
     onInteractionToggle: (enabled: boolean) => void;
+    gradingMode: string;
+    onGradingModeChange: (mode: string) => void;
 
     // 班级批改模式下的学生映射
     studentNameMapping?: Array<{ studentId: string; studentName: string; startIndex: number; endIndex: number }>;
@@ -103,6 +105,8 @@ const ScannerContainer = ({
     onSubmitBatch,
     interactionEnabled,
     onInteractionToggle,
+    gradingMode,
+    onGradingModeChange,
     studentNameMapping = []
 }: ScannerContainerProps) => {
     const { setCurrentSessionId, sessions } = useContext(AppContext)!;
@@ -204,6 +208,8 @@ const ScannerContainer = ({
                         studentNameMapping={viewMode === 'exams' ? studentNameMapping : undefined}
                         interactionEnabled={interactionEnabled}
                         onInteractionToggle={onInteractionToggle}
+                        gradingMode={gradingMode}
+                        onGradingModeChange={onGradingModeChange}
                     />
                 )}
             </div>
@@ -219,6 +225,8 @@ export default function ConsolePage() {
     const llmThoughtsCount = useConsoleStore((state) => state.llmThoughts.length);
     const interactionEnabled = useConsoleStore((state) => state.interactionEnabled);
     const setInteractionEnabled = useConsoleStore((state) => state.setInteractionEnabled);
+    const gradingMode = useConsoleStore((state) => state.gradingMode);
+    const setGradingMode = useConsoleStore((state) => state.setGradingMode);
 
     // Initial Sessions State
     const [sessions, setSessions] = useState<Session[]>([]);
@@ -491,7 +499,8 @@ export default function ConsolePage() {
                 boundaries,
                 undefined,
                 classContextPayload,
-                interactionEnabled
+                interactionEnabled,
+                gradingMode
             );
 
             useConsoleStore.getState().setSubmissionId(response.id);
@@ -540,6 +549,8 @@ export default function ConsolePage() {
                                     onSubmitBatch={handleSubmitBatch}
                                     interactionEnabled={interactionEnabled}
                                     onInteractionToggle={setInteractionEnabled}
+                                    gradingMode={gradingMode}
+                                    onGradingModeChange={setGradingMode}
                                     studentNameMapping={useConsoleStore.getState().classContext.studentImageMapping}
                                 />
                             </motion.div>

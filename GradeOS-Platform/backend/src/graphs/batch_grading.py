@@ -2,6 +2,7 @@ import logging
 import os
 import asyncio
 import json
+import re
 from typing import Optional, List, Dict, Any, Literal, Tuple
 from datetime import datetime
 from dataclasses import dataclass, field
@@ -424,6 +425,32 @@ async def index_node(state: BatchGradingGraphState) -> Dict[str, Any]:
 
     inputs = state.get("inputs") or {}
     manual_raw = inputs.get("manual_boundaries") or inputs.get("student_boundaries")
+    mapping_raw = state.get("student_mapping") or inputs.get("student_mapping")
+    if not manual_raw and mapping_raw:
+        mapped_groups = []
+        if isinstance(mapping_raw, list):
+            for entry in mapping_raw:
+                if not isinstance(entry, dict):
+                    continue
+                pages = entry.get("pages") or entry.get("page_indices") or entry.get("pageIndices")
+                if pages is None:
+                    start = entry.get("startIndex") or entry.get("start_index") or entry.get("startPage") or entry.get("start_page")
+                    end = entry.get("endIndex") or entry.get("end_index") or entry.get("endPage") or entry.get("end_page")
+                    start_idx = _coerce_int(start) if start is not None else None
+                    end_idx = _coerce_int(end) if end is not None else None
+                    if start_idx is not None and end_idx is not None:
+                        pages = list(range(start_idx, end_idx + 1))
+                if pages is None:
+                    continue
+                mapped_groups.append({
+                    "pages": pages,
+                    "student_id": entry.get("studentId") or entry.get("student_id"),
+                    "student_name": entry.get("studentName") or entry.get("student_name"),
+                    "student_key": entry.get("studentKey") or entry.get("student_key"),
+                    "class_name": entry.get("className") or entry.get("class_name"),
+                })
+        if mapped_groups:
+            manual_raw = mapped_groups
     manual_groups = _normalize_manual_boundaries(manual_raw, len(processed_images))
     if manual_groups:
         total_pages = len(processed_images)
@@ -987,14 +1014,14 @@ async def rubric_parse_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                         "criteria": [sp.description for sp in q.scoring_points],
                         "scoring_points": [
                             {
-                                "point_id": sp.point_id,
+                                "point_id": sp.point_id or f"{q.question_id}.{idx + 1}",
                                 "description": sp.description,
                                 "score": sp.score,
                                 "is_required": sp.is_required,
                                 "keywords": sp.keywords or [],
                                 "expected_value": sp.expected_value,
                             }
-                            for sp in q.scoring_points
+                            for idx, sp in enumerate(q.scoring_points)
                         ],
                         "alternative_solutions": [
                             {
@@ -1003,6 +1030,15 @@ async def rubric_parse_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                                 "note": alt.note
                             }
                             for alt in q.alternative_solutions
+                        ],
+                        "deduction_rules": [
+                            {
+                                "rule_id": dr.rule_id or f"{q.question_id}.d{idx + 1}",
+                                "description": dr.description,
+                                "deduction": dr.deduction,
+                                "conditions": dr.conditions,
+                            }
+                            for idx, dr in enumerate(getattr(q, "deduction_rules", []) or [])
                         ],
                         "grading_notes": q.grading_notes
                     }
@@ -1064,14 +1100,23 @@ async def rubric_parse_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                     "sourcePages": q.get("source_pages") or q.get("sourcePages") or [],
                     "scoringPoints": [
                         {
-                            "pointId": sp.get("point_id") or sp.get("pointId"),
+                            "pointId": sp.get("point_id") or sp.get("pointId") or f"{q.get('question_id')}.{idx + 1}",
                             "description": sp.get("description", ""),
                             "expectedValue": sp.get("expected_value") or sp.get("expectedValue", ""),
                             "keywords": sp.get("keywords") or [],
                             "score": sp.get("score", 0),
                             "isRequired": sp.get("is_required", True),
                         }
-                        for sp in q.get("scoring_points", [])
+                        for idx, sp in enumerate(q.get("scoring_points", []))
+                    ],
+                    "deductionRules": [
+                        {
+                            "ruleId": dr.get("rule_id") or dr.get("ruleId") or f"{q.get('question_id')}.d{idx + 1}",
+                            "description": dr.get("description", ""),
+                            "deduction": dr.get("deduction", dr.get("score", 0)),
+                            "conditions": dr.get("conditions") or dr.get("when") or "",
+                        }
+                        for idx, dr in enumerate(q.get("deduction_rules") or q.get("deductionRules") or [])
                     ],
                     "alternativeSolutions": [
                         {
@@ -1110,6 +1155,18 @@ async def rubric_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     parsed_rubric = state.get("parsed_rubric", {})
     api_key = state.get("api_key") or os.getenv("GEMINI_API_KEY")
     enable_review = state.get("inputs", {}).get("enable_review", True)
+    grading_mode = _resolve_grading_mode(state.get("inputs", {}), parsed_rubric)
+
+    if grading_mode.startswith("assist"):
+        logger.info(f"[rubric_review] skip (assist mode): batch_id={batch_id}")
+        return {
+            "current_stage": "rubric_review_skipped",
+            "percentage": 18.0,
+            "timestamps": {
+                **state.get("timestamps", {}),
+                "rubric_review_at": datetime.now().isoformat()
+            }
+        }
 
     if not parsed_rubric or not parsed_rubric.get("questions"):
         logger.info(f"[rubric_review] skip (no rubric): batch_id={batch_id}")
@@ -1225,7 +1282,33 @@ def grading_fanout_router(state: BatchGradingGraphState) -> List[Send]:
     if not processed_images:
         logger.warning(f"[grading_fanout] 没有待批改的图像: batch_id={batch_id}")
         return [Send("index_merge", state)]
-    
+
+    if not student_boundaries and page_index_contexts:
+        grouped: Dict[str, List[int]] = {}
+        for page_idx, context in page_index_contexts.items():
+            if context is None:
+                continue
+            student_key = context.get("student_key")
+            if not student_key:
+                continue
+            grouped.setdefault(str(student_key), []).append(int(page_idx))
+        derived_boundaries = []
+        for idx, (student_key, pages) in enumerate(grouped.items()):
+            pages_sorted = sorted(pages)
+            if not pages_sorted:
+                continue
+            needs_confirmation = student_key.upper() in ("UNKNOWN", "UNASSIGNED") or student_key.startswith("Unassigned")
+            derived_boundaries.append({
+                "student_key": student_key,
+                "start_page": pages_sorted[0],
+                "end_page": pages_sorted[-1],
+                "confidence": 0.0,
+                "needs_confirmation": needs_confirmation,
+                "detection_method": "index_context",
+            })
+        if derived_boundaries:
+            student_boundaries = derived_boundaries
+
     # 获取批次配置 (Requirements: 3.1, 10.1)
     config = get_batch_config()
     max_retries = config.max_retries
@@ -1271,6 +1354,7 @@ def grading_fanout_router(state: BatchGradingGraphState) -> List[Send]:
                 "api_key": api_key,
                 "retry_count": 0,
                 "max_retries": max_retries,
+                "inputs": copy.deepcopy(state.get("inputs", {})),
             }
             
             sends.append(Send("grade_batch", task_state))
@@ -1314,6 +1398,7 @@ def grading_fanout_router(state: BatchGradingGraphState) -> List[Send]:
             "api_key": api_key,
             "retry_count": 0,
             "max_retries": max_retries,
+            "inputs": copy.deepcopy(state.get("inputs", {})),
         }
         
         sends.append(Send("grade_batch", task_state))
@@ -1362,6 +1447,59 @@ def _trim_text(value: Any, max_len: int) -> str:
     if max_len <= 3:
         return text[:max_len]
     return text[: max_len - 3].rstrip() + "..."
+
+
+def _normalize_scoring_point_results(
+    raw_points: Any,
+    question_id: str,
+) -> List[Dict[str, Any]]:
+    if not isinstance(raw_points, list):
+        return []
+    qid = _normalize_question_id(question_id) or str(question_id or "").strip()
+    normalized = []
+    for idx, spr in enumerate(raw_points, 1):
+        if not isinstance(spr, dict):
+            continue
+        scoring_point = spr.get("scoring_point") or spr.get("scoringPoint") or {}
+        point_id = (
+            spr.get("point_id")
+            or spr.get("pointId")
+            or scoring_point.get("point_id")
+            or f"{qid}.{idx}"
+        )
+        description = (
+            scoring_point.get("description")
+            or spr.get("description")
+            or ""
+        )
+        rubric_reference = (
+            spr.get("rubric_reference")
+            or spr.get("rubricReference")
+            or ""
+        )
+        rubric_reference_source = (
+            spr.get("rubric_reference_source")
+            or spr.get("rubricReferenceSource")
+        )
+        if not rubric_reference:
+            rubric_reference = f"[{point_id}] {description}".strip()
+            rubric_reference_source = "system"
+        max_points = (
+            spr.get("max_points")
+            or spr.get("maxPoints")
+            or spr.get("max_score")
+            or spr.get("maxScore")
+            or scoring_point.get("score")
+            or 0
+        )
+        normalized.append({
+            **spr,
+            "point_id": point_id,
+            "rubric_reference": rubric_reference,
+            "rubric_reference_source": rubric_reference_source,
+            "max_points": max_points,
+        })
+    return normalized
 
 
 def _trim_list(items: Any, max_items: int) -> List[Any]:
@@ -1460,12 +1598,117 @@ def _compact_score_result(result: Dict[str, Any], limits: Dict[str, int]) -> Dic
     return result
 
 
+def _normalize_text(value: Any) -> str:
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def _is_choice_question(question_text: str, standard_answer: str) -> bool:
+    text = _normalize_text(question_text)
+    answer = _normalize_text(standard_answer)
+    if not text and not answer:
+        return False
+    text_no_space = re.sub(r"\s+", "", text)
+    if re.search(r"[A-D][\\.、．]", text_no_space):
+        return True
+    if any(token in text for token in ["选择题", "单选", "多选", "选项", "请选择", "下列"]):
+        return True
+    if answer:
+        answer_clean = re.sub(r"\s+", "", answer.upper())
+        if re.fullmatch(r"[A-D](?:[、,/， ]*[A-D]){0,3}", answer_clean):
+            return True
+    return False
+
+
+def _infer_question_type(question: Dict[str, Any]) -> str:
+    raw_type = (
+        question.get("question_type")
+        or question.get("questionType")
+        or ""
+    )
+    raw_type = str(raw_type).strip().lower()
+    if raw_type:
+        return raw_type
+
+    question_text = _normalize_text(
+        question.get("question_text") or question.get("questionText") or ""
+    )
+    grading_notes = _normalize_text(
+        question.get("grading_notes") or question.get("gradingNotes") or ""
+    )
+    standard_answer = _normalize_text(
+        question.get("standard_answer") or question.get("standardAnswer") or ""
+    )
+    alternative_solutions = (
+        question.get("alternative_solutions")
+        or question.get("alternativeSolutions")
+        or []
+    )
+
+    if _is_choice_question(question_text, standard_answer):
+        return "choice"
+
+    text_blob = f"{question_text} {grading_notes}".lower()
+    subjective_keywords = [
+        "简答", "论述", "证明", "推导", "解释", "分析", "讨论", "设计",
+        "说明", "过程", "步骤", "应用", "实验",
+    ]
+    objective_keywords = [
+        "判断", "填空", "对错", "是非", "true", "false", "√", "×",
+    ]
+
+    if alternative_solutions:
+        return "subjective"
+    if any(token.lower() in text_blob for token in subjective_keywords):
+        return "subjective"
+    if any(token.lower() in text_blob for token in objective_keywords):
+        return "objective"
+
+    if standard_answer:
+        answer_clean = re.sub(r"\s+", "", standard_answer)
+        if len(answer_clean) <= 4 and re.fullmatch(r"[0-9A-Za-z\\-+.=()（）/]+", answer_clean):
+            return "objective"
+        if len(standard_answer) > 30 or "\n" in standard_answer:
+            return "subjective"
+
+    return "objective"
+
+
+def _resolve_grading_mode(
+    inputs: Optional[Dict[str, Any]],
+    parsed_rubric: Optional[Dict[str, Any]],
+) -> str:
+    raw_mode = (inputs or {}).get("grading_mode") or (inputs or {}).get("gradingMode") or ""
+    mode = str(raw_mode).strip().lower()
+    mode_map = {
+        "standard": "standard",
+        "auto": "auto",
+        "assist_teacher": "assist_teacher",
+        "teacher_assist": "assist_teacher",
+        "assistant_teacher": "assist_teacher",
+        "assist_student": "assist_student",
+        "student_assist": "assist_student",
+        "assistant_student": "assist_student",
+        "teacher": "assist_teacher",
+        "student": "assist_student",
+    }
+    resolved = mode_map.get(mode, "auto" if not mode else "standard")
+    has_rubric = bool((parsed_rubric or {}).get("questions"))
+    if resolved == "auto":
+        return "standard" if has_rubric else "assist_teacher"
+    if resolved.startswith("assist"):
+        return resolved
+    return "standard"
+
+
 def _build_rubric_question_map(parsed_rubric: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     question_map: Dict[str, Dict[str, Any]] = {}
     for q in parsed_rubric.get("questions", []):
         qid = _normalize_question_id(q.get("question_id") or q.get("id"))
         if not qid:
             continue
+        question_type = _infer_question_type(q)
         scoring_points = []
         for idx, sp in enumerate(q.get("scoring_points", [])):
             point_id = sp.get("point_id") or sp.get("pointId") or f"{qid}.{idx + 1}"
@@ -1477,13 +1720,30 @@ def _build_rubric_question_map(parsed_rubric: Dict[str, Any]) -> Dict[str, Dict[
                 "expected_value": sp.get("expected_value") or sp.get("expectedValue") or "",
                 "keywords": sp.get("keywords") or [],
             })
+        alternative_solutions = []
+        for alt in q.get("alternative_solutions") or q.get("alternativeSolutions") or []:
+            if not isinstance(alt, dict):
+                continue
+            alternative_solutions.append({
+                "description": alt.get("description", ""),
+                "scoring_criteria": alt.get("scoring_criteria")
+                or alt.get("scoringCriteria")
+                or alt.get("scoring_conditions")
+                or alt.get("scoringConditions")
+                or "",
+                "max_score": alt.get("max_score", alt.get("maxScore", q.get("max_score", 0))),
+            })
         question_map[qid] = {
             "question_id": qid,
             "max_score": q.get("max_score", 0),
             "question_text": q.get("question_text", ""),
+            "question_type": question_type,
+            "is_choice": question_type == "choice",
             "standard_answer": q.get("standard_answer", ""),
             "grading_notes": q.get("grading_notes", ""),
             "scoring_points": scoring_points,
+            "deduction_rules": q.get("deduction_rules") or q.get("deductionRules") or [],
+            "alternative_solutions": alternative_solutions,
         }
     return question_map
 
@@ -1506,6 +1766,7 @@ def _normalize_parsed_rubric_input(
         max_score = q.get("max_score", q.get("maxScore"))
         question_text = q.get("question_text") or q.get("questionText") or ""
         standard_answer = q.get("standard_answer") or q.get("standardAnswer") or ""
+        question_type = q.get("question_type") or q.get("questionType") or ""
         grading_notes = q.get("grading_notes") or q.get("gradingNotes") or ""
         source_pages = q.get("source_pages") or q.get("sourcePages") or []
         if not isinstance(source_pages, list):
@@ -1557,6 +1818,24 @@ def _normalize_parsed_rubric_input(
                     "note": "",
                 })
 
+        deduction_rules_raw = q.get("deduction_rules") or q.get("deductionRules") or []
+        deduction_rules = []
+        for idx, dr in enumerate(deduction_rules_raw):
+            if isinstance(dr, dict):
+                deduction_rules.append({
+                    "rule_id": dr.get("rule_id") or dr.get("ruleId") or f"{qid}.d{idx + 1}",
+                    "description": dr.get("description", ""),
+                    "deduction": float(dr.get("deduction", dr.get("score", 0)) or 0),
+                    "conditions": dr.get("conditions") or dr.get("when") or "",
+                })
+            elif isinstance(dr, str):
+                deduction_rules.append({
+                    "rule_id": f"{qid}.d{idx + 1}",
+                    "description": dr,
+                    "deduction": 0.0,
+                    "conditions": "",
+                })
+
         criteria = q.get("criteria")
         if not criteria:
             criteria = [sp.get("description", "") for sp in scoring_points]
@@ -1566,10 +1845,12 @@ def _normalize_parsed_rubric_input(
             "question_id": qid,
             "max_score": max_score,
             "question_text": question_text,
+            "question_type": question_type,
             "standard_answer": standard_answer,
             "criteria": criteria,
             "scoring_points": scoring_points,
             "alternative_solutions": alternative_solutions,
+            "deduction_rules": deduction_rules,
             "grading_notes": grading_notes,
             "source_pages": source_pages,
         })
@@ -1614,7 +1895,8 @@ def _format_rubric_context_from_dict(parsed_rubric: Dict[str, Any]) -> str:
 
     for q in parsed_rubric.get("questions", []):
         lines.append("-" * 40)
-        lines.append(f"Question {ensure_str(q.get('question_id', ''))} max_score: {q.get('max_score', 0)}")
+        question_id = ensure_str(q.get('question_id', ''))
+        lines.append(f"Question {question_id} max_score: {q.get('max_score', 0)}")
 
         question_text = ensure_str(q.get("question_text", ""))
         if question_text:
@@ -1629,15 +1911,28 @@ def _format_rubric_context_from_dict(parsed_rubric: Dict[str, Any]) -> str:
         scoring_points = q.get("scoring_points", [])
         if scoring_points:
             lines.append("Scoring points:")
-            for sp in scoring_points:
+            for idx, sp in enumerate(scoring_points, 1):
                 required = "required" if sp.get("is_required", True) else "optional"
                 keywords = sp.get("keywords") or []
                 keywords_str = f" keywords:{keywords}" if keywords else ""
                 expected_value = ensure_str(sp.get("expected_value", ""))
                 expected_value_str = f" expected:{expected_value}" if expected_value else ""
+                point_id = sp.get("point_id") or sp.get("pointId") or f"{question_id}.{idx}"
                 lines.append(
-                    f"  [{sp.get('point_id', '')}] {sp.get('score', 0)}?/{required} - "
+                    f"  [{point_id}] {sp.get('score', 0)}?/{required} - "
                     f"{ensure_str(sp.get('description', ''))}{keywords_str}{expected_value_str}"
+                )
+
+        deduction_rules = q.get("deduction_rules") or q.get("deductionRules") or []
+        if deduction_rules:
+            lines.append("Deduction rules:")
+            for idx, dr in enumerate(deduction_rules, 1):
+                rule_id = dr.get("rule_id") or dr.get("ruleId") or f"{question_id}.d{idx}"
+                deduction = dr.get("deduction", dr.get("score", 0))
+                conditions = ensure_str(dr.get("conditions") or dr.get("when") or "")
+                condition_text = f" conditions:{conditions}" if conditions else ""
+                lines.append(
+                    f"  [{rule_id}] -{deduction} {ensure_str(dr.get('description', ''))}{condition_text}"
                 )
 
         alternative_solutions = q.get("alternative_solutions", [])
@@ -1692,7 +1987,22 @@ def _finalize_scoring_result(
         rubric = rubric_map.get(qid, {})
         expected_points = rubric.get("scoring_points", [])
         raw_question = raw_by_id.get(qid, {})
+        question_type = rubric.get("question_type") or (
+            _infer_question_type(rubric) if rubric else ""
+        )
+        if not question_type:
+            question_type = (
+                raw_question.get("question_type")
+                or raw_question.get("questionType")
+                or ""
+            )
+        is_choice = bool(rubric.get("is_choice") or question_type == "choice")
         raw_scoring = raw_question.get("scoring_point_results") or raw_question.get("scoring_results") or []
+        answer_info = answer_map.get(qid, {}) if isinstance(answer_map, dict) else {}
+        evidence_snippets = answer_info.get("evidence_snippets") or []
+        fallback_snippet = ""
+        if isinstance(evidence_snippets, list) and evidence_snippets:
+            fallback_snippet = _trim_text(evidence_snippets[0], 90)
         raw_scoring_by_id = {
             _normalize_question_id(spr.get("point_id") or spr.get("pointId")): spr
             for spr in raw_scoring
@@ -1728,7 +2038,9 @@ def _finalize_scoring_result(
             evidence_text = existing.get("evidence")
             if _is_placeholder_evidence(evidence_text):
                 missing_evidence += 1
-                if not evidence_text:
+                if fallback_snippet:
+                    evidence_text = f"【原文引用】{fallback_snippet}"
+                elif not evidence_text:
                     evidence_text = "【原文引用】未找到"
             if not existing:
                 missing_points += 1
@@ -1737,9 +2049,16 @@ def _finalize_scoring_result(
                     "review_reason": "Missing scoring point; added with 0 score.",
                 })
 
+            description = sp.get("description", "")
+            expected_value = sp.get("expected_value") or sp.get("expectedValue") or ""
+            rubric_reference = f"[{point_id}] {description}".strip()
+            if expected_value:
+                rubric_reference = f"{rubric_reference}（标准值:{expected_value}）"
+
             scoring_point_results.append({
                 "point_id": point_id,
-                "rubric_reference": f"[{point_id}] {sp.get('description', '')}",
+                "rubric_reference": rubric_reference,
+                "rubric_reference_source": "system",
                 "decision": "得分" if awarded > 0 else "未得分",
                 "awarded": awarded,
                 "max_points": max_points,
@@ -1753,16 +2072,43 @@ def _finalize_scoring_result(
             })
 
         if not scoring_point_results and raw_scoring:
-            for spr in raw_scoring:
+            for idx, spr in enumerate(raw_scoring, 1):
+                point_id = (
+                    spr.get("point_id")
+                    or spr.get("pointId")
+                    or f"{qid}.{idx}"
+                )
+                scoring_point = spr.get("scoring_point") or spr.get("scoringPoint") or {}
+                description = (
+                    scoring_point.get("description")
+                    or spr.get("description")
+                    or ""
+                )
+                rubric_reference = (
+                    spr.get("rubric_reference")
+                    or spr.get("rubricReference")
+                    or ""
+                )
+                rubric_reference_source = (
+                    spr.get("rubric_reference_source")
+                    or spr.get("rubricReferenceSource")
+                )
+                if not rubric_reference:
+                    rubric_reference = f"[{point_id}] {description}".strip()
+                    rubric_reference_source = "system"
+                max_points = spr.get("max_points", spr.get("maxScore"))
+                if max_points is None:
+                    max_points = scoring_point.get("score", 0)
                 scoring_point_results.append({
-                    "point_id": spr.get("point_id") or spr.get("pointId") or "",
-                    "rubric_reference": spr.get("rubric_reference") or spr.get("rubricReference") or "",
+                    "point_id": point_id,
+                    "rubric_reference": rubric_reference,
+                    "rubric_reference_source": rubric_reference_source,
                     "decision": spr.get("decision") or spr.get("result") or "",
                     "awarded": spr.get("awarded", spr.get("score", 0)),
-                    "max_points": spr.get("max_points", spr.get("maxScore", 0)),
+                    "max_points": max_points or 0,
                     "evidence": spr.get("evidence", ""),
                     "reason": spr.get("reason", ""),
-                    "scoring_point": spr.get("scoring_point"),
+                    "scoring_point": scoring_point if scoring_point else None,
                 })
 
         sum_awarded = sum(r.get("awarded", 0) for r in scoring_point_results)
@@ -1799,7 +2145,18 @@ def _finalize_scoring_result(
         answer_confidence = answer_map.get(qid, {}).get("confidence")
         if isinstance(answer_confidence, (int, float)):
             confidence = max(0.0, min(1.0, confidence * max(0.4, min(1.0, answer_confidence))))
-        confidence = max(0.0, min(1.0, confidence))
+        used_alt = bool(
+            raw_question.get("used_alternative_solution")
+            or raw_question.get("usedAlternativeSolution")
+            or raw_question.get("alternative_solution_ref")
+            or raw_question.get("alternativeSolutionRef")
+        )
+        confidence_multiplier = 1.0
+        if question_type in ("subjective", "essay", "stepwise"):
+            confidence_multiplier *= 0.85
+        if used_alt or rubric.get("alternative_solutions"):
+            confidence_multiplier *= 0.9
+        confidence = max(0.0, min(1.0, confidence * confidence_multiplier))
 
         issues = []
         if missing_points:
@@ -1808,25 +2165,67 @@ def _finalize_scoring_result(
             issues.append("Insufficient evidence for some points")
         if score_adjusted:
             issues.append("Point sum mismatched; adjusted total")
+
+        missing_rubric_ref = any(
+            not spr.get("rubric_reference") for spr in scoring_point_results
+        )
+        missing_point_id = any(
+            not spr.get("point_id") for spr in scoring_point_results
+        )
+        if missing_rubric_ref:
+            issues.append("Missing rubric reference for some points")
+        if missing_point_id:
+            issues.append("Missing point_id for some points")
+
+        audit_flags = []
+        if missing_points:
+            audit_flags.append("missing_scoring_points")
+        if missing_evidence:
+            audit_flags.append("missing_evidence")
+        if score_adjusted:
+            audit_flags.append("score_adjusted")
+        if missing_rubric_ref:
+            audit_flags.append("missing_rubric_reference")
+        if missing_point_id:
+            audit_flags.append("missing_point_id")
+
         review_summary = "; ".join(issues) if issues else "Logic consistent; no obvious issues"
+
+        confidence_reason = f"coverage={coverage:.2f}, evidence={evidence_ok:.2f}, consistency={consistency:.2f}"
+        if question_type:
+            confidence_reason = f"{confidence_reason}, type={question_type}"
+        if used_alt or rubric.get("alternative_solutions"):
+            confidence_reason = f"{confidence_reason}, alt_solution=1"
+
+        feedback = raw_question.get("feedback", "")
+        self_critique = raw_question.get("self_critique") or review_summary
+        if is_choice:
+            feedback = ""
+            self_critique = ""
 
         question_details.append({
             "question_id": qid,
             "score": score,
             "max_score": max_score,
             "confidence": confidence,
-            "confidence_reason": f"coverage={coverage:.2f}, evidence={evidence_ok:.2f}, consistency={consistency:.2f}",
-            "feedback": raw_question.get("feedback", ""),
+            "confidence_reason": confidence_reason,
+            "feedback": feedback,
             "student_answer": raw_question.get("student_answer") or answer_map.get(qid, {}).get("answer_text", ""),
-            "self_critique": raw_question.get("self_critique") or review_summary,
+            "self_critique": self_critique,
             "self_critique_confidence": raw_question.get("self_critique_confidence", confidence),
             "typo_notes": typo_notes,
             "rubric_refs": [sp.get("point_id") for sp in expected_points if sp.get("point_id")] if expected_points else [],
             "scoring_point_results": scoring_point_results,
             "review_summary": review_summary,
             "review_corrections": review_corrections,
+            "audit_flags": audit_flags,
             "page_indices": [page_index],
             "is_correct": max_score > 0 and score >= max_score,
+            "question_type": question_type,
+            "used_alternative_solution": used_alt,
+            "alternative_solution_ref": raw_question.get("alternative_solution_ref")
+            or raw_question.get("alternativeSolutionRef")
+            or "",
         })
 
     page_confidence = (
@@ -1837,6 +2236,84 @@ def _finalize_scoring_result(
         "question_details": question_details,
         "score": sum(q.get("score", 0) for q in question_details),
         "max_score": sum(q.get("max_score", 0) for q in question_details),
+        "page_confidence": page_confidence,
+    }
+
+
+def _finalize_assist_result(
+    raw_result: Dict[str, Any],
+    evidence: Dict[str, Any],
+    page_index: int,
+    grading_mode: str,
+) -> Dict[str, Any]:
+    raw_questions = raw_result.get("question_details") or []
+    raw_by_id = {}
+    for q in raw_questions:
+        qid = _normalize_question_id(q.get("question_id"))
+        if qid:
+            raw_by_id[qid] = q
+
+    answer_map = {}
+    for answer in evidence.get("answers", []):
+        qid = _normalize_question_id(answer.get("question_id"))
+        if qid:
+            answer_map[qid] = answer
+
+    question_ids = list(answer_map.keys())
+    if not question_ids:
+        question_ids = [
+            _normalize_question_id(q.get("question_id"))
+            for q in raw_questions
+            if q.get("question_id")
+        ]
+    seen = set()
+    question_ids = [qid for qid in question_ids if qid and not (qid in seen or seen.add(qid))]
+
+    question_details = []
+    for qid in question_ids:
+        raw_question = raw_by_id.get(qid, {})
+        answer_info = answer_map.get(qid, {}) if isinstance(answer_map, dict) else {}
+        feedback = raw_question.get("feedback", "")
+        if not feedback:
+            feedback = raw_question.get("explanation") or raw_question.get("analysis") or ""
+        if not feedback:
+            hints = raw_question.get("error_hints") or raw_question.get("errorHints") or []
+            if isinstance(hints, list) and hints:
+                feedback = "；".join([str(h).strip() for h in hints if h])
+        confidence = raw_question.get("confidence", 0.4)
+        if not isinstance(confidence, (int, float)):
+            confidence = 0.4
+        question_type = raw_question.get("question_type") or raw_question.get("questionType") or "unknown"
+
+        question_details.append({
+            "question_id": qid,
+            "score": 0.0,
+            "max_score": 0.0,
+            "confidence": float(confidence),
+            "feedback": feedback,
+            "student_answer": raw_question.get("student_answer") or answer_info.get("answer_text", ""),
+            "self_critique": raw_question.get("self_critique") or "",
+            "self_critique_confidence": raw_question.get("self_critique_confidence", confidence),
+            "typo_notes": raw_question.get("typo_notes") or raw_question.get("typoNotes") or [],
+            "rubric_refs": [],
+            "scoring_point_results": [],
+            "review_summary": "",
+            "review_corrections": [],
+            "audit_flags": ["assist_mode", grading_mode],
+            "page_indices": [page_index],
+            "is_correct": False,
+            "question_type": question_type,
+            "grading_mode": grading_mode,
+        })
+
+    page_confidence = (
+        sum(q.get("confidence", 0) for q in question_details) / len(question_details)
+        if question_details else 0.0
+    )
+    return {
+        "question_details": question_details,
+        "score": 0.0,
+        "max_score": 0.0,
         "page_confidence": page_confidence,
     }
 
@@ -1922,6 +2399,7 @@ async def grade_batch_node(state: Dict[str, Any]) -> Dict[str, Any]:
         budget_per_page > 0
         and est_second_pass_cost <= budget_per_page * second_pass_budget_fraction
     )
+    grading_mode = _resolve_grading_mode(state.get("inputs", {}), state.get("parsed_rubric", {}))
     
     try:
         if not api_key:
@@ -1940,6 +2418,12 @@ async def grade_batch_node(state: Dict[str, Any]) -> Dict[str, Any]:
         import copy
         local_parsed_rubric = copy.deepcopy(parsed_rubric)
         rubric_map = _build_rubric_question_map(local_parsed_rubric)
+        grading_mode = _resolve_grading_mode(state.get("inputs", {}), local_parsed_rubric)
+        if grading_mode == "assist_student":
+            output_limits["max_feedback_chars"] = int(os.getenv("GRADING_ASSIST_FEEDBACK_CHARS", "600"))
+            output_limits["max_page_summary_chars"] = int(os.getenv("GRADING_ASSIST_SUMMARY_CHARS", "180"))
+            output_limits["max_student_answer_chars"] = int(os.getenv("GRADING_ASSIST_ANSWER_CHARS", "220"))
+        logger.info(f"[grade_batch] grading_mode={grading_mode}")
         
         # 🔍 调试日志：确认 parsed_rubric 内容
         logger.info(
@@ -1960,18 +2444,20 @@ async def grade_batch_node(state: Dict[str, Any]) -> Dict[str, Any]:
             question_rubrics = []
             for q in questions_data:
                 # 构建 ScoringPoint 列表
+                qid = q.get("question_id") or q.get("id") or ""
                 scoring_points = [
                     ScoringPoint(
                         description=sp.get("description", ""),
                         score=sp.get("score", 0),
-                        is_required=sp.get("is_required", True)
+                        is_required=sp.get("is_required", True),
+                        point_id=sp.get("point_id") or sp.get("pointId") or f"{qid}.{idx + 1}",
                     )
-                    for sp in q.get("scoring_points", [])
+                    for idx, sp in enumerate(q.get("scoring_points", []))
                 ]
                 
                 # 构建 QuestionRubric
                 question_rubric = QuestionRubric(
-                    question_id=str(q.get("id", "")),
+                    question_id=str(qid),
                     question_text=q.get("question_text", ""),
                     max_score=q.get("max_score", 0),
                     scoring_points=scoring_points,
@@ -1993,6 +2479,48 @@ async def grade_batch_node(state: Dict[str, Any]) -> Dict[str, Any]:
         )
         # 错误隔离：单页失败不影响其他页面 (Requirement 9.2)
         error_manager = get_error_manager()
+        from src.api.routes.batch_langgraph import broadcast_progress
+
+        batch_agent_id = f"batch_{batch_index}"
+        batch_student_key = state.get("student_key")
+        batch_agent_label = batch_student_key or f"Student Batch {batch_index + 1}"
+        total_pages_in_batch = len(page_indices)
+        pages_done = 0
+        pages_lock = asyncio.Lock()
+
+        async def emit_agent_update(
+            status: str,
+            message: str = "",
+            progress: Optional[int] = None,
+        ) -> None:
+            payload = {
+                "type": "agent_update",
+                "parentNodeId": "grade_batch",
+                "agentId": batch_agent_id,
+                "agentName": batch_agent_label,
+                "agentLabel": batch_agent_label,
+                "status": status,
+                "message": message,
+            }
+            if progress is not None:
+                payload["progress"] = progress
+            await broadcast_progress(batch_id, payload)
+
+        async def emit_stage(message: str) -> None:
+            await emit_agent_update("running", message)
+
+        async def mark_page_done(page_idx: int, detail: str) -> None:
+            nonlocal pages_done
+            async with pages_lock:
+                pages_done += 1
+                progress = int((pages_done / max(1, total_pages_in_batch)) * 100)
+            await emit_agent_update("running", detail, progress=progress)
+
+        await emit_agent_update(
+            "running",
+            f"Start grading {total_pages_in_batch} pages",
+            progress=0,
+        )
 
         async def allow_second_pass() -> bool:
             nonlocal second_pass_used
@@ -2002,45 +2530,38 @@ async def grade_batch_node(state: Dict[str, Any]) -> Dict[str, Any]:
                 second_pass_used += 1
                 return True
 
+        batch_student_key = state.get("student_key")
+
         async def grade_single_page(page_data):
             """批改单页（带错误隔离和 Agent Skill 集成）"""
             page_idx, image = page_data
+            page_context = page_index_contexts.get(page_idx) if page_index_contexts else None
+            student_key = (page_context or {}).get("student_key") or batch_student_key
+            page_label = f"Page {page_idx + 1}"
+            agent_label = f"{student_key} / {page_label}" if student_key else page_label
             
             # Visualization Callbacks
-            from src.api.routes.batch_langgraph import broadcast_progress
-            
             async def stream_callback(stream_type: str, chunk: str) -> None:
                 await broadcast_progress(batch_id, {
                     "type": "llm_stream_chunk",
                     "nodeId": "grade_batch",
                     "nodeName": "Batch Grading",
-                    "agentId": f"worker-{page_idx}",
+                    "agentId": batch_agent_id,
+                    "agentLabel": agent_label or batch_agent_label,
                     "streamType": stream_type,
                     "chunk": chunk
                 })
-            
-            async def progress_callback(status: str, message: str = "") -> None:
-                await broadcast_progress(batch_id, {
-                    "type": "agent_update",
-                    "parentNodeId": "grade_batch",
-                    "agentId": f"worker-{page_idx}",
-                    "agentName": f"Page {page_idx}",
-                    "status": status,
-                    "message": message
-                })
 
             # Signal Start
-            await progress_callback("running", "Start grading...")
+            await emit_stage(f"Start {page_label}")
             
             try:
-                page_context = page_index_contexts.get(page_idx) if page_index_contexts else None
-
                 def make_stream_callback(stage: str):
                     async def _callback(stream_type: str, chunk: str) -> None:
                         await stream_callback(f"{stage}:{stream_type}", chunk)
                     return _callback
 
-                await progress_callback("running", "Extracting evidence...")
+                await emit_stage(f"{page_label}: Extracting evidence...")
                 evidence = await reasoning_client.extract_answer_evidence(
                     image=image,
                     parsed_rubric=local_parsed_rubric,
@@ -2077,11 +2598,64 @@ async def grade_batch_node(state: Dict[str, Any]) -> Dict[str, Any]:
                         "is_blank_page": True,
                         "revision_count": 0,
                         "batch_index": batch_index,
+                        "grading_mode": grading_mode,
                     }
-                    await progress_callback("completed", "Blank/cover page")
+                    await mark_page_done(page_idx, f"{page_label}: blank/cover")
                     return page_result
 
-                await progress_callback("running", "Scoring from evidence...")
+                if grading_mode.startswith("assist"):
+                    assist_mode = "teacher" if grading_mode == "assist_teacher" else "student"
+                    await emit_stage(f"{page_label}: Assist analysis...")
+                    assist_result = await reasoning_client.assist_from_evidence(
+                        evidence=evidence,
+                        page_context=page_context,
+                        mode=assist_mode,
+                        stream_callback=make_stream_callback("assist"),
+                    )
+                    assist_result = _compact_score_result(assist_result, output_limits)
+                    if not question_numbers:
+                        question_numbers = assist_result.get("question_numbers", [])
+
+                    finalized = _finalize_assist_result(
+                        raw_result=assist_result,
+                        evidence=evidence,
+                        page_index=page_idx,
+                        grading_mode=grading_mode,
+                    )
+                    student_info = assist_result.get("student_info") or evidence.get("student_info")
+                    if not student_info and page_context:
+                        student_info = page_context.get("student_info")
+
+                    flags = assist_result.get("flags") or []
+                    if grading_mode not in flags:
+                        flags.append(grading_mode)
+
+                    page_result = {
+                        "page_index": page_idx,
+                        "status": "completed",
+                        "score": finalized.get("score", 0.0),
+                        "max_score": finalized.get("max_score", 0.0),
+                        "confidence": finalized.get("page_confidence", 0.0),
+                        "feedback": assist_result.get("feedback", ""),
+                        "question_id": f"Q{page_idx}",
+                        "question_numbers": question_numbers,
+                        "question_details": finalized.get("question_details", []),
+                        "page_summary": assist_result.get("page_summary") or evidence.get("page_summary", ""),
+                        "student_info": student_info,
+                        "is_blank_page": False,
+                        "revision_count": 0,
+                        "batch_index": batch_index,
+                        "flags": flags,
+                        "grading_mode": grading_mode,
+                    }
+
+                    await mark_page_done(
+                        page_idx,
+                        f"{page_label}: assist ready",
+                    )
+                    return page_result
+
+                await emit_stage(f"{page_label}: Scoring from evidence...")
                 score_result = await reasoning_client.score_from_evidence(
                     evidence=evidence,
                     parsed_rubric=local_parsed_rubric,
@@ -2106,7 +2680,7 @@ async def grade_batch_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
                 if needs_second_pass and not fast_pass_only and budget_allows_second_pass:
                     if await allow_second_pass():
-                        await progress_callback("running", "Rescoring (low confidence)...")
+                        await emit_stage(f"{page_label}: Rescoring (low confidence)...")
                         strict_result = await reasoning_client.score_from_evidence(
                             evidence=evidence,
                             parsed_rubric=local_parsed_rubric,
@@ -2156,6 +2730,7 @@ async def grade_batch_node(state: Dict[str, Any]) -> Dict[str, Any]:
                     "revision_count": 1 if did_second_pass else 0,
                     "batch_index": batch_index,
                     "flags": score_result.get("flags") or [],
+                    "grading_mode": grading_mode,
                 }
 
                 # Detailed logging
@@ -2171,13 +2746,15 @@ async def grade_batch_node(state: Dict[str, Any]) -> Dict[str, Any]:
                     )
 
                 # Signal Completion
-                await progress_callback("completed", f"Score: {page_result.get('score', 0)}")
+                await mark_page_done(
+                    page_idx,
+                    f"{page_label}: score {page_result.get('score', 0)}",
+                )
 
                 return page_result
                 
             except Exception as e:
-                # Signal Failure
-                await progress_callback("failed", str(e))
+                await mark_page_done(page_idx, f"{page_label}: failed")
                 # 记录错误到全局错误管理器 (Requirement 9.5)
                 error_manager.add_error(
                     exc=e,
@@ -2204,6 +2781,7 @@ async def grade_batch_node(state: Dict[str, Any]) -> Dict[str, Any]:
                     "score": 0,
                     "max_score": 0,
                     "batch_index": batch_index,
+                    "grading_mode": grading_mode,
                 }
         
         # 使用错误隔离批量处理所有页面 (Requirement 9.2)
@@ -2240,6 +2818,10 @@ async def grade_batch_node(state: Dict[str, Any]) -> Dict[str, Any]:
     except Exception as e:
         batch_error = str(e)
         logger.error(f"[grade_batch] 批次 {batch_index} 批改失败: {e}", exc_info=True)
+        try:
+            await emit_agent_update("failed", "Batch failed", progress=100)
+        except Exception:
+            pass
         
         # 记录批次级错误
         from src.utils.error_handling import get_error_manager
@@ -2281,6 +2863,7 @@ async def grade_batch_node(state: Dict[str, Any]) -> Dict[str, Any]:
                 "score": 0,
                 "max_score": 0,
                 "batch_index": batch_index,
+                "grading_mode": grading_mode,
             })
     
     success_count = sum(1 for r in page_results if r['status'] == 'completed')
@@ -2302,11 +2885,19 @@ async def grade_batch_node(state: Dict[str, Any]) -> Dict[str, Any]:
         f"[grade_batch] 批次 {batch_index + 1}/{total_batches} 完成: "
         f"成功={success_count}/{len(page_results)}, 失败={failed_count}, 总分={total_score}"
     )
+
+    final_status = "completed" if success_count > 0 else "failed"
+    await emit_agent_update(
+        final_status,
+        f"Completed {success_count}/{len(page_results)} pages",
+        progress=100,
+    )
     
     # 返回结果（使用 add reducer 聚合）
     return {
         "grading_results": page_results,
         "batch_progress": progress_info,
+        "grading_mode": grading_mode,
     }
 
 
@@ -2354,7 +2945,13 @@ async def cross_page_merge_node(state: BatchGradingGraphState) -> Dict[str, Any]
                     scoring_point = ScoringPoint(
                         description=sp.get("description", ""),
                         score=sp.get("score", 0.0),
-                        is_required=sp.get("is_required", False)
+                        is_required=sp.get("is_required", False),
+                        point_id=(
+                            sp.get("point_id")
+                            or sp.get("pointId")
+                            or (sp.get("scoring_point") or {}).get("point_id")
+                            or ""
+                        ),
                     )
                     scoring_point_result = ScoringPointResult(
                         scoring_point=scoring_point,
@@ -2373,7 +2970,8 @@ async def cross_page_merge_node(state: BatchGradingGraphState) -> Dict[str, Any]
                     page_indices=[result.get("page_index", 0)],
                     is_cross_page=False,
                     merge_source=None,
-                    student_answer=q.get("student_answer", "")
+                    student_answer=q.get("student_answer", ""),
+                    question_type=q.get("question_type") or q.get("questionType")
                 )
                 question_results.append(question_result)
             
@@ -2402,6 +3000,7 @@ async def cross_page_merge_node(state: BatchGradingGraphState) -> Dict[str, Any]
                 "confidence": q.confidence,
                 "feedback": q.feedback,
                 "student_answer": q.student_answer,
+                "question_type": q.question_type,
                 "is_cross_page": q.is_cross_page,
                 "page_indices": q.page_indices,
                 "merge_source": q.merge_source,
@@ -2470,9 +3069,11 @@ async def index_merge_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     batch_id = state["batch_id"]
     grading_results = state.get("grading_results", [])
     merged_questions = state.get("merged_questions", [])
+    grading_mode = _resolve_grading_mode(state.get("inputs", {}), state.get("parsed_rubric", {}))
     student_boundaries = state.get("student_boundaries", []) or []
     indexed_students = state.get("indexed_students", []) or []
     student_page_map = state.get("student_page_map", {}) or {}
+    grading_mode = _resolve_grading_mode(state.get("inputs", {}), state.get("parsed_rubric", {}))
 
     # 去重：由于并行聚合可能导致重复，按 page_index 去重
     seen_pages = set()
@@ -2589,6 +3190,8 @@ async def index_merge_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                             "page_indices": q.get("page_indices") or q.get("pageIndices") or [page.get("page_index")],
                             "is_cross_page": q.get("is_cross_page", False) or q.get("isCrossPage", False),
                             "merge_source": q.get("merge_source") or q.get("mergeSource"),
+                            "question_type": q.get("question_type") or q.get("questionType"),
+                            "grading_mode": grading_mode,
                         })
 
             student_key = boundary["student_key"]
@@ -2606,6 +3209,7 @@ async def index_merge_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                 "question_details": all_question_details,
                 "confidence": boundary.get("confidence", 0.0),
                 "needs_confirmation": boundary.get("needs_confirmation", False),
+                "grading_mode": grading_mode,
             })
 
         logger.info(
@@ -2661,6 +3265,8 @@ async def index_merge_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                         "page_indices": q.get("page_indices") or q.get("pageIndices") or [page.get("page_index")],
                         "is_cross_page": q.get("is_cross_page", False) or q.get("isCrossPage", False),
                         "merge_source": q.get("merge_source") or q.get("mergeSource"),
+                        "question_type": q.get("question_type") or q.get("questionType"),
+                        "grading_mode": grading_mode,
                     })
 
         fallback_student_key = "学生A"
@@ -2683,7 +3289,8 @@ async def index_merge_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                 "page_results": grading_results,
                 "question_details": all_question_details,
                 "confidence": 0.0,
-                "needs_confirmation": True
+                "needs_confirmation": True,
+                "grading_mode": grading_mode,
             }],
             "current_stage": "index_merge_completed",
             "percentage": 80.0,
@@ -2791,7 +3398,12 @@ async def segment_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                             "max_score": q.get("max_score", 0),
                             "feedback": q.get("feedback", ""),
                             "student_answer": q.get("student_answer", ""),
-                            "is_correct": q.get("is_correct", False)
+                            "is_correct": q.get("is_correct", False),
+                            "confidence": q.get("confidence", 0),
+                            "scoring_point_results": q.get("scoring_point_results") or [],
+                            "page_indices": q.get("page_indices") or [page.get("page_index")],
+                            "question_type": q.get("question_type") or q.get("questionType"),
+                            "grading_mode": grading_mode,
                         })
             
             student_results.append({
@@ -2803,7 +3415,8 @@ async def segment_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                 "page_results": student_pages,
                 "question_details": all_question_details,
                 "confidence": boundary["confidence"],
-                "needs_confirmation": boundary["needs_confirmation"]
+                "needs_confirmation": boundary["needs_confirmation"],
+                "grading_mode": grading_mode,
             })
         
         logger.info(
@@ -2847,7 +3460,12 @@ async def segment_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                         "max_score": q.get("max_score", 0),
                         "feedback": q.get("feedback", ""),
                         "student_answer": q.get("student_answer", ""),
-                        "is_correct": q.get("is_correct", False)
+                        "is_correct": q.get("is_correct", False),
+                        "confidence": q.get("confidence", 0),
+                        "scoring_point_results": q.get("scoring_point_results") or [],
+                        "page_indices": q.get("page_indices") or [page.get("page_index")],
+                        "question_type": q.get("question_type") or q.get("questionType"),
+                        "grading_mode": grading_mode,
                     })
         
         # 使用唯一的学生标识
@@ -2870,7 +3488,8 @@ async def segment_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                 "page_results": grading_results,
                 "question_details": all_question_details,
                 "confidence": 0.0,
-                "needs_confirmation": True
+                "needs_confirmation": True,
+                "grading_mode": grading_mode,
             }],
             "current_stage": "segment_completed",
             "percentage": 80.0,
@@ -3052,7 +3671,10 @@ def _apply_question_result_update(
         question["confidence"] = _safe_float(update.get("confidence", question.get("confidence", 0)))
     scoring_points = update.get("scoring_point_results") or update.get("scoring_results")
     if scoring_points is not None:
-        question["scoring_point_results"] = scoring_points
+        question_id = question.get("question_id") or question.get("questionId") or ""
+        question["scoring_point_results"] = _normalize_scoring_point_results(
+            scoring_points, question_id
+        )
     if update.get("student_answer"):
         question["student_answer"] = update.get("student_answer", question.get("student_answer", ""))
     if update.get("page_indices"):
@@ -3152,8 +3774,9 @@ async def _regrade_selected_questions(
                 description=sp.get("description", ""),
                 score=sp.get("score", 0),
                 is_required=sp.get("is_required", True),
+                point_id=sp.get("point_id") or sp.get("pointId") or f"{qid}.{idx + 1}",
             )
-            for sp in q.get("scoring_points", [])
+            for idx, sp in enumerate(q.get("scoring_points", []))
         ]
         question_rubrics.append(QuestionRubric(
             question_id=str(qid),
@@ -3487,6 +4110,100 @@ def _safe_float(value: Any) -> float:
         return 0.0
 
 
+def _collect_review_reasons(
+    question: Dict[str, Any],
+    confidence_threshold: float,
+) -> List[str]:
+    reasons: List[str] = []
+    confidence = _safe_float(question.get("confidence", 0))
+    if confidence < confidence_threshold:
+        reasons.append("low_confidence")
+
+    audit_flags = question.get("audit_flags") or []
+    for flag in audit_flags:
+        if flag not in reasons:
+            reasons.append(flag)
+
+    if question.get("review_corrections"):
+        reasons.append("logic_review_adjusted")
+
+    return reasons
+
+
+def _apply_review_flags_and_queue(
+    student_results: List[Dict[str, Any]],
+    confidence_threshold: float,
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    queue_map: Dict[str, Dict[str, Any]] = {}
+    low_confidence_questions: List[Dict[str, Any]] = []
+
+    for student in student_results:
+        student_key = (
+            student.get("student_key")
+            or student.get("student_id")
+            or student.get("student_name")
+            or ""
+        )
+
+        if student.get("needs_confirmation"):
+            key = f"boundary:{student_key}"
+            queue_map.setdefault(key, {
+                "type": "boundary",
+                "student_key": student_key,
+                "start_page": student.get("start_page"),
+                "end_page": student.get("end_page"),
+                "confidence": _safe_float(student.get("confidence", 0)),
+                "reasons": ["boundary_needs_confirmation"],
+            })
+
+        for question in student.get("question_details", []) or []:
+            qid = _normalize_question_id(question.get("question_id") or question.get("questionId"))
+            if not qid:
+                continue
+            reasons = _collect_review_reasons(question, confidence_threshold)
+            if not reasons:
+                continue
+            question["needs_review"] = True
+            question["review_reasons"] = reasons
+
+            if "low_confidence" in reasons:
+                low_confidence_questions.append({
+                    "student_key": student_key,
+                    "question_id": qid,
+                    "confidence": _safe_float(question.get("confidence", 0)),
+                })
+
+            page_indices = question.get("page_indices") or question.get("pageIndices") or []
+            key = f"question:{student_key}:{qid}"
+            existing = queue_map.get(key)
+            if existing:
+                merged_reasons = set(existing.get("reasons") or [])
+                merged_reasons.update(reasons)
+                existing["reasons"] = list(merged_reasons)
+                if page_indices:
+                    existing_pages = set(existing.get("page_indices") or [])
+                    existing_pages.update(page_indices)
+                    existing["page_indices"] = sorted(existing_pages)
+                continue
+
+            queue_map[key] = {
+                "type": "question",
+                "student_key": student_key,
+                "question_id": qid,
+                "page_indices": page_indices,
+                "confidence": _safe_float(question.get("confidence", 0)),
+                "reasons": reasons,
+            }
+
+        for page in student.get("page_results", []) or []:
+            page_confidence = _safe_float(page.get("confidence", 1.0))
+            if page_confidence < confidence_threshold:
+                page["needs_review"] = True
+                page["review_reasons"] = ["low_confidence"]
+
+    return list(queue_map.values()), low_confidence_questions
+
+
 def _build_class_report(student_results: List[Dict[str, Any]]) -> Dict[str, Any]:
     total_students = len(student_results)
     if total_students == 0:
@@ -3721,11 +4438,112 @@ def _build_logic_review_summary(question_details: List[Dict[str, Any]]) -> Dict[
     }
 
 
+def _extract_logic_review_awarded(item: Dict[str, Any]) -> Optional[float]:
+    keys = [
+        "correct_awarded",
+        "correctAwarded",
+        "correct_score",
+        "correctScore",
+        "adjusted_awarded",
+        "adjustedAwarded",
+        "corrected_awarded",
+        "correctedAwarded",
+    ]
+    for key in keys:
+        if key in item:
+            value = item.get(key)
+            if value is None:
+                continue
+            return _safe_float(value)
+    return None
+
+
+def _apply_logic_review_corrections(
+    question: Dict[str, Any],
+    review: Dict[str, Any],
+) -> Dict[str, Any]:
+    corrections = _normalize_logic_review_items(
+        review.get("review_corrections") or review.get("reviewCorrections")
+    )
+    if not corrections:
+        return question
+    scoring_points = question.get("scoring_point_results") or question.get("scoring_results") or []
+    if not isinstance(scoring_points, list) or not scoring_points:
+        return question
+
+    correction_map: Dict[str, Dict[str, Any]] = {}
+    for item in corrections:
+        point_id = _normalize_question_id(item.get("point_id") or item.get("pointId"))
+        if point_id:
+            correction_map[point_id] = item
+
+    if not correction_map:
+        return question
+
+    updated_points = []
+    adjusted = False
+    for sp in scoring_points:
+        if not isinstance(sp, dict):
+            updated_points.append(sp)
+            continue
+        sp_copy = dict(sp)
+        point_id = _normalize_question_id(
+            sp.get("point_id")
+            or sp.get("pointId")
+            or (sp.get("scoring_point") or {}).get("point_id")
+        )
+        correction = correction_map.get(point_id or "")
+        if correction:
+            proposed = _extract_logic_review_awarded(correction)
+            if proposed is not None:
+                max_points = (
+                    sp_copy.get("max_points")
+                    or sp_copy.get("maxPoints")
+                    or (sp_copy.get("scoring_point") or {}).get("score")
+                    or 0
+                )
+                max_points = max(0.0, _safe_float(max_points))
+                current_awarded = _safe_float(sp_copy.get("awarded", sp_copy.get("score", 0)))
+                proposed = min(max(proposed, 0.0), max_points)
+                delta = proposed - current_awarded
+                if abs(delta) <= 1.01:
+                    sp_copy["review_adjusted"] = True
+                    sp_copy["review_before"] = {
+                        "awarded": current_awarded,
+                        "decision": sp_copy.get("decision"),
+                    }
+                    sp_copy["review_reason"] = (
+                        correction.get("review_reason")
+                        or correction.get("reviewReason")
+                        or "Logic review adjustment"
+                    )
+                    sp_copy["review_by"] = "logic_review"
+                    sp_copy["awarded"] = proposed
+                    corrected_decision = correction.get("correct_decision") or correction.get("correctDecision")
+                    if corrected_decision:
+                        sp_copy["decision"] = corrected_decision
+                    adjusted = True
+        updated_points.append(sp_copy)
+
+    if not adjusted:
+        return question
+
+    updated = dict(question)
+    updated["scoring_point_results"] = updated_points
+    new_score = sum(_safe_float(sp.get("awarded", sp.get("score", 0))) for sp in updated_points)
+    max_score = _safe_float(updated.get("max_score") or updated.get("maxScore") or new_score)
+    if max_score:
+        new_score = min(new_score, max_score)
+    updated["score"] = new_score
+    return updated
+
+
 def _merge_logic_review_fields(
     question: Dict[str, Any],
     review: Dict[str, Any],
 ) -> Dict[str, Any]:
     updated = dict(question)
+    updated = _apply_logic_review_corrections(updated, review)
     confidence = review.get("confidence")
     if confidence is not None:
         updated["confidence"] = max(0.0, min(1.0, _safe_float(confidence)))
@@ -3774,6 +4592,8 @@ def _build_logic_review_prompt(
         "目标：评估每题评分是否和证据/反馈一致，给出置信度与自白。",
         "要求诚实：如果证据不足或存在不确定性，必须明确说明并降低置信度。",
         "若自白过于武断且证据不足，应在 review_summary 中指出并降低 confidence。",
+        "仅对明显错分给出 review_corrections，每题最多 1 个得分点，修正幅度不超过 1 分。",
+        "review_corrections 需包含 point_id、correct_awarded、correct_decision（可选）和 review_reason。",
         "请仅输出 JSON，不要添加额外说明或 markdown。",
         "",
         f"学生标识: {student_key}",
@@ -3821,7 +4641,15 @@ def _build_logic_review_prompt(
                     or 0
                 )
                 evidence = _trim_text(sp.get("evidence", ""), max_evidence_chars)
-                lines.append(f"    - {point_id}: {awarded}/{max_points_val} evidence: {evidence}")
+                rubric_ref = _trim_text(
+                    sp.get("rubric_reference") or sp.get("rubricReference") or "",
+                    max_rubric_chars,
+                )
+                decision = sp.get("decision") or sp.get("result") or ""
+                lines.append(
+                    f"    - {point_id}: {awarded}/{max_points_val} decision: {decision} "
+                    f"evidence: {evidence} rubric_ref: {rubric_ref}"
+                )
         lines.append("")
 
     schema_hint = {
@@ -3835,7 +4663,12 @@ def _build_logic_review_prompt(
                 "self_critique_confidence": 0.0,
                 "review_summary": "string",
                 "review_corrections": [
-                    {"point_id": "1.1", "review_reason": "string"}
+                    {
+                        "point_id": "1.1",
+                        "correct_awarded": 1,
+                        "correct_decision": "得分",
+                        "review_reason": "string"
+                    }
                 ],
                 "honesty_note": "string"
             }
@@ -3863,6 +4696,19 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     student_results = state.get("student_results", []) or []
     parsed_rubric = state.get("parsed_rubric", {}) or {}
     api_key = state.get("api_key") or os.getenv("GEMINI_API_KEY")
+    grading_mode = _resolve_grading_mode(state.get("inputs", {}), parsed_rubric)
+
+    if grading_mode.startswith("assist"):
+        logger.info(f"[logic_review] skip (assist mode): batch_id={batch_id}")
+        return {
+            "logic_review_results": [],
+            "current_stage": "logic_review_completed",
+            "percentage": 85.0,
+            "timestamps": {
+                **state.get("timestamps", {}),
+                "logic_review_at": datetime.now().isoformat(),
+            },
+        }
 
     if not student_results:
         return {
@@ -4071,17 +4917,25 @@ async def review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     student_results = state.get("student_results", [])
     student_boundaries = state.get("student_boundaries", [])
     enable_review = state.get("inputs", {}).get("enable_review", True)
+    grading_mode = _resolve_grading_mode(state.get("inputs", {}), state.get("parsed_rubric", {}))
     
     logger.info(f"[review] 开始结果审核: batch_id={batch_id}")
     
+    review_threshold = float(os.getenv("GRADING_REVIEW_CONFIDENCE_THRESHOLD", "0.7"))
+    max_queue_items = int(os.getenv("GRADING_REVIEW_QUEUE_MAX_ITEMS", "200"))
+
     # 统计需要确认的边界
     needs_confirmation = [b for b in student_boundaries if b.get("needs_confirmation")]
-    
-    # 统计低置信度结果
+
+    review_queue, low_confidence_questions = _apply_review_flags_and_queue(
+        student_results, review_threshold
+    )
+
+    # 统计低置信度结果（按页）
     low_confidence_results = []
     for student in student_results:
         for page_result in student.get("page_results", []):
-            if page_result.get("confidence", 1.0) < 0.7:
+            if page_result.get("confidence", 1.0) < review_threshold:
                 low_confidence_results.append({
                     "student_key": student["student_key"],
                     "page_index": page_result.get("page_index"),
@@ -4092,7 +4946,12 @@ async def review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
         "total_students": len(student_results),
         "boundaries_need_confirmation": len(needs_confirmation),
         "low_confidence_count": len(low_confidence_results),
-        "low_confidence_results": low_confidence_results[:10]  # 最多显示10个
+        "low_confidence_results": low_confidence_results[:10],  # 最多显示10个
+        "low_confidence_question_count": len(low_confidence_questions),
+        "low_confidence_questions": low_confidence_questions[:10],
+        "review_threshold": review_threshold,
+        "review_queue_count": len(review_queue),
+        "review_queue": review_queue[:max_queue_items],
     }
     
     logger.info(
@@ -4100,6 +4959,20 @@ async def review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
         f"学生数={review_summary['total_students']}, "
         f"待确认边界={review_summary['boundaries_need_confirmation']}"
     )
+
+    if grading_mode.startswith("assist"):
+        logger.info(f"[review] skip (assist mode): batch_id={batch_id}")
+        return {
+            "review_summary": review_summary,
+            "review_result": {"action": "skip", "reason": "assist_mode"},
+            "student_results": student_results,
+            "current_stage": "review_completed",
+            "percentage": 90.0,
+            "timestamps": {
+                **state.get("timestamps", {}),
+                "review_at": datetime.now().isoformat()
+            }
+        }
 
     if not enable_review:
         logger.info(f"[review] skip (review disabled): batch_id={batch_id}")
@@ -4119,6 +4992,7 @@ async def review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
         "type": "results_review_required",
         "batch_id": batch_id,
         "summary": review_summary,
+        "review_queue": review_queue[:max_queue_items],
         "message": "Results review required",
         "requested_at": datetime.now().isoformat()
     }

@@ -5,8 +5,6 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
     BookOpen,
     Cpu,
-    CheckCircle2,
-    FileText,
     Share2,
     Undo2,
     Loader2
@@ -36,11 +34,9 @@ interface WorkerData {
 
 const NODES_CONFIG = [
     { id: 'rubric_parse', label: 'Rubric Parse', icon: BookOpen, x: 8, y: 50 },
-    { id: 'rubric_review', label: 'Rubric Review', icon: Undo2, x: 22, y: 50 },
-    { id: 'grade_batch', label: 'Batch Grading', icon: Cpu, x: 36, y: 50 },
-    { id: 'cross_page_merge', label: 'Cross-Page Merge', icon: CheckCircle2, x: 50, y: 50 },
-    { id: 'index_merge', label: 'Result Merge', icon: FileText, x: 64, y: 50 },
-    { id: 'logic_review', label: 'Logic Review', icon: Undo2, x: 78, y: 50 },
+    { id: 'rubric_review', label: 'Rubric Review', icon: Undo2, x: 24, y: 50 },
+    { id: 'grade_batch', label: 'Batch Grading', icon: Cpu, x: 40, y: 50 },
+    { id: 'logic_review', label: 'Logic Review', icon: Undo2, x: 66, y: 50 },
     { id: 'export', label: 'Export', icon: Share2, x: 92, y: 50 },
 ];
 
@@ -83,7 +79,7 @@ const useWorkflowSimulation = () => {
     }, []);
 
     const triggerPipeline = () => {
-        const sequence = ['rubric_parse', 'rubric_review', 'grade_batch', 'cross_page_merge', 'index_merge', 'logic_review', 'export'];
+        const sequence = ['rubric_parse', 'rubric_review', 'grade_batch', 'logic_review', 'export'];
 
         // Staggered execution
         let accumulatedDelay = 0;

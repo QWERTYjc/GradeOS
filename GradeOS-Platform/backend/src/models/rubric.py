@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field, ConfigDict
 
 class ScoringPoint(BaseModel):
     """评分点"""
+    point_id: Optional[str] = Field(None, description="评分点ID")
     description: str = Field(..., description="评分点描述")
     score: float = Field(..., description="该评分点的分值", ge=0)
     required: bool = Field(True, description="是否为必需评分点")

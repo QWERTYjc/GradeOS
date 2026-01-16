@@ -138,6 +138,7 @@ export interface GradingResult {
   studentName: string;
   totalScore: number;
   maxScore: number;
+  gradingMode?: string;
   questions: QuestionResult[];
   confidence?: number;
   needsConfirmation?: boolean;
@@ -180,6 +181,7 @@ export interface QuestionResult {
   rubricRefs?: string[];
   typoNotes?: string[];
   studentAnswer?: string;
+  questionType?: string;
   isCorrect?: boolean;
   scoringPoints?: ScoringPoint[];
   /** 得分点明细列表 - 新增 */

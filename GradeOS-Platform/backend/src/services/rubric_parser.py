@@ -43,6 +43,15 @@ class AlternativeSolution:
 
 
 @dataclass
+class DeductionRule:
+    """扣分规则"""
+    description: str          # 典型错误/扣分条件描述
+    deduction: float          # 扣分分值
+    conditions: str = ""      # 扣分条件表达
+    rule_id: str = ""         # 扣分规则编号
+
+
+@dataclass
 class QuestionRubric:
     """单题评分标准"""
     question_id: str                              # 题号
@@ -51,6 +60,7 @@ class QuestionRubric:
     standard_answer: str = ""                     # 标准答案
     scoring_points: List[ScoringPoint] = field(default_factory=list)  # 得分点列表
     alternative_solutions: List[AlternativeSolution] = field(default_factory=list)  # 另类解法
+    deduction_rules: List[DeductionRule] = field(default_factory=list)  # 扣分规则
     grading_notes: str = ""                       # 批改注意事项
 
 
@@ -189,7 +199,8 @@ class RubricParserService:
 ## 任务
 1. 识别这些页面中的所有题目
 2. 提取每道题的分值和得分点
-3. 识别另类解法（如果有）
+3. 识别扣分规则（如果有）
+4. 识别另类解法（如果有）
 
 ## 分析要求
 - **不要基于任何预设的总分来推断，完全基于页面内容提取。**
@@ -210,9 +221,12 @@ class RubricParserService:
             "max_score": 5,
             "question_text": "题目内容（简短描述）",
             "standard_answer": "标准答案（完整）",
-            "scoring_points": [
-                {{"description": "正确列出方程", "score": 2, "is_required": true}},
-                {{"description": "正确求解", "score": 3, "is_required": true}}
+"scoring_points": [
+                {{"point_id": "1.1", "description": "正确列出方程", "score": 2, "is_required": true}},
+                {{"point_id": "1.2", "description": "正确求解", "score": 3, "is_required": true}}
+            ],
+            "deduction_rules": [
+                {{"rule_id": "1.d1", "description": "最终答案错误", "deduction": 1, "conditions": "其他部分正确"}}
             ],
             "alternative_solutions": [],
             "grading_notes": ""
@@ -331,6 +345,35 @@ class RubricParserService:
                 import re
                 main_id = re.sub(r'\([^)]*\)', '', str(qid)).strip()
                 return main_id
+
+            def _assign_point_ids(question_id: str, scoring_points: List[ScoringPoint]) -> None:
+                seen = set()
+                for idx, sp in enumerate(scoring_points):
+                    point_id = sp.point_id or f"{question_id}.{idx + 1}"
+                    while point_id in seen:
+                        point_id = f"{question_id}.{len(seen) + 1}"
+                    sp.point_id = point_id
+                    seen.add(point_id)
+
+            def _assign_rule_ids(question_id: str, deduction_rules: List[DeductionRule]) -> None:
+                seen = set()
+                for idx, rule in enumerate(deduction_rules):
+                    rule_id = rule.rule_id or f"{question_id}.d{idx + 1}"
+                    while rule_id in seen:
+                        rule_id = f"{question_id}.d{len(seen) + 1}"
+                    rule.rule_id = rule_id
+                    seen.add(rule_id)
+
+            def _dedupe_deduction_rules(deduction_rules: List[DeductionRule]) -> List[DeductionRule]:
+                unique = []
+                seen = set()
+                for rule in deduction_rules:
+                    key = (rule.description, rule.deduction, rule.conditions)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    unique.append(rule)
+                return unique
             
             # 先收集所有题目，然后按主题编号合并
             raw_questions = []
@@ -343,14 +386,24 @@ class RubricParserService:
                         scoring_points.append(ScoringPoint(
                             description=ensure_string(sp.get("description", "")),
                             score=float(sp.get("score", 0)),
-                            is_required=sp.get("is_required", True)
+                            is_required=sp.get("is_required", True),
+                            point_id=ensure_string(sp.get("point_id") or sp.get("pointId") or sp.get("id") or ""),
+                            keywords=[
+                                str(item) for item in (sp.get("keywords") or [])
+                            ] if isinstance(sp.get("keywords"), list) else (
+                                [str(sp.get("keywords"))] if sp.get("keywords") else []
+                            ),
+                            expected_value=ensure_string(sp.get("expected_value") or sp.get("expectedValue") or "")
                         ))
                     elif isinstance(sp, str):
                         # 如果是字符串，将其作为描述，分数设为 0
                         scoring_points.append(ScoringPoint(
                             description=sp,
                             score=0,
-                            is_required=True
+                            is_required=True,
+                            point_id="",
+                            keywords=[],
+                            expected_value="",
                         ))
                 
                 # 处理 alternative_solutions，可能是字典列表或字符串列表
@@ -370,6 +423,24 @@ class RubricParserService:
                             scoring_criteria="",
                             note=""
                         ))
+
+                raw_deductions = q.get("deduction_rules") or q.get("deductionRules") or []
+                deduction_rules = []
+                for dr in raw_deductions:
+                    if isinstance(dr, dict):
+                        deduction_rules.append(DeductionRule(
+                            description=ensure_string(dr.get("description") or dr.get("rule") or ""),
+                            deduction=float(dr.get("deduction", dr.get("score", 0)) or 0),
+                            conditions=ensure_string(dr.get("conditions") or dr.get("when") or ""),
+                            rule_id=ensure_string(dr.get("rule_id") or dr.get("ruleId") or dr.get("id") or ""),
+                        ))
+                    elif isinstance(dr, str):
+                        deduction_rules.append(DeductionRule(
+                            description=dr,
+                            deduction=0.0,
+                            conditions="",
+                            rule_id="",
+                        ))
                 
                 raw_questions.append({
                     "original_id": str(q.get("question_id", "")),
@@ -379,6 +450,7 @@ class RubricParserService:
                     "standard_answer": ensure_string(q.get("standard_answer", "")),
                     "scoring_points": scoring_points,
                     "alternative_solutions": alternative_solutions,
+                    "deduction_rules": deduction_rules,
                     "grading_notes": ensure_string(q.get("grading_notes", ""))
                 })
             
@@ -392,6 +464,7 @@ class RubricParserService:
                     existing["max_score"] += q["max_score"]
                     existing["scoring_points"].extend(q["scoring_points"])
                     existing["alternative_solutions"].extend(q["alternative_solutions"])
+                    existing["deduction_rules"].extend(q["deduction_rules"])
                     
                     # 合并文本内容
                     if q["question_text"] and q["question_text"] not in existing["question_text"]:
@@ -407,6 +480,9 @@ class RubricParserService:
             # 转换为 QuestionRubric 对象
             questions = []
             for norm_id, q in merged_questions.items():
+                _assign_point_ids(norm_id, q["scoring_points"])
+                _assign_rule_ids(norm_id, q["deduction_rules"])
+                q["deduction_rules"] = _dedupe_deduction_rules(q["deduction_rules"])
                 questions.append(QuestionRubric(
                     question_id=norm_id,
                     max_score=q["max_score"],
@@ -414,6 +490,7 @@ class RubricParserService:
                     standard_answer=q["standard_answer"],
                     scoring_points=q["scoring_points"],
                     alternative_solutions=q["alternative_solutions"],
+                    deduction_rules=q["deduction_rules"],
                     grading_notes=q["grading_notes"]
                 ))
             
@@ -482,7 +559,19 @@ class RubricParserService:
             for i, sp in enumerate(q.scoring_points, 1):
                 required = "必须" if sp.is_required else "可选"
                 description = ensure_str(sp.description)
-                lines.append(f"  {i}. [{sp.score}分/{required}] {description}")
+                point_id = ensure_str(sp.point_id) or f"{ensure_str(q.question_id)}.{i}"
+                lines.append(f"  [{point_id}] [{sp.score}分/{required}] {description}")
+
+            if q.deduction_rules:
+                lines.append("扣分规则（备注）")
+                for idx, dr in enumerate(q.deduction_rules, 1):
+                    rule_id = ensure_str(dr.rule_id) or f"{ensure_str(q.question_id)}.d{idx}"
+                    deduction = dr.deduction
+                    conditions = ensure_str(dr.conditions)
+                    condition_text = f"，条件: {conditions}" if conditions else ""
+                    lines.append(
+                        f"  [{rule_id}] -{deduction}分 {ensure_str(dr.description)}{condition_text}"
+                    )
             
             if q.alternative_solutions:
                 lines.append("另类解法（同样可得分）:")

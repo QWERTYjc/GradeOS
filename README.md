@@ -84,7 +84,7 @@ pip install -r requirements.txt
 echo "GEMINI_API_KEY=your_api_key_here" > .env
 
 # 启动服务
-python -m uvicorn src.api.main:app --host 0.0.0.0 --port 8001 --reload
+cd GradeOS-Platform/backend ; python -m uvicorn src.api.main:app --host 0.0.0.0 --port 8001 --reload
 ```
 
 #### 3. 前端安装
@@ -99,7 +99,7 @@ npm install
 echo "NEXT_PUBLIC_API_URL=http://localhost:8001" > .env.local
 
 # 启动开发服务器
-npm run dev
+cd GradeOS-Platform/frontend ;npm run dev
 ```
 
 #### 4. 访问系统

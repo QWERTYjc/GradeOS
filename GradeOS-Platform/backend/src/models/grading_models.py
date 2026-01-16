@@ -33,13 +33,15 @@ class ScoringPoint:
     description: str  # 得分点描述
     score: float  # 该得分点的分值
     is_required: bool = True  # 是否必须
+    point_id: str = ""  # 得分点编号
     
     def to_dict(self) -> Dict[str, Any]:
         """序列化为字典"""
         return {
             "description": self.description,
             "score": self.score,
-            "is_required": self.is_required
+            "is_required": self.is_required,
+            "point_id": self.point_id,
         }
     
     @classmethod
@@ -48,7 +50,8 @@ class ScoringPoint:
         return cls(
             description=data["description"],
             score=data["score"],
-            is_required=data.get("is_required", True)
+            is_required=data.get("is_required", True),
+            point_id=data.get("point_id", ""),
         )
 
 
@@ -94,6 +97,7 @@ class QuestionRubric:
     question_id: str  # 题号
     max_score: float  # 满分
     question_text: str = ""  # 题目内容
+    question_type: Optional[str] = None  # objective/subjective/choice (optional)
     standard_answer: str = ""  # 标准答案
     scoring_points: List[ScoringPoint] = field(default_factory=list)  # 得分点列表
     alternative_solutions: List[AlternativeSolution] = field(default_factory=list)  # 另类解法
@@ -105,6 +109,7 @@ class QuestionRubric:
             "question_id": self.question_id,
             "max_score": self.max_score,
             "question_text": self.question_text,
+            "question_type": self.question_type,
             "standard_answer": self.standard_answer,
             "scoring_points": [sp.to_dict() for sp in self.scoring_points],
             "alternative_solutions": [alt.to_dict() for alt in self.alternative_solutions],
@@ -118,6 +123,7 @@ class QuestionRubric:
             question_id=data["question_id"],
             max_score=data["max_score"],
             question_text=data.get("question_text", ""),
+            question_type=data.get("question_type") or data.get("questionType"),
             standard_answer=data.get("standard_answer", ""),
             scoring_points=[
                 ScoringPoint.from_dict(sp) for sp in data.get("scoring_points", [])
@@ -192,6 +198,7 @@ class QuestionResult:
     is_cross_page: bool = False  # 是否跨页题目
     merge_source: Optional[List[str]] = None  # 合并来源（如果是合并结果）
     student_answer: str = ""  # 学生答案
+    question_type: Optional[str] = None  # objective/subjective/choice (optional)
     
     def to_dict(self) -> Dict[str, Any]:
         """序列化为字典 (Requirements: 8.6)"""
@@ -205,7 +212,8 @@ class QuestionResult:
             "page_indices": self.page_indices,
             "is_cross_page": self.is_cross_page,
             "merge_source": self.merge_source,
-            "student_answer": self.student_answer
+            "student_answer": self.student_answer,
+            "question_type": self.question_type,
         }
     
     @classmethod
@@ -224,7 +232,8 @@ class QuestionResult:
             page_indices=data.get("page_indices", []),
             is_cross_page=data.get("is_cross_page", False),
             merge_source=data.get("merge_source"),
-            student_answer=data.get("student_answer", "")
+            student_answer=data.get("student_answer", ""),
+            question_type=data.get("question_type") or data.get("questionType"),
         )
     
     def to_json(self) -> str:
@@ -330,6 +339,7 @@ class StudentResult:
     student_key: str  # 学生标识
     student_id: Optional[str] = None  # 学号
     student_name: Optional[str] = None  # 姓名
+    grading_mode: Optional[str] = None  # standard/assist_teacher/assist_student
     start_page: int = 0  # 起始页
     end_page: int = 0  # 结束页
     total_score: float = 0.0  # 总分
@@ -344,6 +354,7 @@ class StudentResult:
             "student_key": self.student_key,
             "student_id": self.student_id,
             "student_name": self.student_name,
+            "grading_mode": self.grading_mode,
             "start_page": self.start_page,
             "end_page": self.end_page,
             "total_score": self.total_score,
@@ -360,6 +371,7 @@ class StudentResult:
             student_key=data["student_key"],
             student_id=data.get("student_id"),
             student_name=data.get("student_name"),
+            grading_mode=data.get("grading_mode") or data.get("gradingMode"),
             start_page=data.get("start_page", 0),
             end_page=data.get("end_page", 0),
             total_score=data.get("total_score", 0.0),

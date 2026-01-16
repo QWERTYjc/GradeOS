@@ -30,6 +30,7 @@ class GradingGraphState(TypedDict, total=False):
     
     # ===== 输入数据 =====
     inputs: Dict[str, Any]               # 输入数据（文件路径、配置等）
+    grading_mode: Optional[str]  # standard/assist_teacher/assist_student
     file_paths: List[str]                # 试卷文件路径列表
     rubric: str                          # 评分细则文本
     
@@ -83,10 +84,12 @@ class BatchGradingGraphState(TypedDict, total=False):
     
     # ===== 输入数据 =====
     inputs: Dict[str, Any]               # 批量输入数据
+    grading_mode: Optional[str]  # standard/assist_teacher/assist_student
     pdf_path: str                        # 批量 PDF 文件路径
     rubric: str                          # 评分细则文本
     answer_images: List[str]             # 答题图像列表（base64 或路径）
     rubric_images: List[str]             # 评分标准图像列表
+    student_mapping: List[Dict[str, Any]]  # 前端提供的学生映射（可选）
     
     # ===== 预处理结果 =====
     processed_images: List[str]          # 预处理后的图像

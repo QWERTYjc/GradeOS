@@ -13,6 +13,7 @@ Requirements: 1.1, 1.2, 1.3, 9.1
 import base64
 import json
 import logging
+import re
 from typing import Dict, Any, List, Optional, TYPE_CHECKING, AsyncIterator, Callable, Awaitable, Literal
 
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -607,8 +608,11 @@ class GeminiReasoningClient:
                 scoring_points = q.get("scoring_points", [])
                 
                 if scoring_points:
-                    for sp in scoring_points[:self.MAX_CRITERIA_PER_QUESTION]:
-                        q_info += f"\n  - [{sp.get('score', 0)}分] {sp.get('description', '')}"
+                    for idx, sp in enumerate(scoring_points[:self.MAX_CRITERIA_PER_QUESTION], 1):
+                        point_id = sp.get("point_id") or sp.get("pointId") or f"{q.get('question_id', '?')}.{idx}"
+                        q_info += (
+                            f"\n  - [{point_id}] [{sp.get('score', 0)}分] {sp.get('description', '')}"
+                        )
                 elif criteria:
                     for criterion in criteria[:self.MAX_CRITERIA_PER_QUESTION]:
                         q_info += f"\n  - {criterion}"
@@ -1050,6 +1054,53 @@ class GeminiReasoningClient:
 
         return "\n".join(lines)
 
+    def _infer_question_type(self, question: Dict[str, Any]) -> str:
+        raw_type = (
+            question.get("question_type")
+            or question.get("questionType")
+            or ""
+        )
+        raw_type = str(raw_type).strip().lower()
+        if raw_type:
+            return raw_type
+
+        question_text = (question.get("question_text") or question.get("questionText") or "").strip()
+        grading_notes = (question.get("grading_notes") or question.get("gradingNotes") or "").strip()
+        standard_answer = (question.get("standard_answer") or question.get("standardAnswer") or "").strip()
+        alternative_solutions = (
+            question.get("alternative_solutions")
+            or question.get("alternativeSolutions")
+            or []
+        )
+
+        text_blob = f"{question_text} {grading_notes}".lower()
+        if question_text:
+            text_no_space = re.sub(r"\s+", "", question_text)
+            if re.search(r"[A-D][\\.、．]", text_no_space):
+                return "choice"
+        if standard_answer:
+            answer_clean = re.sub(r"\s+", "", standard_answer.upper())
+            if re.fullmatch(r"[A-D](?:[、,/， ]*[A-D]){0,3}", answer_clean):
+                return "choice"
+        if any(token in text_blob for token in ["选择题", "单选", "多选", "选项", "请选择", "下列"]):
+            return "choice"
+
+        if alternative_solutions:
+            return "subjective"
+        if any(token in text_blob for token in ["简答", "论述", "证明", "推导", "解释", "分析", "讨论", "设计", "说明", "过程", "步骤"]):
+            return "subjective"
+        if any(token in text_blob for token in ["判断", "填空", "对错", "是非", "true", "false"]):
+            return "objective"
+
+        if standard_answer:
+            answer_compact = re.sub(r"\s+", "", standard_answer)
+            if len(answer_compact) <= 4 and re.fullmatch(r"[0-9A-Za-z\\-+.=()（）/]+", answer_compact):
+                return "objective"
+            if len(standard_answer) > 30 or "\n" in standard_answer:
+                return "subjective"
+
+        return "objective"
+
     def _build_rubric_payload(
         self,
         parsed_rubric: Optional[Dict[str, Any]],
@@ -1065,6 +1116,7 @@ class GeminiReasoningClient:
             qid = self._normalize_question_id(q.get("question_id") or q.get("id"))
             if normalized_targets and qid not in normalized_targets:
                 continue
+            question_type = self._infer_question_type(q)
             scoring_points = []
             for idx, sp in enumerate(q.get("scoring_points", [])):
                 point_id = sp.get("point_id") or sp.get("pointId") or f"{qid}.{idx + 1}"
@@ -1076,13 +1128,37 @@ class GeminiReasoningClient:
                     "keywords": sp.get("keywords") or [],
                     "expected_value": sp.get("expected_value") or sp.get("expectedValue") or "",
                 })
+            deduction_rules = []
+            for idx, dr in enumerate(q.get("deduction_rules") or q.get("deductionRules") or []):
+                deduction_rules.append({
+                    "rule_id": dr.get("rule_id") or dr.get("ruleId") or f"{qid}.d{idx + 1}",
+                    "description": dr.get("description", ""),
+                    "deduction": dr.get("deduction", dr.get("score", 0)),
+                    "conditions": dr.get("conditions") or dr.get("when") or "",
+                })
+            alternative_solutions = []
+            for alt in q.get("alternative_solutions") or q.get("alternativeSolutions") or []:
+                if not isinstance(alt, dict):
+                    continue
+                alternative_solutions.append({
+                    "description": (alt.get("description", "") or "")[:200],
+                    "scoring_criteria": (alt.get("scoring_criteria")
+                                         or alt.get("scoringCriteria")
+                                         or alt.get("scoring_conditions")
+                                         or alt.get("scoringConditions")
+                                         or "")[:200],
+                    "max_score": alt.get("max_score", alt.get("maxScore", q.get("max_score", 0))),
+                })
             selected.append({
                 "question_id": qid,
                 "max_score": q.get("max_score", 0),
+                "question_type": question_type,
                 "question_text": (q.get("question_text") or "")[:200],
                 "standard_answer": (q.get("standard_answer") or "")[:300],
                 "grading_notes": (q.get("grading_notes") or "")[:300],
                 "scoring_points": scoring_points,
+                "deduction_rules": deduction_rules,
+                "alternative_solutions": alternative_solutions,
             })
 
         if not selected:
@@ -1090,6 +1166,7 @@ class GeminiReasoningClient:
                 qid = self._normalize_question_id(q.get("question_id") or q.get("id"))
                 if not qid:
                     continue
+                question_type = self._infer_question_type(q)
                 scoring_points = []
                 for idx, sp in enumerate(q.get("scoring_points", [])):
                     point_id = sp.get("point_id") or sp.get("pointId") or f"{qid}.{idx + 1}"
@@ -1101,13 +1178,37 @@ class GeminiReasoningClient:
                         "keywords": sp.get("keywords") or [],
                         "expected_value": sp.get("expected_value") or sp.get("expectedValue") or "",
                     })
+                deduction_rules = []
+                for idx, dr in enumerate(q.get("deduction_rules") or q.get("deductionRules") or []):
+                    deduction_rules.append({
+                        "rule_id": dr.get("rule_id") or dr.get("ruleId") or f"{qid}.d{idx + 1}",
+                        "description": dr.get("description", ""),
+                        "deduction": dr.get("deduction", dr.get("score", 0)),
+                        "conditions": dr.get("conditions") or dr.get("when") or "",
+                    })
+                alternative_solutions = []
+                for alt in q.get("alternative_solutions") or q.get("alternativeSolutions") or []:
+                    if not isinstance(alt, dict):
+                        continue
+                    alternative_solutions.append({
+                        "description": (alt.get("description", "") or "")[:200],
+                        "scoring_criteria": (alt.get("scoring_criteria")
+                                             or alt.get("scoringCriteria")
+                                             or alt.get("scoring_conditions")
+                                             or alt.get("scoringConditions")
+                                             or "")[:200],
+                        "max_score": alt.get("max_score", alt.get("maxScore", q.get("max_score", 0))),
+                    })
                 selected.append({
                     "question_id": qid,
                     "max_score": q.get("max_score", 0),
+                    "question_type": question_type,
                     "question_text": (q.get("question_text") or "")[:200],
                     "standard_answer": (q.get("standard_answer") or "")[:300],
                     "grading_notes": (q.get("grading_notes") or "")[:300],
                     "scoring_points": scoring_points,
+                    "deduction_rules": deduction_rules,
+                    "alternative_solutions": alternative_solutions,
                 })
 
         return {
@@ -1219,6 +1320,12 @@ class GeminiReasoningClient:
             if normalized and normalized not in answer_ids:
                 answer_ids.append(normalized)
 
+        if not answer_ids and parsed_rubric and parsed_rubric.get("questions"):
+            for q in parsed_rubric.get("questions", [])[:self.MAX_QUESTIONS_IN_PROMPT]:
+                qid = self._normalize_question_id(q.get("question_id") or q.get("id"))
+                if qid and qid not in answer_ids:
+                    answer_ids.append(qid)
+
         rubric_payload = self._build_rubric_payload(parsed_rubric, answer_ids)
         mode_label = "FAST" if mode == "fast" else "STRICT"
         fast_note = (
@@ -1231,12 +1338,22 @@ class GeminiReasoningClient:
             "student_answer<=120 chars; evidence<=90 chars; reason<=120 chars; "
             "typo_notes<=3 items."
         )
+        question_type_rules = (
+            "Question type rules:\n"
+            "- choice: no analysis; feedback/self_critique must be empty; keep output minimal.\n"
+            "- objective: strictly follow rubric/scoring_points/deduction_rules; no speculation.\n"
+            "- subjective: allow partial credit; if using alternative_solutions, set "
+            "used_alternative_solution=true and fill alternative_solution_ref; lower confidence.\n"
+        )
         prompt = f"""你是严谨的阅卷老师，只能基于“评分标准”和“答案证据”评分。
 Mode: {mode_label}
 {fast_note}
 {output_constraints}
+{question_type_rules}
 禁止臆测；证据不足时必须给 0 分并说明。
+如评分标准包含扣分规则（deduction_rules），请按规则扣分并在原因中说明。
 如发现错别字/拼写错误，请在每道题的 typo_notes 中标出。
+每个 scoring_point_results 必须包含 point_id、rubric_reference 和 evidence；证据不足时 evidence 写“【原文引用】未找到”。
 
 评分标准(JSON)：
 {json.dumps(rubric_payload, ensure_ascii=False, indent=2)}
@@ -1257,8 +1374,11 @@ Mode: {mode_label}
       "score": 0,
       "max_score": 0,
       "confidence": 0.0,
+      "question_type": "objective",
       "student_answer": "",
       "feedback": "",
+      "used_alternative_solution": false,
+      "alternative_solution_ref": "",
       "typo_notes": ["发现的错别字/拼写错误（如有）"],
       "scoring_point_results": [
         {{
@@ -1283,6 +1403,82 @@ Mode: {mode_label}
             "score": 0.0,
             "max_score": 0.0,
             "confidence": 0.0,
+            "question_numbers": [],
+            "question_details": [],
+            "page_summary": "",
+            "flags": ["parse_error"],
+        }
+        return self._safe_json_loads(response_text, fallback)
+
+    async def assist_from_evidence(
+        self,
+        evidence: Dict[str, Any],
+        parsed_rubric: Optional[Dict[str, Any]] = None,
+        page_context: Optional[Dict[str, Any]] = None,
+        mode: Literal["teacher", "student"] = "teacher",
+        stream_callback: Optional[Callable[[str, str], Awaitable[None]]] = None
+    ) -> Dict[str, Any]:
+        """
+        Provide assistive feedback without grading or scoring.
+        """
+        answer_ids: List[str] = []
+        for item in evidence.get("answers", []):
+            qid = self._normalize_question_id(item.get("question_id"))
+            if qid:
+                answer_ids.append(qid)
+
+        question_numbers = evidence.get("question_numbers") or (page_context or {}).get("question_numbers") or []
+        for qid in question_numbers:
+            normalized = self._normalize_question_id(qid)
+            if normalized and normalized not in answer_ids:
+                answer_ids.append(normalized)
+
+        if not answer_ids and parsed_rubric and parsed_rubric.get("questions"):
+            for q in parsed_rubric.get("questions", [])[:self.MAX_QUESTIONS_IN_PROMPT]:
+                qid = self._normalize_question_id(q.get("question_id") or q.get("id"))
+                if qid and qid not in answer_ids:
+                    answer_ids.append(qid)
+
+        rubric_payload = self._build_rubric_payload(parsed_rubric, answer_ids)
+        mode_label = "TEACHER_ASSIST" if mode == "teacher" else "STUDENT_ASSIST"
+        output_constraints = (
+            "Output constraints: feedback<=160 chars (teacher) or <=600 chars (student); "
+            "student_answer<=200 chars; error_hints<=3 items."
+        )
+        prompt = f"""你是批改助理，只做问题分析与建议，不要打分、不输出分数。
+Mode: {mode_label}
+{output_constraints}
+只基于“答案证据”和可用评分标准（如有）给出提示；证据不足时明确说明不确定。
+Teacher assist: focus on concise error hints and likely missing steps.
+Student assist: explain mistakes and how to improve, step-by-step if needed.
+
+评分标准(JSON，可为空)：
+{json.dumps(rubric_payload, ensure_ascii=False, indent=2)}
+
+答案证据(JSON)：
+{json.dumps(evidence, ensure_ascii=False, indent=2)}
+
+输出 JSON：
+```json
+{{
+  "question_numbers": ["1"],
+  "question_details": [
+    {{
+      "question_id": "1",
+      "question_type": "objective",
+      "student_answer": "",
+      "feedback": "",
+      "error_hints": ["..."],
+      "confidence": 0.0
+    }}
+  ],
+  "page_summary": "",
+  "flags": []
+}}
+```
+"""
+        response_text = await self._call_text_api(prompt, stream_callback)
+        fallback = {
             "question_numbers": [],
             "question_details": [],
             "page_summary": "",
@@ -1644,7 +1840,8 @@ Mode: {mode_label}
         scoring_points_text = ""
         for i, sp in enumerate(rubric.scoring_points, 1):
             required_mark = "【必须】" if sp.is_required else "【可选】"
-            scoring_points_text += f"{i}. {required_mark} {sp.description} ({sp.score}分)\n"
+            point_id = sp.point_id or f"{rubric.question_id}.{i}"
+            scoring_points_text += f"{i}. [{point_id}] {required_mark} {sp.description} ({sp.score}分)\n"
         
         # 构建另类解法列表 (Requirement 1.3)
         alternative_text = ""

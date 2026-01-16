@@ -208,6 +208,7 @@ async def submit_batch(
     homework_id: Optional[str] = Form(None, description="作业 ID（用于成绩写回）"),
     student_mapping_json: Optional[str] = Form(None, description="学生映射 JSON [{studentId, studentName, startIndex, endIndex}]"),
     enable_review: bool = Form(True, description="是否启用人工交互"),
+    grading_mode: Optional[str] = Form(None, description="grading mode: standard/assist_teacher/assist_student/auto"),
     orchestrator: Orchestrator = Depends(get_orchestrator)
 ):
     """
@@ -414,6 +415,7 @@ async def submit_batch(
                 "manual_boundaries": parsed_boundaries,  # 传递人工边界
                 "expected_students": expected_students if expected_students else 2,  # 🔥 默认 2 名学生
                 "enable_review": enable_review,
+                "grading_mode": grading_mode or "auto",
             }
         }
         
@@ -544,17 +546,26 @@ async def stream_langgraph_progress(
                                     "standardAnswer": q.get("standard_answer", ""),
                                     "gradingNotes": q.get("grading_notes", ""),
                                     "sourcePages": q.get("source_pages") or q.get("sourcePages") or [],
-                                  "scoringPoints": [
-                                      {
-                                          "pointId": sp.get("point_id") or sp.get("pointId"),
-                                          "description": sp.get("description", ""),
-                                          "expectedValue": sp.get("expected_value") or sp.get("expectedValue", ""),
-                                          "keywords": sp.get("keywords") or [],
-                                          "score": sp.get("score", 0),
-                                          "isRequired": sp.get("is_required", True),
-                                      }
-                                      for sp in q.get("scoring_points", [])
-                                  ],
+                                    "scoringPoints": [
+                                        {
+                                            "pointId": sp.get("point_id") or sp.get("pointId") or f"{q.get('question_id')}.{idx + 1}",
+                                            "description": sp.get("description", ""),
+                                            "expectedValue": sp.get("expected_value") or sp.get("expectedValue", ""),
+                                            "keywords": sp.get("keywords") or [],
+                                            "score": sp.get("score", 0),
+                                            "isRequired": sp.get("is_required", True),
+                                        }
+                                        for idx, sp in enumerate(q.get("scoring_points", []))
+                                    ],
+                                    "deductionRules": [
+                                        {
+                                            "ruleId": dr.get("rule_id") or dr.get("ruleId") or f"{q.get('question_id')}.d{idx + 1}",
+                                            "description": dr.get("description", ""),
+                                            "deduction": dr.get("deduction", dr.get("score", 0)),
+                                            "conditions": dr.get("conditions") or dr.get("when") or "",
+                                        }
+                                        for idx, dr in enumerate(q.get("deduction_rules") or q.get("deductionRules") or [])
+                                    ],
                                     "alternativeSolutions": [
                                         {
                                             "description": alt.get("description", ""),
@@ -934,8 +945,24 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
                     "rubric_refs": q.get("rubric_refs") or q.get("rubricRefs"),
                     "review_summary": q.get("review_summary") or q.get("reviewSummary"),
                     "review_corrections": q.get("review_corrections") or q.get("reviewCorrections"),
+                    "needsReview": (
+                        q.get("needs_review")
+                        if q.get("needs_review") is not None
+                        else q.get("needsReview", False)
+                    ),
+                    "reviewReasons": (
+                        q.get("review_reasons")
+                        if q.get("review_reasons") is not None
+                        else q.get("reviewReasons") or []
+                    ),
+                    "auditFlags": (
+                        q.get("audit_flags")
+                        if q.get("audit_flags") is not None
+                        else q.get("auditFlags") or []
+                    ),
                     "typo_notes": q.get("typo_notes") or q.get("typoNotes"),
                     "studentAnswer": q.get("student_answer", ""),
+                    "question_type": q.get("question_type") or q.get("questionType"),
                     "isCorrect": q.get("is_correct", False),
                     "scoring_point_results": scoring_results,
                     "page_indices": q.get("page_indices", []),
@@ -958,7 +985,24 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
                     "rubric_refs": q.get("rubric_refs") or q.get("rubricRefs"),
                     "review_summary": q.get("review_summary") or q.get("reviewSummary"),
                     "review_corrections": q.get("review_corrections") or q.get("reviewCorrections"),
+                    "needsReview": (
+                        q.get("needs_review")
+                        if q.get("needs_review") is not None
+                        else q.get("needsReview", False)
+                    ),
+                    "reviewReasons": (
+                        q.get("review_reasons")
+                        if q.get("review_reasons") is not None
+                        else q.get("reviewReasons") or []
+                    ),
+                    "auditFlags": (
+                        q.get("audit_flags")
+                        if q.get("audit_flags") is not None
+                        else q.get("auditFlags") or []
+                    ),
                     "typo_notes": q.get("typo_notes") or q.get("typoNotes"),
+                    "studentAnswer": q.get("student_answer", ""),
+                    "question_type": q.get("question_type") or q.get("questionType"),
                     "scoring_point_results": scoring_results,
                     "page_indices": q.get("page_indices", []),
                     "is_cross_page": q.get("is_cross_page", False),
@@ -980,8 +1024,24 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
                     "rubric_refs": q.get("rubric_refs") or q.get("rubricRefs"),
                     "review_summary": q.get("review_summary") or q.get("reviewSummary"),
                     "review_corrections": q.get("review_corrections") or q.get("reviewCorrections"),
+                    "needsReview": (
+                        q.get("needs_review")
+                        if q.get("needs_review") is not None
+                        else q.get("needsReview", False)
+                    ),
+                    "reviewReasons": (
+                        q.get("review_reasons")
+                        if q.get("review_reasons") is not None
+                        else q.get("reviewReasons") or []
+                    ),
+                    "auditFlags": (
+                        q.get("audit_flags")
+                        if q.get("audit_flags") is not None
+                        else q.get("auditFlags") or []
+                    ),
                     "typo_notes": q.get("typo_notes") or q.get("typoNotes"),
                     "studentAnswer": q.get("student_answer", ""),
+                    "question_type": q.get("question_type") or q.get("questionType"),
                     "isCorrect": q.get("is_correct", False),
                     "scoring_point_results": scoring_results,
                     "page_indices": q.get("page_indices", []),
@@ -1010,8 +1070,24 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
                             "rubric_refs": q.get("rubric_refs") or q.get("rubricRefs"),
                             "review_summary": q.get("review_summary") or q.get("reviewSummary"),
                             "review_corrections": q.get("review_corrections") or q.get("reviewCorrections"),
+                            "needsReview": (
+                                q.get("needs_review")
+                                if q.get("needs_review") is not None
+                                else q.get("needsReview", False)
+                            ),
+                            "reviewReasons": (
+                                q.get("review_reasons")
+                                if q.get("review_reasons") is not None
+                                else q.get("reviewReasons") or []
+                            ),
+                            "auditFlags": (
+                                q.get("audit_flags")
+                                if q.get("audit_flags") is not None
+                                else q.get("auditFlags") or []
+                            ),
                             "typo_notes": q.get("typo_notes") or q.get("typoNotes"),
                             "studentAnswer": q.get("student_answer", ""),
+                            "question_type": q.get("question_type") or q.get("questionType"),
                             "isCorrect": q.get("is_correct", False),
                             "scoring_point_results": scoring_results,
                             "page_indices": page_indices or [],
@@ -1030,6 +1106,7 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
             "questionResults": question_results,
             "confidence": r.get("confidence", 0),
             "needsConfirmation": r.get("needs_confirmation", False),
+            "gradingMode": r.get("grading_mode") or r.get("gradingMode"),
             "studentSummary": student_summary,
             "selfAudit": self_audit
         })
@@ -1131,14 +1208,23 @@ async def websocket_endpoint(websocket: WebSocket, batch_id: str):
                                 "gradingNotes": q.get("grading_notes", ""),
                           "scoringPoints": [
                               {
-                                  "pointId": sp.get("point_id") or sp.get("pointId"),
+                                  "pointId": sp.get("point_id") or sp.get("pointId") or f"{q.get('question_id')}.{idx + 1}",
                                   "description": sp.get("description", ""),
                                   "expectedValue": sp.get("expected_value") or sp.get("expectedValue", ""),
                                   "keywords": sp.get("keywords") or [],
                                   "score": sp.get("score", 0),
                                   "isRequired": sp.get("is_required", True),
                               }
-                              for sp in q.get("scoring_points", [])
+                              for idx, sp in enumerate(q.get("scoring_points", []))
+                          ],
+                          "deductionRules": [
+                              {
+                                  "ruleId": dr.get("rule_id") or dr.get("ruleId") or f"{q.get('question_id')}.d{idx + 1}",
+                                  "description": dr.get("description", ""),
+                                  "deduction": dr.get("deduction", dr.get("score", 0)),
+                                  "conditions": dr.get("conditions") or dr.get("when") or "",
+                              }
+                              for idx, dr in enumerate(q.get("deduction_rules") or q.get("deductionRules") or [])
                           ],
                                 "alternativeSolutions": [
                                     {

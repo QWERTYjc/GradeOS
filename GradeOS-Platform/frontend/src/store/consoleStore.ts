@@ -78,6 +78,8 @@ export interface QuestionResult {
     score: number;
     maxScore: number;
     feedback?: string;
+    studentAnswer?: string;
+    questionType?: string;
     confidence?: number;
     confidenceReason?: string;
     selfCritique?: string;
@@ -138,6 +140,7 @@ export interface StudentResult {
     studentName: string;
     score: number;
     maxScore: number;
+    gradingMode?: string;
     percentage?: number;
     totalRevisions?: number;
     questionResults?: QuestionResult[];
@@ -338,6 +341,7 @@ export interface ConsoleState {
     workflowNodes: WorkflowNode[];
     finalResults: StudentResult[];
     interactionEnabled: boolean;
+    gradingMode: string;
     nodeStatusTimestamps: Record<string, number>;
     nodeStatusTimers: Record<string, ReturnType<typeof setTimeout>>;
 
@@ -402,31 +406,27 @@ export interface ConsoleState {
     setClassContext: (context: Partial<ClassContext>) => void;
     clearClassContext: () => void;
     setInteractionEnabled: (enabled: boolean) => void;
+    setGradingMode: (mode: string) => void;
 }
 
 /**
  * 工作流节点配置
  * 
- * 基于 LangGraph 架构的批改流程（与后端 batch_grading.py 完全对应）：
- * 1. index - 批改前索引（题目信息 + 学生识别）
- * 2. rubric_parse - 解析评分标准
- * 3. rubric_review - 评分标准人工交互（可选）
- * 4. grade_batch - 可配置分批并行批改（支持批次失败重试、Worker 独立性）
- * 5. cross_page_merge - 跨页题目合并（检测并合并跨页题目，避免重复计分）
- * 6. index_merge - 索引聚合（基于索引聚合学生结果）
- * 7. logic_review - 逻辑复核
- * 8. review - 批改结果人工交互（可选）
- * 9. export - 导出结果（支持 JSON 导出、部分结果保存）
+ * 基于 LangGraph 架构的前端展示流程（隐藏内部 merge 节点）：
+ * 1. rubric_parse - 解析评分标准
+ * 2. rubric_review - 评分标准人工交互（可选）
+ * 3. grade_batch - 按学生批次并行批改
+ * 4. logic_review - 批改逻辑复核
+ * 5. review - 批改结果人工交互（可选）
+ * 6. export - 导出结果
  * 
- * 后端 LangGraph Graph 流程：
+ * 后端 LangGraph Graph 流程（含内部节点）：
  * index -> rubric_parse -> rubric_review -> grade_batch -> cross_page_merge -> index_merge -> logic_review -> review -> export -> END
  */
 const initialNodes: WorkflowNode[] = [
     { id: 'rubric_parse', label: 'Rubric Parse', status: 'pending', isParallelContainer: true, children: [] },
     { id: 'rubric_review', label: 'Rubric Review', status: 'pending' },
     { id: 'grade_batch', label: 'Batch Grading', status: 'pending', isParallelContainer: true, children: [] },
-    { id: 'cross_page_merge', label: 'Cross-Page Merge', status: 'pending' },
-    { id: 'index_merge', label: 'Result Merge', status: 'pending' },
     { id: 'logic_review', label: 'Logic Review', status: 'pending', isParallelContainer: true, children: [] },
     { id: 'review', label: 'Results Review', status: 'pending' },
     { id: 'export', label: 'Export', status: 'pending' },
@@ -554,6 +554,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
     workflowNodes: initialNodes,
     finalResults: [],
     interactionEnabled: false,
+    gradingMode: 'auto',
     nodeStatusTimestamps: {},
     nodeStatusTimers: {},
 
@@ -590,6 +591,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
     setStatus: (status) => set({ status }),
     setSubmissionId: (id) => set({ submissionId: id }),
     setInteractionEnabled: (enabled) => set({ interactionEnabled: enabled }),
+    setGradingMode: (mode) => set({ gradingMode: mode }),
     addLog: (message, level = 'INFO') => set((state) => ({
         logs: [...state.logs, {
             timestamp: new Date().toISOString(),
@@ -762,6 +764,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
             logs: [],
             finalResults: [],
             interactionEnabled: false,
+            gradingMode: 'auto',
             workflowNodes: initialNodes.map(n => ({
                 ...n,
                 status: 'pending' as NodeStatus,
@@ -1284,6 +1287,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
                     studentName: r.studentName || r.student_name || r.student_key || 'Unknown',
                     score: r.score || r.total_score || 0,
                     maxScore: r.maxScore || r.max_score || r.max_total_score || 100,
+                    gradingMode: r.gradingMode || r.grading_mode,
                     percentage: r.percentage,
                     totalRevisions: r.totalRevisions,
                     startPage: r.start_page || r.startPage,
@@ -1328,6 +1332,8 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
                             score: q.score || 0,
                             maxScore: q.maxScore || q.max_score || 0,
                             feedback: q.feedback || '',
+                            studentAnswer: q.studentAnswer || q.student_answer || '',
+                            questionType: q.questionType || q.question_type || '',
                             confidence: q.confidence,
                             confidenceReason: q.confidence_reason || q.confidenceReason,
                             selfCritique: q.self_critique || q.selfCritique,
@@ -1388,8 +1394,8 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
                     rubric_review_completed: 'rubric_review',
                     rubric_review_skipped: 'rubric_review',
                     grade_batch_completed: 'grade_batch',
-                    cross_page_merge_completed: 'cross_page_merge',
-                    index_merge_completed: 'index_merge',
+                    cross_page_merge_completed: 'grade_batch',
+                    index_merge_completed: 'grade_batch',
                     logic_review_completed: 'logic_review',
                     logic_review_skipped: 'logic_review',
                     review_completed: 'review',
@@ -1399,8 +1405,6 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
                     'rubric_parse',
                     'rubric_review',
                     'grade_batch',
-                    'cross_page_merge',
-                    'index_merge',
                     'logic_review',
                     'review',
                     'export'

@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useMemo } from 'react';
+import { useRouter } from 'next/navigation';
 import { useConsoleStore, WorkflowNode, GradingAgent } from '@/store/consoleStore';
 import clsx from 'clsx';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -215,7 +216,13 @@ const NodeCard: React.FC<{
     onClick: () => void;
     isSelected: boolean;
 }> = ({ node, onClick, isSelected }) => {
-    const inferredStatus = node.status === 'pending' && !node.isParallelContainer ? 'completed' : node.status;
+    const shouldAutoComplete = (
+        node.status === 'pending'
+        && !node.isParallelContainer
+        && node.id !== 'rubric_review'
+        && node.id !== 'review'
+    );
+    const inferredStatus = shouldAutoComplete ? 'completed' : node.status;
     const effectiveStatus = (node as any).isVisualCompleted ? 'completed' : inferredStatus;
     const styles = statusStyles[effectiveStatus] || statusStyles.pending;
     const isRunning = effectiveStatus === 'running';
@@ -306,8 +313,32 @@ export const WorkflowGraph: React.FC = () => {
         setSelectedAgentId,
         status,
         batchProgress,
-        interactionEnabled
+        interactionEnabled,
+        pendingReview,
+        submissionId
     } = useConsoleStore();
+    const router = useRouter();
+
+    const handleNodeClick = (node: WorkflowNode) => {
+        setSelectedNodeId(node.id);
+        if (!interactionEnabled || !submissionId) {
+            return;
+        }
+        const reviewType = pendingReview?.reviewType || '';
+        if (node.id === 'rubric_review') {
+            const canNavigate = node.status === 'running' || reviewType.includes('rubric');
+            if (canNavigate) {
+                router.push(`/grading/rubric-review/${submissionId}`);
+            }
+            return;
+        }
+        if (node.id === 'review') {
+            const canNavigate = node.status === 'running' || reviewType.includes('results');
+            if (canNavigate) {
+                router.push(`/grading/results-review/${submissionId}`);
+            }
+        }
+    };
 
     const visibleNodes = useMemo(() => {
         const filteredNodes = interactionEnabled
@@ -346,7 +377,7 @@ export const WorkflowGraph: React.FC = () => {
                                 ) : (
                                     <NodeCard
                                         node={node}
-                                        onClick={() => setSelectedNodeId(node.id)}
+                                        onClick={() => handleNodeClick(node)}
                                         isSelected={selectedNodeId === node.id}
                                     />
                                 )}
