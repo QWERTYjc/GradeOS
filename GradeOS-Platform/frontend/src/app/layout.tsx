@@ -11,6 +11,8 @@ export const metadata: Metadata = {
 
 import GlobalBackground from '@/components/GlobalBackground';
 
+import PageTransition from '@/components/layout/PageTransition';
+
 export default function RootLayout({
   children,
 }: {
@@ -20,7 +22,7 @@ export default function RootLayout({
     <html lang="en">
       <body className={inter.className}>
         <GlobalBackground />
-        {children}
+        <PageTransition>{children}</PageTransition>
       </body>
     </html>
   );
