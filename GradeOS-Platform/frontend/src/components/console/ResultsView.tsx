@@ -25,6 +25,22 @@ const normalizeEvidenceText = (text?: string) => {
     return text.replace(/^【原文引用】\s*/, '').trim();
 };
 
+const splitParagraphs = (text: string) => {
+    const normalized = text.replace(/\r\n/g, '\n').trim();
+    if (!normalized) return [];
+    return normalized.split(/\n\s*\n/).map((paragraph) => paragraph.trimEnd());
+};
+
+const renderParagraphs = (text: string) => {
+    const paragraphs = splitParagraphs(text);
+    if (paragraphs.length === 0) return null;
+    return paragraphs.map((paragraph, idx) => (
+        <p key={`para-${idx}`} className="whitespace-pre-wrap text-sm text-slate-700 leading-relaxed">
+            <MathText text={paragraph} />
+        </p>
+    ));
+};
+
 const QuestionDetail: React.FC<{ question: QuestionResult; gradingMode?: string }> = ({ question, gradingMode }) => {
     const percentage = question.maxScore > 0 ? (question.score / question.maxScore) * 100 : 0;
     const questionLabel = question.questionId === 'unknown' ? '未识别' : question.questionId;
@@ -94,7 +110,9 @@ const QuestionDetail: React.FC<{ question: QuestionResult; gradingMode?: string 
             {question.studentAnswer && (
                 <div className="bg-slate-50/80 rounded-lg p-3 border border-slate-100">
                     <span className="text-[10px] uppercase font-bold text-slate-400 mb-1 block tracking-wider">Student Answer</span>
-                    <MathText className="text-slate-700 text-sm" text={question.studentAnswer} />
+                    <div className="space-y-2">
+                        {renderParagraphs(question.studentAnswer)}
+                    </div>
                 </div>
             )}
 
@@ -562,6 +580,33 @@ export const ResultsView: React.FC = () => {
                                 </div>
                                 <div className="text-sm font-bold text-slate-400 uppercase tracking-[0.2em]">{isAssist ? 'Assisted Grading' : 'Total Score'}</div>
                             </div>
+
+                            {detailViewStudent.selfAudit && (
+                                <GlassCard className="p-4 border border-slate-100 bg-slate-50/80" hoverEffect={false}>
+                                    <div className="flex items-center justify-between mb-2">
+                                        <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">Confession</div>
+                                        {detailViewStudent.selfAudit.overallComplianceGrade !== undefined && (
+                                            <div className="text-xs font-semibold text-slate-500">
+                                                合规评分 {Math.round(detailViewStudent.selfAudit.overallComplianceGrade)} / 7
+                                            </div>
+                                        )}
+                                    </div>
+                                    {detailViewStudent.selfAudit.summary && (
+                                        <p className="text-xs text-slate-600 leading-relaxed whitespace-pre-wrap">
+                                            {detailViewStudent.selfAudit.summary}
+                                        </p>
+                                    )}
+                                    {detailViewStudent.selfAudit.uncertaintiesAndConflicts && detailViewStudent.selfAudit.uncertaintiesAndConflicts.length > 0 && (
+                                        <ul className="mt-3 space-y-1 text-[11px] text-slate-500 list-disc pl-4">
+                                            {detailViewStudent.selfAudit.uncertaintiesAndConflicts.slice(0, 4).map((item, idx) => (
+                                                <li key={`confession-${idx}`}>
+                                                    {item.issue || item.impact || '存在未披露的不确定性'}
+                                                </li>
+                                            ))}
+                                        </ul>
+                                    )}
+                                </GlassCard>
+                            )}
 
                             {/* Questions */}
                             <div className="space-y-4">

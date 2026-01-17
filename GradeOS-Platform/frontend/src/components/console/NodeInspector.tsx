@@ -289,10 +289,25 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({ className }) => {
                                             )}
                                             {selectedAgent.output?.selfAudit && (
                                                 <div className="space-y-3 relative z-10">
+                                                    {((selectedAgent.output.selfAudit.overallComplianceGrade ?? selectedAgent.output.selfAudit.overall_compliance_grade) !== undefined) && (
+                                                        <div className="text-[11px] font-semibold text-amber-700 bg-amber-100/50 rounded-lg px-3 py-2 border border-amber-200/40">
+                                                            合规评分：{Math.round(selectedAgent.output.selfAudit.overallComplianceGrade ?? selectedAgent.output.selfAudit.overall_compliance_grade)} / 7
+                                                        </div>
+                                                    )}
                                                     {selectedAgent.output.selfAudit.summary && (
                                                         <p className="text-xs text-amber-800/80 leading-relaxed bg-amber-100/40 p-3 rounded-xl border border-amber-200/40">
                                                             {selectedAgent.output.selfAudit.summary}
                                                         </p>
+                                                    )}
+                                                    {(selectedAgent.output.selfAudit.uncertaintiesAndConflicts || selectedAgent.output.selfAudit.uncertainties_and_conflicts) && (
+                                                        <div className="space-y-1.5">
+                                                            {(selectedAgent.output.selfAudit.uncertaintiesAndConflicts || selectedAgent.output.selfAudit.uncertainties_and_conflicts || []).slice(0, 3).map((issue, idx) => (
+                                                                <div key={`conflict-${idx}`} className="bg-white/60 border border-amber-100 rounded-lg px-3 py-2 text-xs text-amber-700 flex items-start gap-2">
+                                                                    <AlertTriangle className="w-3 h-3 mt-0.5 flex-shrink-0 opacity-70" />
+                                                                    <span>{issue.issue || issue.impact || '存在未披露的不确定性'}</span>
+                                                                </div>
+                                                            ))}
+                                                        </div>
                                                     )}
                                                     {selectedAgent.output.selfAudit.issues && selectedAgent.output.selfAudit.issues.length > 0 && (
                                                         <div className="space-y-1.5">

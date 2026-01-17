@@ -2992,7 +2992,7 @@ async def index_merge_node(state: BatchGradingGraphState) -> Dict[str, Any]:
             student_key = boundary["student_key"]
             info = student_info_by_key.get(student_key, {})
 
-            student_results.append({
+            student_record = {
                 "student_key": student_key,
                 "student_id": info.get("student_id"),
                 "student_name": info.get("student_name"),
@@ -3005,7 +3005,9 @@ async def index_merge_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                 "confidence": boundary.get("confidence", 0.0),
                 "needs_confirmation": boundary.get("needs_confirmation", False),
                 "grading_mode": grading_mode,
-            })
+            }
+            _recompute_student_totals(student_record)
+            student_results.append(student_record)
 
         logger.info(
             f"[index_merge] 聚合完成: batch_id={batch_id}, 学生数={len(student_boundaries)}"
@@ -3367,6 +3369,32 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _recompute_student_totals(student: Dict[str, Any]) -> None:
+    total_score = _safe_float(student.get("total_score", 0))
+    max_total_score = _safe_float(student.get("max_total_score", 0))
+
+    question_details = student.get("question_details") or []
+    if question_details:
+        computed_score = sum(_safe_float(q.get("score", 0)) for q in question_details)
+        computed_max = sum(
+            _safe_float(q.get("max_score", q.get("maxScore", 0))) for q in question_details
+        )
+        if total_score <= 0 and computed_score > 0:
+            student["total_score"] = computed_score
+        if max_total_score <= 0 and computed_max > 0:
+            student["max_total_score"] = computed_max
+        return
+
+    page_results = student.get("page_results") or []
+    if page_results:
+        computed_score = sum(_safe_float(p.get("score", 0)) for p in page_results)
+        computed_max = sum(_safe_float(p.get("max_score", 0)) for p in page_results)
+        if total_score <= 0 and computed_score > 0:
+            student["total_score"] = computed_score
+        if max_total_score <= 0 and computed_max > 0:
+            student["max_total_score"] = computed_max
 
 
 def _resolve_student_key_for_page(
@@ -3876,12 +3904,56 @@ def _build_self_audit(student: Dict[str, Any]) -> Dict[str, Any]:
                 "question_id": qid,
             })
 
+    issue_types = {issue.get("issue_type") for issue in issues}
+    low_confidence_questions = [
+        issue.get("question_id")
+        for issue in issues
+        if issue.get("issue_type") == "low_confidence" and issue.get("question_id")
+    ]
+
+    compliance_analysis = [
+        {
+            "goal": "严格按评分标准给分",
+            "tag": "unsure_not_reported" if "missing_rubric_ref" in issue_types else "fully_complied",
+            "notes": "部分评分点缺少标准引用" if "missing_rubric_ref" in issue_types else "未发现明显偏离评分标准",
+        },
+        {
+            "goal": "扣分点需有答案证据",
+            "tag": "failed_not_reported" if "missing_evidence" in issue_types else "fully_complied",
+            "notes": "存在证据不足的评分点" if "missing_evidence" in issue_types else "评分点证据充足",
+        },
+        {
+            "goal": "不确定性需明确披露",
+            "tag": "unsure_not_reported" if "low_confidence" in issue_types else "fully_complied",
+            "notes": "存在低置信度题目" if "low_confidence" in issue_types else "未发现明显不确定性",
+        },
+    ]
+
+    uncertainties_and_conflicts = []
+    if low_confidence_questions:
+        uncertainties_and_conflicts.append({
+            "issue": "部分题目评分置信度不足",
+            "impact": "可能导致评分偏差",
+            "question_ids": low_confidence_questions,
+            "reported_to_user": False,
+        })
+
     avg_confidence = (
         sum(confidence_values) / len(confidence_values)
         if confidence_values else 0.7
     )
     penalty = min(0.4, 0.05 * len(issues))
     audit_confidence = max(0.1, min(1.0, avg_confidence - penalty))
+    base_grade = 7
+    if "missing_evidence" in issue_types:
+        base_grade -= 2
+    if "missing_rubric_ref" in issue_types:
+        base_grade -= 1
+    if "low_confidence" in issue_types:
+        base_grade -= 1
+    if "missing_self_critique" in issue_types:
+        base_grade -= 1
+    overall_compliance_grade = max(1, min(7, base_grade))
 
     if issues:
         issue_labels = [issue.get("message", "") for issue in issues[:3] if issue.get("message")]
@@ -3893,6 +3965,9 @@ def _build_self_audit(student: Dict[str, Any]) -> Dict[str, Any]:
         "summary": summary,
         "confidence": audit_confidence,
         "issues": issues,
+        "compliance_analysis": compliance_analysis,
+        "uncertainties_and_conflicts": uncertainties_and_conflicts,
+        "overall_compliance_grade": overall_compliance_grade,
         "generated_at": datetime.now().isoformat(),
     }
 
@@ -3942,6 +4017,18 @@ def _apply_review_flags_and_queue(
                 "end_page": student.get("end_page"),
                 "confidence": _safe_float(student.get("confidence", 0)),
                 "reasons": ["boundary_needs_confirmation"],
+            })
+
+        self_audit = student.get("self_audit") or {}
+        compliance_grade = _safe_float(self_audit.get("overall_compliance_grade"))
+        if compliance_grade and compliance_grade <= 3:
+            key = f"confession:{student_key}"
+            queue_map.setdefault(key, {
+                "type": "confession",
+                "student_key": student_key,
+                "confidence": _safe_float(self_audit.get("confidence", 0)),
+                "compliance_grade": compliance_grade,
+                "reasons": ["confession_low_grade"],
             })
 
         for question in student.get("question_details", []) or []:
@@ -4202,10 +4289,16 @@ def _normalize_logic_review_self_audit(raw: Any) -> Optional[Dict[str, Any]]:
     if not isinstance(raw, dict):
         return None
     issues = _normalize_logic_review_issues(raw.get("issues"))
+    compliance_analysis = raw.get("compliance_analysis") or raw.get("complianceAnalysis") or []
+    uncertainties = raw.get("uncertainties_and_conflicts") or raw.get("uncertaintiesAndConflicts") or []
+    overall_grade = raw.get("overall_compliance_grade") or raw.get("overallComplianceGrade")
     return {
         "summary": raw.get("summary") or "",
         "confidence": _safe_float(raw.get("confidence", 0.0)),
         "issues": issues,
+        "compliance_analysis": compliance_analysis if isinstance(compliance_analysis, list) else [],
+        "uncertainties_and_conflicts": uncertainties if isinstance(uncertainties, list) else [],
+        "overall_compliance_grade": _safe_float(overall_grade, 0.0),
         "generated_at": datetime.now().isoformat(),
         "honesty_note": raw.get("honesty_note") or raw.get("honestyNote") or "",
     }
@@ -4382,6 +4475,11 @@ def _build_logic_review_prompt(
         "若自白过于武断且证据不足，应在 review_summary 中指出并降低 confidence。",
         "仅对明显错分给出 review_corrections，每题最多 1 个得分点，修正幅度不超过 1 分。",
         "review_corrections 需包含 point_id、correct_awarded、correct_decision（可选）和 review_reason。",
+        "自白要求：枚举应遵守的目标 -> 逐条判定 -> 报告不确定/冲突点。",
+        "self_audit.compliance_analysis 每项包含 goal 与 tag，tag 只能是：",
+        "fully_complied | unsure_reported | unsure_not_reported | failed_reported | failed_implied。",
+        "self_audit.uncertainties_and_conflicts 列出问题、不确定原因与是否已披露。",
+        "self_audit.overall_compliance_grade 为 1-7，<=3 视为失败。",
         "请仅输出 JSON，不要添加额外说明或 markdown。",
         "",
         f"学生标识: {student_key}",
@@ -4465,6 +4563,13 @@ def _build_logic_review_prompt(
             "summary": "string",
             "confidence": 0.0,
             "issues": [{"issue_type": "string", "message": "string", "question_id": "1"}],
+            "compliance_analysis": [
+                {"goal": "string", "tag": "fully_complied", "notes": "string"}
+            ],
+            "uncertainties_and_conflicts": [
+                {"issue": "string", "impact": "string", "question_ids": ["1"], "reported_to_user": true}
+            ],
+            "overall_compliance_grade": 4,
             "honesty_note": "string"
         }
     }
@@ -4564,6 +4669,7 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
             question_details = _extract_logic_review_questions(student)
             if not question_details:
                 updated_student = dict(student)
+                _recompute_student_totals(updated_student)
                 updated_student["self_audit"] = _build_self_audit(updated_student)
                 updated_student["logic_reviewed_at"] = datetime.now().isoformat()
                 updated_results[index] = updated_student
@@ -4644,6 +4750,7 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                 else:
                     updated_details.append(dict(q))
             updated_student["question_details"] = updated_details
+            _recompute_student_totals(updated_student)
 
             self_audit = _normalize_logic_review_self_audit(
                 payload.get("self_audit") or payload.get("selfAudit")
@@ -4874,6 +4981,7 @@ async def export_node(state: BatchGradingGraphState) -> Dict[str, Any]:
         ]
     
     for student in student_results:
+        _recompute_student_totals(student)
         # 计算百分比
         total_score = student.get("total_score", 0)
         max_score = student.get("max_total_score", 0)

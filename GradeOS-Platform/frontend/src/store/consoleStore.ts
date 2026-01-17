@@ -39,17 +39,7 @@ export interface GradingAgent {
             lowConfidenceCount?: number;
             notes?: string;
         };
-        selfAudit?: {
-            summary?: string;
-            confidence?: number;
-            issues?: Array<{
-                issueType?: string;
-                message?: string;
-                questionId?: string;
-            }>;
-            honestyNote?: string;
-            generatedAt?: string;
-        };
+        selfAudit?: SelfAudit;
     };
 }
 
@@ -186,6 +176,20 @@ export interface SelfAudit {
     summary?: string;
     confidence?: number;
     issues?: SelfAuditIssue[];
+    complianceAnalysis?: Array<{
+        goal?: string;
+        tag?: string;
+        notes?: string;
+        evidence?: string;
+    }>;
+    uncertaintiesAndConflicts?: Array<{
+        issue?: string;
+        impact?: string;
+        questionIds?: string[];
+        reportedToUser?: boolean;
+    }>;
+    overallComplianceGrade?: number;
+    honestyNote?: string;
     generatedAt?: string;
 }
 
@@ -524,6 +528,10 @@ const normalizeSelfAudit = (audit: any): SelfAudit | undefined => {
         summary: audit.summary,
         confidence: audit.confidence,
         issues,
+        complianceAnalysis: audit.complianceAnalysis || audit.compliance_analysis || [],
+        uncertaintiesAndConflicts: audit.uncertaintiesAndConflicts || audit.uncertainties_and_conflicts || [],
+        overallComplianceGrade: audit.overallComplianceGrade ?? audit.overall_compliance_grade,
+        honestyNote: audit.honestyNote || audit.honesty_note,
         generatedAt: audit.generatedAt || audit.generated_at,
     };
 };
@@ -1445,6 +1453,15 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
                                 get().updateNodeStatus(nodeId, 'completed');
                             }
                         });
+                        const pendingReview = get().pendingReview;
+                        const holdRubricReview = stageNode === 'rubric_review'
+                            && pendingReview
+                            && (pendingReview.reviewType || '').includes('rubric');
+                        if (holdRubricReview) {
+                            get().updateNodeStatus(stageNode, 'running', 'Waiting for interaction');
+                            return;
+                        }
+
                         get().updateNodeStatus(stageNode, 'completed');
 
                         const nextNode = orderedNodes[stageIndex + 1];

@@ -905,6 +905,15 @@ def _get_node_display_name(node_name: str) -> str:
     return display_names.get(node_name, node_name)
 
 
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        if value is None:
+            return default
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
     """格式化批改结果为前端格式"""
     # #region agent log - 假设D: _format_results_for_frontend 输入
@@ -1091,12 +1100,19 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
                             "merge_source": q.get("merge_source")
                         })
         
+        computed_score = sum(_safe_float(q.get("score", 0)) for q in question_results)
+        computed_max = sum(_safe_float(q.get("maxScore", 0)) for q in question_results)
+        raw_score = _safe_float(r.get("total_score", r.get("score", 0)))
+        raw_max = _safe_float(r.get("max_total_score", r.get("max_score", 0)))
+        final_score = raw_score if raw_score > 0 or computed_score <= 0 else computed_score
+        final_max = raw_max if raw_max > 0 or computed_max <= 0 else computed_max
+
         student_summary = r.get("student_summary") or r.get("studentSummary")
         self_audit = r.get("self_audit") or r.get("selfAudit")
         formatted.append({
             "studentName": r.get("student_key") or r.get("student_name") or r.get("student_id", "Unknown"),
-            "score": r.get("total_score", r.get("score", 0)),
-            "maxScore": r.get("max_total_score", r.get("max_score", 100)),
+            "score": final_score,
+            "maxScore": final_max if final_max > 0 else 0,
             "startPage": r.get("start_page"),   # 🔥 新增：学生页面范围
             "endPage": r.get("end_page"),       # 🔥 新增：学生页面范围
             "questionResults": question_results,
