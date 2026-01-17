@@ -1,22 +1,15 @@
 'use client';
 
-import React, { useEffect, useRef, useState, useContext } from 'react';
+import React, { useEffect, useState, useContext } from 'react';
 import dynamic from 'next/dynamic';
 import { useConsoleStore } from '@/store/consoleStore';
 import { useSearchParams } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Space_Grotesk, Unbounded } from 'next/font/google';
 import {
-    Activity,
-    CheckCircle,
-    AlertCircle,
-    X,
-    Terminal,
-    Minimize2,
     Images,
     ScanLine,
-    Trophy,
-    Info
+    Trophy
 } from 'lucide-react';
 import clsx from 'clsx';
 import { AppContext } from '@/components/bookscan/AppContext';
@@ -30,7 +23,6 @@ const WorkflowGraph = dynamic(() => import('@/components/console/WorkflowGraph')
 const ResultsView = dynamic(() => import('@/components/console/ResultsView'), { ssr: false });
 const LLMThoughtsPanel = dynamic(() => import('@/components/console/LLMThoughtsPanel'), { ssr: false });
 const ReviewOverlay = dynamic(() => import('@/components/console/ReviewOverlay'), { ssr: false });
-const NodeInspector = dynamic(() => import('@/components/console/NodeInspector').then(mod => mod.NodeInspector), { ssr: false });
 
 const spaceGrotesk = Space_Grotesk({ subsets: ['latin'], variable: '--font-space' });
 const unbounded = Unbounded({ subsets: ['latin'], variable: '--font-display' });
@@ -222,7 +214,7 @@ export default function ConsolePage() {
     const reset = useConsoleStore((state) => state.reset);
     const selectedAgentId = useConsoleStore((state) => state.selectedAgentId);
     const selectedNodeId = useConsoleStore((state) => state.selectedNodeId);
-    const llmThoughtsCount = useConsoleStore((state) => state.llmThoughts.length);
+    const setSelectedNodeId = useConsoleStore((state) => state.setSelectedNodeId);
     const interactionEnabled = useConsoleStore((state) => state.interactionEnabled);
     const setInteractionEnabled = useConsoleStore((state) => state.setInteractionEnabled);
     const gradingMode = useConsoleStore((state) => state.gradingMode);
@@ -243,6 +235,20 @@ export default function ConsolePage() {
 
     // Used for Workflow view
     const [currentTab, setCurrentTab] = useState<'process' | 'results'>('process');
+    const [isStreamOpen, setIsStreamOpen] = useState(false);
+
+    useEffect(() => {
+        if (selectedAgentId || selectedNodeId) {
+            setIsStreamOpen(true);
+            return;
+        }
+        setIsStreamOpen(false);
+    }, [selectedAgentId, selectedNodeId]);
+
+    const handleStreamClose = () => {
+        setIsStreamOpen(false);
+        setSelectedNodeId(null);
+    };
 
     // Create default sessions on mount
     useEffect(() => {
@@ -620,12 +626,18 @@ export default function ConsolePage() {
                 </main>
 
                 {/* Drawers & Overlays */}
-                {(selectedAgentId || selectedNodeId || llmThoughtsCount > 0) && (
-                    <div className="fixed right-6 top-24 bottom-6 w-[360px] flex flex-col gap-4 z-40 pointer-events-auto">
-                        <NodeInspector className="flex-1 min-h-[200px]" />
-                        <LLMThoughtsPanel className="flex-1 min-h-[220px]" />
-                    </div>
-                )}
+                <AnimatePresence>
+                    {(selectedAgentId || selectedNodeId) && isStreamOpen && (
+                        <motion.div
+                            initial={{ opacity: 0, x: 30 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            exit={{ opacity: 0, x: 30 }}
+                            className="fixed right-6 top-24 bottom-6 w-[360px] z-40 pointer-events-auto"
+                        >
+                            <LLMThoughtsPanel className="h-full" onClose={handleStreamClose} />
+                        </motion.div>
+                    )}
+                </AnimatePresence>
                 <ReviewOverlay />
 
             </div>

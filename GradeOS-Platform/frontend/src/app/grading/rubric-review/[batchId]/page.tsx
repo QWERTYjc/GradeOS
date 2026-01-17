@@ -4,6 +4,7 @@ import React, { use, useCallback, useEffect, useMemo, useRef, useState } from "r
 import { useRouter } from "next/navigation";
 import clsx from "clsx";
 import { gradingApi } from "@/services/api";
+import { buildWsUrl } from "@/services/ws";
 
 type RubricScoringPointDraft = {
   pointId: string;
@@ -184,8 +185,7 @@ export default function RubricReviewPage({ params }: { params: Promise<{ batchId
       clearTimeout(streamFlushTimerRef.current);
       streamFlushTimerRef.current = null;
     }
-    const wsBase = process.env.NEXT_PUBLIC_WS_BASE_URL || "ws://127.0.0.1:8001";
-    const socket = new WebSocket(`${wsBase}/api/batch/ws/${batchId}`);
+    const socket = new WebSocket(buildWsUrl(`/api/batch/ws/${batchId}`));
     const flushStream = () => {
       streamFlushTimerRef.current = null;
       setStreamText(streamBufferRef.current);

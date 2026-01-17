@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { wsClient } from '@/services/ws';
+import { wsClient, buildWsUrl } from '@/services/ws';
 
 export type WorkflowStatus = 'IDLE' | 'UPLOADING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'REVIEWING';
 export type NodeStatus = 'pending' | 'running' | 'completed' | 'failed';
@@ -408,6 +408,16 @@ export interface ConsoleState {
     setInteractionEnabled: (enabled: boolean) => void;
     setGradingMode: (mode: string) => void;
 }
+
+const normalizeImageSource = (value: string) => {
+    if (!value) {
+        return value;
+    }
+    if (value.startsWith('data:') || value.startsWith('http') || value.startsWith('blob:')) {
+        return value;
+    }
+    return `data:image/jpeg;base64,${value}`;
+};
 
 /**
  * 工作流节点配置
@@ -930,8 +940,12 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
     clearLLMThoughts: () => set({ llmThoughts: [] }),
 
     // 图片方法
-    setUploadedImages: (images) => set({ uploadedImages: images }),
-    setRubricImages: (images) => set({ rubricImages: images }),
+    setUploadedImages: (images) => set({
+        uploadedImages: Array.isArray(images) ? images.map(normalizeImageSource) : []
+    }),
+    setRubricImages: (images) => set({
+        rubricImages: Array.isArray(images) ? images.map(normalizeImageSource) : []
+    }),
     setPendingReview: (review) => set({ pendingReview: review }),
     setClassReport: (report) => set({ classReport: report }),
 
@@ -951,8 +965,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
     }),
 
     connectWs: (batchId) => {
-        const wsUrl = process.env.NEXT_PUBLIC_WS_BASE_URL || 'ws://127.0.0.1:8001';
-        wsClient.connect(`${wsUrl}/api/batch/ws/${batchId}`);
+        wsClient.connect(buildWsUrl(`/api/batch/ws/${batchId}`));
 
         // 处理工作流节点更新
         wsClient.on('workflow_update', (data) => {
@@ -1108,7 +1121,8 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
             const { pageIndex, chunk } = data;
             const agentId = data.agentId || data.agent_id;
             const agentLabel = data.agentLabel || data.agent_label;
-            const streamType = data.streamType || data.stream_type || 'output';
+            const rawStreamType = data.streamType || data.stream_type;
+            const streamType = rawStreamType === 'thinking' ? 'thinking' : 'output';
 
             // 防御性处理：确保 chunk 是字符串
             let contentStr = '';
@@ -1160,7 +1174,8 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
         // 处理 LLM 思考完成事件
         wsClient.on('llm_thought_complete', (data) => {
             const { nodeId, pageIndex, agentId } = data;
-            const streamType = data.streamType || data.stream_type;
+            const rawStreamType = data.streamType || data.stream_type;
+            const streamType = rawStreamType === 'thinking' ? 'thinking' : 'output';
             get().completeLLMThought(nodeId || "unknown", pageIndex, streamType, agentId);
         });
 
@@ -1202,6 +1217,18 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
                     confidence: s.confidence,
                     needsConfirmation: s.needsConfirmation,
                 })));
+                const nodes = get().workflowNodes;
+                const gradingNode = nodes.find(n => n.id === 'grade_batch');
+                if (gradingNode && (!gradingNode.children || gradingNode.children.length === 0)) {
+                    const placeholders = students.map((s: any, idx: number) => ({
+                        id: `batch_${idx}`,
+                        label: s.studentKey || `Student ${idx + 1}`,
+                        status: 'pending' as NodeStatus,
+                        progress: 0,
+                        logs: [],
+                    }));
+                    get().setParallelAgents('grade_batch', placeholders);
+                }
                 // 统计待确认边界
                 const needsConfirm = students.filter((s: any) => s.needsConfirmation).length;
                 if (needsConfirm > 0) {

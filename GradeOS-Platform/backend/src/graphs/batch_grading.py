@@ -860,7 +860,7 @@ async def rubric_parse_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     from src.services.rubric_registry import RubricRegistry
     from src.models.grading_models import QuestionRubric, ScoringPoint, AlternativeSolution
     
-    rubric_registry = RubricRegistry(total_score=105.0)  # 预期总分
+    rubric_registry = RubricRegistry()
     
     try:
         if rubric_images and api_key:
@@ -870,41 +870,43 @@ async def rubric_parse_node(state: BatchGradingGraphState) -> Dict[str, Any]:
             parser = RubricParserService(api_key=api_key)
             
             # 流式输出回调 - 发送 llm_stream_chunk 事件到前端
+            parse_agent_id = "rubric-parse"
+            review_agent_id = "rubric-review"
+            parse_agent_name = "Rubric Parse"
+            review_agent_name = "Rubric Review"
+            from src.api.routes.batch_langgraph import broadcast_progress
+
+            await broadcast_progress(batch_id, {
+                "type": "agent_update",
+                "agentId": parse_agent_id,
+                "agentName": parse_agent_name,
+                "agentLabel": parse_agent_name,
+                "parentNodeId": "rubric_parse",
+                "status": "running",
+                "progress": 0,
+                "message": "Preparing rubric parse",
+            })
+
             async def stream_callback(stream_type: str, chunk: str) -> None:
-                from src.api.routes.batch_langgraph import broadcast_progress
-                
-                # Default values
-                batch_idx = 0
                 phase = "parse"
                 real_type = stream_type
 
-                # Parsing logic for "batch_idx:phase:type"
                 parts = stream_type.split(":")
                 if len(parts) >= 3:
-                     try:
-                         batch_idx = int(parts[0])
-                         phase = parts[1]
-                         real_type = ":".join(parts[2:])
-                     except:
-                         pass
+                    phase = parts[1]
+                    real_type = ":".join(parts[2:])
                 elif len(parts) == 2:
-                     # e.g. "0:output" (fallback if phase missing)
-                     try:
-                         batch_idx = int(parts[0])
-                         real_type = parts[1]
-                     except:
-                         pass
-                
-                # Determine Target Node and Agent
+                    real_type = parts[1]
+
                 target_node = "rubric_parse"
-                target_agent = f"rubric-batch-{batch_idx}"
-                node_name = "Rubric Parse"
-                
+                target_agent = parse_agent_id
+                node_name = parse_agent_name
+
                 if phase == "review":
                     target_node = "rubric_review"
-                    target_agent = f"rubric-review-batch-{batch_idx}"
-                    node_name = "Rubric Review"
-                
+                    target_agent = review_agent_id
+                    node_name = review_agent_name
+
                 await broadcast_progress(batch_id, {
                     "type": "llm_stream_chunk",
                     "nodeId": target_node,
@@ -913,84 +915,73 @@ async def rubric_parse_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                     "streamType": real_type,
                     "chunk": chunk,
                 })
-            
-            # 进度回调 - 发送 agent_update 事件到前端
+
             async def progress_callback(
                 batch_index: int,
                 total_batches: int,
                 status: str,
-                message: Optional[str]
+                message: Optional[str],
             ) -> None:
                 from src.api.routes.batch_langgraph import broadcast_progress
-                
-                # Logic for status == "reviewing"
+
+                normalized_total = max(1, total_batches)
+                batch_progress = int(((batch_index + 1) / normalized_total) * 100)
+                is_last_batch = (batch_index + 1) >= normalized_total
+
                 if status == "reviewing":
-                     # Complete Parse
-                     await broadcast_progress(batch_id, {
+                    await broadcast_progress(batch_id, {
                         "type": "agent_update",
-                        "agentId": f"rubric-batch-{batch_index}",
+                        "agentId": parse_agent_id,
+                        "agentName": parse_agent_name,
+                        "agentLabel": parse_agent_name,
                         "parentNodeId": "rubric_parse",
-                        "status": "completed",
-                        "progress": 100,
-                        "message": "Parsing completed"
+                        "status": "completed" if is_last_batch else "running",
+                        "progress": 100 if is_last_batch else batch_progress,
+                        "message": "Parsing completed" if is_last_batch else (message or f"Batch {batch_index + 1}/{total_batches}"),
                     })
-                    # Start Review
-                     await broadcast_progress(batch_id, {
+                    await broadcast_progress(batch_id, {
                         "type": "agent_update",
-                        "agentId": f"rubric-review-batch-{batch_index}",
+                        "agentId": review_agent_id,
+                        "agentName": review_agent_name,
+                        "agentLabel": review_agent_name,
                         "parentNodeId": "rubric_review",
-                        "agentName": f"Batch {batch_index + 1}",
                         "status": "running",
                         "progress": 0,
-                        "message": message or "Reviewing..."
+                        "message": message or "Reviewing...",
                     })
-                     return
-                
-                # Logic for status == "completed"
+                    return
+
                 if status == "completed":
-                    # Ensure Review is completed (Parse was completed when Review started)
-                     await broadcast_progress(batch_id, {
+                    await broadcast_progress(batch_id, {
                         "type": "agent_update",
-                        "agentId": f"rubric-review-batch-{batch_index}",
-                        "parentNodeId": "rubric_review",
-                        "status": "completed",
-                        "progress": 100,
-                        "message": message
-                    })
-                     # Also ensure Parse is marked completed (idempotent)
-                     await broadcast_progress(batch_id, {
-                        "type": "agent_update",
-                        "agentId": f"rubric-batch-{batch_index}",
+                        "agentId": parse_agent_id,
+                        "agentName": parse_agent_name,
+                        "agentLabel": parse_agent_name,
                         "parentNodeId": "rubric_parse",
                         "status": "completed",
-                        "progress": 100
+                        "progress": 100,
+                        "message": message or "Parsing completed",
                     })
-                     return
+                    return
 
                 status_map = {
+                    "parsing": "running",
                     "running": "running",
-                    "reviewing": "running", 
-                    "completed": "completed",
                     "failed": "failed",
                 }
-                progress_map = {
-                    "running": 35,
-                    "reviewing": 70,
-                    "completed": 100,
-                    "failed": 100,
-                }
-                
-                # Default emit to Rubric Parse (for running/failed)
+                progress = 100 if status == "failed" else batch_progress
+
                 await broadcast_progress(batch_id, {
                     "type": "agent_update",
-                    "agentId": f"rubric-batch-{batch_index}",
+                    "agentId": parse_agent_id,
+                    "agentName": parse_agent_name,
+                    "agentLabel": parse_agent_name,
                     "parentNodeId": "rubric_parse",
                     "status": status_map.get(status, "running"),
-                    "progress": progress_map.get(status, 0),
+                    "progress": progress,
                     "message": message or f"Batch {batch_index + 1}/{total_batches}",
                 })
-            
-            # 解析评分标准（内部会分批处理）
+
             result = await parser.parse_rubric(
                 rubric_images=rubric_images,
                 progress_callback=progress_callback,
@@ -2360,7 +2351,7 @@ async def grade_batch_node(state: Dict[str, Any]) -> Dict[str, Any]:
     batch_error = None
     output_limits = {
         "max_answer_chars": int(os.getenv("GRADING_MAX_ANSWER_CHARS", "160")),
-        "max_student_answer_chars": int(os.getenv("GRADING_MAX_STUDENT_ANSWER_CHARS", "120")),
+        "max_student_answer_chars": int(os.getenv("GRADING_MAX_STUDENT_ANSWER_CHARS", "4000")),
         "max_snippet_chars": int(os.getenv("GRADING_MAX_SNIPPET_CHARS", "90")),
         "max_snippets": int(os.getenv("GRADING_MAX_SNIPPETS", "1")),
         "max_page_summary_chars": int(os.getenv("GRADING_MAX_PAGE_SUMMARY_CHARS", "100")),
@@ -2530,290 +2521,90 @@ async def grade_batch_node(state: Dict[str, Any]) -> Dict[str, Any]:
                 second_pass_used += 1
                 return True
 
-        batch_student_key = state.get("student_key")
+        batch_student_key = state.get("student_key") or f"Student {batch_index + 1}"
 
-        async def grade_single_page(page_data):
-            """批改单页（带错误隔离和 Agent Skill 集成）"""
-            page_idx, image = page_data
-            page_context = page_index_contexts.get(page_idx) if page_index_contexts else None
-            student_key = (page_context or {}).get("student_key") or batch_student_key
-            page_label = f"Page {page_idx + 1}"
-            agent_label = f"{student_key} / {page_label}" if student_key else page_label
-            
-            # Visualization Callbacks
-            async def stream_callback(stream_type: str, chunk: str) -> None:
-                await broadcast_progress(batch_id, {
-                    "type": "llm_stream_chunk",
-                    "nodeId": "grade_batch",
-                    "nodeName": "Batch Grading",
-                    "agentId": batch_agent_id,
-                    "agentLabel": agent_label or batch_agent_label,
-                    "streamType": stream_type,
-                    "chunk": chunk
-                })
-
-            # Signal Start
-            await emit_stage(f"Start {page_label}")
-            
-            try:
-                def make_stream_callback(stage: str):
-                    async def _callback(stream_type: str, chunk: str) -> None:
-                        await stream_callback(f"{stage}:{stream_type}", chunk)
-                    return _callback
-
-                await emit_stage(f"{page_label}: Extracting evidence...")
-                evidence = await reasoning_client.extract_answer_evidence(
-                    image=image,
-                    parsed_rubric=local_parsed_rubric,
-                    page_context=page_context,
-                    stream_callback=make_stream_callback("extract"),
-                )
-                evidence = _compact_evidence(evidence, output_limits)
-
-                if evidence.get("is_cover_page"):
-                    evidence["is_blank_page"] = True
-                    evidence["answers"] = []
-
-                question_numbers = evidence.get("question_numbers", [])
-                if page_context:
-                    if not question_numbers and page_context.get("question_numbers"):
-                        question_numbers = page_context.get("question_numbers", [])
-                    if not question_numbers and page_context.get("continuation_of"):
-                        question_numbers = [page_context["continuation_of"]]
-
-                is_blank = evidence.get("is_blank_page") or evidence.get("is_cover_page")
-                if is_blank and not evidence.get("answers"):
-                    page_result = {
-                        "page_index": page_idx,
-                        "status": "completed",
-                        "score": 0.0,
-                        "max_score": 0.0,
-                        "confidence": 0.0,
-                        "feedback": "",
-                        "question_id": f"Q{page_idx}",
-                        "question_numbers": question_numbers,
-                        "question_details": [],
-                        "page_summary": evidence.get("page_summary", ""),
-                        "student_info": evidence.get("student_info") or (page_context or {}).get("student_info"),
-                        "is_blank_page": True,
-                        "revision_count": 0,
-                        "batch_index": batch_index,
-                        "grading_mode": grading_mode,
-                    }
-                    await mark_page_done(page_idx, f"{page_label}: blank/cover")
-                    return page_result
-
-                if grading_mode.startswith("assist"):
-                    assist_mode = "teacher" if grading_mode == "assist_teacher" else "student"
-                    await emit_stage(f"{page_label}: Assist analysis...")
-                    assist_result = await reasoning_client.assist_from_evidence(
-                        evidence=evidence,
-                        page_context=page_context,
-                        mode=assist_mode,
-                        stream_callback=make_stream_callback("assist"),
-                    )
-                    assist_result = _compact_score_result(assist_result, output_limits)
-                    if not question_numbers:
-                        question_numbers = assist_result.get("question_numbers", [])
-
-                    finalized = _finalize_assist_result(
-                        raw_result=assist_result,
-                        evidence=evidence,
-                        page_index=page_idx,
-                        grading_mode=grading_mode,
-                    )
-                    student_info = assist_result.get("student_info") or evidence.get("student_info")
-                    if not student_info and page_context:
-                        student_info = page_context.get("student_info")
-
-                    flags = assist_result.get("flags") or []
-                    if grading_mode not in flags:
-                        flags.append(grading_mode)
-
-                    page_result = {
-                        "page_index": page_idx,
-                        "status": "completed",
-                        "score": finalized.get("score", 0.0),
-                        "max_score": finalized.get("max_score", 0.0),
-                        "confidence": finalized.get("page_confidence", 0.0),
-                        "feedback": assist_result.get("feedback", ""),
-                        "question_id": f"Q{page_idx}",
-                        "question_numbers": question_numbers,
-                        "question_details": finalized.get("question_details", []),
-                        "page_summary": assist_result.get("page_summary") or evidence.get("page_summary", ""),
-                        "student_info": student_info,
-                        "is_blank_page": False,
-                        "revision_count": 0,
-                        "batch_index": batch_index,
-                        "flags": flags,
-                        "grading_mode": grading_mode,
-                    }
-
-                    await mark_page_done(
-                        page_idx,
-                        f"{page_label}: assist ready",
-                    )
-                    return page_result
-
-                await emit_stage(f"{page_label}: Scoring from evidence...")
-                score_result = await reasoning_client.score_from_evidence(
-                    evidence=evidence,
-                    parsed_rubric=local_parsed_rubric,
-                    page_context=page_context,
-                    mode="fast",
-                    stream_callback=make_stream_callback("score"),
-                )
-                score_result = _compact_score_result(score_result, output_limits)
-                if not question_numbers:
-                    question_numbers = score_result.get("question_numbers", [])
-
-                finalized = _finalize_scoring_result(
-                    raw_result=score_result,
-                    evidence=evidence,
-                    rubric_map=rubric_map,
-                    page_index=page_idx,
-                )
-
-                needs_second_pass = finalized.get("page_confidence", 0.0) < second_pass_threshold
-                did_second_pass = False
-                skip_reason = None
-
-                if needs_second_pass and not fast_pass_only and budget_allows_second_pass:
-                    if await allow_second_pass():
-                        await emit_stage(f"{page_label}: Rescoring (low confidence)...")
-                        strict_result = await reasoning_client.score_from_evidence(
-                            evidence=evidence,
-                            parsed_rubric=local_parsed_rubric,
-                            page_context=page_context,
-                            mode="strict",
-                            stream_callback=make_stream_callback("rescore"),
-                        )
-                        strict_result = _compact_score_result(strict_result, output_limits)
-                        if not question_numbers:
-                            question_numbers = strict_result.get("question_numbers", [])
-                        finalized = _finalize_scoring_result(
-                            raw_result=strict_result,
-                            evidence=evidence,
-                            rubric_map=rubric_map,
-                            page_index=page_idx,
-                        )
-                        score_result = strict_result
-                        did_second_pass = True
-                    else:
-                        skip_reason = "second_pass_limit_reached"
-                elif needs_second_pass:
-                    skip_reason = "second_pass_skipped_budget" if not budget_allows_second_pass else "second_pass_disabled"
-
-                if skip_reason:
-                    flags = score_result.get("flags") or []
-                    if skip_reason not in flags:
-                        flags.append(skip_reason)
-                    score_result["flags"] = flags
-
-                student_info = score_result.get("student_info") or evidence.get("student_info")
-                if not student_info and page_context:
-                    student_info = page_context.get("student_info")
-
-                page_result = {
-                    "page_index": page_idx,
-                    "status": "completed",
-                    "score": finalized.get("score", 0.0),
-                    "max_score": finalized.get("max_score", 0.0),
-                    "confidence": finalized.get("page_confidence", 0.0),
-                    "feedback": score_result.get("feedback", ""),
-                    "question_id": f"Q{page_idx}",
-                    "question_numbers": question_numbers,
-                    "question_details": finalized.get("question_details", []),
-                    "page_summary": score_result.get("page_summary") or evidence.get("page_summary", ""),
-                    "student_info": student_info,
-                    "is_blank_page": False,
-                    "revision_count": 1 if did_second_pass else 0,
-                    "batch_index": batch_index,
-                    "flags": score_result.get("flags") or [],
-                    "grading_mode": grading_mode,
-                }
-
-                # Detailed logging
-                is_blank = page_result.get("is_blank_page", False)
-
-                if is_blank:
-                    logger.info(f"[grade_batch] Page {page_idx} is blank/cover")
-                else:
-                    logger.info(
-                        f"[grade_batch] Page {page_idx} graded: "
-                        f"score={page_result.get('score', 0)}/{page_result.get('max_score', 0)}, "
-                        f"questions={question_numbers}, confidence={page_result.get('confidence', 0):.2f}"
-                    )
-
-                # Signal Completion
-                await mark_page_done(
-                    page_idx,
-                    f"{page_label}: score {page_result.get('score', 0)}",
-                )
-
-                return page_result
-                
-            except Exception as e:
-                await mark_page_done(page_idx, f"{page_label}: failed")
-                # 记录错误到全局错误管理器 (Requirement 9.5)
-                error_manager.add_error(
-                    exc=e,
-                    context={
-                        "batch_id": batch_id,
-                        "batch_index": batch_index,
-                        "page_index": page_idx,
-                        "function": "grade_single_page",
-                    },
-                    batch_id=batch_id,
-                    page_index=page_idx,
-                )
-                
-                logger.error(
-                    f"[grade_batch] 页面 {page_idx} 批改失败: {e}. "
-                    f"错误已隔离，继续处理其他页面。"
-                )
-                
-                # 返回失败结果（不中断批次）
-                return {
-                    "page_index": page_idx,
-                    "status": "failed",
-                    "error": str(e),
-                    "score": 0,
-                    "max_score": 0,
-                    "batch_index": batch_index,
-                    "grading_mode": grading_mode,
-                }
+        # 🚀 使用 grade_student 一次 LLM call 批改整个学生
+        async def stream_callback(stream_type: str, chunk: str) -> None:
+            await broadcast_progress(batch_id, {
+                "type": "llm_stream_chunk",
+                "nodeId": "grade_batch",
+                "nodeName": "Batch Grading",
+                "agentId": f"batch_{batch_index}",
+                "agentLabel": batch_student_key,
+                "streamType": stream_type,
+                "chunk": chunk
+            })
         
-        # 使用错误隔离批量处理所有页面 (Requirement 9.2)
-        page_data_list = list(zip(page_indices, images))
+        await broadcast_progress(batch_id, {
+            "type": "agent_update",
+            "parentNodeId": "grade_batch",
+            "agentId": f"batch_{batch_index}",
+            "agentName": batch_student_key,
+            "agentLabel": batch_student_key,
+            "status": "running",
+            "message": f"Grading {len(images)} pages...",
+            "progress": 10,
+        })
         
-        # 并发处理所有页面（带错误隔离）
-        from src.utils.error_handling import execute_batch_with_isolation
+        logger.info(f"[grade_batch] 使用 grade_student 批改学生 {batch_student_key}，共 {len(images)} 页")
         
-        isolated_results = await execute_batch_with_isolation(
-            func=grade_single_page,
-            items=page_data_list,
-            error_log_context={
-                "batch_id": batch_id,
-                "batch_index": batch_index,
-            }
+        # 调用 grade_student 方法
+        student_result = await reasoning_client.grade_student(
+            images=images,
+            student_key=batch_student_key,
+            parsed_rubric=local_parsed_rubric,
+            page_indices=page_indices,
+            page_contexts=page_index_contexts,
+            stream_callback=stream_callback,
         )
         
-        # 收集结果
-        for isolated_result in isolated_results:
-            if isolated_result.is_success():
-                page_results.append(isolated_result.get_result())
-            else:
-                # 失败的页面也添加到结果中（标记为失败）
-                page_idx = page_data_list[isolated_result.index][0]
-                page_results.append({
-                    "page_index": page_idx,
-                    "status": "failed",
-                    "error": str(isolated_result.get_error()),
-                    "score": 0,
-                    "max_score": 0,
-                    "batch_index": batch_index,
-                })
+        # 转换为兼容原有格式的结果
+        if student_result.get("status") == "completed":
+            # 将学生结果转换为页面结果格式（保持向后兼容）
+            total_score = student_result.get("total_score", 0)
+            max_score = student_result.get("max_score", 0)
+            question_details = student_result.get("question_details", [])
+            
+            # 创建一个包含学生所有信息的综合结果
+            page_results.append({
+                "page_index": page_indices[0] if page_indices else 0,
+                "page_indices": page_indices,
+                "status": "completed",
+                "score": total_score,
+                "max_score": max_score,
+                "confidence": student_result.get("confidence", 0.8),
+                "feedback": student_result.get("overall_feedback", ""),
+                "student_key": batch_student_key,
+                "student_info": student_result.get("student_info"),
+                "question_details": question_details,
+                "page_summaries": student_result.get("page_summaries", []),
+                "batch_index": batch_index,
+                "grading_mode": grading_mode,
+                "revision_count": 0,
+            })
+            
+            logger.info(
+                f"[grade_batch] 学生 {batch_student_key} 批改成功: "
+                f"score={total_score}/{max_score}, questions={len(question_details)}"
+            )
+        else:
+            # 批改失败
+            page_results.append({
+                "page_index": page_indices[0] if page_indices else 0,
+                "page_indices": page_indices,
+                "status": "failed",
+                "error": student_result.get("error", "Unknown error"),
+                "score": 0,
+                "max_score": 0,
+                "student_key": batch_student_key,
+                "batch_index": batch_index,
+            })
+            
+            logger.warning(
+                f"[grade_batch] 学生 {batch_student_key} 批改失败: "
+                f"{student_result.get('error')}"
+            )
+
     
     except Exception as e:
         batch_error = str(e)
@@ -2887,17 +2678,21 @@ async def grade_batch_node(state: Dict[str, Any]) -> Dict[str, Any]:
     )
 
     final_status = "completed" if success_count > 0 else "failed"
-    await emit_agent_update(
-        final_status,
-        f"Completed {success_count}/{len(page_results)} pages",
-        progress=100,
-    )
+    await broadcast_progress(batch_id, {
+        "type": "agent_update",
+        "parentNodeId": "grade_batch",
+        "agentId": f"batch_{batch_index}",
+        "agentName": batch_student_key,
+        "agentLabel": batch_student_key,
+        "status": final_status,
+        "message": f"Completed {success_count}/{len(page_results)} students",
+        "progress": 100,
+    })
     
-    # 返回结果（使用 add reducer 聚合）
+    # 返回结果（使用 add reducer 聚合，不返回 grading_mode 避免并发冲突）
     return {
         "grading_results": page_results,
         "batch_progress": progress_info,
-        "grading_mode": grading_mode,
     }
 
 
@@ -4103,13 +3898,6 @@ def _build_self_audit(student: Dict[str, Any]) -> Dict[str, Any]:
 
 
 
-def _safe_float(value: Any) -> float:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return 0.0
-
-
 def _collect_review_reasons(
     question: Dict[str, Any],
     confidence_threshold: float,
@@ -4724,7 +4512,7 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     rubric_map = _build_rubric_question_map(parsed_rubric)
     limits = {
         "max_questions": int(os.getenv("LOGIC_REVIEW_MAX_QUESTIONS", "20")),
-        "max_answer_chars": int(os.getenv("LOGIC_REVIEW_MAX_ANSWER_CHARS", "400")),
+        "max_answer_chars": int(os.getenv("LOGIC_REVIEW_MAX_ANSWER_CHARS", "4000")),
         "max_feedback_chars": int(os.getenv("LOGIC_REVIEW_MAX_FEEDBACK_CHARS", "200")),
         "max_rubric_chars": int(os.getenv("LOGIC_REVIEW_MAX_RUBRIC_CHARS", "240")),
         "max_scoring_points": int(os.getenv("LOGIC_REVIEW_MAX_SCORING_POINTS", "4")),

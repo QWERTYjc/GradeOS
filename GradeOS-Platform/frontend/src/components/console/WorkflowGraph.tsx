@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useConsoleStore, WorkflowNode, GradingAgent } from '@/store/consoleStore';
 import clsx from 'clsx';
@@ -330,6 +330,8 @@ export const WorkflowGraph: React.FC = () => {
         submissionId
     } = useConsoleStore();
     const router = useRouter();
+    const containerRef = useRef<HTMLDivElement | null>(null);
+    const nodeRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
     const handleNodeClick = (node: WorkflowNode) => {
         setSelectedNodeId(node.id);
@@ -372,13 +374,34 @@ export const WorkflowGraph: React.FC = () => {
         }));
     }, [workflowNodes, status, interactionEnabled]);
 
+    useEffect(() => {
+        if (visibleNodes.length === 0) return;
+        const selectedNode = selectedNodeId
+            ? visibleNodes.find((node) => node.id === selectedNodeId)
+            : null;
+        const runningNode = [...visibleNodes].reverse().find((node) => node.status === 'running');
+        const targetId = (selectedNode || runningNode || visibleNodes[visibleNodes.length - 1])?.id;
+        if (!targetId) return;
+        const target = nodeRefs.current[targetId];
+        if (!target) return;
+        requestAnimationFrame(() => {
+            target.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+        });
+    }, [visibleNodes, selectedNodeId]);
+
     return (
-        <div className="w-full h-full flex items-center justify-center overflow-x-auto py-12 px-8 scrollbar-hide perspective-1000">
+        <div
+            ref={containerRef}
+            className="w-full h-full flex items-center justify-center overflow-x-auto py-12 px-8 scrollbar-hide perspective-1000"
+        >
             <div className="flex items-center space-x-2 md:space-x-1">
                 <AnimatePresence mode="popLayout">
                     {visibleNodes.map((node, index) => (
                         <React.Fragment key={node.id}>
                             <motion.div
+                                ref={(el) => {
+                                    nodeRefs.current[node.id] = el;
+                                }}
                                 className="relative z-10"
                                 initial={{ opacity: 0, x: 50, rotateY: 90 }}
                                 animate={{ opacity: 1, x: 0, rotateY: 0 }}

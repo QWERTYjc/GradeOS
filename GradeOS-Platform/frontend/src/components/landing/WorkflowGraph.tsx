@@ -33,11 +33,11 @@ interface WorkerData {
 // --- Constants ---
 
 const NODES_CONFIG = [
-    { id: 'rubric_parse', label: 'Rubric Parse', icon: BookOpen, x: 8, y: 50 },
-    { id: 'rubric_review', label: 'Rubric Review', icon: Undo2, x: 24, y: 50 },
-    { id: 'grade_batch', label: 'Batch Grading', icon: Cpu, x: 40, y: 50 },
-    { id: 'logic_review', label: 'Logic Review', icon: Undo2, x: 66, y: 50 },
-    { id: 'export', label: 'Export', icon: Share2, x: 92, y: 50 },
+    { id: 'rubric_parse', label: 'Rubric Parse', icon: BookOpen, x: 10, y: 50 },
+    { id: 'rubric_review', label: 'Rubric Review', icon: Undo2, x: 30, y: 50 },
+    { id: 'grade_batch', label: 'Batch Grading', icon: Cpu, x: 50, y: 50 },
+    { id: 'logic_review', label: 'Logic Review', icon: Undo2, x: 70, y: 50 },
+    { id: 'export', label: 'Export', icon: Share2, x: 90, y: 50 },
 ];
 
 
@@ -187,7 +187,7 @@ const NodeCard = ({ data, onClick }: { data: NodeData, onClick: () => void }) =>
 
 const WorkerPool = ({ workers }: { workers: WorkerData[] }) => {
     return (
-        <div className="absolute top-[80%] left-[45%] -translate-x-1/2 flex gap-2">
+        <div className="absolute top-[80%] left-1/2 -translate-x-1/2 flex gap-2">
             {workers.map(w => (
                 <motion.div
                     key={w.id}

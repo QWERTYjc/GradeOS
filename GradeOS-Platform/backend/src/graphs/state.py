@@ -84,7 +84,7 @@ class BatchGradingGraphState(TypedDict, total=False):
     
     # ===== 输入数据 =====
     inputs: Dict[str, Any]               # 批量输入数据
-    grading_mode: Optional[str]  # standard/assist_teacher/assist_student
+    grading_mode: Annotated[Optional[str], last_value]  # standard/assist_teacher/assist_student
     pdf_path: str                        # 批量 PDF 文件路径
     rubric: str                          # 评分细则文本
     answer_images: List[str]             # 答题图像列表（base64 或路径）

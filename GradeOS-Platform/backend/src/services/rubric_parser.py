@@ -23,6 +23,42 @@ from src.services.gemini_reasoning import GeminiReasoningClient
 logger = logging.getLogger(__name__)
 
 
+def _escape_invalid_backslashes(text: str) -> str:
+    """Escape invalid backslashes in JSON strings to improve parse resilience."""
+    result = []
+    i = 0
+    hexdigits = "0123456789abcdefABCDEF"
+    while i < len(text):
+        ch = text[i]
+        if ch != "\\":
+            result.append(ch)
+            i += 1
+            continue
+        if i + 1 >= len(text):
+            result.append("\\\\")
+            i += 1
+            continue
+        nxt = text[i + 1]
+        if nxt in ('"', "\\", "/"):
+            result.append("\\")
+            result.append(nxt)
+            i += 2
+            continue
+        if nxt == "u":
+            seq = text[i + 2 : i + 6]
+            if len(seq) == 4 and all(c in hexdigits for c in seq):
+                result.append("\\u")
+                result.append(seq)
+                i += 6
+                continue
+            result.append("\\\\")
+            i += 1
+            continue
+        result.append("\\\\")
+        i += 1
+    return "".join(result)
+
+
 @dataclass
 class ScoringPoint:
     """得分点"""
@@ -101,7 +137,6 @@ class RubricParserService:
     async def parse_rubric(
         self,
         rubric_images: List[bytes],
-        expected_total_score: float = 105,
         progress_callback=None,
         stream_callback=None
     ) -> ParsedRubric:
@@ -110,7 +145,6 @@ class RubricParserService:
         
         Args:
             rubric_images: 批改标准页面图像列表
-            expected_total_score: 预期总分（用于验证）
             progress_callback: 进度回调 (batch_index, total_batches, status, message)
             stream_callback: 流式输出回调 (stream_type, chunk)
             
@@ -119,11 +153,12 @@ class RubricParserService:
         """
         logger.info(f"[rubric_parse] received {len(rubric_images)} pages")
         
-        # 分批处理：每批最多 12 页
-        MAX_PAGES_PER_BATCH = 12
+        # Max images per LLM call for rubric parsing.
+        MAX_PAGES_PER_BATCH = max(1, int(os.getenv("RUBRIC_PARSE_MAX_PAGES", "14")))
         all_questions = []
         general_notes = ""
         rubric_format = "standard"
+        total_batches = 0
         
         for batch_start in range(0, len(rubric_images), MAX_PAGES_PER_BATCH):
             batch_end = min(batch_start + MAX_PAGES_PER_BATCH, len(rubric_images))
@@ -145,10 +180,10 @@ class RubricParserService:
                     logger.warning(f"[rubric_parse] progress_callback error: {e}")
             
             batch_result = await self._parse_rubric_batch(
-                batch_images, 
-                expected_total_score,
+                batch_images,
                 batch_num,
-                total_batches
+                total_batches,
+                stream_callback,
             )
             
             all_questions.extend(batch_result.questions)
@@ -168,13 +203,16 @@ class RubricParserService:
             general_notes=general_notes,
             rubric_format=rubric_format
         )
-        
-        # 验证总分
-        if abs(calculated_total - expected_total_score) > 1:
-            logger.warning(
-                f"总分不匹配: 预期 {expected_total_score}, "
-                f"实际解析出 {calculated_total}，请检查评分标准解析是否正确"
-            )
+
+        if progress_callback and total_batches > 0:
+            try:
+                import asyncio
+                if asyncio.iscoroutinefunction(progress_callback):
+                    await progress_callback(total_batches - 1, total_batches, "completed", "Parsing completed")
+                else:
+                    progress_callback(total_batches - 1, total_batches, "completed", "Parsing completed")
+            except Exception as e:
+                logger.warning(f"[rubric_parse] progress_callback error: {e}")
         
         logger.info(
             f"批改标准解析完成: "
@@ -187,9 +225,9 @@ class RubricParserService:
     async def _parse_rubric_batch(
         self,
         rubric_images: List[bytes],
-        expected_total_score: float,
         batch_num: int,
-        total_batches: int
+        total_batches: int,
+        stream_callback=None,
     ) -> ParsedRubric:
         """解析单批评分标准页面"""
         batch_info = f"（第 {batch_num}/{total_batches} 批）" if total_batches > 1 else ""
@@ -252,7 +290,8 @@ class RubricParserService:
                     # 使用 GeminiReasoningClient 的 analyze_with_vision 方法
                     response = await self.gemini_client.analyze_with_vision(
                         images=rubric_images,
-                        prompt=prompt
+                        prompt=prompt,
+                        stream_callback=stream_callback,
                     )
                     result_text = response.get("response", "")
                     break
@@ -316,16 +355,30 @@ class RubricParserService:
             try:
                 data = json.loads(json_text)
             except json.JSONDecodeError as e:
-                logger.warning(f"JSON 解析失败: {e}, 原文: {json_text[:200]}...")
-                return ParsedRubric(
-                    total_questions=0,
-                    total_score=0,
-                    questions=[],
-                    general_notes="",
-                    rubric_format="standard"
-                )
-            
-            # 解析结果
+                logger.warning(f"[rubric_parse] JSON decode failed: {e}. Attempting repair.")
+                repaired = _escape_invalid_backslashes(json_text)
+                if repaired != json_text:
+                    try:
+                        data = json.loads(repaired)
+                        logger.info("[rubric_parse] JSON repaired by escaping invalid backslashes.")
+                    except json.JSONDecodeError as repair_err:
+                        logger.warning(f"[rubric_parse] JSON repair failed: {repair_err}. Raw: {json_text[:200]}...")
+                        return ParsedRubric(
+                            total_questions=0,
+                            total_score=0,
+                            questions=[],
+                            general_notes="",
+                            rubric_format="standard"
+                        )
+                else:
+                    logger.warning(f"[rubric_parse] JSON decode failed with no repair: {json_text[:200]}...")
+                    return ParsedRubric(
+                        total_questions=0,
+                        total_score=0,
+                        questions=[],
+                        general_notes="",
+                        rubric_format="standard"
+                    )
             def ensure_string(value, default=""):
                 """确保值是字符串类型"""
                 if value is None:

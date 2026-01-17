@@ -5,7 +5,7 @@ import clsx from 'clsx';
 import { useConsoleStore } from '@/store/consoleStore';
 import { GlassCard } from '@/components/design-system/GlassCard';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Sparkles, Terminal, Activity, BrainCircuit } from 'lucide-react';
+import { Sparkles, Terminal, Activity, BrainCircuit, X } from 'lucide-react';
 
 type StreamTab = 'output' | 'thinking';
 
@@ -16,9 +16,10 @@ const tabLabels: Record<StreamTab, string> = {
 
 interface LLMThoughtsPanelProps {
   className?: string;
+  onClose?: () => void;
 }
 
-export default function LLMThoughtsPanel({ className }: LLMThoughtsPanelProps) {
+export default function LLMThoughtsPanel({ className, onClose }: LLMThoughtsPanelProps) {
   const llmThoughts = useConsoleStore((state) => state.llmThoughts);
   const selectedAgentId = useConsoleStore((state) => state.selectedAgentId);
   const selectedNodeId = useConsoleStore((state) => state.selectedNodeId);
@@ -64,7 +65,7 @@ export default function LLMThoughtsPanel({ className }: LLMThoughtsPanelProps) {
 
   return (
     <GlassCard
-      className={clsx("h-full flex flex-col p-0 overflow-hidden", className)}
+      className={clsx("h-full min-h-0 flex flex-col p-0 overflow-hidden", className)}
       hoverEffect={false}
     >
       <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100 bg-white/50 backdrop-blur-md z-10">
@@ -83,33 +84,45 @@ export default function LLMThoughtsPanel({ className }: LLMThoughtsPanelProps) {
           </p>
         </div>
 
-        <div className="flex rounded-lg bg-slate-100/80 p-1 relative">
-          {(Object.keys(tabLabels) as StreamTab[]).map((tab) => (
+        <div className="flex items-center gap-2">
+          <div className="flex rounded-lg bg-slate-100/80 p-1 relative">
+            {(Object.keys(tabLabels) as StreamTab[]).map((tab) => (
+              <button
+                key={tab}
+                onClick={() => setActiveTab(tab)}
+                className={clsx(
+                  'relative px-3 py-1 text-xs font-bold rounded-md transition-all z-10',
+                  activeTab === tab ? 'text-indigo-600' : 'text-slate-500 hover:text-slate-700'
+                )}
+              >
+                {activeTab === tab && (
+                  <motion.div
+                    layoutId="activeTab"
+                    className="absolute inset-0 bg-white rounded-md shadow-sm border border-slate-200/50"
+                    transition={{ type: "spring", stiffness: 400, damping: 30 }}
+                  />
+                )}
+                <span className="relative z-10 flex items-center gap-1.5">
+                  {tab === 'thinking' ? <BrainCircuit className="w-3 h-3" /> : <Terminal className="w-3 h-3" />}
+                  {tabLabels[tab]}
+                </span>
+              </button>
+            ))}
+          </div>
+          {onClose && (
             <button
-              key={tab}
-              onClick={() => setActiveTab(tab)}
-              className={clsx(
-                'relative px-3 py-1 text-xs font-bold rounded-md transition-all z-10',
-                activeTab === tab ? 'text-indigo-600' : 'text-slate-500 hover:text-slate-700'
-              )}
+              type="button"
+              onClick={onClose}
+              aria-label="Close stream panel"
+              className="h-8 w-8 rounded-lg border border-slate-200/60 bg-white/70 text-slate-400 transition-colors hover:text-slate-700 hover:bg-white"
             >
-              {activeTab === tab && (
-                <motion.div
-                  layoutId="activeTab"
-                  className="absolute inset-0 bg-white rounded-md shadow-sm border border-slate-200/50"
-                  transition={{ type: "spring", stiffness: 400, damping: 30 }}
-                />
-              )}
-              <span className="relative z-10 flex items-center gap-1.5">
-                {tab === 'thinking' ? <BrainCircuit className="w-3 h-3" /> : <Terminal className="w-3 h-3" />}
-                {tabLabels[tab]}
-              </span>
+              <X className="w-4 h-4 mx-auto" />
             </button>
-          ))}
+          )}
         </div>
       </div>
 
-      <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-3 space-y-3 custom-scrollbar bg-slate-50/30">
+      <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto px-4 py-3 space-y-3 custom-scrollbar bg-slate-50/30">
         <AnimatePresence initial={false}>
           {thoughts.length === 0 ? (
             <motion.div

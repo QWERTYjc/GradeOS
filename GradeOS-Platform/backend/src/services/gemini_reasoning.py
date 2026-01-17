@@ -136,6 +136,208 @@ class GeminiReasoningClient:
             json_end = text.find("```", json_start)
             return text[json_start:json_end].strip()
         return text
+
+    def _escape_invalid_backslashes(self, text: str) -> str:
+        return re.sub(r'\\(?!["\\/bfnrtu])', r'\\\\', text)
+
+    def _strip_control_chars(self, text: str) -> str:
+        cleaned = re.sub(r'[\x00-\x1F]', ' ', text)
+        return re.sub(r'[\u2028\u2029]', ' ', cleaned)
+
+    def _load_json_with_repair(self, text: str) -> Dict[str, Any]:
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            repaired = self._escape_invalid_backslashes(text)
+            try:
+                return json.loads(repaired, strict=False)
+            except json.JSONDecodeError:
+                repaired = self._strip_control_chars(repaired)
+                return json.loads(repaired, strict=False)
+
+    def _extract_json_block(self, text: str) -> Optional[str]:
+        start = text.find("{")
+        end = text.rfind("}")
+        if start == -1 or end <= start:
+            return None
+        return text[start:end + 1]
+
+    def _normalize_question_detail(
+        self,
+        detail: Dict[str, Any],
+        page_index: Optional[int],
+    ) -> Dict[str, Any]:
+        question_id = detail.get("question_id") or detail.get("questionId") or detail.get("id") or "unknown"
+        score = float(detail.get("score") or 0)
+        max_score = float(detail.get("max_score") or detail.get("maxScore") or 0)
+        student_answer = detail.get("student_answer") or detail.get("studentAnswer") or ""
+        feedback = detail.get("feedback") or ""
+        is_correct = detail.get("is_correct") if "is_correct" in detail else detail.get("isCorrect")
+        confidence = detail.get("confidence")
+        source_pages = (
+            detail.get("source_pages")
+            or detail.get("sourcePages")
+            or detail.get("page_indices")
+            or detail.get("pageIndices")
+            or []
+        )
+        if not source_pages and page_index is not None:
+            source_pages = [page_index]
+        scoring_point_results = (
+            detail.get("scoring_point_results")
+            or detail.get("scoringPointResults")
+            or detail.get("scoring_results")
+            or detail.get("scoringResults")
+            or []
+        )
+        return {
+            "question_id": question_id,
+            "score": score,
+            "max_score": max_score,
+            "student_answer": student_answer,
+            "is_correct": is_correct,
+            "feedback": feedback,
+            "confidence": confidence,
+            "source_pages": source_pages,
+            "scoring_point_results": scoring_point_results,
+            "self_critique": detail.get("self_critique") or detail.get("selfCritique"),
+            "self_critique_confidence": detail.get("self_critique_confidence") or detail.get("selfCritiqueConfidence"),
+            "rubric_refs": detail.get("rubric_refs") or detail.get("rubricRefs"),
+            "question_type": detail.get("question_type") or detail.get("questionType"),
+        }
+
+    def _merge_page_break_results(
+        self,
+        page_results: List[Dict[str, Any]],
+        student_key: str,
+    ) -> Dict[str, Any]:
+        question_map: Dict[str, Dict[str, Any]] = {}
+        page_summaries: List[Dict[str, Any]] = []
+        overall_feedback = ""
+        student_info = None
+
+        for page in page_results:
+            page_index = page.get("page_index")
+            if isinstance(page_index, str) and page_index.isdigit():
+                page_index = int(page_index)
+            if page_index is not None:
+                page_summaries.append({
+                    "page_index": page_index,
+                    "question_numbers": page.get("question_numbers") or page.get("questionNumbers") or [],
+                    "summary": page.get("page_summary") or page.get("summary") or "",
+                })
+            if student_info is None and page.get("student_info"):
+                student_info = page.get("student_info")
+            if not overall_feedback and page.get("overall_feedback"):
+                overall_feedback = page.get("overall_feedback")
+
+            for detail in page.get("question_details", []) or []:
+                normalized = self._normalize_question_detail(detail, page_index)
+                key = str(normalized.get("question_id") or "unknown")
+                existing = question_map.get(key)
+                if not existing:
+                    question_map[key] = normalized
+                    continue
+
+                existing_pages = set(existing.get("source_pages") or [])
+                existing_pages.update(normalized.get("source_pages") or [])
+                existing["source_pages"] = sorted(existing_pages)
+
+                existing["scoring_point_results"] = (
+                    (existing.get("scoring_point_results") or [])
+                    + (normalized.get("scoring_point_results") or [])
+                )
+
+                existing_answer = (existing.get("student_answer") or "").strip()
+                new_answer = (normalized.get("student_answer") or "").strip()
+                if new_answer and new_answer not in existing_answer:
+                    existing["student_answer"] = "\n".join(filter(None, [existing_answer, new_answer]))
+
+                existing_feedback = (existing.get("feedback") or "").strip()
+                new_feedback = (normalized.get("feedback") or "").strip()
+                if new_feedback and new_feedback not in existing_feedback:
+                    existing["feedback"] = "\n".join(filter(None, [existing_feedback, new_feedback]))
+
+                merged_max = max(
+                    float(existing.get("max_score") or 0),
+                    float(normalized.get("max_score") or 0),
+                )
+                merged_score = float(existing.get("score") or 0) + float(normalized.get("score") or 0)
+                if merged_max > 0:
+                    merged_score = min(merged_score, merged_max)
+                existing["score"] = merged_score
+                existing["max_score"] = merged_max
+
+                existing_conf = existing.get("confidence")
+                new_conf = normalized.get("confidence")
+                if existing_conf is None:
+                    existing["confidence"] = new_conf
+                elif new_conf is not None:
+                    existing["confidence"] = (float(existing_conf) + float(new_conf)) / 2
+
+                if not existing.get("question_type") and normalized.get("question_type"):
+                    existing["question_type"] = normalized.get("question_type")
+
+        question_details = list(question_map.values())
+        confidence_values = [
+            float(q.get("confidence"))
+            for q in question_details
+            if isinstance(q.get("confidence"), (int, float))
+        ]
+        total_score = sum(q.get("score", 0) for q in question_details)
+        max_score = sum(q.get("max_score", 0) for q in question_details)
+
+        result = {
+            "student_key": student_key,
+            "status": "completed",
+            "total_score": total_score,
+            "max_score": max_score,
+            "confidence": (
+                sum(confidence_values) / len(confidence_values)
+                if confidence_values
+                else 0.8
+            ),
+            "question_details": question_details,
+            "page_summaries": page_summaries,
+        }
+        if student_info is not None:
+            result["student_info"] = student_info
+        if overall_feedback:
+            result["overall_feedback"] = overall_feedback
+        return result
+
+    def _parse_page_break_output(
+        self,
+        full_response: str,
+        student_key: str,
+    ) -> Optional[Dict[str, Any]]:
+        text = self._extract_json_from_text(full_response)
+        sections = [section.strip() for section in text.split("---PAGE_BREAK---") if section.strip()]
+        if not sections:
+            return None
+
+        page_results: List[Dict[str, Any]] = []
+        for section in sections:
+            candidate = self._extract_json_from_text(section).strip()
+            if not candidate:
+                continue
+            try:
+                page_results.append(self._load_json_with_repair(candidate))
+                continue
+            except json.JSONDecodeError:
+                pass
+
+            trimmed = self._extract_json_block(candidate)
+            if not trimmed:
+                continue
+            try:
+                page_results.append(self._load_json_with_repair(trimmed))
+            except json.JSONDecodeError:
+                continue
+
+        if not page_results:
+            return None
+        return self._merge_page_break_results(page_results, student_key)
     
     @with_retry(max_retries=3, initial_delay=1.0, max_delay=60.0)
     async def _call_vision_api(
@@ -479,7 +681,8 @@ class GeminiReasoningClient:
     async def analyze_with_vision(
         self,
         images: List[bytes],
-        prompt: str
+        prompt: str,
+        stream_callback: Optional[Callable[[str, str], Awaitable[None]]] = None,
     ) -> Dict[str, Any]:
         """
         通用视觉分析方法：分析多张图像并返回结构化结果
@@ -517,13 +720,19 @@ class GeminiReasoningClient:
                     # 正确提取文本内容
                     if isinstance(content_chunk, str):
                         full_response += content_chunk
+                        if stream_callback:
+                            await stream_callback("output", content_chunk)
                     elif isinstance(content_chunk, list):
                         # 处理多部分响应
                         for part in content_chunk:
                             if isinstance(part, str):
                                 full_response += part
+                                if stream_callback:
+                                    await stream_callback("output", part)
                             elif isinstance(part, dict) and "text" in part:
                                 full_response += part["text"]
+                                if stream_callback:
+                                    await stream_callback("output", part["text"])
                     else:
                         # 尝试转换为字符串，但记录警告
                         logger.warning(f"Unexpected chunk type: {type(content_chunk)}")
@@ -678,7 +887,7 @@ class GeminiReasoningClient:
             "question_id": "1",
             "score": 8,
             "max_score": 10,
-            "student_answer": "学生写了：...",
+            "student_answer": "学生作答原文（逐字摘录，保留换行，用 \\n 表示；无法辨识则为空字符串）",
             "is_correct": false,
             "feedback": "第1步正确得3分，第2步计算错误扣2分...",
             "scoring_point_results": [
@@ -1221,7 +1430,7 @@ class GeminiReasoningClient:
             return fallback
         json_text = self._extract_json_from_text(text)
         try:
-            return json.loads(json_text)
+            return self._load_json_with_repair(json_text)
         except Exception as e:
             logger.warning(f"JSON 解析失败: {e}")
             return fallback
@@ -1575,6 +1784,266 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
             img_b64 = base64.b64encode(image).decode('utf-8') if isinstance(image, bytes) else image
             async for chunk in self._call_vision_api_stream(img_b64, prompt):
                 yield chunk
+
+    async def grade_student(
+        self,
+        images: List[bytes],
+        student_key: str,
+        parsed_rubric: Dict[str, Any],
+        page_indices: Optional[List[int]] = None,
+        page_contexts: Optional[Dict[int, Dict[str, Any]]] = None,
+        stream_callback: Optional[Callable[[str, str], Awaitable[None]]] = None
+    ) -> Dict[str, Any]:
+        """
+        批改整个学生的所有页面（一次 LLM call）
+        
+        将该学生所有页面图像和评分标准一起发送给 LLM，
+        由 LLM 统一分析并返回完整的批改结果。
+        
+        Args:
+            images: 学生的所有页面图像（bytes 列表）
+            student_key: 学生标识
+            parsed_rubric: 解析后的评分标准
+            page_indices: 页面索引列表（可选）
+            page_contexts: 各页面的索引上下文（可选）
+            stream_callback: 流式回调函数
+            
+        Returns:
+            Dict: 学生的完整批改结果，包含所有题目的评分
+        """
+        if not images:
+            logger.warning(f"[grade_student] 学生 {student_key} 没有图像")
+            return {
+                "student_key": student_key,
+                "status": "failed",
+                "error": "没有图像",
+                "score": 0,
+                "max_score": 0,
+                "question_details": [],
+            }
+        
+        logger.info(f"[grade_student] 开始批改学生 {student_key}，共 {len(images)} 页")
+        
+        # 构建评分标准信息
+        rubric_info = self._build_student_grading_rubric_info(parsed_rubric)
+        
+        # 构建页面上下文信息
+        context_info = ""
+        if page_contexts and page_indices:
+            context_parts = []
+            for idx, page_idx in enumerate(page_indices):
+                ctx = page_contexts.get(page_idx, {})
+                if ctx:
+                    q_nums = ctx.get("question_numbers", [])
+                    context_parts.append(
+                        f"- 第{idx + 1}张图 (page_index={page_idx}): "
+                        f"题号 {', '.join(str(q) for q in q_nums) if q_nums else '待识别'}"
+                    )
+            if context_parts:
+                context_info = "\n## 页面索引上下文\n" + "\n".join(context_parts)
+        
+        # 构建完整 prompt
+        prompt = f"""你是一位专业的阅卷教师，请分析这位学生的所有答题页面并进行完整评分。
+
+## 学生信息
+- 学生标识: {student_key}
+- 答题页数: {len(images)} 页
+
+## 评分标准
+{rubric_info}
+{context_info}
+
+## 评分任务
+
+### 任务说明
+你将收到该学生的所有答题页面图像，请：
+1. 按顺序分析每一页的内容
+2. 识别所有题目及学生的作答
+3. 对每道题逐一评分，严格按照评分标准
+4. 汇总该学生的总分
+
+### 输出格式（JSON）
+```json
+{{
+    "student_key": "{student_key}",
+    "total_score": 学生总得分,
+    "max_score": 涉及题目的满分总和,
+    "confidence": 评分置信度（0.0-1.0）,
+    "question_details": [
+        {{
+            "question_id": "1",
+            "score": 8,
+            "max_score": 10,
+            "student_answer": "学生写了：...",
+            "is_correct": false,
+            "feedback": "第1步正确得3分，第2步计算错误扣2分...",
+            "source_pages": [0, 1],
+            "scoring_point_results": [
+                {{
+                    "point_id": "1.1",
+                    "description": "第1步计算",
+                    "max_points": 3,
+                    "awarded": 3,
+                    "evidence": "【必填】学生在第1页写道：'x = 3/2'，计算正确"
+                }}
+            ]
+        }}
+    ],
+    "page_summaries": [
+        {{
+            "page_index": 0,
+            "question_numbers": ["1", "2"],
+            "summary": "本页包含第1-2题的作答"
+        }}
+    ],
+    "student_info": {{
+        "name": "张三",
+        "student_id": "2024001"
+    }},
+    "overall_feedback": "该学生整体表现良好，主要在第3题计算方面有失误"
+}}
+```
+
+## 重要评分原则
+1. **严格使用评分标准中的分值**：每道题的 max_score 必须等于评分标准规定值
+2. **完整评分**：必须对所有页面中出现的每道题都进行评分
+3. **跨页题目**：如果一道题跨越多页，合并评分，在 source_pages 中记录所有相关页码
+4. **学生作答原文**：student_answer 必须逐字摘录，不要总结或改写；换行用 \\n 表示，无法辨识则留空并在 feedback 说明
+5. **证据必填**：每个得分点的 evidence 必须引用学生原文
+6. **总分核算**：total_score 必须等于所有 question_details 中 score 的总和
+
+注意：图像按顺序提供，第1张是第1页，以此类推。"""
+
+        try:
+            # 构建消息内容
+            content = [{"type": "text", "text": prompt}]
+            
+            # 添加所有图像
+            for idx, img_bytes in enumerate(images):
+                if isinstance(img_bytes, bytes):
+                    img_b64 = base64.b64encode(img_bytes).decode('utf-8')
+                else:
+                    img_b64 = img_bytes
+                content.append({
+                    "type": "image_url",
+                    "image_url": f"data:image/jpeg;base64,{img_b64}"
+                })
+            
+            # 调用 LLM
+            message = HumanMessage(content=content)
+            full_response = ""
+            
+            async for chunk in self.llm.astream([message]):
+                content_chunk = chunk.content
+                if content_chunk:
+                    if isinstance(content_chunk, str):
+                        full_response += content_chunk
+                        if stream_callback:
+                            await stream_callback("output", content_chunk)
+                    elif isinstance(content_chunk, list):
+                        for part in content_chunk:
+                            text = ""
+                            if isinstance(part, str):
+                                text = part
+                            elif isinstance(part, dict) and "text" in part:
+                                text = part["text"]
+                            if text:
+                                full_response += text
+                                if stream_callback:
+                                    await stream_callback("output", text)
+            
+            # 解析 JSON 结果
+            result = None
+            if "---PAGE_BREAK---" in full_response:
+                result = self._parse_page_break_output(full_response, student_key)
+
+            if result is None:
+                json_text = self._extract_json_from_text(full_response)
+                try:
+                    result = self._load_json_with_repair(json_text)
+                except json.JSONDecodeError:
+                    trimmed = self._extract_json_block(json_text)
+                    if trimmed and trimmed != json_text:
+                        result = self._load_json_with_repair(trimmed)
+                    else:
+                        raise
+            
+            # 确保必要字段存在
+            result.setdefault("student_key", student_key)
+            result.setdefault("status", "completed")
+            result.setdefault("total_score", 0)
+            result.setdefault("max_score", 0)
+            result.setdefault("question_details", [])
+            
+            logger.info(
+                f"[grade_student] 学生 {student_key} 批改完成: "
+                f"score={result.get('total_score')}/{result.get('max_score')}, "
+                f"questions={len(result.get('question_details', []))}"
+            )
+            
+            return result
+            
+        except json.JSONDecodeError as e:
+            logger.error(f"[grade_student] JSON 解析失败: {e}")
+            return {
+                "student_key": student_key,
+                "status": "failed",
+                "error": f"JSON 解析失败: {str(e)}",
+                "score": 0,
+                "max_score": 0,
+                "question_details": [],
+            }
+        except Exception as e:
+            logger.error(f"[grade_student] 批改失败: {e}", exc_info=True)
+            return {
+                "student_key": student_key,
+                "status": "failed",
+                "error": str(e),
+                "score": 0,
+                "max_score": 0,
+                "question_details": [],
+            }
+
+    def _build_student_grading_rubric_info(self, parsed_rubric: Dict[str, Any]) -> str:
+        """构建学生批改用的评分标准信息"""
+        if not parsed_rubric:
+            return "请根据答案的正确性、完整性和清晰度进行评分"
+        
+        if parsed_rubric.get("rubric_context"):
+            return parsed_rubric["rubric_context"]
+        
+        questions = parsed_rubric.get("questions", [])
+        if not questions:
+            return "请根据答案的正确性、完整性和清晰度进行评分"
+        
+        lines = [
+            f"评分标准（共{parsed_rubric.get('total_questions', len(questions))}题，"
+            f"总分{parsed_rubric.get('total_score', 0)}分）：",
+            ""
+        ]
+        
+        for q in questions[:self.MAX_QUESTIONS_IN_PROMPT]:
+            qid = q.get("question_id") or q.get("id") or "?"
+            max_score = q.get("max_score", 0)
+            lines.append(f"第{qid}题 (满分{max_score}分):")
+            
+            # 评分要点
+            scoring_points = q.get("scoring_points", [])
+            for idx, sp in enumerate(scoring_points[:self.MAX_CRITERIA_PER_QUESTION], 1):
+                point_id = sp.get("point_id") or f"{qid}.{idx}"
+                lines.append(
+                    f"  - [{point_id}] [{sp.get('score', 0)}分] {sp.get('description', '')}"
+                )
+            
+            # 标准答案
+            if q.get("standard_answer"):
+                answer = q["standard_answer"]
+                preview = answer[:150] + "..." if len(answer) > 150 else answer
+                lines.append(f"  标准答案: {preview}")
+            
+            lines.append("")
+        
+        return "\n".join(lines)
 
     async def grade_batch_pages_stream(
         self,

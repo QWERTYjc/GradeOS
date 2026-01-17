@@ -191,7 +191,8 @@ async def broadcast_progress(batch_id: str, message: dict):
         
         # 移除断开的连接
         for ws in disconnected:
-            active_connections[batch_id].remove(ws)
+            if ws in active_connections[batch_id]:
+                active_connections[batch_id].remove(ws)
 
 
 @router.post("/submit", response_model=BatchSubmissionResponse)
@@ -652,11 +653,6 @@ async def stream_langgraph_progress(
                         "status": "paused",
                         "message": "Workflow paused (awaiting input)"
                     })
-
-            elif event_type == "completed":
-                # Graph 执行完成
-                logger.info(f"LangGraph 执行完成: batch_id={batch_id}")
-                # 可以在这里广播 completed 事件，或者依赖 state_update 通过 percentage=100 来通知
 
             elif event_type == "state_update":
                 # 推送状态更新

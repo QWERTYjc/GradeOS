@@ -229,18 +229,26 @@ const ResultCard: React.FC<ResultCardProps> = ({ result, rank, onExpand, isExpan
 
     const crossPageCount = result.questionResults?.filter(q => q.isCrossPage).length || 0;
 
+    const rankStyle = rank <= 3
+        ? 'from-amber-200 to-amber-400 text-amber-900 ring-amber-200/70'
+        : 'from-slate-100 to-slate-200 text-slate-600 ring-slate-200/70';
+
     return (
         <GlassCard
             className={clsx(
-                'group relative hover:z-10 transition-all duration-300',
+                'group relative overflow-hidden hover:z-10 transition-all duration-300',
                 result.needsConfirmation && 'ring-2 ring-amber-400/50 shadow-[0_0_15px_rgba(251,191,36,0.2)]'
             )}
             hoverEffect={true}
         >
-            <div className="flex items-center gap-4 p-1">
+            <div className={clsx('absolute inset-y-0 left-0 w-1.5 bg-gradient-to-b', barColor)} />
+            <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300 bg-gradient-to-r from-blue-50/40 via-white/60 to-emerald-50/30" />
+
+            <div className="relative flex items-center gap-4 p-4">
                 <div className={clsx(
-                    'w-8 h-8 flex items-center justify-center rounded-lg font-bold font-mono text-sm shrink-0 shadow-sm',
-                    rank <= 3 ? 'bg-gradient-to-br from-amber-100 to-amber-200 text-amber-700 ring-1 ring-amber-300' : 'bg-slate-100 text-slate-500'
+                    'w-10 h-10 flex items-center justify-center rounded-xl font-black font-mono text-sm shrink-0 shadow-sm ring-1',
+                    'bg-gradient-to-br',
+                    rankStyle
                 )}>
                     {rank}
                 </div>
@@ -248,37 +256,40 @@ const ResultCard: React.FC<ResultCardProps> = ({ result, rank, onExpand, isExpan
                 <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-3 mb-1">
                         <h3 className="font-bold text-slate-800 text-base truncate">{result.studentName}</h3>
-                        <span className={clsx("text-[10px] px-2 py-0.5 rounded border border-transparent font-bold uppercase tracking-wide", gradeBadgeColor)}>
+                        <span className={clsx(
+                            "text-[10px] px-2 py-0.5 rounded-full border border-transparent font-bold uppercase tracking-wide",
+                            gradeBadgeColor
+                        )}>
                             {gradeLabel}
                         </span>
                     </div>
 
-                    <div className="flex items-center gap-2 text-[10px] font-medium text-slate-400">
+                    <div className="flex flex-wrap items-center gap-2 text-[10px] font-medium text-slate-400">
                         {result.totalRevisions !== undefined && result.totalRevisions > 0 && (
-                            <span className="flex items-center gap-1 bg-violet-50 text-violet-600 px-1.5 py-0.5 rounded border border-violet-100">
+                            <span className="flex items-center gap-1 bg-violet-50 text-violet-600 px-2 py-0.5 rounded-full border border-violet-100">
                                 <GitMerge className="w-3 h-3" /> {result.totalRevisions} revisions
                             </span>
                         )}
                         {crossPageCount > 0 && (
-                            <span className="flex items-center gap-1 bg-purple-50 text-purple-600 px-1.5 py-0.5 rounded border border-purple-100">
+                            <span className="flex items-center gap-1 bg-purple-50 text-purple-600 px-2 py-0.5 rounded-full border border-purple-100">
                                 <Layers className="w-3 h-3" /> {crossPageCount} cross-page
                             </span>
                         )}
                         {result.needsConfirmation && (
-                            <span className="flex items-center gap-1 bg-amber-50 text-amber-600 px-1.5 py-0.5 rounded border border-amber-100">
+                            <span className="flex items-center gap-1 bg-amber-50 text-amber-600 px-2 py-0.5 rounded-full border border-amber-100">
                                 <AlertCircle className="w-3 h-3" /> Needs Review
                             </span>
                         )}
                         {result.startPage !== undefined && (
-                            <span className="flex items-center gap-1 px-1.5 py-0.5">
+                            <span className="flex items-center gap-1 px-2 py-0.5 bg-slate-50 rounded-full border border-slate-100">
                                 <FileText className="w-3 h-3" /> Pages {result.startPage + 1}-{result.endPage !== undefined ? result.endPage + 1 : '?'}
                             </span>
                         )}
                     </div>
                 </div>
 
-                <div className="flex flex-col items-end gap-1.5 min-w-[120px]">
-                    <div className="flex items-baseline gap-1">
+                <div className="flex flex-col items-end gap-2 min-w-[150px]">
+                    <div className="flex items-baseline gap-1.5">
                         <span className={clsx(
                             "text-2xl font-black font-mono tracking-tight",
                             isAssist ? "text-slate-400" : "text-transparent bg-clip-text bg-gradient-to-r " + barColor
@@ -288,7 +299,7 @@ const ResultCard: React.FC<ResultCardProps> = ({ result, rank, onExpand, isExpan
                         {!isAssist && <span className="text-xs font-bold text-slate-300">/ {result.maxScore}</span>}
                     </div>
 
-                    <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden ring-1 ring-slate-50">
+                    <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden ring-1 ring-slate-50">
                         <motion.div
                             className={clsx('h-full bg-gradient-to-r', barColor)}
                             initial={{ width: 0 }}
@@ -425,13 +436,67 @@ export const ResultsView: React.FC = () => {
     const needsConfirmCount = sortedResults.filter(r => r.needsConfirmation).length;
     const totalCrossPageQuestions = crossPageQuestions.length;
     const hasScores = scoredCount > 0;
+    const metrics = [
+        {
+            label: 'Total Students',
+            value: totalStudents,
+            icon: UsergroupAddOutlined,
+            accent: 'text-blue-600',
+            glow: 'bg-blue-100/70',
+            surface: 'bg-white/70'
+        },
+        {
+            label: 'Avg Score',
+            value: hasScores ? avgScore.toFixed(1) : '--',
+            icon: BarChartOutlined,
+            accent: 'text-indigo-600',
+            glow: 'bg-indigo-100/70',
+            surface: 'bg-white/70'
+        },
+        {
+            label: 'Highest',
+            value: hasScores ? highestScore : '--',
+            icon: CrownOutlined,
+            accent: 'text-amber-600',
+            glow: 'bg-amber-100/70',
+            surface: 'bg-white/70'
+        },
+        {
+            label: 'Pass Rate',
+            value: hasScores ? `${((passCount / scoredCount) * 100).toFixed(0)}%` : '--',
+            icon: CheckCircleOutlined,
+            accent: 'text-emerald-600',
+            glow: 'bg-emerald-100/70',
+            surface: 'bg-white/70'
+        },
+    ];
+    if (needsConfirmCount > 0) {
+        metrics.push({
+            label: 'Review Needed',
+            value: needsConfirmCount,
+            icon: ExclamationCircleOutlined,
+            accent: 'text-amber-600',
+            glow: 'bg-amber-100/70',
+            surface: 'bg-amber-50/70'
+        });
+    }
 
     // === Detail View ===
     if (detailViewStudent) {
         // (Detail View Logic - Simplified for brevity but functionally complete with improved styles)
         const isAssist = (detailViewStudent.gradingMode || '').startsWith('assist') || detailViewStudent.maxScore <= 0;
         const pageIndices = detailViewStudent.questionResults?.flatMap(q => q.pageIndices || []) || [];
-        const uniquePages = Array.from(new Set(pageIndices)).filter(p => Number.isFinite(p)).sort((a, b) => a - b);
+        const fallbackPages: number[] = [];
+        if (detailViewStudent.startPage !== undefined) {
+            const start = detailViewStudent.startPage;
+            const end = detailViewStudent.endPage ?? start;
+            for (let i = start; i <= end; i += 1) {
+                fallbackPages.push(i);
+            }
+        }
+        const uniquePages = Array.from(new Set([...pageIndices, ...fallbackPages]))
+            .filter(p => Number.isFinite(p))
+            .sort((a, b) => a - b);
 
         return (
             <div className="h-full min-h-0 flex flex-col bg-slate-50">
@@ -601,66 +666,75 @@ export const ResultsView: React.FC = () => {
             </AnimatePresence>
 
             {/* Dashboard Header */}
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                <div className="flex items-center gap-3">
-                    <div className="p-2 bg-blue-500 text-white rounded-xl shadow-lg shadow-blue-500/30">
-                        <RocketOutlined className="text-xl" />
+            <div className="relative overflow-hidden rounded-3xl border border-slate-200/60 bg-white/70 p-6 md:p-8 shadow-[0_30px_80px_-60px_rgba(15,23,42,0.45)]">
+                <div className="absolute inset-0 bg-gradient-to-br from-blue-50/80 via-white/70 to-emerald-50/60" />
+                <div className="relative space-y-6">
+                    <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                        <div className="flex items-center gap-4">
+                            <div className="relative">
+                                <div className="absolute -inset-1 rounded-2xl bg-blue-500/20 blur" />
+                                <div className="relative p-3 bg-slate-900 text-white rounded-2xl shadow-lg shadow-slate-900/20">
+                                    <RocketOutlined className="text-xl" />
+                                </div>
+                            </div>
+                            <div>
+                                <h2 className="text-2xl font-black text-slate-900 tracking-tight">批改结果</h2>
+                                <p className="text-xs font-semibold text-slate-500 uppercase tracking-[0.2em]">Grading Overview</p>
+                            </div>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                            <SmoothButton onClick={() => setShowClassReport(true)} variant="secondary" size="sm">
+                                <BarChartOutlined className="mr-2" /> 班级报告
+                            </SmoothButton>
+                            <SmoothButton variant="secondary" size="sm">
+                                <Download className="w-4 h-4 mr-2" /> 导出 CSV
+                            </SmoothButton>
+                        </div>
                     </div>
-                    <div>
-                        <h2 className="text-2xl font-black text-slate-800 tracking-tight">批改结果</h2>
-                        <p className="text-xs font-medium text-slate-500">Grading Overview & Analysis</p>
+
+                    <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
+                        {metrics.map((metric) => (
+                            <GlassCard
+                                key={metric.label}
+                                className={clsx(
+                                    'relative overflow-hidden rounded-2xl border p-4 text-left',
+                                    metric.surface
+                                )}
+                                hoverEffect={false}
+                            >
+                                <div className={clsx('absolute -right-8 -top-8 h-20 w-20 rounded-full blur-2xl', metric.glow)} />
+                                <div className="relative flex items-center justify-between">
+                                    <div className="text-[11px] font-bold text-slate-500 uppercase tracking-[0.2em]">{metric.label}</div>
+                                    <metric.icon className={clsx('text-lg', metric.accent)} />
+                                </div>
+                                <div className="relative mt-3 text-2xl font-black text-slate-800">
+                                    {metric.value}
+                                </div>
+                            </GlassCard>
+                        ))}
                     </div>
                 </div>
-
-                <div className="flex items-center gap-2">
-                    <SmoothButton onClick={() => setShowClassReport(true)} variant="secondary" size="sm">
-                        <BarChartOutlined className="mr-2" /> 班级报告
-                    </SmoothButton>
-                    <SmoothButton variant="secondary" size="sm">
-                        <Download className="w-4 h-4 mr-2" /> 导出 CSV
-                    </SmoothButton>
-                </div>
-            </div>
-
-            {/* Metrics Grid */}
-            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
-                {[
-                    { label: 'Total Students', value: totalStudents, icon: <UsergroupAddOutlined />, color: 'blue' },
-                    { label: 'Avg Score', value: hasScores ? avgScore.toFixed(1) : '-', icon: <BarChartOutlined />, color: 'indigo' },
-                    { label: 'Highest', value: hasScores ? highestScore : '-', icon: <CrownOutlined />, color: 'amber' },
-                    { label: 'Pass Rate', value: hasScores ? `${((passCount / scoredCount) * 100).toFixed(0)}%` : '-', icon: <CheckCircleOutlined />, color: 'emerald' },
-                ].map((metric, i) => (
-                    <GlassCard key={i} className="p-3 flex flex-col items-center justify-center text-center gap-1 hover:-translate-y-1 transition-transform" hoverEffect={false}>
-                        <div className={`text-${metric.color}-500 text-lg opacity-80 mb-1`}>{metric.icon}</div>
-                        <div className="text-xl font-black text-slate-700">{metric.value}</div>
-                        <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{metric.label}</div>
-                    </GlassCard>
-                ))}
-                {needsConfirmCount > 0 && (
-                    <GlassCard className="p-3 flex flex-col items-center justify-center text-center gap-1 bg-amber-50 border-amber-100" hoverEffect={false}>
-                        <ExclamationCircleOutlined className="text-amber-500 text-lg mb-1" />
-                        <div className="text-xl font-black text-amber-600">{needsConfirmCount}</div>
-                        <div className="text-[10px] font-bold text-amber-500 uppercase tracking-wider">Review Needed</div>
-                    </GlassCard>
-                )}
             </div>
 
             {/* Results List */}
             <div className="space-y-4">
-                <div className="flex items-center justify-between px-2">
-                    <h3 className="font-bold text-slate-700 flex items-center gap-2">
+                <div className="flex items-center justify-between px-1">
+                    <div className="flex items-center gap-2">
                         <ListOrdered className="w-5 h-5 text-slate-400" />
-                        学生列表
-                    </h3>
+                        <h3 className="font-bold text-slate-700">学生列表</h3>
+                        <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400 bg-white/70 px-2 py-0.5 rounded-full border border-slate-100">
+                            {totalStudents} students
+                        </span>
+                    </div>
+                    {totalCrossPageQuestions > 0 && (
+                        <span className="text-[10px] font-bold uppercase tracking-widest text-purple-600 bg-purple-50 px-2 py-0.5 rounded-full border border-purple-100">
+                            {totalCrossPageQuestions} cross-page
+                        </span>
+                    )}
                 </div>
 
-                <div className="space-y-2">
-                    {/* Header Row */}
-                    <div className="px-6 py-2 grid grid-cols-[3rem_1fr_8rem_2rem] gap-4 text-xs font-bold text-slate-400 uppercase tracking-wider pl-16">
-                        <div className="col-start-2">Student Info</div>
-                        <div className="text-right">Score / Progress</div>
-                    </div>
-
+                <div className="space-y-3 rounded-2xl border border-slate-100/80 bg-white/70 p-3 shadow-[0_20px_60px_-45px_rgba(15,23,42,0.5)]">
                     {sortedResults.map((result, index) => (
                         <div key={`${result.studentName}-${index}`} onClick={() => handleViewDetail(result)} className="cursor-pointer">
                             <ResultCard result={result} rank={index + 1} isExpanded={false} onExpand={() => { }} />

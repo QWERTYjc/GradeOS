@@ -1,5 +1,43 @@
 import { create } from 'zustand';
 
+const stripTrailingSlash = (value: string) => value.replace(/\/+$/, '');
+
+const resolveFromApiBase = (apiBase: string, fallbackOrigin: string) => {
+    const base = apiBase.startsWith('http')
+        ? new URL(apiBase)
+        : new URL(apiBase, fallbackOrigin);
+    const wsProtocol = base.protocol === 'https:' ? 'wss:' : 'ws:';
+    const path = base.pathname.replace(/\/api(?:\/.*)?$/, '');
+    base.protocol = wsProtocol;
+    base.pathname = path || '/';
+    base.search = '';
+    base.hash = '';
+    return stripTrailingSlash(base.toString());
+};
+
+export const resolveWsBaseUrl = () => {
+    const explicit = process.env.NEXT_PUBLIC_WS_BASE_URL;
+    if (explicit) {
+        return stripTrailingSlash(explicit);
+    }
+
+    const fallbackOrigin = typeof window !== 'undefined'
+        ? window.location.origin
+        : 'http://localhost:8001';
+    const apiBase = process.env.NEXT_PUBLIC_API_URL;
+    if (apiBase) {
+        return resolveFromApiBase(apiBase, fallbackOrigin);
+    }
+
+    return resolveFromApiBase(fallbackOrigin, fallbackOrigin);
+};
+
+export const buildWsUrl = (path: string) => {
+    const base = resolveWsBaseUrl();
+    const normalized = path.startsWith('/') ? path : `/${path}`;
+    return `${base}${normalized}`;
+};
+
 type WebSocketStatus = 'CONNECTING' | 'OPEN' | 'CLOSED' | 'ERROR';
 
 interface WebSocketService {
@@ -24,9 +62,12 @@ class WSClient {
     private reconnectAttempts = 0;
     private maxReconnectAttempts = 5;
     private reconnectInterval = 1000;
+    private maxReconnectInterval = 15000;
     private listeners = new Map<string, ((data: any) => void)[]>();
     private url: string = '';
     private statusChangeCallback: ((status: WebSocketStatus) => void) | null = null;
+    private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    private manualClose = false;
 
     constructor() { }
 
@@ -47,6 +88,7 @@ class WSClient {
         }
 
         this.url = url;
+        this.manualClose = false;
         this.updateStatus('CONNECTING');
 
         try {
@@ -58,14 +100,27 @@ class WSClient {
                 this.reconnectAttempts = 0;
             };
 
-            this.socket.onclose = () => {
-                console.log('WS Closed');
+            this.socket.onclose = (event) => {
+                console.warn('WS Closed', {
+                    url: this.url,
+                    code: event.code,
+                    reason: event.reason,
+                    wasClean: event.wasClean,
+                });
+                this.socket = null;
                 this.updateStatus('CLOSED');
+                if (this.manualClose) {
+                    return;
+                }
                 this.handleReconnect();
             };
 
             this.socket.onerror = (error) => {
-                console.error('WS Error', error);
+                console.error('WS Error', {
+                    url: this.url,
+                    readyState: this.socket?.readyState,
+                    error,
+                });
                 this.updateStatus('ERROR');
             };
 
@@ -85,11 +140,24 @@ class WSClient {
     }
 
     private handleReconnect() {
+        if (!this.url) {
+            console.error('WS Reconnect skipped: missing URL');
+            return;
+        }
+        if (this.reconnectTimer) {
+            return;
+        }
         if (this.reconnectAttempts < this.maxReconnectAttempts) {
             this.reconnectAttempts++;
-            const timeout = this.reconnectInterval * Math.pow(2, this.reconnectAttempts - 1);
-            console.log(`Reconnecting in ${timeout}ms...`);
-            setTimeout(() => {
+            const baseDelay = Math.min(
+                this.reconnectInterval * Math.pow(2, this.reconnectAttempts - 1),
+                this.maxReconnectInterval
+            );
+            const jitter = baseDelay * 0.2;
+            const timeout = Math.round(baseDelay - jitter + Math.random() * jitter * 2);
+            console.log(`Reconnecting in ${timeout}ms (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
+            this.reconnectTimer = setTimeout(() => {
+                this.reconnectTimer = null;
                 this.connect(this.url);
             }, timeout);
         } else {
@@ -98,6 +166,11 @@ class WSClient {
     }
 
     disconnect() {
+        this.manualClose = true;
+        if (this.reconnectTimer) {
+            clearTimeout(this.reconnectTimer);
+            this.reconnectTimer = null;
+        }
         if (this.socket) {
             this.socket.close();
             this.socket = null;
