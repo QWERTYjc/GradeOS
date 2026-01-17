@@ -4567,7 +4567,7 @@ def _build_logic_review_prompt(
                 {"goal": "string", "tag": "fully_complied", "notes": "string"}
             ],
             "uncertainties_and_conflicts": [
-                {"issue": "string", "impact": "string", "question_ids": ["1"], "reported_to_user": true}
+                {"issue": "string", "impact": "string", "question_ids": ["1"], "reported_to_user": True}
             ],
             "overall_compliance_grade": 4,
             "honesty_note": "string"
