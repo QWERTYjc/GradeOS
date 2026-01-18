@@ -13,6 +13,8 @@ import {
   GraduationCap,
   History,
   LayoutDashboard,
+  Megaphone,
+  TrendingUp,
   Users,
 } from 'lucide-react';
 
@@ -34,6 +36,7 @@ export default function DashboardLayout({ children }: Props) {
     { href: '/teacher/homework', label: 'Homework', icon: <ClipboardList className="h-4 w-4" />, desc: 'Assign and grade' },
     { href: '/console', label: 'AI Grading', icon: <FileText className="h-4 w-4" />, desc: 'Grading console' },
     { href: '/teacher/grading/history', label: 'Grading History', icon: <History className="h-4 w-4" />, desc: 'Imports and results' },
+    { href: '/teacher/performance', label: 'Teaching Cockpit', icon: <TrendingUp className="h-4 w-4" />, desc: 'Performance dashboard' },
     { href: '/teacher/statistics', label: 'Analytics', icon: <BarChart3 className="h-4 w-4" />, desc: 'Class insights' },
   ];
 
@@ -41,7 +44,9 @@ export default function DashboardLayout({ children }: Props) {
     { href: '/student/dashboard', label: 'My Courses', icon: <GraduationCap className="h-4 w-4" />, desc: 'Assignments and scores' },
     { href: '/student/student_assistant', label: 'AI Assistant', icon: <Bot className="h-4 w-4" />, desc: 'Learning support' },
     { href: '/student/analysis', label: 'Mistake Analysis', icon: <LayoutDashboard className="h-4 w-4" />, desc: 'Targeted review' },
+    { href: '/student/performance', label: 'Mindful Score', icon: <TrendingUp className="h-4 w-4" />, desc: 'No-rank performance' },
     { href: '/student/report', label: 'Progress Report', icon: <BarChart3 className="h-4 w-4" />, desc: 'Growth insights' },
+    { href: '/student/crowdboard', label: 'Open Board', icon: <Megaphone className="h-4 w-4" />, desc: 'Shared questions' },
   ];
 
   const navItems = user?.role === Role.Teacher ? teacherNav : studentNav;

@@ -38,6 +38,21 @@ type FocusStat = {
   ratio: number;
 };
 
+const captureFlow = [
+  { title: '拍照即录', detail: '扫描试卷或作业，自动识别题号与答案。' },
+  { title: '智能标签', detail: '基于知识点与错误类型自动分类。' },
+  { title: '举一反三', detail: '推送同类题型与变式练习。' },
+  { title: '一键重测', detail: '即时生成针对性重测卷。' },
+];
+
+const tagLibrary = ['二次函数', '电路等效', '审题', '计算粗心', '图像分析', '实验设计'];
+
+const recommendedDrills = [
+  { id: 'r-01', title: '电路并联等效专项', count: 6, duration: '15 分钟' },
+  { id: 'r-02', title: '受力分析基础巩固', count: 5, duration: '12 分钟' },
+  { id: 'r-03', title: '顶点式转换练习', count: 8, duration: '18 分钟' },
+];
+
 const extractQuestions = (result: Record<string, any>) => {
   return (
     result.questionResults ||
@@ -202,6 +217,53 @@ export default function StudentWrongBookPage() {
             >
               开启深究助手
             </button>
+          </div>
+        </div>
+
+        <div className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
+          <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900">错题管理系统</h2>
+                <p className="text-xs text-slate-400">消除机械整理，让复练更精准</p>
+              </div>
+              <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-600">
+                每周节省 4 小时
+              </span>
+            </div>
+            <div className="mt-5 grid gap-4 md:grid-cols-2">
+              {captureFlow.map((item) => (
+                <div key={item.title} className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+                  <div className="text-sm font-semibold text-slate-800">{item.title}</div>
+                  <p className="mt-2 text-xs text-slate-500">{item.detail}</p>
+                </div>
+              ))}
+            </div>
+            <div className="mt-5 flex flex-wrap gap-2">
+              {tagLibrary.map((tag) => (
+                <span key={tag} className="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-500">
+                  #{tag}
+                </span>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+            <h2 className="text-lg font-semibold text-slate-900">同类题推荐</h2>
+            <p className="text-xs text-slate-400">举一反三，构建闭合复习回路</p>
+            <div className="mt-4 space-y-3">
+              {recommendedDrills.map((drill) => (
+                <div key={drill.id} className="rounded-xl border border-slate-200 px-4 py-3">
+                  <div className="flex items-center justify-between text-sm text-slate-700">
+                    <span>{drill.title}</span>
+                    <span className="text-xs text-slate-400">{drill.count} 题 · {drill.duration}</span>
+                  </div>
+                  <button className="mt-3 w-full rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-800">
+                    一键生成重测卷
+                  </button>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
 
