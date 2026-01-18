@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 
 const commonMistakes = [
@@ -40,6 +41,7 @@ const reflectionNotes = [
 ];
 
 export default function StudentPerformancePage() {
+  const router = useRouter();
   const [checked, setChecked] = useState<boolean[]>(repairChecklist.map(() => false));
 
   const toggleCheck = (index: number) => {
@@ -160,19 +162,36 @@ export default function StudentPerformancePage() {
             </div>
           </div>
 
-          <div className="rounded-2xl border border-slate-200 bg-slate-900 p-6 text-white">
-            <h2 className="text-lg font-semibold">无排名安心区</h2>
-            <p className="mt-2 text-sm text-white/60">你看不到任何位次，只看得到可以提升的方向。</p>
-            <div className="mt-5 space-y-4">
-              <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-4">
-                <div className="text-xs text-white/40">情绪波动指数</div>
-                <div className="mt-2 text-2xl font-semibold">稳定</div>
-                <p className="mt-2 text-xs text-white/50">学习状态已从外部压力转向自我调节</p>
+          <div className="space-y-4">
+            <div className="rounded-2xl border border-slate-200 bg-slate-900 p-6 text-white">
+              <h2 className="text-lg font-semibold">无排名安心区</h2>
+              <p className="mt-2 text-sm text-white/60">你看不到任何位次，只看得到可以提升的方向。</p>
+              <div className="mt-5 space-y-4">
+                <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-4">
+                  <div className="text-xs text-white/40">情绪波动指数</div>
+                  <div className="mt-2 text-2xl font-semibold">稳定</div>
+                  <p className="mt-2 text-xs text-white/50">学习状态已从外部压力转向自我调节</p>
+                </div>
+                <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-4">
+                  <div className="text-xs text-white/40">下一步行动</div>
+                  <p className="mt-2 text-sm text-white/70">聚焦 2 个共性易错点，优先补齐基础。</p>
+                </div>
               </div>
-              <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-4">
-                <div className="text-xs text-white/40">下一步行动</div>
-                <p className="mt-2 text-sm text-white/70">聚焦 2 个共性易错点，优先补齐基础。</p>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-6">
+              <h2 className="text-lg font-semibold text-slate-900">AI 学习助手</h2>
+              <p className="text-xs text-slate-400">把共性问题交给 AI，获取个性化纠错建议。</p>
+              <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <div className="text-sm font-semibold text-slate-800">今日建议</div>
+                <p className="mt-2 text-sm text-slate-600">优先复盘“电路等效”与“顶点式转换”，再做 1 组同类题。</p>
               </div>
+              <button
+                onClick={() => router.push('/student/student_assistant')}
+                className="mt-4 w-full rounded-xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white hover:bg-blue-700"
+              >
+                进入 AI 助手
+              </button>
             </div>
           </div>
         </div>
