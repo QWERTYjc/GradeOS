@@ -87,6 +87,8 @@ class LangGraphOrchestrator(Orchestrator):
         # 事件队列（用于实时流式推送）
         self._event_queues: Dict[str, asyncio.Queue] = {}
         self._event_stream_complete: Dict[str, bool] = {}
+        max_active_runs = int(os.getenv("RUN_MAX_CONCURRENCY", "3"))
+        self._run_semaphore = asyncio.Semaphore(max(1, max_active_runs))
         
         if offline_mode:
             logger.info("LangGraphOrchestrator 已初始化（离线模式）")
@@ -222,7 +224,10 @@ class LangGraphOrchestrator(Orchestrator):
             payload: 输入数据
         """
         paused = False  # 初始化，避免 finally 中 UnboundLocalError
+        acquired = False
         try:
+            await self._run_semaphore.acquire()
+            acquired = True
             # 更新状态为 running
             await self._update_run_status(run_id, "running")
             
@@ -394,6 +399,8 @@ class LangGraphOrchestrator(Orchestrator):
             await self._push_event(run_id, {"kind": "error", "name": None, "data": {"error": str(e)}})
             
         finally:
+            if acquired:
+                self._run_semaphore.release()
             # 清理后台任务
             self._background_tasks.pop(run_id, None)
             
@@ -799,8 +806,11 @@ class LangGraphOrchestrator(Orchestrator):
             config: 配置
         """
         paused = False
+        acquired = False
         accumulated_state: Dict[str, Any] = {}
         try:
+            await self._run_semaphore.acquire()
+            acquired = True
             # 更新状态为 running
             await self._update_run_status(run_id, "running")
             
@@ -891,6 +901,8 @@ class LangGraphOrchestrator(Orchestrator):
                 error=str(e)
             )
         finally:
+            if acquired:
+                self._run_semaphore.release()
             self._background_tasks.pop(run_id, None)
             if not paused:
                 await self._mark_event_stream_complete(run_id)

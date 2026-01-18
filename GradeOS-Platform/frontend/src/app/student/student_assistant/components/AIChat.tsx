@@ -1,7 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { ICONS, I18N } from '../constants';
 import { ChatMessage, Language } from '../types';
-import { geminiService } from '../services/gemini';
+import { assistantApi } from '@/services/api';
+import { useAuthStore } from '@/store/authStore';
 
 interface Props {
   lang: Language;
@@ -12,6 +13,7 @@ const AIChat: React.FC<Props> = ({ lang }) => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
+  const { user } = useAuthStore();
   
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -31,11 +33,13 @@ const AIChat: React.FC<Props> = ({ lang }) => {
     }
   }, [messages, isStreaming]);
 
-  const cleanText = (text: string) => text.replace(/[*#`]/g, '').trim();
-
   const handleSend = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!input.trim() || isStreaming) return;
+    if (!user?.id) {
+      setMessages(prev => [...prev, { role: 'assistant', content: t.brainFreeze, timestamp: new Date() }]);
+      return;
+    }
 
     const userMsgContent = input;
     setInput('');
@@ -47,20 +51,26 @@ const AIChat: React.FC<Props> = ({ lang }) => {
     try {
       // Add placeholder Assistant Message for streaming
       setMessages(prev => [...prev, { role: 'assistant', content: '', timestamp: new Date() }]);
-      
-      let currentResponse = '';
-      
-      // Use Gemini streaming response
-      await geminiService.generateStreamResponse(userMsgContent, lang, (chunk: string) => {
-        currentResponse += chunk;
-        setMessages(prev => {
-          const newMessages = [...prev];
-          const lastMessage = newMessages[newMessages.length - 1];
-          if (lastMessage.role === 'assistant') {
-            lastMessage.content = cleanText(currentResponse);
-          }
-          return newMessages;
-        });
+
+      const history = [...messages, { role: 'user', content: userMsgContent, timestamp: new Date() }]
+        .filter((msg) => msg.content)
+        .slice(-6)
+        .map((msg) => ({ role: msg.role, content: msg.content }));
+
+      const response = await assistantApi.chat({
+        student_id: user.id,
+        class_id: user.classIds?.[0],
+        message: userMsgContent,
+        history,
+      });
+
+      setMessages(prev => {
+        const next = [...prev];
+        const lastMessage = next[next.length - 1];
+        if (lastMessage.role === 'assistant') {
+          lastMessage.content = response.content;
+        }
+        return next;
       });
 
     } catch (error) {

@@ -16,9 +16,9 @@ import logging
 import re
 from typing import Dict, Any, List, Optional, TYPE_CHECKING, AsyncIterator, Callable, Awaitable, Literal
 
-from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage
 
+from src.services.chat_model_factory import get_chat_model
 from ..models.grading import RubricMappingItem
 from ..models.grading_models import (
     QuestionRubric,
@@ -30,7 +30,7 @@ from ..models.grading_models import (
 )
 from ..config.models import get_default_model
 from ..utils.error_handling import with_retry, get_error_manager
-from ..utils.llm_thinking import get_thinking_kwargs, split_thinking_content
+from ..utils.llm_thinking import split_thinking_content
 
 if TYPE_CHECKING:
     from ..services.rubric_registry import RubricRegistry
@@ -56,8 +56,8 @@ class GeminiReasoningClient:
     MAX_CRITERIA_PER_QUESTION = 10  # 每道题最多显示的评分要点数
     
     def __init__(
-        self, 
-        api_key: str, 
+        self,
+        api_key: Optional[str] = None,
         model_name: Optional[str] = None,
         rubric_registry: Optional["RubricRegistry"] = None,
     ):
@@ -71,12 +71,12 @@ class GeminiReasoningClient:
         """
         if model_name is None:
             model_name = get_default_model()
-        thinking_kwargs = get_thinking_kwargs(model_name, enable_thinking=True)
-        self.llm = ChatGoogleGenerativeAI(
-            model=model_name,
-            google_api_key=api_key,
+        self.llm = get_chat_model(
+            api_key=api_key,
+            model_name=model_name,
             temperature=0.2,
-            **thinking_kwargs,
+            purpose="vision",
+            enable_thinking=True,
         )
         self.model_name = model_name
         self.temperature = 0.2  # 低温度以保持一致性

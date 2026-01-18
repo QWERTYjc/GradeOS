@@ -35,6 +35,12 @@ export interface LoginRequest {
   password: string;
 }
 
+export interface RegisterRequest {
+  username: string;
+  password: string;
+  role: 'teacher' | 'student';
+}
+
 export interface UserResponse {
   user_id: string;
   username: string;
@@ -46,6 +52,8 @@ export interface UserResponse {
 export const authApi = {
   login: (data: LoginRequest) =>
     request<UserResponse>('/auth/login', { method: 'POST', body: JSON.stringify(data) }),
+  register: (data: RegisterRequest) =>
+    request<UserResponse>('/auth/register', { method: 'POST', body: JSON.stringify(data) }),
 
   getUserInfo: (userId: string) =>
     request<UserResponse>(`/user/info?user_id=${userId}`),
@@ -224,6 +232,34 @@ export const analysisApi = {
   },
 };
 
+// ============ 学生助手 API ============
+
+export interface AssistantMessage {
+  role: 'system' | 'user' | 'assistant';
+  content: string;
+}
+
+export interface AssistantChatRequest {
+  student_id: string;
+  message: string;
+  class_id?: string;
+  history?: AssistantMessage[];
+}
+
+export interface AssistantChatResponse {
+  content: string;
+  model?: string;
+  usage?: Record<string, number>;
+}
+
+export const assistantApi = {
+  chat: (data: AssistantChatRequest) =>
+    request<AssistantChatResponse>('/assistant/chat', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+};
+
 // ============ 统计 API ============
 
 export interface ClassStatistics {
@@ -349,6 +385,7 @@ export interface GradingImportTarget {
   class_id: string;
   student_ids: string[];
   assignment_id?: string;
+  student_mapping?: Array<{ student_key: string; student_id: string }>;
 }
 
 export interface GradingImportRequest {
@@ -419,7 +456,8 @@ export const gradingApi = {
       studentMapping?: Array<{ studentId: string; studentName: string; startIndex: number; endIndex: number }>;
     },
     enableReview: boolean = true,
-    gradingMode?: string
+    gradingMode?: string,
+    teacherId?: string
   ): Promise<Submission> => {
     const formData = new FormData();
 
@@ -452,6 +490,9 @@ export const gradingApi = {
     formData.append('enable_review', enableReview ? 'true' : 'false');
     if (gradingMode) {
       formData.append('grading_mode', gradingMode);
+    }
+    if (teacherId) {
+      formData.append('teacher_id', teacherId);
     }
 
     // 使用正确的批改 API 端点
@@ -552,6 +593,7 @@ export const api = {
   class: classApi,
   homework: homeworkApi,
   analysis: analysisApi,
+  assistant: assistantApi,
   statistics: statisticsApi,
   // Console API (兼容旧接口)
   createSubmission: (
@@ -565,7 +607,8 @@ export const api = {
       studentMapping?: Array<{ studentId: string; studentName: string; startIndex: number; endIndex: number }>;
     },
     enableReview: boolean = true,
-    gradingMode?: string
+    gradingMode?: string,
+    teacherId?: string
   ) => gradingApi.createSubmission(
     examFiles,
     rubricFiles,
@@ -573,7 +616,8 @@ export const api = {
     expectedStudents,
     classContext,
     enableReview,
-    gradingMode
+    gradingMode,
+    teacherId
   ),
   getSubmission: gradingApi.getSubmission,
   getResults: gradingApi.getResults,

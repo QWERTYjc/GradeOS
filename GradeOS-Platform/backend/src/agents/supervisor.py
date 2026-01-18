@@ -7,14 +7,13 @@ import json
 import logging
 from typing import Dict, Any, List, Optional
 
-from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage
 
+from src.services.chat_model_factory import get_chat_model
 from src.models.enums import QuestionType
 from src.models.state import ContextPack, GradingState
 from src.agents.base import BaseGradingAgent
 from src.agents.pool import AgentPool, AgentNotFoundError
-from src.utils.llm_thinking import get_thinking_kwargs
 from src.config.models import get_lite_model
 
 
@@ -38,9 +37,9 @@ class SupervisorAgent:
     
     def __init__(
         self,
-        api_key: str,
+        api_key: Optional[str] = None,
         model_name: Optional[str] = None,
-        agent_pool: Optional[AgentPool] = None
+        agent_pool: Optional[AgentPool] = None,
     ):
         """初始化 SupervisorAgent
         
@@ -51,12 +50,12 @@ class SupervisorAgent:
         """
         if model_name is None:
             model_name = get_lite_model()
-        thinking_kwargs = get_thinking_kwargs(model_name, enable_thinking=True)
-        self.llm = ChatGoogleGenerativeAI(
-            model=model_name,
-            google_api_key=api_key,
-            temperature=0.1,  # low temperature for consistent classification
-            **thinking_kwargs,
+        self.llm = get_chat_model(
+            api_key=api_key,
+            model_name=model_name,
+            temperature=0.1,
+            purpose="vision",
+            enable_thinking=True,
         )
         self.agent_pool = agent_pool or AgentPool()
         self._api_key = api_key

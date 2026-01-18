@@ -12,12 +12,11 @@ import logging
 from typing import List, Optional, Dict, Any
 from dataclasses import dataclass, field
 
-from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage
 
+from src.services.chat_model_factory import get_chat_model
 from src.services.rubric_parser import ParsedRubric, QuestionRubric
 from src.config.models import get_default_model
-from src.utils.llm_thinking import get_thinking_kwargs
 
 
 logger = logging.getLogger(__name__)
@@ -68,16 +67,16 @@ class StrictGradingService:
     4. 输出详细的评分解释
     """
     
-    def __init__(self, api_key: str, model_name: Optional[str] = None):
+    def __init__(self, api_key: Optional[str] = None, model_name: Optional[str] = None):
         if model_name is None:
             model_name = get_default_model()
-        thinking_kwargs = get_thinking_kwargs(model_name, enable_thinking=True)
-        self.llm = ChatGoogleGenerativeAI(
-            model=model_name,
-            google_api_key=api_key,
+        self.llm = get_chat_model(
+            api_key=api_key,
+            model_name=model_name,
             temperature=0.1,
-            streaming=True,  # enable streaming
-            **thinking_kwargs,
+            purpose="vision",
+            enable_thinking=True,
+            streaming=True,
         )
     
     async def grade_student(

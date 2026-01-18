@@ -7,14 +7,13 @@ import json
 import logging
 from typing import List, Dict, Any, Optional
 
-from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage
 
+from src.services.chat_model_factory import get_chat_model
 from src.models.enums import QuestionType
 from src.models.state import ContextPack, GradingState, EvidenceItem
 from src.agents.base import BaseGradingAgent
 from src.config.models import get_default_model
-from src.utils.llm_thinking import get_thinking_kwargs
 
 
 logger = logging.getLogger(__name__)
@@ -47,8 +46,8 @@ class LabDesignAgent(BaseGradingAgent):
     
     def __init__(
         self,
-        api_key: str,
-        model_name: Optional[str] = None
+        api_key: Optional[str] = None,
+        model_name: Optional[str] = None,
     ):
         """初始化 LabDesignAgent
         
@@ -58,12 +57,12 @@ class LabDesignAgent(BaseGradingAgent):
         """
         if model_name is None:
             model_name = get_default_model()
-        thinking_kwargs = get_thinking_kwargs(model_name, enable_thinking=True)
-        self.llm = ChatGoogleGenerativeAI(
-            model=model_name,
-            google_api_key=api_key,
+        self.llm = get_chat_model(
+            api_key=api_key,
+            model_name=model_name,
             temperature=0.2,
-            **thinking_kwargs,
+            purpose="vision",
+            enable_thinking=True,
         )
         self._api_key = api_key
     

@@ -1,7 +1,6 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { CheckCircle2, ArrowRight, AlertTriangle } from 'lucide-react';
 import clsx from 'clsx';
 import { useConsoleStore } from '@/store/consoleStore';
@@ -25,8 +24,7 @@ const REVIEW_LABELS: Record<string, string> = {
 };
 
 export default function ReviewOverlay() {
-  const router = useRouter();
-  const { pendingReview, submissionId, setPendingReview, setStatus } = useConsoleStore();
+  const { pendingReview, submissionId, setPendingReview, setStatus, setCurrentTab, setReviewFocus } = useConsoleStore();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -36,21 +34,16 @@ export default function ReviewOverlay() {
   const reviewLabel = REVIEW_LABELS[reviewType] || '人工交互';
   const reviewMessage = pendingReview?.message || '需要人工介入确认。';
 
-  const reviewRoute = useMemo(() => {
-    if (!submissionId) return '';
-    if (isRubricReview) return `/grading/rubric-review/${submissionId}`;
-    if (isResultsReview) return `/grading/results-review/${submissionId}`;
-    return '';
-  }, [submissionId, isRubricReview, isResultsReview]);
+  const reviewFocus = isRubricReview ? 'rubric' : isResultsReview ? 'results' : null;
 
   if (!pendingReview || !submissionId) {
     return null;
   }
 
   const handleNavigate = () => {
-    if (reviewRoute) {
-      router.push(reviewRoute);
-    }
+    if (!reviewFocus) return;
+    setReviewFocus(reviewFocus);
+    setCurrentTab('results');
   };
 
   const handleSkip = async () => {
@@ -96,7 +89,7 @@ export default function ReviewOverlay() {
           onClick={handleNavigate}
           className="flex-1 rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600 transition hover:border-slate-300"
         >
-          前往交互
+          打开结果页
           <ArrowRight className="ml-2 inline h-3.5 w-3.5" />
         </button>
         <button

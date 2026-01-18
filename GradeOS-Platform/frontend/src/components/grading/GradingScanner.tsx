@@ -3,6 +3,7 @@
 import React, { useRef, useState } from 'react';
 import { UploadCloud, FileText, Image as ImageIcon, Loader2 } from 'lucide-react';
 import { useConsoleStore } from '@/store/consoleStore';
+import { useAuthStore } from '@/store/authStore';
 import { useGradingScan } from './index';
 import { api } from '@/services/api';
 import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf';
@@ -45,6 +46,7 @@ const renderPdfToImages = async (file: File, maxPages = 80): Promise<string[]> =
 
 export default function GradingScanner() {
   const { setCurrentView } = useGradingScan();
+  const { user } = useAuthStore();
   const {
     setStatus,
     setSubmissionId,
@@ -104,7 +106,8 @@ export default function GradingScanner() {
         undefined,
         undefined,
         interactionEnabled,
-        gradingMode
+        gradingMode,
+        user?.id
       );
       addLog(`Upload complete. Submission ID: ${submission.id}`, 'SUCCESS');
       setSubmissionId(submission.id);

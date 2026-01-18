@@ -26,6 +26,7 @@ from src.db.sqlite import (
     get_student_results as get_sqlite_student_results,
     get_connection as get_sqlite_connection,
 )
+from src.services.llm_client import LLMMessage, get_llm_client
 from src.utils.image import to_jpeg_bytes
 
 logger = logging.getLogger(__name__)
@@ -37,6 +38,13 @@ UPLOAD_DIR = Path("./storage/scans")
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 # ============ 数据模型 ============
+
+class RegisterRequest(BaseModel):
+    """用户注册"""
+    username: str
+    password: str
+    role: str = "teacher"
+
 
 class LoginRequest(BaseModel):
     username: str
@@ -111,15 +119,39 @@ class SubmissionResponse(BaseModel):
     feedback: Optional[str]
 
 
+class GradingStudentMapping(BaseModel):
+    student_key: str
+    student_id: str
+
+
 class GradingImportTarget(BaseModel):
     class_id: str
     student_ids: List[str]
     assignment_id: Optional[str] = None
+    student_mapping: Optional[List[GradingStudentMapping]] = None
 
 
 class GradingImportRequest(BaseModel):
     batch_id: str
     targets: List[GradingImportTarget]
+
+
+class AssistantMessage(BaseModel):
+    role: str
+    content: str
+
+
+class AssistantChatRequest(BaseModel):
+    student_id: str
+    message: str
+    class_id: Optional[str] = None
+    history: Optional[List[AssistantMessage]] = None
+
+
+class AssistantChatResponse(BaseModel):
+    content: str
+    model: Optional[str] = None
+    usage: Optional[Dict[str, int]] = None
 
 
 class GradingImportRecord(BaseModel):
@@ -243,6 +275,90 @@ def _get_student_map(class_id: str) -> Dict[str, str]:
     return {student.id: student.name for student in students}
 
 
+def _extract_question_results(result: Dict[str, Any]) -> List[Dict[str, Any]]:
+    for key in ("questionResults", "question_results", "questions", "questionDetails", "question_details"):
+        values = result.get(key)
+        if isinstance(values, list) and values:
+            return values
+    return []
+
+
+def _build_student_context(student_id: str, class_id: Optional[str] = None) -> Dict[str, Any]:
+    class_ids = []
+    class_names = {}
+    for cid, students in CLASS_STUDENTS.items():
+        if any(student.id == student_id for student in students):
+            class_ids.append(cid)
+            if cid in CLASSES:
+                class_names[cid] = CLASSES[cid]["class_name"]
+    if class_id and class_id not in class_ids:
+        class_ids.append(class_id)
+    if class_id and class_id in CLASSES:
+        class_names[class_id] = CLASSES[class_id]["class_name"]
+
+    items = [
+        item for item in GRADING_IMPORT_ITEMS.values()
+        if item.get("student_id") == student_id and (not class_id or item.get("class_id") == class_id)
+    ]
+    wrong_samples = []
+    total_questions = 0
+    total_wrong = 0
+    total_score = 0.0
+    total_max = 0.0
+
+    for item in items:
+        result = item.get("result") or {}
+        questions = _extract_question_results(result)
+        for q in questions:
+            score = float(q.get("score", 0) or 0)
+            max_score = float(q.get("maxScore") or q.get("max_score") or 0)
+            if max_score <= 0:
+                continue
+            total_questions += 1
+            total_score += score
+            total_max += max_score
+            if score < max_score:
+                total_wrong += 1
+                if len(wrong_samples) < 8:
+                    wrong_samples.append({
+                        "question_id": str(q.get("questionId") or q.get("question_id") or ""),
+                        "score": score,
+                        "max_score": max_score,
+                        "feedback": q.get("feedback") or "",
+                        "student_answer": q.get("studentAnswer") or q.get("student_answer") or "",
+                        "evidence": (q.get("scoring_point_results") or q.get("scoringPointResults") or [])[:2],
+                    })
+
+    submissions = []
+    for homework_id, submission_list in SUBMISSIONS.items():
+        for submission in submission_list:
+            if submission.get("student_id") != student_id:
+                continue
+            homework = HOMEWORKS.get(homework_id, {})
+            submissions.append({
+                "homework_id": homework_id,
+                "title": homework.get("title"),
+                "status": submission.get("status"),
+                "submitted_at": submission.get("submitted_at"),
+                "score": submission.get("score"),
+            })
+    submissions = sorted(submissions, key=lambda x: x.get("submitted_at") or "", reverse=True)[:5]
+
+    return {
+        "student_id": student_id,
+        "class_ids": class_ids,
+        "class_names": class_names,
+        "grading_summary": {
+            "total_questions": total_questions,
+            "wrong_questions": total_wrong,
+            "total_score": total_score,
+            "total_max": total_max,
+        },
+        "wrong_question_samples": wrong_samples,
+        "recent_submissions": submissions,
+    }
+
+
 async def _get_formatted_results(batch_id: str, orchestrator: Orchestrator) -> List[Dict[str, Any]]:
     run_id = f"batch_grading_{batch_id}"
     run_info = await orchestrator.get_run_info(run_id)
@@ -346,19 +462,38 @@ async def _maybe_trigger_grading(homework_id: str, orchestrator: Orchestrator) -
 
 # ============ 认证接口 ============
 
-@router.post("/auth/login", response_model=UserResponse, tags=["认证"])
-async def login(request: LoginRequest):
-    """用户登录"""
-    # Mock 实现
-    mock_users = {
-        "teacher": {"user_id": "t-001", "name": "Demo Teacher", "user_type": "teacher", "class_ids": ["c-001"]},
-        "student": {"user_id": "s-001", "name": "Demo Student", "user_type": "student", "class_ids": ["c-001"]},
+AUTH_USERS = {
+    "teacher": {"user_id": "t-001", "name": "Demo Teacher", "user_type": "teacher", "class_ids": ["c-001"], "password": "123456"},
+    "student": {"user_id": "s-001", "name": "Demo Student", "user_type": "student", "class_ids": ["c-001"], "password": "123456"},
+}
+
+@router.post("/auth/register", response_model=UserResponse, tags=["认证"])
+async def register(request: RegisterRequest):
+    """用户注册（Mock）"""
+    username = request.username.strip()
+    if not username or not request.password:
+        raise HTTPException(status_code=400, detail="Invalid registration info")
+    if username in AUTH_USERS:
+        raise HTTPException(status_code=409, detail="Username already exists")
+    role = request.role if request.role in ("teacher", "student") else "teacher"
+    user_id = f"{role[0]}-{len(AUTH_USERS) + 1:03d}"
+    AUTH_USERS[username] = {
+        "user_id": user_id,
+        "name": username,
+        "user_type": role,
+        "class_ids": [],
+        "password": request.password,
     }
-    
-    if request.username in mock_users and request.password == "123456":
-        user = mock_users[request.username]
-        return UserResponse(username=request.username, **user)
-    
+    user = AUTH_USERS[username]
+    return UserResponse(username=username, **{k: v for k, v in user.items() if k != "password"})
+
+
+@router.post("/auth/login", response_model=UserResponse, tags=["??"])
+async def login(request: LoginRequest):
+    """????"""
+    user = AUTH_USERS.get(request.username)
+    if user and user.get("password") == request.password:
+        return UserResponse(username=request.username, **{k: v for k, v in user.items() if k != "password"})
     raise HTTPException(status_code=401, detail="Invalid credentials")
 
 
@@ -661,7 +796,18 @@ async def import_grading_results(
         raise HTTPException(status_code=503, detail="编排器未初始化")
 
     formatted_results = await _get_formatted_results(request.batch_id, orchestrator)
-    results_by_key = {result.get("studentName"): result for result in formatted_results}
+    results_by_key: Dict[str, Dict[str, Any]] = {}
+    for result in formatted_results:
+        for key in [
+            result.get("studentName"),
+            result.get("student_name"),
+            result.get("studentKey"),
+            result.get("student_key"),
+            result.get("studentId"),
+            result.get("student_id"),
+        ]:
+            if key:
+                results_by_key[str(key)] = result
 
     records: List[GradingImportRecord] = []
     now = datetime.utcnow().isoformat()
@@ -675,6 +821,7 @@ async def import_grading_results(
             raise HTTPException(status_code=404, detail="班级不存在")
 
         student_map = _get_student_map(target.class_id)
+        mapping_by_id = {m.student_id: m.student_key for m in (target.student_mapping or [])}
         assignment_title = None
         if target.assignment_id and target.assignment_id in HOMEWORKS:
             assignment_title = HOMEWORKS[target.assignment_id]["title"]
@@ -696,7 +843,12 @@ async def import_grading_results(
 
         for student_id in target.student_ids:
             student_name = student_map.get(student_id, student_id)
-            result = results_by_key.get(student_name) or results_by_key.get(student_id)
+            student_key = mapping_by_id.get(student_id)
+            result = None
+            if student_key:
+                result = results_by_key.get(student_key)
+            if not result:
+                result = results_by_key.get(student_name) or results_by_key.get(student_id)
             item_id = str(uuid.uuid4())[:8]
             GRADING_IMPORT_ITEMS[item_id] = {
                 "item_id": item_id,
@@ -874,6 +1026,43 @@ async def revoke_grading_import(import_id: str, request: GradingRevokeRequest):
     return GradingImportRecord(**record)
 
 
+# ============ 学生助手 ============ 
+
+@router.post("/assistant/chat", response_model=AssistantChatResponse, tags=["学生助手"])
+async def assistant_chat(request: AssistantChatRequest):
+    """学生助手对话"""
+    context = _build_student_context(request.student_id, request.class_id)
+    system_prompt = (
+        "You are GradeOS Student Assistant, focused on data-driven tutoring. "
+        "Use the provided context as ground truth for scores, wrong questions, "
+        "recent submissions, and class membership. "
+        "If the context is insufficient, explain what is missing and propose next steps. "
+        "Be concise, structured, and actionable.\n\n"
+        f"CONTEXT:\n{json.dumps(context, ensure_ascii=False)}"
+    )
+
+    messages: List[LLMMessage] = [LLMMessage(role="system", content=system_prompt)]
+    if request.history:
+        for msg in request.history[-8:]:
+            role = msg.role if msg.role in ("system", "user", "assistant") else "user"
+            messages.append(LLMMessage(role=role, content=msg.content))
+    messages.append(LLMMessage(role="user", content=request.message))
+
+    client = get_llm_client()
+    response = await client.invoke(
+        messages=messages,
+        purpose="text",
+        temperature=0.3,
+        max_tokens=2048,
+    )
+
+    return AssistantChatResponse(
+        content=response.content,
+        model=response.model,
+        usage=response.usage or {},
+    )
+
+
 # ============ 错题分析接口 (IntelliLearn) ============
 
 @router.post("/v1/analysis/submit-error", response_model=ErrorAnalysisResponse, tags=["错题分析"])
@@ -992,4 +1181,3 @@ async def merge_statistics(class_id: str, external_data: Optional[str] = None):
         "internalAssignments": ["Homework 1", "Homework 2"],
         "externalAssignments": ["Midterm"]
     }
-

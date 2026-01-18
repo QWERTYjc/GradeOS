@@ -1,7 +1,6 @@
 'use client';
 
-import React, { useEffect, useMemo, useRef } from 'react';
-import { useRouter } from 'next/navigation';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useConsoleStore, WorkflowNode, GradingAgent } from '@/store/consoleStore';
 import clsx from 'clsx';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -123,6 +122,49 @@ const AgentCard: React.FC<{ agent: GradingAgent; onClick: () => void; isSelected
     );
 };
 
+const WorkerTile: React.FC<{
+    agent?: GradingAgent;
+    nodeLabel?: string;
+    onClick?: () => void;
+    isSelected?: boolean;
+}> = ({ agent, nodeLabel, onClick, isSelected }) => {
+    const status = agent?.status || 'pending';
+    const statusColor = status === 'running'
+        ? 'bg-blue-500'
+        : status === 'completed'
+            ? 'bg-emerald-500'
+            : status === 'failed'
+                ? 'bg-red-500'
+                : 'bg-slate-300';
+
+    return (
+        <button
+            onClick={onClick}
+            type="button"
+            disabled={!agent}
+            className={clsx(
+                "rounded-xl border border-slate-200/70 bg-white/70 px-3 py-2 shadow-sm backdrop-blur-md text-left transition",
+                agent ? "cursor-pointer hover:border-blue-200 hover:bg-white/90" : "cursor-default opacity-70",
+                isSelected && "ring-2 ring-blue-500 border-transparent"
+            )}
+        >
+            <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                    <span className={clsx('h-2 w-2 rounded-full', statusColor)} />
+                    <span className="text-xs font-semibold text-slate-700">
+                        {agent?.label || 'Worker'}
+                    </span>
+                </div>
+                {nodeLabel && (
+                    <span className="text-[10px] uppercase tracking-wider text-slate-400">
+                        {nodeLabel}
+                    </span>
+                )}
+            </div>
+        </button>
+    );
+};
+
 const ParallelContainer: React.FC<{
     node: WorkflowNode;
     onAgentClick: (id: string) => void;
@@ -135,12 +177,40 @@ const ParallelContainer: React.FC<{
     const isLogicReview = node.id === 'logic_review';
     const isRubricReview = node.id === 'rubric_review';
     const isRubricParse = node.id === 'rubric_parse';
+    const isGradeBatch = node.id === 'grade_batch';
+    const [openBatchIndex, setOpenBatchIndex] = useState<number | null>(0);
 
     const waitLabel = isLogicReview || isRubricReview
         ? 'Waiting for reviews...'
         : isRubricParse
             ? 'Waiting for parse...'
             : 'Waiting for tasks...';
+
+    const batchSize = 5;
+    const batchGroups = useMemo(() => {
+        if (!isGradeBatch || agents.length === 0) {
+            return [];
+        }
+        const groups: Array<{ index: number; agents: GradingAgent[] }> = [];
+        for (let i = 0; i < agents.length; i += batchSize) {
+            groups.push({ index: Math.floor(i / batchSize), agents: agents.slice(i, i + batchSize) });
+        }
+        return groups;
+    }, [agents, isGradeBatch]);
+
+    useEffect(() => {
+        if (!isGradeBatch) return;
+        if (batchProgress?.batchIndex !== undefined) {
+            setOpenBatchIndex(batchProgress.batchIndex);
+        }
+    }, [batchProgress?.batchIndex, isGradeBatch]);
+
+    const getBatchStatus = (batchAgents: GradingAgent[]) => {
+        if (batchAgents.some((agent) => agent.status === 'running')) return 'running';
+        if (batchAgents.some((agent) => agent.status === 'failed')) return 'failed';
+        if (batchAgents.length > 0 && batchAgents.every((agent) => agent.status === 'completed')) return 'completed';
+        return 'pending';
+    };
 
     return (
         <motion.div
@@ -184,7 +254,7 @@ const ParallelContainer: React.FC<{
                             )}
                         </div>
                     </div>
-                    {batchProgress && node.id === 'grade_batch' && (
+                    {batchProgress && isGradeBatch && (
                         <div className="ml-auto flex flex-col items-end">
                             <span className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">Batch</span>
                             <span className="text-xs font-mono font-bold text-slate-700 bg-slate-100 px-1.5 py-0.5 rounded">
@@ -194,7 +264,7 @@ const ParallelContainer: React.FC<{
                     )}
                 </div>
 
-                <div className="grid grid-cols-1 gap-2.5 max-h-[280px] overflow-y-auto pr-1 custom-scrollbar">
+                <div className="grid grid-cols-1 gap-2.5 max-h-[340px] overflow-y-auto pr-1 custom-scrollbar">
                     <AnimatePresence mode="popLayout">
                         {agents.length === 0 ? (
                             <motion.div
@@ -205,6 +275,76 @@ const ParallelContainer: React.FC<{
                                 <Clock className="w-6 h-6 opacity-30" />
                                 <span className="text-xs font-medium">Waiting for agents...</span>
                             </motion.div>
+                        ) : isGradeBatch ? (
+                            batchGroups.map((group) => {
+                                const status = getBatchStatus(group.agents);
+                                const isOpen = openBatchIndex === group.index;
+                                const isActive = batchProgress?.batchIndex === group.index || status === 'running';
+                                return (
+                                    <motion.div
+                                        key={`batch-${group.index}`}
+                                        layout
+                                        className={clsx(
+                                            "rounded-2xl border px-3 py-3 transition-all bg-white/70",
+                                            isActive ? "border-blue-300 shadow-[0_0_15px_rgba(59,130,246,0.2)]" : "border-slate-200"
+                                        )}
+                                    >
+                                        <button
+                                            type="button"
+                                            onClick={() => setOpenBatchIndex(isOpen ? null : group.index)}
+                                            className="w-full flex items-center justify-between text-left"
+                                        >
+                                            <div className="flex items-center gap-2">
+                                                <span
+                                                    className={clsx(
+                                                        "h-2 w-2 rounded-full",
+                                                        status === 'running'
+                                                            ? 'bg-blue-500 animate-pulse'
+                                                            : status === 'completed'
+                                                                ? 'bg-emerald-500'
+                                                                : status === 'failed'
+                                                                    ? 'bg-red-500'
+                                                                    : 'bg-slate-300'
+                                                    )}
+                                                />
+                                                <span className="text-xs font-semibold text-slate-700">
+                                                    Batch {group.index + 1}
+                                                </span>
+                                                <span className="text-[10px] text-slate-400">
+                                                    {group.agents.length} workers
+                                                </span>
+                                            </div>
+                                            <span className="text-[10px] uppercase tracking-[0.2em] text-slate-400">
+                                                {isOpen ? 'collapse' : 'expand'}
+                                            </span>
+                                        </button>
+
+                                        <AnimatePresence initial={false}>
+                                            {isOpen && (
+                                                <motion.div
+                                                    initial={{ height: 0, opacity: 0 }}
+                                                    animate={{ height: 'auto', opacity: 1 }}
+                                                    exit={{ height: 0, opacity: 0 }}
+                                                    className="mt-3 grid grid-cols-2 gap-2"
+                                                >
+                                                    {Array.from({ length: batchSize }).map((_, idx) => {
+                                                        const agent = group.agents[idx];
+                                                        return (
+                                                            <WorkerTile
+                                                                key={agent?.id || `placeholder-${group.index}-${idx}`}
+                                                                agent={agent}
+                                                                nodeLabel="Worker"
+                                                                onClick={agent ? () => onAgentClick(agent.id) : undefined}
+                                                                isSelected={selectedAgentId === agent?.id}
+                                                            />
+                                                        );
+                                                    })}
+                                                </motion.div>
+                                            )}
+                                        </AnimatePresence>
+                                    </motion.div>
+                                );
+                            })
                         ) : (
                             agents.map((agent) => (
                                 <AgentCard
@@ -327,10 +467,19 @@ export const WorkflowGraph: React.FC = () => {
         batchProgress,
         interactionEnabled,
         pendingReview,
-        submissionId
+        submissionId,
+        setCurrentTab,
+        setReviewFocus
     } = useConsoleStore();
-    const router = useRouter();
     const containerRef = useRef<HTMLDivElement | null>(null);
+    const scrollRef = useRef<HTMLDivElement | null>(null);
+    const dragState = useRef({
+        isDragging: false,
+        startX: 0,
+        startY: 0,
+        scrollLeft: 0,
+        scrollTop: 0
+    });
     const nodeRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
     const handleNodeClick = (node: WorkflowNode) => {
@@ -342,14 +491,16 @@ export const WorkflowGraph: React.FC = () => {
         if (node.id === 'rubric_review') {
             const canNavigate = node.status === 'running' || reviewType.includes('rubric');
             if (canNavigate) {
-                router.push(`/grading/rubric-review/${submissionId}`);
+                setReviewFocus('rubric');
+                setCurrentTab('results');
             }
             return;
         }
         if (node.id === 'review') {
             const canNavigate = node.status === 'running' || reviewType.includes('results');
             if (canNavigate) {
-                router.push(`/grading/results-review/${submissionId}`);
+                setReviewFocus('results');
+                setCurrentTab('results');
             }
         }
     };
@@ -391,51 +542,86 @@ export const WorkflowGraph: React.FC = () => {
 
     return (
         <div
-            ref={containerRef}
-            className="w-full h-full flex items-center justify-center overflow-x-auto py-12 px-8 scrollbar-hide perspective-1000"
+            ref={scrollRef}
+            className="w-full h-full flex flex-col items-center justify-start overflow-auto cursor-grab active:cursor-grabbing"
+            onPointerDown={(event) => {
+                const el = scrollRef.current;
+                if (!el) return;
+                if (event.pointerType === 'mouse' && event.button !== 0) return;
+                dragState.current = {
+                    isDragging: true,
+                    startX: event.clientX,
+                    startY: event.clientY,
+                    scrollLeft: el.scrollLeft,
+                    scrollTop: el.scrollTop
+                };
+                el.setPointerCapture(event.pointerId);
+            }}
+            onPointerMove={(event) => {
+                const el = scrollRef.current;
+                if (!el || !dragState.current.isDragging) return;
+                const dx = event.clientX - dragState.current.startX;
+                const dy = event.clientY - dragState.current.startY;
+                el.scrollLeft = dragState.current.scrollLeft - dx;
+                el.scrollTop = dragState.current.scrollTop - dy;
+            }}
+            onPointerUp={(event) => {
+                const el = scrollRef.current;
+                if (!el) return;
+                dragState.current.isDragging = false;
+                el.releasePointerCapture(event.pointerId);
+            }}
+            onPointerLeave={() => {
+                dragState.current.isDragging = false;
+            }}
         >
-            <div className="flex items-center space-x-2 md:space-x-1">
-                <AnimatePresence mode="popLayout">
-                    {visibleNodes.map((node, index) => (
-                        <React.Fragment key={node.id}>
-                            <motion.div
-                                ref={(el) => {
-                                    nodeRefs.current[node.id] = el;
-                                }}
-                                className="relative z-10"
-                                initial={{ opacity: 0, x: 50, rotateY: 90 }}
-                                animate={{ opacity: 1, x: 0, rotateY: 0 }}
-                                transition={{ type: "spring", stiffness: 100, damping: 20, delay: index * 0.1 }}
-                            >
-                                {node.isParallelContainer ? (
-                                    <ParallelContainer
-                                        node={node}
-                                        onAgentClick={setSelectedAgentId}
-                                        selectedAgentId={selectedAgentId}
-                                        batchProgress={batchProgress}
-                                    />
-                                ) : (
-                                    <NodeCard
-                                        node={node}
-                                        onClick={() => handleNodeClick(node)}
-                                        isSelected={selectedNodeId === node.id}
-                                    />
-                                )}
-                            </motion.div>
-
-                            {index < visibleNodes.length - 1 && (
+            <div
+                ref={containerRef}
+                className="w-full flex items-center justify-center py-14 px-10 scrollbar-hide perspective-1000"
+            >
+                <div className="flex items-center space-x-2 md:space-x-1 min-w-max">
+                    <AnimatePresence mode="popLayout">
+                        {visibleNodes.map((node, index) => (
+                            <React.Fragment key={node.id}>
                                 <motion.div
-                                    initial={{ width: 0, opacity: 0 }}
-                                    animate={{ width: 'auto', opacity: 1 }}
-                                    exit={{ width: 0, opacity: 0 }}
-                                    transition={{ duration: 0.5 }}
+                                    ref={(el) => {
+                                        nodeRefs.current[node.id] = el;
+                                    }}
+                                    className="relative z-10"
+                                    initial={{ opacity: 0, x: 50, rotateY: 90 }}
+                                    animate={{ opacity: 1, x: 0, rotateY: 0 }}
+                                    transition={{ type: "spring", stiffness: 100, damping: 20, delay: index * 0.1 }}
                                 >
-                                    <FlowingConnector active={node.status === 'completed' || node.status === 'running'} />
+                                    {node.isParallelContainer ? (
+                                        <ParallelContainer
+                                            node={node}
+                                            onAgentClick={setSelectedAgentId}
+                                            selectedAgentId={selectedAgentId}
+                                            batchProgress={batchProgress}
+                                        />
+                                    ) : (
+                                        <NodeCard
+                                            node={node}
+                                            onClick={() => handleNodeClick(node)}
+                                            isSelected={selectedNodeId === node.id}
+                                        />
+                                    )}
                                 </motion.div>
-                            )}
-                        </React.Fragment>
-                    ))}
-                </AnimatePresence>
+
+                                {index < visibleNodes.length - 1 && (
+                                    <motion.div
+                                        initial={{ width: 0, opacity: 0 }}
+                                        animate={{ width: 'auto', opacity: 1 }}
+                                        exit={{ width: 0, opacity: 0 }}
+                                        transition={{ duration: 0.5 }}
+                                    >
+                                        <FlowingConnector active={node.status === 'completed' || node.status === 'running'} />
+                                    </motion.div>
+                                )}
+                            </React.Fragment>
+                        ))}
+                    </AnimatePresence>
+                </div>
             </div>
         </div>
     );

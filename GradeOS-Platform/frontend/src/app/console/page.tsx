@@ -3,7 +3,8 @@
 import React, { useEffect, useState, useContext } from 'react';
 import dynamic from 'next/dynamic';
 import { useConsoleStore } from '@/store/consoleStore';
-import { useSearchParams } from 'next/navigation';
+import { useAuthStore } from '@/store/authStore';
+import { useSearchParams, useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Space_Grotesk, Unbounded } from 'next/font/google';
 import {
@@ -30,28 +31,6 @@ const unbounded = Unbounded({ subsets: ['latin'], variable: '--font-display' });
 // --- Components ---
 
 type ScanTab = 'scan' | 'gallery';
-
-interface HeaderProps {
-    count: number;
-}
-
-const Header = ({ count }: HeaderProps) => (
-    <header className="fixed top-6 left-1/2 -translate-x-1/2 z-50">
-        <div className="bg-white/70 backdrop-blur-md border border-gray-200/50 px-6 py-3 rounded-full shadow-sm flex items-center gap-4">
-            <div className="flex items-center gap-2">
-                <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
-                <span className="font-semibold text-gray-800 tracking-tight console-display console-shimmer">ANTIGRAVITY</span>
-                <span className="text-gray-400 text-sm">CONSOLE</span>
-            </div>
-            {count > 0 && (
-                <div className="flex items-center gap-2 pl-4 border-l border-gray-200">
-                    <span className="text-xs font-semibold text-slate-500 uppercase tracking-widest">Images</span>
-                    <span className="text-sm font-bold text-slate-800">{count}</span>
-                </div>
-            )}
-        </div>
-    </header>
-);
 
 const dataUrlToFile = (dataUrl: string, filename: string): File => {
     const [meta, base64] = dataUrl.split(',');
@@ -101,6 +80,7 @@ const ScannerContainer = ({
     onGradingModeChange,
     studentNameMapping = []
 }: ScannerContainerProps) => {
+    const { user } = useAuthStore();
     const { setCurrentSessionId, sessions } = useContext(AppContext)!;
     const [viewMode, setViewMode] = useState<ScanViewMode>('exams');
     const [studentBoundaries, setStudentBoundaries] = useState<number[]>([]);
@@ -121,6 +101,10 @@ const ScannerContainer = ({
     const handleSubmit = async (images: ScannedImage[]) => {
         await onSubmitBatch(images, studentBoundaries);
     };
+
+    if (!user) {
+        return null;
+    }
 
     return (
         <div className="h-full w-full flex flex-col bg-[#F5F7FB]">
@@ -212,6 +196,7 @@ const ScannerContainer = ({
 export default function ConsolePage() {
     const status = useConsoleStore((state) => state.status);
     const reset = useConsoleStore((state) => state.reset);
+    const { user } = useAuthStore();
     const selectedAgentId = useConsoleStore((state) => state.selectedAgentId);
     const selectedNodeId = useConsoleStore((state) => state.selectedNodeId);
     const setSelectedNodeId = useConsoleStore((state) => state.setSelectedNodeId);
@@ -219,6 +204,8 @@ export default function ConsolePage() {
     const setInteractionEnabled = useConsoleStore((state) => state.setInteractionEnabled);
     const gradingMode = useConsoleStore((state) => state.gradingMode);
     const setGradingMode = useConsoleStore((state) => state.setGradingMode);
+    const currentTab = useConsoleStore((state) => state.currentTab);
+    const setCurrentTab = useConsoleStore((state) => state.setCurrentTab);
 
     // Initial Sessions State
     const [sessions, setSessions] = useState<Session[]>([]);
@@ -233,8 +220,6 @@ export default function ConsolePage() {
 
     const [activeTab, setActiveTab] = useState<ScanTab>('scan'); // Sub-tab for ScannerContainer
 
-    // Used for Workflow view
-    const [currentTab, setCurrentTab] = useState<'process' | 'results'>('process');
     const [isStreamOpen, setIsStreamOpen] = useState(false);
 
     useEffect(() => {
@@ -506,7 +491,8 @@ export default function ConsolePage() {
                 undefined,
                 classContextPayload,
                 interactionEnabled,
-                gradingMode
+                gradingMode,
+                user?.id
             );
 
             useConsoleStore.getState().setSubmissionId(response.id);
@@ -524,7 +510,7 @@ export default function ConsolePage() {
             <div className={clsx(
                 spaceGrotesk.variable,
                 unbounded.variable,
-                "min-h-screen w-full relative overflow-hidden console-shell"
+                "min-h-screen w-full relative overflow-auto console-shell"
             )}>
                 <div className="pointer-events-none absolute inset-0 console-aurora" />
                 <div className="pointer-events-none absolute inset-0 console-grid" />
@@ -532,10 +518,46 @@ export default function ConsolePage() {
                 <div className="pointer-events-none absolute top-24 right-[-120px] w-[260px] h-[260px] console-orb orb-2" />
                 <div className="pointer-events-none absolute bottom-[-140px] left-1/3 w-[360px] h-[360px] console-orb orb-3" />
 
-                <Header count={activeSession?.images.length || 0} />
+                <AnimatePresence>
+                    {status === 'REVIEWING' && (
+                        <motion.div
+                            initial={{ opacity: 0, y: -12 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0, y: -12 }}
+                            className="fixed right-6 top-24 z-40 bg-white/90 backdrop-blur border border-amber-200 text-amber-900 shadow-lg rounded-2xl px-4 py-3 flex items-center gap-3"
+                        >
+                            <div className="text-sm font-semibold">Review required</div>
+                            <button
+                                onClick={() => setCurrentTab('results')}
+                                className="px-3 py-1.5 text-xs font-semibold rounded-full bg-amber-500 text-white hover:bg-amber-600 transition"
+                            >
+                                Open
+                            </button>
+                        </motion.div>
+                    )}
+                </AnimatePresence>
+
+                <AnimatePresence>
+                    {status === 'COMPLETED' && currentTab !== 'results' && (
+                        <motion.div
+                            initial={{ opacity: 0, y: -12 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0, y: -12 }}
+                            className="fixed right-6 top-36 z-40 bg-white/90 backdrop-blur border border-emerald-200 text-emerald-900 shadow-lg rounded-2xl px-4 py-3 flex items-center gap-3"
+                        >
+                            <div className="text-sm font-semibold">Grading completed</div>
+                            <button
+                                onClick={() => setCurrentTab('results')}
+                                className="px-3 py-1.5 text-xs font-semibold rounded-full bg-emerald-500 text-white hover:bg-emerald-600 transition"
+                            >
+                                View results
+                            </button>
+                        </motion.div>
+                    )}
+                </AnimatePresence>
 
                 {/* Main Content Area - Centered */}
-                <main className="relative z-10 w-full h-screen flex flex-col items-center justify-center">
+                <main className="relative z-10 w-full min-h-screen flex flex-col items-center justify-center">
 
                     {/* Scanner/Uploader - Only visible when IDLE */}
                     <AnimatePresence mode="wait">

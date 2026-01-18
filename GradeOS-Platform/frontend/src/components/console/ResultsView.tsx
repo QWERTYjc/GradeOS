@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useContext, useMemo } from 'react';
+import React, { useState, useContext, useMemo, useEffect, useCallback } from 'react';
 import { useConsoleStore, StudentResult, QuestionResult } from '@/store/consoleStore';
 import clsx from 'clsx';
 import { ArrowLeft, ChevronDown, ChevronUp, CheckCircle, XCircle, Download, GitMerge, AlertCircle, Layers, FileText, Info, X, Sparkles, AlertTriangle, BookOpen, ListOrdered } from 'lucide-react';
@@ -12,6 +12,7 @@ import { AppContext, AppContextType } from '../bookscan/AppContext';
 import { MathText } from '@/components/common/MathText';
 import { GlassCard } from '@/components/design-system/GlassCard';
 import { SmoothButton } from '@/components/design-system/SmoothButton';
+import { gradingApi } from '@/services/api';
 
 interface ResultCardProps {
     result: StudentResult;
@@ -24,6 +25,169 @@ const normalizeEvidenceText = (text?: string) => {
     if (!text) return '';
     return text.replace(/^【原文引用】\s*/, '').trim();
 };
+
+type ReviewQuestionDraft = {
+    questionId: string;
+    score: number;
+    maxScore: number;
+    feedback: string;
+    pageIndices?: number[];
+    reviewNote: string;
+};
+
+type ReviewStudentDraft = {
+    studentName: string;
+    score: number;
+    maxScore: number;
+    startPage?: number;
+    endPage?: number;
+    questionResults: ReviewQuestionDraft[];
+};
+
+const buildReviewDraft = (results: StudentResult[]): ReviewStudentDraft[] => (
+    results.map((student) => ({
+        studentName: student.studentName,
+        score: student.score,
+        maxScore: student.maxScore,
+        startPage: student.startPage,
+        endPage: student.endPage,
+        questionResults: (student.questionResults || []).map((q) => ({
+            questionId: q.questionId,
+            score: q.score,
+            maxScore: q.maxScore,
+            feedback: q.feedback || '',
+            pageIndices: q.pageIndices || [],
+            reviewNote: '',
+        })),
+    }))
+);
+
+const buildResultsOverridePayload = (draft: ReviewStudentDraft[]) => (
+    draft.map((student) => ({
+        studentKey: student.studentName,
+        questionResults: student.questionResults.map((q) => ({
+            questionId: q.questionId,
+            score: q.score,
+            feedback: q.feedback,
+        })),
+    }))
+);
+
+type RubricScoringPointDraft = {
+    pointId: string;
+    description: string;
+    expectedValue?: string;
+    score: number;
+    isRequired: boolean;
+    keywords: string[];
+};
+
+type RubricAlternativeSolutionDraft = {
+    description: string;
+    scoringCriteria?: string;
+    note?: string;
+};
+
+type RubricQuestionDraft = {
+    questionId: string;
+    maxScore: number;
+    questionText: string;
+    standardAnswer: string;
+    gradingNotes: string;
+    reviewNote: string;
+    scoringPoints: RubricScoringPointDraft[];
+    alternativeSolutions: RubricAlternativeSolutionDraft[];
+    criteria: string[];
+    sourcePages: number[];
+};
+
+type ParsedRubricDraft = {
+    totalQuestions: number;
+    totalScore: number;
+    generalNotes: string;
+    rubricFormat: string;
+    questions: RubricQuestionDraft[];
+};
+
+const normalizeRubricDraft = (raw: any): ParsedRubricDraft => {
+    const rawQuestions = raw?.questions || [];
+    const questions: RubricQuestionDraft[] = rawQuestions.map((q: any, idx: number) => {
+        const questionId = String(q.questionId || q.question_id || q.id || idx + 1);
+        const scoringPoints = (q.scoringPoints || q.scoring_points || []).map((sp: any, spIdx: number) => ({
+            pointId: String(sp.pointId || sp.point_id || `${questionId}.${spIdx + 1}`),
+            description: sp.description || "",
+            expectedValue: sp.expectedValue || sp.expected_value || "",
+            score: Number(sp.score ?? sp.maxScore ?? 0),
+            isRequired: Boolean(sp.isRequired ?? sp.is_required ?? true),
+            keywords: Array.isArray(sp.keywords)
+                ? sp.keywords
+                : typeof sp.keywords === "string"
+                    ? sp.keywords.split(",").map((v: string) => v.trim()).filter(Boolean)
+                    : [],
+        }));
+
+        const alternativeSolutions = (q.alternativeSolutions || q.alternative_solutions || []).map((alt: any) => ({
+            description: alt.description || "",
+            scoringCriteria: alt.scoringCriteria || alt.scoring_criteria || "",
+            note: alt.note || "",
+        }));
+
+        return {
+            questionId,
+            maxScore: Number(q.maxScore ?? q.max_score ?? 0),
+            questionText: q.questionText || q.question_text || "",
+            standardAnswer: q.standardAnswer || q.standard_answer || "",
+            gradingNotes: q.gradingNotes || q.grading_notes || "",
+            reviewNote: q.reviewNote || q.review_note || "",
+            scoringPoints,
+            alternativeSolutions,
+            criteria: q.criteria || [],
+            sourcePages: q.sourcePages || q.source_pages || [],
+        };
+    });
+
+    const totalQuestions = Number(raw?.totalQuestions ?? raw?.total_questions ?? questions.length);
+    const totalScore = Number(
+        raw?.totalScore ?? raw?.total_score ?? questions.reduce((sum, q) => sum + (q.maxScore || 0), 0)
+    );
+
+    return {
+        totalQuestions,
+        totalScore,
+        generalNotes: raw?.generalNotes || raw?.general_notes || "",
+        rubricFormat: raw?.rubricFormat || raw?.rubric_format || "standard",
+        questions,
+    };
+};
+
+const buildRubricPayload = (draft: ParsedRubricDraft) => ({
+    totalQuestions: draft.questions.length,
+    totalScore: draft.questions.reduce((sum, q) => sum + (q.maxScore || 0), 0),
+    generalNotes: draft.generalNotes,
+    rubricFormat: draft.rubricFormat,
+    questions: draft.questions.map((q) => ({
+        questionId: q.questionId,
+        maxScore: q.maxScore,
+        questionText: q.questionText,
+        standardAnswer: q.standardAnswer,
+        gradingNotes: q.gradingNotes,
+        criteria: q.criteria,
+        sourcePages: q.sourcePages,
+        scoringPoints: q.scoringPoints.map((sp) => ({
+            pointId: sp.pointId,
+            description: sp.description,
+            expectedValue: sp.expectedValue,
+            score: sp.score,
+            isRequired: sp.isRequired,
+            keywords: sp.keywords,
+        })),
+        alternativeSolutions: q.alternativeSolutions.map((alt) => ({
+            description: alt.description,
+            scoringCriteria: alt.scoringCriteria,
+            note: alt.note,
+        })),
+    })),
+});
 
 const splitParagraphs = (text: string) => {
     const normalized = text.replace(/\r\n/g, '\n').trim();
@@ -219,129 +383,65 @@ const ResultCard: React.FC<ResultCardProps> = ({ result, rank, onExpand, isExpan
     const isAssist = (result.gradingMode || '').startsWith('assist') || result.maxScore <= 0;
     const percentage = !isAssist && result.maxScore > 0 ? (result.score / result.maxScore) * 100 : 0;
 
-    let barColor = 'from-slate-400 to-slate-500';
-    let gradeLabel = '待提升';
-    let gradeBadgeColor = 'bg-slate-100 text-slate-600';
-
+    let gradeLabel = '未评级';
     if (isAssist) {
-        barColor = 'from-slate-300 to-slate-400';
         gradeLabel = 'Assist';
-        gradeBadgeColor = 'bg-slate-50 text-slate-500 border-slate-200';
     } else if (percentage >= 85) {
-        barColor = 'from-emerald-400 to-emerald-600';
         gradeLabel = '优秀';
-        gradeBadgeColor = 'bg-emerald-50 text-emerald-600 border-emerald-100';
     } else if (percentage >= 70) {
-        barColor = 'from-blue-400 to-indigo-600';
         gradeLabel = '良好';
-        gradeBadgeColor = 'bg-blue-50 text-blue-600 border-blue-100';
     } else if (percentage >= 60) {
-        barColor = 'from-amber-400 to-orange-500';
         gradeLabel = '及格';
-        gradeBadgeColor = 'bg-amber-50 text-amber-600 border-amber-100';
     } else {
-        barColor = 'from-rose-400 to-red-600';
         gradeLabel = '不及格';
-        gradeBadgeColor = 'bg-red-50 text-red-600 border-red-100';
     }
 
     const crossPageCount = result.questionResults?.filter(q => q.isCrossPage).length || 0;
-
-    const rankStyle = rank <= 3
-        ? 'from-amber-200 to-amber-400 text-amber-900 ring-amber-200/70'
-        : 'from-slate-100 to-slate-200 text-slate-600 ring-slate-200/70';
+    const pageRange = result.pageRange || result.pages || '';
 
     return (
-        <GlassCard
+        <div
             className={clsx(
-                'group relative overflow-hidden hover:z-10 transition-all duration-300',
-                result.needsConfirmation && 'ring-2 ring-amber-400/50 shadow-[0_0_15px_rgba(251,191,36,0.2)]'
+                'grid grid-cols-[56px_1fr_auto] items-center gap-4 px-4 py-3 border-b border-slate-200/70 hover:bg-slate-50/60 transition',
+                result.needsConfirmation && 'bg-amber-50/50'
             )}
-            hoverEffect={true}
+            onClick={() => onExpand?.()}
         >
-            <div className={clsx('absolute inset-y-0 left-0 w-1.5 bg-gradient-to-b', barColor)} />
-            <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300 bg-gradient-to-r from-blue-50/40 via-white/60 to-emerald-50/30" />
+            <div className="h-10 w-10 rounded-md border border-slate-200 bg-slate-50 text-slate-700 font-mono font-bold text-sm flex items-center justify-center">
+                {rank}
+            </div>
 
-            <div className="relative flex items-center gap-4 p-4">
-                <div className={clsx(
-                    'w-10 h-10 flex items-center justify-center rounded-xl font-black font-mono text-sm shrink-0 shadow-sm ring-1',
-                    'bg-gradient-to-br',
-                    rankStyle
-                )}>
-                    {rank}
+            <div className="min-w-0">
+                <div className="flex items-center gap-3">
+                    <h3 className="font-semibold text-slate-900 truncate">{result.studentName}</h3>
+                    <span className="text-[10px] font-semibold tracking-wide text-slate-500 uppercase">{gradeLabel}</span>
                 </div>
-
-                <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-3 mb-1">
-                        <h3 className="font-bold text-slate-800 text-base truncate">{result.studentName}</h3>
-                        <span className={clsx(
-                            "text-[10px] px-2 py-0.5 rounded-full border border-transparent font-bold uppercase tracking-wide",
-                            gradeBadgeColor
-                        )}>
-                            {gradeLabel}
-                        </span>
-                    </div>
-
-                    <div className="flex flex-wrap items-center gap-2 text-[10px] font-medium text-slate-400">
-                        {result.totalRevisions !== undefined && result.totalRevisions > 0 && (
-                            <span className="flex items-center gap-1 bg-violet-50 text-violet-600 px-2 py-0.5 rounded-full border border-violet-100">
-                                <GitMerge className="w-3 h-3" /> {result.totalRevisions} revisions
-                            </span>
-                        )}
-                        {crossPageCount > 0 && (
-                            <span className="flex items-center gap-1 bg-purple-50 text-purple-600 px-2 py-0.5 rounded-full border border-purple-100">
-                                <Layers className="w-3 h-3" /> {crossPageCount} cross-page
-                            </span>
-                        )}
-                        {result.needsConfirmation && (
-                            <span className="flex items-center gap-1 bg-amber-50 text-amber-600 px-2 py-0.5 rounded-full border border-amber-100">
-                                <AlertCircle className="w-3 h-3" /> Needs Review
-                            </span>
-                        )}
-                        {result.startPage !== undefined && (
-                            <span className="flex items-center gap-1 px-2 py-0.5 bg-slate-50 rounded-full border border-slate-100">
-                                <FileText className="w-3 h-3" /> Pages {result.startPage + 1}-{result.endPage !== undefined ? result.endPage + 1 : '?'}
-                            </span>
-                        )}
-                    </div>
+                <div className="mt-1 text-[11px] text-slate-500 flex flex-wrap gap-3">
+                    {pageRange && <span>Pages {pageRange}</span>}
+                    {result.totalRevisions !== undefined && result.totalRevisions > 0 && (
+                        <span>Revisions {result.totalRevisions}</span>
+                    )}
+                    {crossPageCount > 0 && <span>Cross-page {crossPageCount}</span>}
+                    {result.needsConfirmation && <span className="text-amber-600">Needs confirmation</span>}
                 </div>
+            </div>
 
-                <div className="flex flex-col items-end gap-2 min-w-[150px]">
-                    <div className="flex items-baseline gap-1.5">
-                        <span className={clsx(
-                            "text-2xl font-black font-mono tracking-tight",
-                            isAssist ? "text-slate-400" : "text-transparent bg-clip-text bg-gradient-to-r " + barColor
-                        )}>
-                            {isAssist ? 'N/A' : result.score}
-                        </span>
-                        {!isAssist && <span className="text-xs font-bold text-slate-300">/ {result.maxScore}</span>}
+            <div className="text-right">
+                {isAssist ? (
+                    <div className="text-xs font-semibold text-slate-500">Assist</div>
+                ) : (
+                    <div className="text-lg font-bold text-slate-900">
+                        {result.score.toFixed(1)}<span className="text-xs text-slate-400">/{result.maxScore}</span>
                     </div>
-
-                    <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden ring-1 ring-slate-50">
-                        <motion.div
-                            className={clsx('h-full bg-gradient-to-r', barColor)}
-                            initial={{ width: 0 }}
-                            animate={{ width: `${percentage}%` }}
-                            transition={{ duration: 1, ease: 'easeOut' }}
-                        />
-                    </div>
-                </div>
-
-                {result.questionResults && result.questionResults.length > 0 && (
-                    <button
-                        onClick={(e) => {
-                            e.stopPropagation();
-                            onExpand();
-                        }}
-                        className="p-2 -mr-2 rounded-full hover:bg-slate-100 text-slate-400 hover:text-blue-500 transition-colors"
-                    >
-                        {isExpanded ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
-                    </button>
+                )}
+                {!isAssist && (
+                    <div className="text-[11px] text-slate-500">{percentage.toFixed(0)}%</div>
                 )}
             </div>
-        </GlassCard>
+        </div>
     );
 };
+
 
 const normalizeQuestionId = (questionId: string) => {
     const raw = (questionId || '').toString().trim();
@@ -393,7 +493,18 @@ const normalizeQuestionResults = (questionResults?: QuestionResult[]) => {
 };
 
 export const ResultsView: React.FC = () => {
-    const { finalResults, workflowNodes, crossPageQuestions, uploadedImages, setCurrentTab, classReport } = useConsoleStore();
+    const {
+        finalResults,
+        workflowNodes,
+        crossPageQuestions,
+        uploadedImages,
+        setCurrentTab,
+        classReport,
+        submissionId,
+        pendingReview,
+        reviewFocus,
+        setReviewFocus
+    } = useConsoleStore();
     const bookScanContext = useContext(AppContext) as AppContextType | null;
     const sessions = bookScanContext?.sessions || [];
     const currentSessionId = bookScanContext?.currentSessionId || null;
@@ -401,6 +512,23 @@ export const ResultsView: React.FC = () => {
 
     const [detailViewIndex, setDetailViewIndex] = useState<number | null>(null);
     const [showClassReport, setShowClassReport] = useState(false);
+    const [reviewMode, setReviewMode] = useState(false);
+    const [reviewDraft, setReviewDraft] = useState<ReviewStudentDraft[]>([]);
+    const [reviewSelectedKeys, setReviewSelectedKeys] = useState<Set<string>>(new Set());
+    const [reviewGlobalNote, setReviewGlobalNote] = useState('');
+    const [reviewMessage, setReviewMessage] = useState<string | null>(null);
+    const [reviewError, setReviewError] = useState<string | null>(null);
+    const [reviewSubmitting, setReviewSubmitting] = useState(false);
+    const [rubricOpen, setRubricOpen] = useState(false);
+    const [rubricLoading, setRubricLoading] = useState(false);
+    const [rubricError, setRubricError] = useState<string | null>(null);
+    const [rubricImages, setRubricImages] = useState<string[]>([]);
+    const [rubricDraft, setRubricDraft] = useState<any>(null);
+    const [rubricSelectedIds, setRubricSelectedIds] = useState<Set<string>>(new Set());
+    const [rubricExpandedIds, setRubricExpandedIds] = useState<Set<string>>(new Set());
+    const [rubricGlobalNote, setRubricGlobalNote] = useState('');
+    const [rubricSubmitting, setRubricSubmitting] = useState(false);
+    const [rubricMessage, setRubricMessage] = useState<string | null>(null);
 
     const gradingNode = workflowNodes.find(n => n.id === 'grade_batch') || workflowNodes.find(n => n.id === 'grading');
     const agentResults = gradingNode?.children?.filter(c => c.status === 'completed' && c.output) || [];
@@ -444,6 +572,42 @@ export const ResultsView: React.FC = () => {
 
     const sortedResults = [...normalizedResults].sort((a, b) => b.score - a.score);
     const detailViewStudent = detailViewIndex !== null ? sortedResults[detailViewIndex] : null;
+    const reviewIndex = detailViewIndex ?? 0;
+    const clampedReviewIndex = reviewDraft.length > 0 ? Math.min(reviewIndex, reviewDraft.length - 1) : 0;
+    const reviewStudent = reviewDraft.length > 0 ? reviewDraft[clampedReviewIndex] : null;
+    const reviewPageIndices = useMemo(() => {
+        if (!reviewStudent) return [];
+        const pages = new Set<number>();
+        if (reviewStudent.startPage !== undefined) {
+            const start = reviewStudent.startPage;
+            const end = reviewStudent.endPage ?? start;
+            for (let i = start; i <= end; i += 1) {
+                pages.add(i);
+            }
+        }
+        reviewStudent.questionResults.forEach((q) => {
+            (q.pageIndices || []).forEach((page) => pages.add(page));
+        });
+        return Array.from(pages).filter((p) => Number.isFinite(p)).sort((a, b) => a - b);
+    }, [reviewStudent]);
+    const reviewScoreSummary = useMemo(() => {
+        if (!reviewStudent) {
+            return { total: 0, max: 0 };
+        }
+        const total = reviewStudent.questionResults.reduce((sum, q) => sum + (Number(q.score) || 0), 0);
+        const max = reviewStudent.questionResults.reduce((sum, q) => sum + (Number(q.maxScore) || 0), 0);
+        return { total, max };
+    }, [reviewStudent]);
+
+    useEffect(() => {
+        if (!reviewFocus) return;
+        if (reviewFocus === 'rubric') {
+            setRubricOpen(true);
+        } else {
+            setReviewMode(true);
+        }
+        setReviewFocus(null);
+    }, [reviewFocus, setReviewFocus]);
 
     const totalStudents = sortedResults.length;
     const scoredResults = sortedResults.filter(r => !(r.gradingMode || '').startsWith('assist') && r.maxScore > 0);
@@ -497,6 +661,792 @@ export const ResultsView: React.FC = () => {
             glow: 'bg-amber-100/70',
             surface: 'bg-amber-50/70'
         });
+    }
+
+    const ensureReviewDraft = useCallback(() => {
+        setReviewDraft((prev) => (prev.length > 0 ? prev : buildReviewDraft(sortedResults)));
+    }, [sortedResults]);
+
+    useEffect(() => {
+        if (reviewMode) {
+            ensureReviewDraft();
+        }
+    }, [reviewMode, ensureReviewDraft]);
+
+    useEffect(() => {
+        if (!reviewMode) return;
+        if (detailViewIndex === null && sortedResults.length > 0) {
+            setDetailViewIndex(0);
+        }
+    }, [reviewMode, detailViewIndex, sortedResults.length]);
+
+    const handleToggleReviewMode = () => {
+        setReviewMessage(null);
+        setReviewError(null);
+        if (!reviewMode) {
+            setReviewDraft(buildReviewDraft(sortedResults));
+            setReviewSelectedKeys(new Set());
+            setReviewGlobalNote('');
+            if (detailViewIndex === null && sortedResults.length > 0) {
+                setDetailViewIndex(0);
+            }
+        } else {
+            setDetailViewIndex(null);
+            setReviewSelectedKeys(new Set());
+            setReviewGlobalNote('');
+        }
+        setReviewMode((prev) => !prev);
+    };
+
+    const updateReviewQuestion = useCallback(
+        (studentIndex: number, questionId: string, field: keyof ReviewQuestionDraft, value: any) => {
+            setReviewDraft((prev) =>
+                prev.map((student, idx) => {
+                    if (idx !== studentIndex) return student;
+                    return {
+                        ...student,
+                        questionResults: student.questionResults.map((q) =>
+                            q.questionId === questionId ? { ...q, [field]: value } : q
+                        ),
+                    };
+                })
+            );
+        },
+        []
+    );
+
+    const toggleReviewSelected = (studentIndex: number, questionId: string) => {
+        const key = `${studentIndex}:${questionId}`;
+        setReviewSelectedKeys((prev) => {
+            const next = new Set(prev);
+            if (next.has(key)) {
+                next.delete(key);
+            } else {
+                next.add(key);
+            }
+            return next;
+        });
+    };
+
+    const handleReviewApprove = async () => {
+        if (!submissionId) return;
+        setReviewSubmitting(true);
+        setReviewMessage(null);
+        setReviewError(null);
+        try {
+            await gradingApi.submitResultsReview({ batch_id: submissionId, action: 'approve' });
+            setReviewMessage('已确认批改结果，流程继续进行。');
+        } catch (err) {
+            setReviewError(err instanceof Error ? err.message : '提交失败');
+        } finally {
+            setReviewSubmitting(false);
+        }
+    };
+
+    const handleReviewUpdate = async () => {
+        if (!submissionId || reviewDraft.length === 0) return;
+        setReviewSubmitting(true);
+        setReviewMessage(null);
+        setReviewError(null);
+        try {
+            await gradingApi.submitResultsReview({
+                batch_id: submissionId,
+                action: 'update',
+                results: buildResultsOverridePayload(reviewDraft),
+            });
+            setReviewMessage('已提交修正结果，流程继续进行。');
+        } catch (err) {
+            setReviewError(err instanceof Error ? err.message : '提交失败');
+        } finally {
+            setReviewSubmitting(false);
+        }
+    };
+
+    const handleReviewRegrade = async () => {
+        if (!submissionId || reviewSelectedKeys.size === 0) return;
+        setReviewSubmitting(true);
+        setReviewMessage(null);
+        setReviewError(null);
+        const regradeItems: Array<Record<string, any>> = [];
+        const noteLines: string[] = [];
+        const trimmedGlobal = reviewGlobalNote.trim();
+        if (trimmedGlobal) noteLines.push(trimmedGlobal);
+
+        reviewDraft.forEach((student, sIdx) => {
+            student.questionResults.forEach((q) => {
+                const key = `${sIdx}:${q.questionId}`;
+                if (!reviewSelectedKeys.has(key)) return;
+                const note = q.reviewNote.trim();
+                if (note) {
+                    noteLines.push(`${student.studentName} Q${q.questionId}: ${note}`);
+                }
+                regradeItems.push({
+                    student_key: student.studentName,
+                    question_id: q.questionId,
+                    page_indices: q.pageIndices || [],
+                    notes: note,
+                });
+            });
+        });
+
+        try {
+            await gradingApi.submitResultsReview({
+                batch_id: submissionId,
+                action: 'regrade',
+                regrade_items: regradeItems,
+                notes: noteLines.join('\n'),
+            });
+            setReviewMessage('已提交重新批改请求，请稍后刷新查看结果。');
+        } catch (err) {
+            setReviewError(err instanceof Error ? err.message : '提交失败');
+        } finally {
+            setReviewSubmitting(false);
+        }
+    };
+
+    const loadRubricContext = useCallback(async () => {
+        if (!submissionId) return;
+        setRubricLoading(true);
+        setRubricError(null);
+        try {
+            const data = await gradingApi.getRubricReviewContext(submissionId);
+            const parsed = normalizeRubricDraft(data.parsed_rubric || {});
+            setRubricDraft(parsed);
+            const images = (data.rubric_images || []).map((img: string) =>
+                img.startsWith('data:') ? img : `data:image/jpeg;base64,${img}`
+            );
+            setRubricImages(images);
+        } catch (err) {
+            setRubricError(err instanceof Error ? err.message : 'Failed to load rubric context.');
+        } finally {
+            setRubricLoading(false);
+        }
+    }, [submissionId]);
+
+    useEffect(() => {
+        if (rubricOpen && rubricDraft === null) {
+            loadRubricContext();
+        }
+    }, [rubricOpen, rubricDraft, loadRubricContext]);
+
+    const toggleRubricSelected = useCallback((questionId: string) => {
+        setRubricSelectedIds((prev) => {
+            const next = new Set(prev);
+            if (next.has(questionId)) {
+                next.delete(questionId);
+            } else {
+                next.add(questionId);
+            }
+            return next;
+        });
+    }, []);
+
+    const toggleRubricExpanded = useCallback((questionId: string) => {
+        setRubricExpandedIds((prev) => {
+            const next = new Set(prev);
+            if (next.has(questionId)) {
+                next.delete(questionId);
+            } else {
+                next.add(questionId);
+            }
+            return next;
+        });
+    }, []);
+
+    const updateRubricQuestion = useCallback((questionId: string, field: keyof RubricQuestionDraft, value: any) => {
+        setRubricDraft((prev: ParsedRubricDraft | null) => {
+            if (!prev) return prev;
+            return {
+                ...prev,
+                questions: prev.questions.map((q) => (q.questionId === questionId ? { ...q, [field]: value } : q)),
+            };
+        });
+    }, []);
+
+    const updateRubricScoringPoint = useCallback(
+        (questionId: string, index: number, field: keyof RubricScoringPointDraft, value: any) => {
+            setRubricDraft((prev: ParsedRubricDraft | null) => {
+                if (!prev) return prev;
+                return {
+                    ...prev,
+                    questions: prev.questions.map((q) => {
+                        if (q.questionId !== questionId) return q;
+                        const scoringPoints = q.scoringPoints.map((sp, idx) =>
+                            idx === index ? { ...sp, [field]: value } : sp
+                        );
+                        return { ...q, scoringPoints };
+                    }),
+                };
+            });
+        },
+        []
+    );
+
+    const addRubricScoringPoint = useCallback((questionId: string) => {
+        setRubricDraft((prev: ParsedRubricDraft | null) => {
+            if (!prev) return prev;
+            return {
+                ...prev,
+                questions: prev.questions.map((q) => {
+                    if (q.questionId !== questionId) return q;
+                    const nextIndex = q.scoringPoints.length + 1;
+                    const newPoint: RubricScoringPointDraft = {
+                        pointId: `${questionId}.${nextIndex}`,
+                        description: '',
+                        expectedValue: '',
+                        score: 0,
+                        isRequired: true,
+                        keywords: [],
+                    };
+                    return { ...q, scoringPoints: [...q.scoringPoints, newPoint] };
+                }),
+            };
+        });
+    }, []);
+
+    const removeRubricScoringPoint = useCallback((questionId: string, index: number) => {
+        setRubricDraft((prev: ParsedRubricDraft | null) => {
+            if (!prev) return prev;
+            return {
+                ...prev,
+                questions: prev.questions.map((q) => {
+                    if (q.questionId !== questionId) return q;
+                    const scoringPoints = q.scoringPoints.filter((_, idx) => idx !== index);
+                    return { ...q, scoringPoints };
+                }),
+            };
+        });
+    }, []);
+
+    const handleRubricApprove = async () => {
+        if (!submissionId) return;
+        setRubricSubmitting(true);
+        setRubricMessage(null);
+        setRubricError(null);
+        try {
+            await gradingApi.submitRubricReview({ batch_id: submissionId, action: 'approve' });
+            setRubricMessage('已确认解析结果，批改流程继续进行。');
+        } catch (err) {
+            setRubricError(err instanceof Error ? err.message : '提交失败');
+        } finally {
+            setRubricSubmitting(false);
+        }
+    };
+
+    const handleRubricUpdate = async () => {
+        if (!submissionId || !rubricDraft) return;
+        setRubricSubmitting(true);
+        setRubricMessage(null);
+        setRubricError(null);
+        try {
+            await gradingApi.submitRubricReview({
+                batch_id: submissionId,
+                action: 'update',
+                parsed_rubric: buildRubricPayload(rubricDraft),
+            });
+            setRubricMessage('已提交修正，批改流程继续进行。');
+        } catch (err) {
+            setRubricError(err instanceof Error ? err.message : '提交失败');
+        } finally {
+            setRubricSubmitting(false);
+        }
+    };
+
+    const handleRubricReparse = async () => {
+        if (!submissionId || !rubricDraft || rubricSelectedIds.size === 0) return;
+        setRubricSubmitting(true);
+        setRubricMessage(null);
+        setRubricError(null);
+        const noteLines: string[] = [];
+        const trimmedGlobal = rubricGlobalNote.trim();
+        if (trimmedGlobal) noteLines.push(trimmedGlobal);
+        rubricDraft.questions.forEach((q) => {
+            if (!rubricSelectedIds.has(q.questionId)) return;
+            const note = q.reviewNote.trim();
+            if (note) {
+                noteLines.push(`Q${q.questionId}: ${note}`);
+            }
+        });
+        try {
+            await gradingApi.submitRubricReview({
+                batch_id: submissionId,
+                action: 'reparse',
+                selected_question_ids: Array.from(rubricSelectedIds),
+                notes: noteLines.join('\n'),
+            });
+            setRubricMessage('已提交重解析请求，请稍后刷新查看结果。');
+        } catch (err) {
+            setRubricError(err instanceof Error ? err.message : '提交失败');
+        } finally {
+            setRubricSubmitting(false);
+        }
+    };
+
+    if (rubricOpen) {
+        return (
+            <div className="h-full min-h-0 flex flex-col bg-slate-50">
+                <div className="bg-white/80 backdrop-blur-md border-b border-slate-200/60 px-6 py-4 flex items-center justify-between shrink-0 z-20">
+                    <div className="flex items-center gap-4">
+                        <SmoothButton
+                            onClick={() => {
+                                setRubricOpen(false);
+                                setRubricMessage(null);
+                                setRubricError(null);
+                            }}
+                            variant="ghost"
+                            size="sm"
+                            className="!p-2"
+                        >
+                            <ArrowLeft className="w-5 h-5 text-slate-500" />
+                        </SmoothButton>
+                        <div>
+                            <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                                <BookOpen className="w-5 h-5 text-emerald-500" />
+                                批改标准复核
+                            </h2>
+                            <p className="text-xs text-slate-500">对照原始批改标准进行校验与修正</p>
+                        </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <SmoothButton
+                            onClick={handleRubricApprove}
+                            isLoading={rubricSubmitting}
+                            variant="secondary"
+                            size="sm"
+                        >
+                            <CheckCircle className="w-4 h-4 mr-2" /> 确认无误
+                        </SmoothButton>
+                        <SmoothButton
+                            onClick={handleRubricUpdate}
+                            isLoading={rubricSubmitting}
+                            variant="primary"
+                            size="sm"
+                        >
+                            <GitMerge className="w-4 h-4 mr-2" /> 提交修正
+                        </SmoothButton>
+                    </div>
+                </div>
+
+                <div className="flex-1 min-h-0 overflow-hidden flex">
+                    <div className="w-1/2 h-full min-h-0 overflow-y-auto p-6 border-r border-slate-200 custom-scrollbar space-y-6 bg-slate-100/50">
+                        {rubricImages.length === 0 ? (
+                            <div className="flex flex-col items-center justify-center h-full text-slate-400 gap-2">
+                                <FileText className="w-10 h-10 opacity-30" />
+                                <span>暂无批改标准图片</span>
+                            </div>
+                        ) : (
+                            rubricImages.map((img, idx) => (
+                                <GlassCard key={idx} className="overflow-hidden p-0 bg-white" hoverEffect={false}>
+                                    <div className="px-4 py-2 border-b border-slate-100 bg-white/50 backdrop-blur-sm text-xs font-bold text-slate-500 flex justify-between">
+                                        <span>Page {idx + 1}</span>
+                                    </div>
+                                    <img src={img} alt={`Rubric page ${idx + 1}`} className="w-full h-auto" />
+                                </GlassCard>
+                            ))
+                        )}
+                    </div>
+
+                    <div className="w-1/2 h-full min-h-0 overflow-y-auto bg-white p-8 custom-scrollbar">
+                        <div className="max-w-2xl mx-auto space-y-6">
+                            {(rubricError || rubricMessage) && (
+                                <div className={clsx(
+                                    "rounded-lg px-3 py-2 text-xs",
+                                    rubricError ? "bg-rose-50 text-rose-600" : "bg-emerald-50 text-emerald-600"
+                                )}>
+                                    {rubricError || rubricMessage}
+                                </div>
+                            )}
+                            <div className="flex flex-wrap items-center justify-between gap-3">
+                                <div className="text-sm text-slate-500">
+                                    共 {rubricDraft?.questions?.length ?? 0} 题，总分 <span className="font-semibold text-slate-900">{rubricDraft?.totalScore ?? 0}</span>
+                                </div>
+                                <SmoothButton
+                                    onClick={handleRubricReparse}
+                                    disabled={rubricSubmitting || rubricSelectedIds.size === 0}
+                                    variant="ghost"
+                                    size="sm"
+                                >
+                                    重新解析({rubricSelectedIds.size})
+                                </SmoothButton>
+                            </div>
+
+                            <div className="grid gap-3 md:grid-cols-2">
+                                <div>
+                                    <label className="text-[10px] uppercase tracking-[0.2em] text-slate-400">总备注</label>
+                                    <input
+                                        value={rubricDraft?.generalNotes || ''}
+                                        onChange={(e) => rubricDraft && setRubricDraft({ ...rubricDraft, generalNotes: e.target.value })}
+                                        className="mt-2 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs focus:border-emerald-500 focus:outline-none"
+                                        placeholder="扣分规则/补充说明"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="text-[10px] uppercase tracking-[0.2em] text-slate-400">重解析说明</label>
+                                    <input
+                                        value={rubricGlobalNote}
+                                        onChange={(e) => setRubricGlobalNote(e.target.value)}
+                                        className="mt-2 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs focus:border-emerald-500 focus:outline-none"
+                                        placeholder="告诉 AI 哪里解析有问题"
+                                    />
+                                </div>
+                            </div>
+
+                            {rubricLoading && (
+                                <div className="text-sm text-slate-400">正在加载批改标准...</div>
+                            )}
+
+                            {!rubricLoading && !rubricDraft && (
+                                <div className="text-sm text-slate-400">暂无批改标准数据</div>
+                            )}
+
+                            {!rubricLoading && rubricDraft && (
+                                <div className="space-y-4">
+                                    {rubricDraft.questions.map((q) => {
+                                        const isSelected = rubricSelectedIds.has(q.questionId);
+                                        const isExpanded = rubricExpandedIds.has(q.questionId);
+                                        return (
+                                            <GlassCard
+                                                key={q.questionId}
+                                                className={clsx(
+                                                    "p-4 border border-slate-100 !bg-white shadow-sm",
+                                                    isSelected && "ring-1 ring-rose-200 bg-rose-50/30"
+                                                )}
+                                                hoverEffect={false}
+                                            >
+                                                <div className="flex items-start justify-between gap-3">
+                                                    <div className="flex items-center gap-3">
+                                                        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-slate-100 text-xs font-bold text-slate-600">
+                                                            {q.questionId}
+                                                        </div>
+                                                        <div>
+                                                            <div className="text-[10px] font-semibold text-slate-500">满分 {q.maxScore}</div>
+                                                            <div className="text-xs font-semibold text-slate-800">题目 {q.questionId}</div>
+                                                        </div>
+                                                    </div>
+                                                    <div className="flex items-center gap-2">
+                                                        <SmoothButton
+                                                            onClick={() => toggleRubricExpanded(q.questionId)}
+                                                            variant="ghost"
+                                                            size="sm"
+                                                            className="!px-2"
+                                                        >
+                                                            {isExpanded ? '收起详情' : '展开详情'}
+                                                        </SmoothButton>
+                                                        <label className="flex items-center gap-2 cursor-pointer rounded-full border border-slate-200 px-2 py-1 text-[10px] font-medium text-slate-500 hover:border-rose-200 hover:bg-rose-50 transition-colors">
+                                                            <input
+                                                                type="checkbox"
+                                                                checked={isSelected}
+                                                                onChange={() => toggleRubricSelected(q.questionId)}
+                                                                className="h-3.5 w-3.5 rounded border-slate-300 text-rose-500 focus:ring-rose-500"
+                                                            />
+                                                            <span className={clsx(isSelected ? "text-rose-500" : "text-slate-500")}>标记问题</span>
+                                                        </label>
+                                                    </div>
+                                                </div>
+
+                                                <div className="mt-3 space-y-3 text-xs text-slate-600">
+                                                    <div>
+                                                        <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">题目内容</div>
+                                                        <div className="mt-1 text-[13px] font-semibold text-slate-800 leading-snug">
+                                                            <MathText className="whitespace-pre-wrap" text={q.questionText || '—'} />
+                                                        </div>
+                                                    </div>
+                                                    {q.standardAnswer && (
+                                                        <div>
+                                                            <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">标准答案</div>
+                                                            <div className="mt-1 text-[12px] text-slate-700">
+                                                                <MathText className="whitespace-pre-wrap" text={q.standardAnswer} />
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                    {q.gradingNotes && (
+                                                        <div>
+                                                            <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">备注</div>
+                                                            <div className="mt-1 text-[12px] text-slate-700">
+                                                                <MathText className="whitespace-pre-wrap" text={q.gradingNotes} />
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                    {q.criteria && q.criteria.length > 0 && (
+                                                        <div>
+                                                            <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">评分要点</div>
+                                                            <div className="mt-1 text-[12px] text-slate-700">{q.criteria.join(' · ')}</div>
+                                                        </div>
+                                                    )}
+                                                    {q.scoringPoints.length > 0 && (
+                                                        <div>
+                                                            <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">评分点</div>
+                                                            <div className="mt-2 space-y-1 text-[11px] text-slate-600 leading-snug">
+                                                                {q.scoringPoints.map((sp) => (
+                                                                    <div key={sp.pointId} className="flex items-start gap-2">
+                                                                        <span className="font-mono text-slate-400">{sp.pointId}</span>
+                                                                        <span className="flex-1">
+                                                                            {sp.description || '—'}
+                                                                            {sp.expectedValue ? ` | 期望: ${sp.expectedValue}` : ''}
+                                                                            {sp.keywords && sp.keywords.length > 0 ? ` | 关键词 ${sp.keywords.join(', ')}` : ''}
+                                                                        </span>
+                                                                        <span className="font-semibold text-slate-700">{sp.score}</span>
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                </div>
+
+                                                <div className="mt-3">
+                                                    <label className="text-[10px] uppercase tracking-[0.2em] text-slate-400">解析问题备注</label>
+                                                    <textarea
+                                                        value={q.reviewNote}
+                                                        onChange={(e) => updateRubricQuestion(q.questionId, 'reviewNote', e.target.value)}
+                                                        className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300"
+                                                        rows={2}
+                                                        placeholder="说明需要重解析的原因"
+                                                    />
+                                                </div>
+
+                                                {isExpanded && q.sourcePages.length > 0 && (
+                                                    <div className="mt-3 rounded-xl border border-slate-200 bg-white/80 p-3 space-y-3">
+                                                        <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">来源页</div>
+                                                        <div className="grid grid-cols-2 gap-2">
+                                                            {q.sourcePages.map((pageIndex) => (
+                                                                <div key={`${q.questionId}-page-${pageIndex}`} className="rounded-lg border border-slate-200 bg-white p-2">
+                                                                    <div className="text-[10px] text-slate-400 mb-1">Page {pageIndex + 1}</div>
+                                                                    {rubricImages[pageIndex] ? (
+                                                                        <img
+                                                                            src={rubricImages[pageIndex]}
+                                                                            alt={`Evidence ${pageIndex + 1}`}
+                                                                            className="h-28 w-full object-contain"
+                                                                        />
+                                                                    ) : (
+                                                                        <div className="text-xs text-slate-400">No image</div>
+                                                                    )}
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                )}
+                                            </GlassCard>
+                                        );
+                                    })}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    if (reviewMode) {
+        if (!reviewStudent) {
+            return (
+                <div className="h-full min-h-0 flex flex-col bg-slate-50">
+                    <div className="bg-white/80 backdrop-blur-md border-b border-slate-200/60 px-6 py-4 flex items-center justify-between shrink-0 z-20">
+                        <div className="flex items-center gap-4">
+                            <SmoothButton onClick={handleToggleReviewMode} variant="ghost" size="sm" className="!p-2">
+                                <ArrowLeft className="w-5 h-5 text-slate-500" />
+                            </SmoothButton>
+                            <div>
+                                <h2 className="text-xl font-bold text-slate-800">批改结果复核</h2>
+                                <p className="text-xs text-slate-500">暂无可复核的批改数据</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        const selectedKeyPrefix = `${clampedReviewIndex}:`;
+
+        return (
+            <div className="h-full min-h-0 flex flex-col bg-slate-50">
+                <div className="bg-white/80 backdrop-blur-md border-b border-slate-200/60 px-6 py-4 flex items-center justify-between shrink-0 z-20">
+                    <div className="flex items-center gap-4">
+                        <SmoothButton onClick={handleToggleReviewMode} variant="ghost" size="sm" className="!p-2">
+                            <ArrowLeft className="w-5 h-5 text-slate-500" />
+                        </SmoothButton>
+                        <div>
+                            <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                                <CheckCircle className="w-5 h-5 text-blue-500" />
+                                批改结果复核
+                            </h2>
+                            <p className="text-xs text-slate-500">可以随时调整评分或发起重批</p>
+                        </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <SmoothButton
+                            onClick={handleReviewApprove}
+                            isLoading={reviewSubmitting}
+                            variant="secondary"
+                            size="sm"
+                        >
+                            <CheckCircle className="w-4 h-4 mr-2" /> 确认无误
+                        </SmoothButton>
+                        <SmoothButton
+                            onClick={handleReviewUpdate}
+                            isLoading={reviewSubmitting}
+                            variant="primary"
+                            size="sm"
+                        >
+                            <GitMerge className="w-4 h-4 mr-2" /> 提交修正
+                        </SmoothButton>
+                    </div>
+                </div>
+
+                <div className="flex-1 min-h-0 overflow-hidden flex">
+                    <div className="w-1/2 h-full min-h-0 overflow-y-auto p-6 border-r border-slate-200 custom-scrollbar space-y-6 bg-slate-100/50">
+                        <div className="flex items-center justify-between text-xs font-semibold text-slate-500 uppercase tracking-[0.2em]">
+                            <span>学生作答</span>
+                            <span>{reviewStudent.studentName}</span>
+                        </div>
+                        {reviewPageIndices.length === 0 ? (
+                            <div className="flex flex-col items-center justify-center h-full text-slate-400 gap-2">
+                                <FileText className="w-10 h-10 opacity-30" />
+                                <span>暂无作答图片</span>
+                            </div>
+                        ) : (
+                            reviewPageIndices.map((pageIdx) => {
+                                const imageUrl = uploadedImages[pageIdx] || currentSession?.images[pageIdx]?.url;
+                                return (
+                                    <GlassCard key={pageIdx} className="overflow-hidden p-0 bg-white" hoverEffect={false}>
+                                        <div className="px-4 py-2 border-b border-slate-100 bg-white/50 backdrop-blur-sm text-xs font-bold text-slate-500 flex justify-between">
+                                            <span>Page {pageIdx + 1}</span>
+                                        </div>
+                                        {imageUrl ? (
+                                            <img src={imageUrl} alt={`Page ${pageIdx + 1}`} className="w-full h-auto" />
+                                        ) : (
+                                            <div className="p-10 text-center text-slate-400">Image missing</div>
+                                        )}
+                                    </GlassCard>
+                                );
+                            })
+                        )}
+                    </div>
+
+                    <div className="w-1/2 h-full min-h-0 overflow-y-auto bg-white p-8 custom-scrollbar">
+                        <div className="max-w-2xl mx-auto space-y-6">
+                            {(reviewError || reviewMessage) && (
+                                <div className={clsx(
+                                    "rounded-lg px-3 py-2 text-xs",
+                                    reviewError ? "bg-rose-50 text-rose-600" : "bg-emerald-50 text-emerald-600"
+                                )}>
+                                    {reviewError || reviewMessage}
+                                </div>
+                            )}
+                            <div className="flex items-center justify-between">
+                                <div className="text-sm text-slate-500">
+                                    总分 <span className="text-lg font-bold text-slate-900">{reviewScoreSummary.total}</span>
+                                    <span className="text-slate-400"> / {reviewScoreSummary.max}</span>
+                                </div>
+                                <SmoothButton
+                                    onClick={handleReviewRegrade}
+                                    disabled={reviewSubmitting || reviewSelectedKeys.size === 0}
+                                    variant="ghost"
+                                    size="sm"
+                                >
+                                    重新批改({reviewSelectedKeys.size})
+                                </SmoothButton>
+                            </div>
+
+                            <div className="flex flex-wrap gap-2">
+                                {reviewDraft.map((student, idx) => (
+                                    <button
+                                        key={`${student.studentName}-${idx}`}
+                                        onClick={() => setDetailViewIndex(idx)}
+                                        className={clsx(
+                                            "rounded-full px-3 py-1 text-xs font-semibold transition-colors",
+                                            idx === clampedReviewIndex
+                                                ? "bg-slate-900 text-white"
+                                                : "bg-slate-100 text-slate-500 hover:bg-slate-200"
+                                        )}
+                                    >
+                                        {student.studentName}
+                                    </button>
+                                ))}
+                            </div>
+
+                            <div>
+                                <label className="text-[10px] uppercase tracking-[0.2em] text-slate-400">重批说明</label>
+                                <input
+                                    value={reviewGlobalNote}
+                                    onChange={(e) => setReviewGlobalNote(e.target.value)}
+                                    className="mt-2 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs focus:border-emerald-500 focus:outline-none"
+                                    placeholder="说明需要重批的原因（全局备注）"
+                                />
+                            </div>
+
+                            <div className="space-y-4">
+                                {reviewStudent.questionResults.map((q) => {
+                                    const key = `${selectedKeyPrefix}${q.questionId}`;
+                                    const isSelected = reviewSelectedKeys.has(key);
+                                    return (
+                                        <GlassCard
+                                            key={q.questionId}
+                                            className={clsx(
+                                                "p-4 border border-slate-100 !bg-white shadow-sm",
+                                                isSelected && "ring-1 ring-rose-200 bg-rose-50/30"
+                                            )}
+                                            hoverEffect={false}
+                                        >
+                                            <div className="flex items-start justify-between gap-3">
+                                                <div className="flex items-center gap-3">
+                                                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-slate-100 text-xs font-bold text-slate-600">
+                                                        {q.questionId}
+                                                    </div>
+                                                    <div className="flex items-baseline gap-1 text-sm font-medium text-slate-900">
+                                                        <input
+                                                            value={q.score}
+                                                            onChange={(e) => updateReviewQuestion(clampedReviewIndex, q.questionId, 'score', Number(e.target.value))}
+                                                            type="number"
+                                                            className="w-12 rounded border-none bg-transparent p-0 text-right font-bold hover:bg-slate-100 focus:ring-0"
+                                                        />
+                                                        <span className="text-slate-400 text-xs">/ {q.maxScore}</span>
+                                                    </div>
+                                                </div>
+                                                <label className="flex items-center gap-2 cursor-pointer rounded-full border border-slate-200 px-2 py-1 text-[10px] font-medium text-slate-500 hover:border-rose-200 hover:bg-rose-50 transition-colors">
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={isSelected}
+                                                        onChange={() => toggleReviewSelected(clampedReviewIndex, q.questionId)}
+                                                        className="h-3.5 w-3.5 rounded border-slate-300 text-rose-500 focus:ring-rose-500"
+                                                    />
+                                                    <span className={clsx(isSelected ? "text-rose-500" : "text-slate-500")}>标记重批</span>
+                                                </label>
+                                            </div>
+
+                                            <div className="mt-3">
+                                                <label className="text-[10px] uppercase tracking-[0.2em] text-slate-400">评语</label>
+                                                <textarea
+                                                    value={q.feedback}
+                                                    onChange={(e) => updateReviewQuestion(clampedReviewIndex, q.questionId, 'feedback', e.target.value)}
+                                                    className="mt-2 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700 focus:border-emerald-500 focus:outline-none"
+                                                    rows={2}
+                                                />
+                                            </div>
+
+                                            <div className="mt-3 space-y-2 text-xs text-slate-500">
+                                                {q.pageIndices && q.pageIndices.length > 0 && (
+                                                    <div>Pages: {q.pageIndices.map((p) => p + 1).join(', ')}</div>
+                                                )}
+                                                <div>
+                                                    <label className="text-[10px] uppercase tracking-[0.2em] text-slate-400">重批备注</label>
+                                                    <input
+                                                        value={q.reviewNote}
+                                                        onChange={(e) => updateReviewQuestion(clampedReviewIndex, q.questionId, 'reviewNote', e.target.value)}
+                                                        className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 focus:border-emerald-500 focus:outline-none"
+                                                        placeholder="说明需要重批的原因"
+                                                    />
+                                                </div>
+                                            </div>
+                                        </GlassCard>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        );
     }
 
     // === Detail View ===
@@ -711,75 +1661,63 @@ export const ResultsView: React.FC = () => {
             </AnimatePresence>
 
             {/* Dashboard Header */}
-            <div className="relative overflow-hidden rounded-3xl border border-slate-200/60 bg-white/70 p-6 md:p-8 shadow-[0_30px_80px_-60px_rgba(15,23,42,0.45)]">
-                <div className="absolute inset-0 bg-gradient-to-br from-blue-50/80 via-white/70 to-emerald-50/60" />
-                <div className="relative space-y-6">
-                    <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-                        <div className="flex items-center gap-4">
-                            <div className="relative">
-                                <div className="absolute -inset-1 rounded-2xl bg-blue-500/20 blur" />
-                                <div className="relative p-3 bg-slate-900 text-white rounded-2xl shadow-lg shadow-slate-900/20">
-                                    <RocketOutlined className="text-xl" />
-                                </div>
-                            </div>
-                            <div>
-                                <h2 className="text-2xl font-black text-slate-900 tracking-tight">批改结果</h2>
-                                <p className="text-xs font-semibold text-slate-500 uppercase tracking-[0.2em]">Grading Overview</p>
-                            </div>
+            <div className="border border-slate-200/80 bg-white/90">
+                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 px-6 py-5 border-b border-slate-200/70">
+                    <div className="flex items-center gap-3">
+                        <div className="h-10 w-10 grid place-items-center rounded-lg bg-slate-900 text-white">
+                            <RocketOutlined className="text-lg" />
                         </div>
-
-                        <div className="flex items-center gap-2">
-                            <SmoothButton onClick={() => setShowClassReport(true)} variant="secondary" size="sm">
-                                <BarChartOutlined className="mr-2" /> 班级报告
-                            </SmoothButton>
-                            <SmoothButton variant="secondary" size="sm">
-                                <Download className="w-4 h-4 mr-2" /> 导出 CSV
-                            </SmoothButton>
+                        <div>
+                            <h2 className="text-xl font-bold text-slate-900 tracking-tight">批改总览</h2>
+                            <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-[0.2em]">Grading Overview</p>
                         </div>
                     </div>
 
-                    <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
-                        {metrics.map((metric) => (
-                            <GlassCard
-                                key={metric.label}
-                                className={clsx(
-                                    'relative overflow-hidden rounded-2xl border p-4 text-left',
-                                    metric.surface
-                                )}
-                                hoverEffect={false}
-                            >
-                                <div className={clsx('absolute -right-8 -top-8 h-20 w-20 rounded-full blur-2xl', metric.glow)} />
-                                <div className="relative flex items-center justify-between">
-                                    <div className="text-[11px] font-bold text-slate-500 uppercase tracking-[0.2em]">{metric.label}</div>
-                                    <metric.icon className={clsx('text-lg', metric.accent)} />
-                                </div>
-                                <div className="relative mt-3 text-2xl font-black text-slate-800">
-                                    {metric.value}
-                                </div>
-                            </GlassCard>
-                        ))}
+                    <div className="flex flex-wrap items-center gap-2">
+                        <SmoothButton onClick={handleToggleReviewMode} variant="secondary" size="sm" disabled={!submissionId}>
+                            <CheckCircle className="w-4 h-4 mr-2" /> 批改复核
+                        </SmoothButton>
+                        <SmoothButton onClick={() => setRubricOpen(true)} variant="secondary" size="sm" disabled={!submissionId}>
+                            <BookOpen className="w-4 h-4 mr-2" /> 标准复核
+                        </SmoothButton>
+                        <SmoothButton onClick={() => setShowClassReport(true)} variant="secondary" size="sm">
+                            <BarChartOutlined className="mr-2" /> 班级报告
+                        </SmoothButton>
+                        <SmoothButton variant="secondary" size="sm">
+                            <Download className="w-4 h-4 mr-2" /> 导出 CSV
+                        </SmoothButton>
                     </div>
+                </div>
+
+                <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 divide-x divide-slate-200/70">
+                    {metrics.map((metric) => (
+                        <div key={metric.label} className="px-4 py-4">
+                            <div className="flex items-center justify-between text-[11px] font-semibold text-slate-500 uppercase tracking-[0.2em]">
+                                {metric.label}
+                                <metric.icon className="text-base text-slate-400" />
+                            </div>
+                            <div className="mt-2 text-2xl font-black text-slate-900">
+                                {metric.value}
+                            </div>
+                        </div>
+                    ))}
                 </div>
             </div>
 
-            {/* Results List */}
+{/* Results List */}
             <div className="space-y-4">
                 <div className="flex items-center justify-between px-1">
                     <div className="flex items-center gap-2">
-                        <ListOrdered className="w-5 h-5 text-slate-400" />
-                        <h3 className="font-bold text-slate-700">学生列表</h3>
-                        <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400 bg-white/70 px-2 py-0.5 rounded-full border border-slate-100">
-                            {totalStudents} students
-                        </span>
+                        <ListOrdered className="w-4 h-4 text-slate-400" />
+                        <h3 className="text-sm font-semibold text-slate-700">学生列表</h3>
+                        <span className="text-[11px] text-slate-500">{totalStudents} students</span>
                     </div>
                     {totalCrossPageQuestions > 0 && (
-                        <span className="text-[10px] font-bold uppercase tracking-widest text-purple-600 bg-purple-50 px-2 py-0.5 rounded-full border border-purple-100">
-                            {totalCrossPageQuestions} cross-page
-                        </span>
+                        <span className="text-[11px] text-purple-600">{totalCrossPageQuestions} cross-page</span>
                     )}
                 </div>
 
-                <div className="space-y-3 rounded-2xl border border-slate-100/80 bg-white/70 p-3 shadow-[0_20px_60px_-45px_rgba(15,23,42,0.5)]">
+                <div className="border border-slate-200/80 bg-white">
                     {sortedResults.map((result, index) => (
                         <div key={`${result.studentName}-${index}`} onClick={() => handleViewDetail(result)} className="cursor-pointer">
                             <ResultCard result={result} rank={index + 1} isExpanded={false} onExpand={() => { }} />
@@ -788,34 +1726,30 @@ export const ResultsView: React.FC = () => {
                 </div>
             </div>
 
-            {/* Cross Page Alerts */}
+{/* Cross Page Alerts */}
             {crossPageQuestions.length > 0 && (
-                <GlassCard className="p-5 border-l-4 border-l-purple-500 bg-purple-50/30">
-                    <div className="flex items-center gap-2 text-purple-700 font-bold mb-3">
-                        <Layers className="w-5 h-5" />
-                        跨页题目识别 (Cross-page Questions)
+                <div className="border border-slate-200/80 bg-white p-4">
+                    <div className="flex items-center gap-2 text-slate-700 font-semibold mb-3">
+                        <Layers className="w-4 h-4" />
+                        跨页题提醒
                     </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div className="space-y-2">
                         {crossPageQuestions.map((cpq, idx) => (
-                            <div key={idx} className="bg-white/60 p-3 rounded-lg border border-purple-100 flex items-center justify-between">
-                                <span className="font-bold text-slate-700 text-sm">Question {cpq.questionId}</span>
+                            <div key={idx} className="flex items-center justify-between border-b border-slate-100 pb-2 text-sm text-slate-600">
+                                <span>Question {cpq.questionId}</span>
                                 <div className="flex items-center gap-3">
-                                    <span className="text-xs text-slate-500 bg-slate-100 px-2 py-1 rounded">
-                                        Pages {cpq.pageIndices.map(p => p + 1).join(', ')}
-                                    </span>
+                                    <span className="text-xs text-slate-500">Pages {cpq.pageIndices.map(p => p + 1).join(', ')}</span>
                                     {cpq.confidence < 0.8 && (
-                                        <span className="text-[10px] font-bold text-amber-600 bg-amber-100 px-1.5 py-0.5 rounded flex items-center gap-1">
-                                            <AlertTriangle className="w-3 h-3" /> Check
-                                        </span>
+                                        <span className="text-[10px] text-amber-600">Check</span>
                                     )}
                                 </div>
                             </div>
                         ))}
                     </div>
-                </GlassCard>
+                </div>
             )}
 
-            <RubricOverview />
+<RubricOverview />
         </div>
     );
 };

@@ -1,10 +1,20 @@
 'use client';
 
-import React, { useState } from 'react';
+import React from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAuthStore } from '@/store/authStore';
 import { Role } from '@/types';
+import {
+  BarChart3,
+  Bot,
+  ClipboardList,
+  FileText,
+  GraduationCap,
+  History,
+  LayoutDashboard,
+  Users,
+} from 'lucide-react';
 
 interface Props {
   children: React.ReactNode;
@@ -14,35 +24,30 @@ export default function DashboardLayout({ children }: Props) {
   const { user, logout } = useAuthStore();
   const pathname = usePathname();
   const router = useRouter();
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-
   const handleLogout = () => {
     logout();
     router.push('/login');
   };
 
-  // 教师导航 - 完整功能
   const teacherNav = [
-    { href: '/teacher/dashboard', label: '班级管理', icon: '📚', desc: '管理班级和学生' },
-    { href: '/teacher/homework', label: '作业管理', icon: '📝', desc: '发布和批改作业' },
-    { href: '/console', label: 'AI批改', icon: '🤖', desc: '智能批改控制台' },
-    { href: '/teacher/grading/history', label: '批改历史', icon: '🗂️', desc: '导入记录与结果回溯' },
-    { href: '/teacher/statistics', label: '数据统计', icon: '📊', desc: '班级学情分析' },
+    { href: '/teacher/dashboard', label: 'Classes', icon: <Users className="h-4 w-4" />, desc: 'Manage classes and students' },
+    { href: '/teacher/homework', label: 'Homework', icon: <ClipboardList className="h-4 w-4" />, desc: 'Assign and grade' },
+    { href: '/console', label: 'AI Grading', icon: <FileText className="h-4 w-4" />, desc: 'Grading console' },
+    { href: '/teacher/grading/history', label: 'Grading History', icon: <History className="h-4 w-4" />, desc: 'Imports and results' },
+    { href: '/teacher/statistics', label: 'Analytics', icon: <BarChart3 className="h-4 w-4" />, desc: 'Class insights' },
   ];
 
-  // 学生导航 - 完整功能
   const studentNav = [
-    { href: '/student/dashboard', label: '我的课程', icon: '📚', desc: '查看作业和成绩' },
-    { href: '/student/assistant', label: 'AI学习助手', icon: '🤖', desc: '智能学习规划' },
-    { href: '/student/analysis', label: '错题分析', icon: '🔍', desc: '深度错题诊断' },
-    { href: '/student/report', label: '学情报告', icon: '📈', desc: '个人成长分析' },
+    { href: '/student/dashboard', label: 'My Courses', icon: <GraduationCap className="h-4 w-4" />, desc: 'Assignments and scores' },
+    { href: '/student/student_assistant', label: 'AI Assistant', icon: <Bot className="h-4 w-4" />, desc: 'Learning support' },
+    { href: '/student/analysis', label: 'Mistake Analysis', icon: <LayoutDashboard className="h-4 w-4" />, desc: 'Targeted review' },
+    { href: '/student/report', label: 'Progress Report', icon: <BarChart3 className="h-4 w-4" />, desc: 'Growth insights' },
   ];
 
   const navItems = user?.role === Role.Teacher ? teacherNav : studentNav;
 
   return (
     <div className="min-h-screen bg-slate-50">
-      {/* Header */}
       <header className="bg-white border-b border-slate-200 sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
@@ -59,13 +64,14 @@ export default function DashboardLayout({ children }: Props) {
                   <Link
                     key={item.href}
                     href={item.href}
+                    title={item.desc}
                     className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
                       pathname === item.href || pathname.startsWith(item.href + '/')
                         ? 'bg-blue-50 text-blue-600'
                         : 'text-slate-600 hover:bg-slate-100'
                     }`}
                   >
-                    <span className="mr-2">{item.icon}</span>
+                    <span className="mr-2 inline-flex">{item.icon}</span>
                     {item.label}
                   </Link>
                 ))}
@@ -88,7 +94,6 @@ export default function DashboardLayout({ children }: Props) {
         </div>
       </header>
 
-      {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {children}
       </main>

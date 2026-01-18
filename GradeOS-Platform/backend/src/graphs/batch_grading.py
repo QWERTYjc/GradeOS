@@ -16,6 +16,15 @@ from src.utils.llm_thinking import split_thinking_content
 
 
 logger = logging.getLogger(__name__)
+_grade_batch_semaphore: Optional[asyncio.Semaphore] = None
+
+
+def _get_grade_batch_semaphore() -> asyncio.Semaphore:
+    global _grade_batch_semaphore
+    config = get_batch_config()
+    if _grade_batch_semaphore is None:
+        _grade_batch_semaphore = asyncio.Semaphore(max(1, config.max_concurrent_workers))
+    return _grade_batch_semaphore
 
 
 # ==================== 批次配置 ====================
@@ -2310,6 +2319,12 @@ def _finalize_assist_result(
 
 
 async def grade_batch_node(state: Dict[str, Any]) -> Dict[str, Any]:
+    semaphore = _get_grade_batch_semaphore()
+    async with semaphore:
+        return await _grade_batch_node_impl(state)
+
+
+async def _grade_batch_node_impl(state: Dict[str, Any]) -> Dict[str, Any]:
     """
     批量批改节点
     

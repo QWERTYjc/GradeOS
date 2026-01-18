@@ -3,19 +3,18 @@
 import base64
 import json
 from typing import List, Optional
-from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage
 
+from src.services.chat_model_factory import get_chat_model
 from ..models.region import BoundingBox, QuestionRegion, SegmentationResult
 from ..utils.coordinates import normalize_coordinates
 from ..config.models import get_lite_model
-from ..utils.llm_thinking import get_thinking_kwargs
 
 
 class LayoutAnalysisService:
     """布局分析服务，使用 Gemini 识别试卷中的题目边界"""
     
-    def __init__(self, api_key: str, model_name: Optional[str] = None):
+    def __init__(self, api_key: Optional[str] = None, model_name: Optional[str] = None):
         """
         初始化布局分析服务
         
@@ -25,12 +24,12 @@ class LayoutAnalysisService:
         """
         if model_name is None:
             model_name = get_lite_model()
-        thinking_kwargs = get_thinking_kwargs(model_name, enable_thinking=False)
-        self.llm = ChatGoogleGenerativeAI(
-            model=model_name,
-            google_api_key=api_key,
+        self.llm = get_chat_model(
+            api_key=api_key,
+            model_name=model_name,
             temperature=0.1,
-            **thinking_kwargs,
+            purpose="vision",
+            enable_thinking=False,
         )
         self.model_name = model_name
         

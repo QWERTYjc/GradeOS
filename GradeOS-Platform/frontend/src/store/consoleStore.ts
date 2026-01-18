@@ -365,6 +365,7 @@ export interface ConsoleState {
     classReport: ClassReport | null;
     // 新增：班级批改上下文
     classContext: ClassContext;
+    reviewFocus: 'rubric' | 'results' | null;
 
     setView: (view: 'LANDING' | 'CONSOLE') => void;
     setCurrentTab: (tab: ConsoleTab) => void;
@@ -411,6 +412,7 @@ export interface ConsoleState {
     clearClassContext: () => void;
     setInteractionEnabled: (enabled: boolean) => void;
     setGradingMode: (mode: string) => void;
+    setReviewFocus: (focus: 'rubric' | 'results' | null) => void;
 }
 
 const normalizeImageSource = (value: string) => {
@@ -603,6 +605,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
         students: [],
         studentImageMapping: [],
     },
+    reviewFocus: null,
 
     setView: (view) => set({ view }),
     setCurrentTab: (tab) => set({ currentTab: tab }),
@@ -610,6 +613,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
     setSubmissionId: (id) => set({ submissionId: id }),
     setInteractionEnabled: (enabled) => set({ interactionEnabled: enabled }),
     setGradingMode: (mode) => set({ gradingMode: mode }),
+    setReviewFocus: (focus) => set({ reviewFocus: focus }),
     addLog: (message, level = 'INFO') => set((state) => ({
         logs: [...state.logs, {
             timestamp: new Date().toISOString(),
@@ -1274,6 +1278,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
             get().setStatus('REVIEWING');
             const reviewNodeId = (reviewData.type || '').includes('rubric') ? 'rubric_review' : 'review';
             get().updateNodeStatus(reviewNodeId, 'running', 'Waiting for interaction');
+            get().setReviewFocus((reviewData.type || '').includes('rubric') ? 'rubric' : 'results');
             get().addLog(`Review required: ${reviewData.type}`, 'WARNING');
         });
 
@@ -1304,6 +1309,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
             const classReport = normalizeClassReport(data.classReport || data.class_report);
             get().setClassReport(classReport);
             get().setPendingReview(null);
+            get().setReviewFocus(null);
 
             // 保存跨页题目信息
             if (data.cross_page_questions && Array.isArray(data.cross_page_questions)) {
@@ -1491,6 +1497,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
             }
             get().setStatus('RUNNING');
             get().setPendingReview(null);
+            get().setReviewFocus(null);
         });
 
         // 处理工作流错误（对应设计文档 EventType.ERROR）

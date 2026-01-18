@@ -1,32 +1,22 @@
 """统一 LLM 客户端
-
 提供统一的 LLM 调用接口，支持：
 - OpenRouter API（可混合各家模型）
 - 直连 Google Gemini API
 - 流式输出
 - 视觉模型支持
 """
-
 import logging
 import base64
 from typing import List, Dict, Any, Optional, AsyncIterator, Union
 from dataclasses import dataclass
-
 import httpx
-
 from src.config.llm import get_llm_config, LLMConfig, LLMProvider
-
-
 logger = logging.getLogger(__name__)
-
-
 @dataclass
 class LLMMessage:
     """LLM 消息"""
     role: str  # "system", "user", "assistant"
     content: Union[str, List[Dict[str, Any]]]  # 文本或多模态内容
-
-
 @dataclass
 class LLMResponse:
     """LLM 响应"""
@@ -34,8 +24,6 @@ class LLMResponse:
     model: str
     usage: Dict[str, int] = None
     finish_reason: str = None
-
-
 class UnifiedLLMClient:
     """统一 LLM 客户端"""
     
@@ -73,12 +61,25 @@ class UnifiedLLMClient:
                     "role": msg.role,
                     "content": msg.content
                 })
-            else:
-                # 多模态消息
-                formatted.append({
-                    "role": msg.role,
-                    "content": msg.content
-                })
+                continue
+            content = msg.content
+            if self.config.provider == LLMProvider.OPENROUTER and isinstance(content, list):
+                normalized = []
+                for item in content:
+                    if isinstance(item, dict) and item.get("type") == "image_url":
+                        image_url = item.get("image_url")
+                        if isinstance(image_url, str):
+                            normalized.append({
+                                **item,
+                                "image_url": {"url": image_url}
+                            })
+                            continue
+                    normalized.append(item)
+                content = normalized
+            formatted.append({
+                "role": msg.role,
+                "content": content
+            })
         return formatted
     
     @staticmethod
@@ -144,9 +145,22 @@ class UnifiedLLMClient:
             
             choice = data.get("choices", [{}])[0]
             content = choice.get("message", {}).get("content", "")
-            usage = data.get("usage", {})
-            
-            logger.info(f"[LLM] 响应成功: {len(content)} chars, tokens: {usage}")
+            usage = data.get("usage", {}) or {}
+            header_usage = {}
+            header_key = response.headers.get("x-openrouter-usage") or response.headers.get("x-usage")
+            if header_key:
+                try:
+                    import json
+                    header_usage = json.loads(header_key)
+                except Exception:
+                    header_usage = {}
+            if header_usage:
+                usage = {**usage, **header_usage}
+            logger.info(
+                f"[LLM] 响应成功: {len(content)} chars, tokens: {usage}"
+            )
+            if self.config.provider == LLMProvider.OPENROUTER:
+                logger.info(f"[LLM] OpenRouter token usage: {usage}")
             
             return LLMResponse(
                 content=content,
@@ -157,8 +171,22 @@ class UnifiedLLMClient:
         except httpx.HTTPStatusError as e:
             logger.error(f"[LLM] HTTP 错误: {e.response.status_code} - {e.response.text}")
             raise
+        except httpx.HTTPStatusError as e:
+            try:
+                body = await e.response.aread()
+                text = body.decode("utf-8", errors="replace")
+            except Exception:
+                text = "<unreadable response>"
+            logger.error(f"[LLM] HTTP error: {e.response.status_code} - {text}")
+            raise
+        except httpx.HTTPStatusError as e:
+            logger.error(
+                f"[LLM] HTTP error: {e.response.status_code} - {e.response.text} "
+                f"(model={model}, purpose={purpose}, images={image_count})"
+            )
+            raise
         except Exception as e:
-            logger.error(f"[LLM] 调用失败: {e}")
+            logger.error(f"[LLM] stream failed: {e}")
             raise
     
     async def stream(
@@ -192,10 +220,23 @@ class UnifiedLLMClient:
             "stream": True,
             **kwargs
         }
-        
-        logger.info(f"[LLM] 流式调用: {model}, 用途: {purpose}")
-        
+        if self.config.provider == LLMProvider.OPENROUTER:
+            payload["stream_options"] = {"include_usage": True}
+
+        image_count = 0
+        for msg in payload["messages"]:
+            content = msg.get("content")
+            if isinstance(content, list):
+                for item in content:
+                    if isinstance(item, dict) and item.get("type") == "image_url":
+                        image_count += 1
+
+        logger.info(
+            f"[LLM] stream call: {model}, purpose={purpose}, images={image_count}, messages={len(payload['messages'])}"
+        )
+
         try:
+            usage_summary: Dict[str, int] = {}
             async with client.stream(
                 "POST",
                 f"{self.config.base_url}/chat/completions",
@@ -212,14 +253,21 @@ class UnifiedLLMClient:
                         try:
                             import json
                             data = json.loads(data_str)
+                            if data.get("usage"):
+                                usage_summary = data.get("usage") or usage_summary
                             delta = data.get("choices", [{}])[0].get("delta", {})
                             content = delta.get("content", "")
                             if content:
                                 yield content
                         except Exception:
                             continue
+            if usage_summary and self.config.provider == LLMProvider.OPENROUTER:
+                logger.info(f"[LLM] OpenRouter token usage (stream): {usage_summary}")
+        except httpx.HTTPStatusError as e:
+            logger.error(f"[LLM] HTTP error: {e.response.status_code} - {e.response.text}")
+            raise
         except Exception as e:
-            logger.error(f"[LLM] 流式调用失败: {e}")
+            logger.error(f"[LLM] stream failed: {e}")
             raise
     
     async def invoke_with_images(
@@ -268,20 +316,14 @@ class UnifiedLLMClient:
             max_tokens=max_tokens,
             **kwargs
         )
-
-
 # 全局客户端实例
 _llm_client: Optional[UnifiedLLMClient] = None
-
-
 def get_llm_client() -> UnifiedLLMClient:
     """获取全局 LLM 客户端"""
     global _llm_client
     if _llm_client is None:
         _llm_client = UnifiedLLMClient()
     return _llm_client
-
-
 async def close_llm_client():
     """关闭全局 LLM 客户端"""
     global _llm_client

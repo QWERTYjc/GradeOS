@@ -15,10 +15,10 @@ const statusIcons = {
 };
 
 const statusLabels = {
-    pending: '等待中',
-    running: '运行中',
-    completed: '已完成',
-    failed: '失败'
+    pending: 'Pending',
+    running: 'Running',
+    completed: 'Completed',
+    failed: 'Failed'
 };
 
 const statusColors = {
@@ -44,10 +44,10 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({ className }) => {
         studentBoundaries,
     } = useConsoleStore();
 
-    // 获取选中的节点
+    // 
     const selectedNode = workflowNodes.find(n => n.id === selectedNodeId);
 
-    // 获取选中的 Agent
+    // 
     let selectedAgent: GradingAgent | undefined;
     if (selectedAgentId) {
         for (const node of workflowNodes) {
@@ -61,7 +61,7 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({ className }) => {
         }
     }
 
-    // 关闭面板
+    // 
     const handleClose = () => {
         setSelectedNodeId(null);
         setSelectedAgentId(null);

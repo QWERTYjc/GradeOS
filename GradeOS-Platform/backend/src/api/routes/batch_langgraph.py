@@ -44,6 +44,9 @@ active_connections: Dict[str, List[WebSocket]] = {}
 # 缓存图片，避免 images_ready 早于 WebSocket 连接导致前端丢失
 batch_image_cache: Dict[str, Dict[str, dict]] = {}
 DEBUG_LOG_PATH = os.getenv("GRADEOS_DEBUG_LOG_PATH")
+TEACHER_MAX_ACTIVE_RUNS = int(os.getenv("TEACHER_MAX_ACTIVE_RUNS", "3"))
+_TEACHER_SEMAPHORE_LOCK = asyncio.Lock()
+_TEACHER_SEMAPHORES: Dict[str, asyncio.Semaphore] = {}
 
 
 def _is_ws_connected(websocket: WebSocket) -> bool:
@@ -70,6 +73,22 @@ def _safe_to_jpeg_bytes(image_bytes: bytes, label: str) -> bytes:
     except Exception as exc:
         logger.warning(f"Failed to convert image to JPEG ({label}): {exc}")
         return image_bytes
+
+
+
+def _normalize_teacher_key(teacher_id: Optional[str]) -> str:
+    if teacher_id and teacher_id.strip():
+        return teacher_id.strip()
+    return "anonymous"
+
+
+async def _get_teacher_semaphore(teacher_key: str) -> asyncio.Semaphore:
+    async with _TEACHER_SEMAPHORE_LOCK:
+        semaphore = _TEACHER_SEMAPHORES.get(teacher_key)
+        if not semaphore:
+            semaphore = asyncio.Semaphore(max(1, TEACHER_MAX_ACTIVE_RUNS))
+            _TEACHER_SEMAPHORES[teacher_key] = semaphore
+    return semaphore
 
 
 class BatchSubmissionResponse(BaseModel):
@@ -195,12 +214,63 @@ async def broadcast_progress(batch_id: str, message: dict):
                 active_connections[batch_id].remove(ws)
 
 
+
+async def _start_run_with_teacher_limit(
+    *,
+    teacher_key: str,
+    batch_id: str,
+    payload: Dict[str, Any],
+    orchestrator: Orchestrator,
+    class_id: Optional[str],
+    homework_id: Optional[str],
+    student_mapping: List[dict],
+) -> Optional[str]:
+    semaphore = await _get_teacher_semaphore(teacher_key)
+    await semaphore.acquire()
+    run_id: Optional[str] = None
+    try:
+        run_id = await orchestrator.start_run(
+            graph_name="batch_grading",
+            payload=payload,
+            idempotency_key=batch_id
+        )
+        logger.info(
+            f"LangGraph ??????? "
+            f"batch_id={batch_id}, "
+            f"run_id={run_id}"
+        )
+        asyncio.create_task(
+            stream_langgraph_progress(
+                batch_id=batch_id,
+                run_id=run_id,
+                orchestrator=orchestrator,
+                class_id=class_id,
+                homework_id=homework_id,
+                student_mapping=student_mapping,
+                teacher_key=teacher_key,
+                teacher_semaphore=semaphore,
+            )
+        )
+        return run_id
+    except Exception as exc:
+        logger.error(f"????????: {exc}", exc_info=True)
+        semaphore.release()
+        await broadcast_progress(batch_id, {
+            "type": "workflow_update",
+            "nodeId": "rubric_parse",
+            "status": "failed",
+            "message": "Queued run failed to start"
+        })
+        return None
+
+
 @router.post("/submit", response_model=BatchSubmissionResponse)
 async def submit_batch(
     exam_id: Optional[str] = Form(None, description="考试 ID"),
     rubrics: List[UploadFile] = File(default=[], description="评分标准 PDF（可选）"),
     files: List[UploadFile] = File(..., description="学生作答 PDF"),
     api_key: Optional[str] = Form(None, description="Gemini API Key"),
+    teacher_id: Optional[str] = Form(None, description="?? ID"),
     auto_identify: bool = Form(True, description="是否自动识别学生身份"),
     student_boundaries: Optional[str] = Form(None, description="手动设置的学生边界 (JSON List of page indices)"),
     expected_students: Optional[int] = Form(None, description="预期学生数量（强烈建议提供，用于更准确的分割）"),
@@ -249,12 +319,12 @@ async def submit_batch(
         )
     
     if not api_key:
-        api_key = os.getenv("GEMINI_API_KEY")
+        api_key = os.getenv("GEMINI_API_KEY") or os.getenv("OPENROUTER_API_KEY")
     
     if not api_key:
         raise HTTPException(
             status_code=400,
-            detail="未提供 API Key，请在请求中提供或配置环境变量 GEMINI_API_KEY"
+            detail="未提供 API Key，请在请求中提供或配置环境变量 GEMINI_API_KEY/OPENROUTER_API_KEY"
         )
 
 
@@ -421,35 +491,32 @@ async def submit_batch(
         }
         
         # 启动 LangGraph batch_grading Graph
-        run_id = await orchestrator.start_run(
-            graph_name="batch_grading",
-            payload=payload,
-            idempotency_key=batch_id
-        )
-        
-        logger.info(
-            f"LangGraph 批改流程已启动: "
-            f"batch_id={batch_id}, "
-            f"run_id={run_id}"
-        )
-        
-        # 启动后台任务监听 LangGraph 进度并推送到 WebSocket
+        teacher_key = _normalize_teacher_key(teacher_id)
+        teacher_semaphore = await _get_teacher_semaphore(teacher_key)
+        if teacher_semaphore.locked():
+            await broadcast_progress(batch_id, {
+                "type": "workflow_update",
+                "nodeId": "rubric_parse",
+                "status": "pending",
+                "message": "Queued: waiting for teacher slot"
+            })
         asyncio.create_task(
-            stream_langgraph_progress(
+            _start_run_with_teacher_limit(
+                teacher_key=teacher_key,
                 batch_id=batch_id,
-                run_id=run_id,
+                payload=payload,
                 orchestrator=orchestrator,
                 class_id=class_id,
                 homework_id=homework_id,
-                student_mapping=student_mapping
+                student_mapping=student_mapping,
             )
         )
-        
+
         return BatchSubmissionResponse(
             batch_id=batch_id,
             status=SubmissionStatus.UPLOADED,
             total_pages=total_pages,
-            estimated_completion_time=total_pages * 3  # 估算：每页 3 秒
+            estimated_completion_time=total_pages * 3  # Estimated: 3s per page
         )
         
     except Exception as e:
@@ -463,7 +530,9 @@ async def stream_langgraph_progress(
     orchestrator: Orchestrator,
     class_id: Optional[str] = None,
     homework_id: Optional[str] = None,
-    student_mapping: Optional[List[dict]] = None
+    student_mapping: Optional[List[dict]] = None,
+    teacher_key: Optional[str] = None,
+    teacher_semaphore: Optional[asyncio.Semaphore] = None
 ):
     """
     流式监听 LangGraph 执行进度并推送到 WebSocket
@@ -847,6 +916,16 @@ async def stream_langgraph_progress(
             "type": "workflow_error",
             "message": f"流式传输失败: {str(e)}"
         })
+
+    finally:
+        if teacher_semaphore:
+            try:
+                run_info = await orchestrator.get_status(run_id)
+                status_value = run_info.status.value if hasattr(run_info.status, "value") else str(run_info.status)
+                if status_value in ("completed", "failed", "cancelled"):
+                    teacher_semaphore.release()
+            except Exception:
+                teacher_semaphore.release()
 
 
 def _map_node_to_frontend(node_name: str) -> str:

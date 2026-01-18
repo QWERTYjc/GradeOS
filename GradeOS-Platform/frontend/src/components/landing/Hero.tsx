@@ -3,9 +3,15 @@
 import React from 'react';
 import { motion } from 'framer-motion';
 import { ArrowRight } from 'lucide-react';
+import { useAuthStore } from '@/store/authStore';
+import { Role } from '@/types';
 import Link from 'next/link';
 
 export default function Hero() {
+    const { user } = useAuthStore();
+    const isTeacher = user?.role === Role.Teacher || user?.role === Role.Admin;
+    const ctaHref = user ? (isTeacher ? "/console" : "/student/dashboard") : "/login";
+
     const stats = [
         { value: '90s', label: '平均批改', detail: '50页批次' },
         { value: '3-8', label: '并行Worker', detail: '自动扩展' },
@@ -68,7 +74,7 @@ export default function Hero() {
                         transition={{ delay: 0.4 }}
                         className="flex flex-col sm:flex-row gap-4 items-center"
                     >
-                        <Link href="/console" className="landing-cta-primary group">
+                        <Link href={ctaHref} className="landing-cta-primary group">
                             <span className="relative flex items-center gap-2">
                                 立即体验
                                 <ArrowRight size={18} />
