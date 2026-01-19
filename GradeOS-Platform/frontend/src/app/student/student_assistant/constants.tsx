@@ -1,5 +1,5 @@
 import React from 'react';
-import { Subject, ScoreEntry, ElectiveCombo, Language } from './types';
+import { Language } from './types';
 
 export const COLORS = {
   inkBlack: '#0B0F17',
@@ -99,30 +99,6 @@ export const I18N = {
     addRecord: "新增記錄"
   }
 };
-
-export const MOCK_SCORES: ScoreEntry[] = [
-  { id: '1', subject: Subject.MATH, score: 78, averageScore: 72, date: '2024-01-15', weakPoints: ['Trigonometry', 'Quadratic Equations'] },
-  { id: '2', subject: Subject.ENGLISH, score: 85, averageScore: 75, date: '2024-01-15', weakPoints: ['Grammar: Relative Clauses', 'Writing: Tone'] },
-  { id: '3', subject: Subject.CHINESE, score: 62, averageScore: 68, date: '2024-01-15', weakPoints: ['Classical Prose Interpretation'] },
-  { id: '4', subject: Subject.PHYSICS, score: 92, averageScore: 70, date: '2024-01-15', weakPoints: ['Heat Energy'] },
-];
-
-export const MOCK_COMBOS: ElectiveCombo[] = [
-  {
-    comboId: 'c1',
-    subjects: [Subject.PHYSICS, Subject.CHEMISTRY, Subject.MATH],
-    advantage: 'Strong alignment with Engineering and Science degrees.',
-    suitableMajors: ['Computer Science', 'Mechanical Engineering', 'Medicine'],
-    difficulty: 5,
-  },
-  {
-    comboId: 'c2',
-    subjects: [Subject.ECONOMICS, Subject.GEOGRAPHY, Subject.ICT],
-    advantage: 'Balanced approach to business and data visualization.',
-    suitableMajors: ['Business Administration', 'Data Analytics', 'Urban Planning'],
-    difficulty: 3,
-  },
-];
 
 export const ICONS = {
   Analysis: (props: React.SVGProps<SVGSVGElement>) => (

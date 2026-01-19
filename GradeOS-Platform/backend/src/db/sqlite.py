@@ -24,6 +24,13 @@ logger = logging.getLogger(__name__)
 DB_PATH = Path(os.getenv("GRADING_DB_PATH", "data/grading.db"))
 
 
+def _add_column_if_missing(conn: sqlite3.Connection, table: str, column: str, ddl: str) -> None:
+    """Add a column if the table exists but column is missing."""
+    columns = [row["name"] for row in conn.execute(f"PRAGMA table_info({table})")]
+    if column not in columns:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {ddl}")
+
+
 def ensure_db_dir():
     """确保数据库目录存在"""
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -75,6 +82,40 @@ def init_db():
                 result_data TEXT
             )
         """)
+
+        # Import records (per class)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS grading_imports (
+                id TEXT PRIMARY KEY,
+                batch_id TEXT NOT NULL,
+                class_id TEXT NOT NULL,
+                assignment_id TEXT,
+                created_at TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'imported',
+                revoked_at TEXT,
+                student_count INTEGER DEFAULT 0
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_imports_batch_id ON grading_imports(batch_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_imports_class_id ON grading_imports(class_id)")
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS grading_import_items (
+                id TEXT PRIMARY KEY,
+                import_id TEXT NOT NULL,
+                batch_id TEXT NOT NULL,
+                class_id TEXT NOT NULL,
+                student_id TEXT NOT NULL,
+                student_name TEXT,
+                status TEXT NOT NULL DEFAULT 'imported',
+                created_at TEXT NOT NULL,
+                revoked_at TEXT,
+                result_data TEXT,
+                FOREIGN KEY (import_id) REFERENCES grading_imports(id)
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_import_items_import ON grading_import_items(import_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_import_items_student ON grading_import_items(student_id)")
         
         # 学生批改结果表
         conn.execute("""
@@ -117,8 +158,396 @@ def init_db():
             )
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_homework_class ON homework_submissions(class_id, homework_id)")
+
+        _add_column_if_missing(conn, "homework_submissions", "content", "content TEXT")
+        _add_column_if_missing(conn, "homework_submissions", "submission_type", "submission_type TEXT")
+        _add_column_if_missing(conn, "homework_submissions", "score", "score REAL")
+        _add_column_if_missing(conn, "homework_submissions", "feedback", "feedback TEXT")
+
+        # Users table
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id TEXT PRIMARY KEY,
+                username TEXT UNIQUE NOT NULL,
+                name TEXT,
+                role TEXT NOT NULL,
+                password_hash TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)")
+
+        # Classes table
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS classes (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                teacher_id TEXT NOT NULL,
+                invite_code TEXT UNIQUE NOT NULL,
+                created_at TEXT NOT NULL
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_classes_teacher ON classes(teacher_id)")
+
+        # Class enrollments
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS class_students (
+                class_id TEXT NOT NULL,
+                student_id TEXT NOT NULL,
+                joined_at TEXT NOT NULL,
+                PRIMARY KEY (class_id, student_id)
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_class_students_class ON class_students(class_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_class_students_student ON class_students(student_id)")
+
+        # Homework table
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS homeworks (
+                id TEXT PRIMARY KEY,
+                class_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                description TEXT,
+                deadline TEXT NOT NULL,
+                allow_early_grading INTEGER DEFAULT 0,
+                subject TEXT,
+                created_at TEXT NOT NULL
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_homeworks_class ON homeworks(class_id)")
         
         logger.info(f"SQLite 数据库已初始化: {DB_PATH}")
+
+
+# ==================== User/Class/Homework data ====================
+
+
+@dataclass
+class UserRecord:
+    """User record."""
+    id: str
+    username: str
+    name: Optional[str] = None
+    role: str = "student"
+    password_hash: str = ""
+    created_at: str = ""
+
+
+@dataclass
+class ClassRecord:
+    """Class record."""
+    id: str
+    name: str
+    teacher_id: str
+    invite_code: str
+    created_at: str = ""
+
+
+@dataclass
+class HomeworkRecord:
+    """Homework record."""
+    id: str
+    class_id: str
+    title: str
+    description: Optional[str] = None
+    deadline: str = ""
+    allow_early_grading: bool = False
+    subject: Optional[str] = None
+    created_at: str = ""
+
+
+def create_user(user: UserRecord) -> None:
+    """Create a user."""
+    if not user.created_at:
+        user.created_at = datetime.now().isoformat()
+    with get_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO users (id, username, name, role, password_hash, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                user.id,
+                user.username,
+                user.name,
+                user.role,
+                user.password_hash,
+                user.created_at,
+            ),
+        )
+
+
+def get_user_by_username(username: str) -> Optional[UserRecord]:
+    """Get user by username."""
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM users WHERE username = ?",
+            (username,),
+        ).fetchone()
+    if not row:
+        return None
+    return UserRecord(
+        id=row["id"],
+        username=row["username"],
+        name=row["name"],
+        role=row["role"],
+        password_hash=row["password_hash"],
+        created_at=row["created_at"],
+    )
+
+
+def get_user_by_id(user_id: str) -> Optional[UserRecord]:
+    """Get user by id."""
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM users WHERE id = ?",
+            (user_id,),
+        ).fetchone()
+    if not row:
+        return None
+    return UserRecord(
+        id=row["id"],
+        username=row["username"],
+        name=row["name"],
+        role=row["role"],
+        password_hash=row["password_hash"],
+        created_at=row["created_at"],
+    )
+
+
+def list_user_class_ids(user_id: str) -> List[str]:
+    """List class ids for a student."""
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT class_id FROM class_students WHERE student_id = ?",
+            (user_id,),
+        ).fetchall()
+    return [row["class_id"] for row in rows]
+
+
+def create_class_record(record: ClassRecord) -> None:
+    """Create a class."""
+    if not record.created_at:
+        record.created_at = datetime.now().isoformat()
+    with get_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO classes (id, name, teacher_id, invite_code, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                record.id,
+                record.name,
+                record.teacher_id,
+                record.invite_code,
+                record.created_at,
+            ),
+        )
+
+
+def get_class_by_id(class_id: str) -> Optional[ClassRecord]:
+    """Get class by id."""
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM classes WHERE id = ?",
+            (class_id,),
+        ).fetchone()
+    if not row:
+        return None
+    return ClassRecord(
+        id=row["id"],
+        name=row["name"],
+        teacher_id=row["teacher_id"],
+        invite_code=row["invite_code"],
+        created_at=row["created_at"],
+    )
+
+
+def get_class_by_invite_code(invite_code: str) -> Optional[ClassRecord]:
+    """Get class by invite code."""
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM classes WHERE invite_code = ?",
+            (invite_code,),
+        ).fetchone()
+    if not row:
+        return None
+    return ClassRecord(
+        id=row["id"],
+        name=row["name"],
+        teacher_id=row["teacher_id"],
+        invite_code=row["invite_code"],
+        created_at=row["created_at"],
+    )
+
+
+def list_classes_by_teacher(teacher_id: str) -> List[ClassRecord]:
+    """List classes for a teacher."""
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT * FROM classes WHERE teacher_id = ? ORDER BY created_at DESC",
+            (teacher_id,),
+        ).fetchall()
+    return [
+        ClassRecord(
+            id=row["id"],
+            name=row["name"],
+            teacher_id=row["teacher_id"],
+            invite_code=row["invite_code"],
+            created_at=row["created_at"],
+        )
+        for row in rows
+    ]
+
+
+def list_classes_by_student(student_id: str) -> List[ClassRecord]:
+    """List classes for a student."""
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT c.*
+            FROM classes c
+            JOIN class_students cs ON c.id = cs.class_id
+            WHERE cs.student_id = ?
+            ORDER BY c.created_at DESC
+            """,
+            (student_id,),
+        ).fetchall()
+    return [
+        ClassRecord(
+            id=row["id"],
+            name=row["name"],
+            teacher_id=row["teacher_id"],
+            invite_code=row["invite_code"],
+            created_at=row["created_at"],
+        )
+        for row in rows
+    ]
+
+
+def add_student_to_class(class_id: str, student_id: str) -> None:
+    """Add student to class if not exists."""
+    with get_connection() as conn:
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO class_students (class_id, student_id, joined_at)
+            VALUES (?, ?, ?)
+            """,
+            (class_id, student_id, datetime.now().isoformat()),
+        )
+
+
+def count_class_students(class_id: str) -> int:
+    """Count students in class."""
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS total FROM class_students WHERE class_id = ?",
+            (class_id,),
+        ).fetchone()
+    return int(row["total"]) if row else 0
+
+
+def list_class_students(class_id: str) -> List[UserRecord]:
+    """List students in class."""
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT u.*
+            FROM class_students cs
+            JOIN users u ON cs.student_id = u.id
+            WHERE cs.class_id = ?
+            ORDER BY u.name
+            """,
+            (class_id,),
+        ).fetchall()
+    return [
+        UserRecord(
+            id=row["id"],
+            username=row["username"],
+            name=row["name"],
+            role=row["role"],
+            password_hash=row["password_hash"],
+            created_at=row["created_at"],
+        )
+        for row in rows
+    ]
+
+
+def create_homework_record(record: HomeworkRecord) -> None:
+    """Create homework."""
+    if not record.created_at:
+        record.created_at = datetime.now().isoformat()
+    with get_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO homeworks
+            (id, class_id, title, description, deadline, allow_early_grading, subject, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                record.id,
+                record.class_id,
+                record.title,
+                record.description,
+                record.deadline,
+                1 if record.allow_early_grading else 0,
+                record.subject,
+                record.created_at,
+            ),
+        )
+
+
+def get_homework(homework_id: str) -> Optional[HomeworkRecord]:
+    """Get homework by id."""
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM homeworks WHERE id = ?",
+            (homework_id,),
+        ).fetchone()
+    if not row:
+        return None
+    return HomeworkRecord(
+        id=row["id"],
+        class_id=row["class_id"],
+        title=row["title"],
+        description=row["description"],
+        deadline=row["deadline"],
+        allow_early_grading=bool(row["allow_early_grading"]),
+        subject=row["subject"],
+        created_at=row["created_at"],
+    )
+
+
+def list_homeworks(class_id: Optional[str] = None, student_id: Optional[str] = None) -> List[HomeworkRecord]:
+    """List homeworks with optional filters."""
+    query = "SELECT h.* FROM homeworks h"
+    params: List[Any] = []
+    where = []
+    if student_id:
+        query += " JOIN class_students cs ON h.class_id = cs.class_id"
+        where.append("cs.student_id = ?")
+        params.append(student_id)
+    if class_id:
+        where.append("h.class_id = ?")
+        params.append(class_id)
+    if where:
+        query += " WHERE " + " AND ".join(where)
+    query += " ORDER BY h.created_at DESC"
+    with get_connection() as conn:
+        rows = conn.execute(query, params).fetchall()
+    return [
+        HomeworkRecord(
+            id=row["id"],
+            class_id=row["class_id"],
+            title=row["title"],
+            description=row["description"],
+            deadline=row["deadline"],
+            allow_early_grading=bool(row["allow_early_grading"]),
+            subject=row["subject"],
+            created_at=row["created_at"],
+        )
+        for row in rows
+    ]
 
 
 # ==================== 工作流状态操作 ====================
@@ -397,10 +826,14 @@ class HomeworkSubmission:
     student_id: str
     student_name: Optional[str] = None
     images: Optional[List[str]] = None  # base64 或 file paths
+    content: Optional[str] = None
+    submission_type: str = "scan"
     page_count: int = 0
     submitted_at: str = ""
     status: str = "pending"
     grading_batch_id: Optional[str] = None
+    score: Optional[float] = None
+    feedback: Optional[str] = None
 
 
 def save_homework_submission(submission: HomeworkSubmission) -> None:
@@ -414,8 +847,8 @@ def save_homework_submission(submission: HomeworkSubmission) -> None:
         conn.execute("""
             INSERT OR REPLACE INTO homework_submissions 
             (id, class_id, homework_id, student_id, student_name, 
-             images, page_count, submitted_at, status, grading_batch_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             images, content, submission_type, page_count, submitted_at, status, grading_batch_id, score, feedback)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             submission.id,
             submission.class_id,
@@ -423,10 +856,14 @@ def save_homework_submission(submission: HomeworkSubmission) -> None:
             submission.student_id,
             submission.student_name,
             images_json,
+            submission.content,
+            submission.submission_type,
             submission.page_count,
             submission.submitted_at,
             submission.status,
-            submission.grading_batch_id
+            submission.grading_batch_id,
+            submission.score,
+            submission.feedback,
         ))
     
     logger.info(f"作业提交已保存: class_id={submission.class_id}, student_id={submission.student_id}")
@@ -453,13 +890,51 @@ def get_homework_submissions(class_id: str, homework_id: str) -> List[HomeworkSu
                 student_id=row["student_id"],
                 student_name=row["student_name"],
                 images=images,
+                content=row["content"],
+                submission_type=row["submission_type"] or ("scan" if images else "text"),
                 page_count=row["page_count"],
                 submitted_at=row["submitted_at"],
                 status=row["status"],
-                grading_batch_id=row["grading_batch_id"]
+                grading_batch_id=row["grading_batch_id"],
+                score=row["score"],
+                feedback=row["feedback"],
             ))
         
         return submissions
+
+
+def list_student_submissions(student_id: str, limit: int = 5) -> List[HomeworkSubmission]:
+    """List recent submissions for a student."""
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT * FROM homework_submissions
+            WHERE student_id = ?
+            ORDER BY submitted_at DESC
+            LIMIT ?
+            """,
+            (student_id, limit),
+        ).fetchall()
+    submissions = []
+    for row in rows:
+        images = json.loads(row["images"]) if row["images"] else None
+        submissions.append(HomeworkSubmission(
+            id=row["id"],
+            class_id=row["class_id"],
+            homework_id=row["homework_id"],
+            student_id=row["student_id"],
+            student_name=row["student_name"],
+            images=images,
+            content=row["content"],
+            submission_type=row["submission_type"] or ("scan" if images else "text"),
+            page_count=row["page_count"],
+            submitted_at=row["submitted_at"],
+            status=row["status"],
+            grading_batch_id=row["grading_batch_id"],
+            score=row["score"],
+            feedback=row["feedback"],
+        ))
+    return submissions
 
 
 def update_homework_submission_status(

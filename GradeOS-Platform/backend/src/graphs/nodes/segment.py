@@ -1,4 +1,4 @@
-"""文档分割 Node - 将 Temporal Activity 重写为 LangGraph Node"""
+"""Document segmentation node for LangGraph."""
 
 import logging
 from typing import Dict, Any
@@ -14,25 +14,13 @@ logger = logging.getLogger(__name__)
 
 
 async def _segment_node_impl(state: GradingGraphState) -> GradingGraphState:
-    """
-    文档分割节点实现
-    
-    使用 LayoutAnalysisService 调用 Gemini 2.5 Flash Lite 识别试卷中的题目边界。
-    
-    Args:
-        state: 当前 Graph 状态
-        
-    Returns:
-        更新后的 Graph 状态
-        
-    验证：需求 2.2, 2.3
-    """
+    """Run document segmentation via LayoutAnalysisService."""
     submission_id = state["submission_id"]
     file_paths = state.get("file_paths", [])
     
     logger.info(
-        f"开始文档分割节点: submission_id={submission_id}, "
-        f"文件数={len(file_paths)}"
+        f"开始文档分割节�? submission_id={submission_id}, "
+        f"文件�?{len(file_paths)}"
     )
     
     # 获取布局分析服务实例
@@ -42,7 +30,7 @@ async def _segment_node_impl(state: GradingGraphState) -> GradingGraphState:
     all_segments = []
     
     try:
-        # 遍历所有文件/页面
+        # 遍历所有文�?页面
         for page_index, file_path in enumerate(file_paths):
             logger.debug(
                 f"处理页面: submission_id={submission_id}, "
@@ -70,10 +58,10 @@ async def _segment_node_impl(state: GradingGraphState) -> GradingGraphState:
             
             logger.info(
                 f"页面分割完成: submission_id={submission_id}, "
-                f"page_index={page_index}, 识别题目数={len(result.regions)}"
+                f"page_index={page_index}, 识别题目�?{len(result.regions)}"
             )
         
-        # 更新状态
+        # 更新状�?
         total_questions = sum(len(seg["regions"]) for seg in all_segments)
         
         updated_state = {
@@ -88,7 +76,7 @@ async def _segment_node_impl(state: GradingGraphState) -> GradingGraphState:
                 "total_questions": total_questions
             },
             "current_stage": "segmentation_completed",
-            "percentage": 20.0,  # 分割完成占 20%
+            "percentage": 20.0,  # 分割完成�?20%
             "timestamps": {
                 **state.get("timestamps", {}),
                 "segmentation_completed_at": datetime.now()
@@ -109,7 +97,7 @@ async def _segment_node_impl(state: GradingGraphState) -> GradingGraphState:
             f"error={str(e)}"
         )
         
-        # 记录错误到状态
+        # 记录错误到状�?
         errors = state.get("errors", [])
         errors.append({
             "node": "segment",
@@ -139,18 +127,18 @@ segment_retry_config = RetryConfig(
     backoff_coefficient=2.0,
     maximum_interval=60.0,
     maximum_attempts=3,
-    non_retryable_errors=[ValueError]  # 无法识别题目不重试
+    non_retryable_errors=[ValueError]  # 无法识别题目不重�?
 )
 
 
 async def segment_fallback(state: GradingGraphState, error: Exception) -> GradingGraphState:
     """
-    分割失败的降级处理
+    分割失败的降级处�?
     
-    当重试耗尽时，记录错误并标记为需要人工介入
+    当重试耗尽时，记录错误并标记为需要人工介�?
     """
     logger.warning(
-        f"文档分割重试耗尽，执行降级: submission_id={state['submission_id']}, "
+        f"文档分割重试耗尽，执行降�? submission_id={state['submission_id']}, "
         f"error={str(error)}"
     )
     
@@ -167,7 +155,7 @@ async def segment_fallback(state: GradingGraphState, error: Exception) -> Gradin
         **state,
         "errors": errors,
         "current_stage": "segmentation_failed",
-        "needs_review": True  # 标记需要人工介入
+        "needs_review": True  # 标记需要人工介�?
     }
 
 

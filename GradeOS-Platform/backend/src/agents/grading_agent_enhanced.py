@@ -1,13 +1,4 @@
-"""增强版批改智能体 - 集成自我成长组件
-
-集成以下组件：
-1. ExemplarMemory: 判例检索（需求 4.3）
-2. PromptAssembler: 动态提示词（需求 5.1）
-3. CalibrationService: 校准配置（需求 6.3）
-4. GradingLogger: 日志记录（需求 8.1）
-
-验证：需求 4.3, 5.1, 6.3, 8.1
-"""
+"""Enhanced grading agent with optional learning components."""
 
 import logging
 from typing import Literal, Optional, Callable, Dict, Any, List
@@ -18,7 +9,7 @@ from langgraph.graph import StateGraph, END
 
 from src.models.state import GradingState
 from src.models.grading_log import GradingLog
-from src.services.gemini_reasoning import GeminiReasoningClient
+from src.services.llm_reasoning import LLMReasoningClient
 from src.utils.enhanced_checkpointer import EnhancedPostgresCheckpointer
 from src.services.exemplar_memory import ExemplarMemory
 from src.services.prompt_assembler import PromptAssembler
@@ -36,40 +27,19 @@ logger = logging.getLogger(__name__)
 
 
 class EnhancedGradingAgent:
-    """
-    增强版批改智能体
-    
-    在原有 LangGraph 循环推理基础上，集成自我成长组件：
-    - 判例检索：从判例库检索相似案例用于 few-shot 学习
-    - 动态提示词：根据题型、错误模式、置信度动态拼装提示词
-    - 校准配置：应用教师个性化评分规则
-    - 日志记录：记录完整批改上下文用于后续分析
-    
-    验证：需求 4.3, 5.1, 6.3, 8.1
-    """
-    
+    """Enhanced grading agent with optional learning components."""
+
     def __init__(
         self,
-        reasoning_client: GeminiReasoningClient,
+        reasoning_client: LLMReasoningClient,
         exemplar_memory: Optional[ExemplarMemory] = None,
         prompt_assembler: Optional[PromptAssembler] = None,
         calibration_service: Optional[CalibrationService] = None,
         grading_logger: Optional[GradingLogger] = None,
         checkpointer: Optional[EnhancedPostgresCheckpointer] = None,
-        heartbeat_callback: Optional[Callable[[str, float], None]] = None
+        heartbeat_callback: Optional[Callable[[str, float], None]] = None,
     ):
-        """
-        初始化增强版批改智能体
-        
-        Args:
-            reasoning_client: Gemini 推理客户端
-            exemplar_memory: 判例记忆服务（可选）
-            prompt_assembler: 提示词拼装器（可选）
-            calibration_service: 校准服务（可选）
-            grading_logger: 批改日志服务（可选）
-            checkpointer: 增强型 PostgreSQL 检查点保存器（可选）
-            heartbeat_callback: Temporal Activity 心跳回调（可选）
-        """
+        """Initialize the enhanced grading agent."""
         self.reasoning_client = reasoning_client
         self.exemplar_memory = exemplar_memory or ExemplarMemory()
         self.prompt_assembler = prompt_assembler or PromptAssembler()
@@ -79,19 +49,19 @@ class EnhancedGradingAgent:
         self.heartbeat_callback = heartbeat_callback
         self.graph = self._build_graph()
         
-        logger.info("EnhancedGradingAgent 初始化完成")
+        logger.info("EnhancedGradingAgent initialized")
     
     def _build_graph(self) -> StateGraph:
         """
-        构建 LangGraph 图结构
+        构建 LangGraph 图结?
         
         Returns:
-            StateGraph: 编译后的图
+            StateGraph: 编译后的?
         """
-        # 创建图
+        # 创建?
         workflow = StateGraph(GradingState)
         
-        # 添加节点（使用 async lambda）
+        # 添加节点（使?async lambda?
         async def _vision_node(state):
             return await vision_extraction_node(state, self.reasoning_client)
         
@@ -106,10 +76,10 @@ class EnhancedGradingAgent:
         workflow.add_node("critique", _critique_node)
         workflow.add_node("finalization", finalization_node)
         
-        # 设置入口点
+        # 设置入口?
         workflow.set_entry_point("vision_extraction")
         
-        # 添加边
+        # 添加?
         workflow.add_edge("vision_extraction", "rubric_mapping")
         workflow.add_edge("rubric_mapping", "critique")
         
@@ -126,7 +96,7 @@ class EnhancedGradingAgent:
         # finalization -> END
         workflow.add_edge("finalization", END)
         
-        # 编译图
+        # 编译?
         if self.checkpointer:
             return workflow.compile(checkpointer=self.checkpointer)
         else:
@@ -134,13 +104,13 @@ class EnhancedGradingAgent:
     
     def _should_revise(self, state: GradingState) -> Literal["revise", "finalize"]:
         """
-        条件函数：决定是否需要修正
+        条件函数：决定是否需要修?
         
         Args:
-            state: 当前状态
+            state: 当前状?
             
         Returns:
-            str: "revise" 或 "finalize"
+            str: "revise" ?"finalize"
         """
         if state.get("error"):
             return "finalize"
@@ -171,15 +141,15 @@ class EnhancedGradingAgent:
         运行增强版批改智能体
         
         集成自我成长组件的完整流程：
-        1. 检索相似判例（ExemplarMemory）
-        2. 加载教师校准配置（CalibrationService）
-        3. 动态拼装提示词（PromptAssembler）
-        4. 执行批改（LangGraph）
+        1. 检索相似判例（ExemplarMemory?
+        2. 加载教师校准配置（CalibrationService?
+        3. 动态拼装提示词（PromptAssembler?
+        4. 执行批改（LangGraph?
         5. 应用校准规则
-        6. 记录批改日志（GradingLogger）
+        6. 记录批改日志（GradingLogger?
         
         Args:
-            question_image: Base64 编码的题目图像
+            question_image: Base64 编码的题目图?
             rubric: 评分细则
             max_score: 满分
             question_type: 题目类型
@@ -192,30 +162,32 @@ class EnhancedGradingAgent:
             error_patterns: 错误模式列表（可选）
             
         Returns:
-            GradingState: 最终状态
+            GradingState: 最终状?
         """
         log_id = str(uuid4())
         
         try:
-            # ===== 第一步：检索相似判例 =====
-            logger.info(f"检索相似判例: question_type={question_type}")
+            # ===== Step 1: retrieve similar exemplars =====
+            logger.info(f"Retrieving exemplar cases: question_type={question_type}")
             exemplars = await self.exemplar_memory.retrieve_similar(
-                question_image_hash=question_image[:64],  # 使用图像前64字符作为哈希
+                question_image_hash=question_image[:64],  # 使用图像?4字符作为哈希
                 question_type=question_type,
                 top_k=5,
                 min_similarity=0.7
             )
-            logger.info(f"检索到 {len(exemplars)} 个相似判例")
+            logger.info(f"Retrieved {len(exemplars)} exemplar cases")
             
-            # ===== 第二步：加载教师校准配置 =====
-            logger.info(f"加载教师校准配置: teacher_id={teacher_id}")
+            # ===== Step 2: load teacher calibration profile =====
+            logger.info(f"Loading calibration profile: teacher_id={teacher_id}")
             calibration_profile = await self.calibration_service.get_or_create_profile(
                 teacher_id=teacher_id
             )
-            logger.info(f"校准配置已加载: strictness_level={calibration_profile.strictness_level}")
+            logger.info(
+                f"Calibration profile loaded: strictness_level={calibration_profile.strictness_level}"
+            )
             
-            # ===== 第三步：动态拼装提示词 =====
-            logger.info("动态拼装提示词")
+            # ===== Step 3: assemble prompt =====
+            logger.info("Assembling prompt")
             assembled_prompt = self.prompt_assembler.assemble(
                 question_type=question_type,
                 rubric=rubric,
@@ -231,12 +203,12 @@ class EnhancedGradingAgent:
             )
             
             logger.info(
-                f"提示词拼装完成: "
+                f"提示词拼装完? "
                 f"total_tokens={assembled_prompt.total_tokens}, "
                 f"truncated_sections={len(assembled_prompt.truncated_sections)}"
             )
             
-            # ===== 第四步：初始化状态 =====
+            # ===== 第四步：初始化状?=====
             initial_state: GradingState = {
                 "question_image": question_image,
                 "rubric": rubric,
@@ -255,14 +227,14 @@ class EnhancedGradingAgent:
                 "teacher_id": teacher_id
             }
             
-            # ===== 第五步：运行图 =====
+            # ===== Step 5: run grading graph =====
             config = {}
             if thread_id and self.checkpointer:
                 config["configurable"] = {"thread_id": thread_id}
             
-            logger.info("开始执行批改图")
+            logger.info("Running grading graph")
             result = await self.graph.ainvoke(initial_state, config=config)
-            logger.info("批改图执行完成")
+            logger.info("Grading graph completed")
             
             # ===== 第六步：应用校准规则 =====
             if result.get("student_answer") and standard_answer:
@@ -273,9 +245,9 @@ class EnhancedGradingAgent:
                 )
                 
                 if is_equivalent and result.get("score", 0) < max_score:
-                    logger.info("应用容差规则：答案等价，调整为满分")
+                    logger.info("Tolerance applied: equivalent answer, adjusted to full score")
                     result["score"] = max_score
-                    result["reasoning_trace"].append("应用容差规则：答案等价")
+                    result["reasoning_trace"].append("Tolerance applied: equivalent answer")
             
             # ===== 第七步：生成评语 =====
             if result.get("score") is not None:
@@ -310,7 +282,7 @@ class EnhancedGradingAgent:
                 extracted_answer=result.get("student_answer", ""),
                 extraction_confidence=result.get("confidence", 0.0),
                 evidence_snippets=result.get("evidence_snippets", []),
-                # 规范化阶段
+                # 规范化阶?
                 normalized_answer=result.get("normalized_answer"),
                 normalization_rules_applied=result.get("normalization_rules", []),
                 # 匹配阶段
@@ -326,9 +298,9 @@ class EnhancedGradingAgent:
             )
             
             await self.grading_logger.log_grading(grading_log)
-            logger.info(f"批改日志已记录: log_id={log_id}")
+            logger.info(f"批改日志已记? log_id={log_id}")
             
-            # 添加日志 ID 到结果
+            # 添加日志 ID 到结?
             result["log_id"] = log_id
             
             return result

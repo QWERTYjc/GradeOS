@@ -1,7 +1,7 @@
 import React, { useState, useContext } from 'react';
 import { Wand2, Loader2, Download, PlusCircle } from 'lucide-react';
 import { AppContext } from './AppContext';
-import { generateImage } from './geminiService';
+import { generateImage } from './llmService';
 import { ImageSize } from './types';
 
 export default function ImageGenerator() {
@@ -47,7 +47,7 @@ export default function ImageGenerator() {
         <div className="mb-8">
           <h1 className="text-3xl font-bold text-slate-800 mb-2">AI Image Generator</h1>
           <p className="text-slate-600">
-            Create high-quality images using <strong>Nano Banana Pro</strong> (Gemini 3 Pro). 
+            Create high-quality images using the configured OpenRouter model.
             Requires a paid API key.
           </p>
         </div>

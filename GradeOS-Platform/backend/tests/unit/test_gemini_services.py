@@ -1,4 +1,4 @@
-"""Gemini 服务单元测试"""
+"""LLM 服务单元测试"""
 
 import pytest
 from unittest.mock import Mock, patch, MagicMock, AsyncMock
@@ -6,17 +6,12 @@ import base64
 import json
 
 from src.services.layout_analysis import LayoutAnalysisService
-from src.services.gemini_reasoning import GeminiReasoningClient
+from src.services.llm_reasoning import LLMReasoningClient
 from src.models.region import BoundingBox, QuestionRegion, SegmentationResult
 
 
-class TestLayoutAnalysisService:
-    """布局分析服务测试"""
-    
-    @pytest.fixture
-    def service(self):
-        """创建测试服务实例"""
-        return LayoutAnalysisService(api_key="test_api_key")
+    class TestLayoutAnalysisService:
+        """布局分析服务测试"""
     
     @pytest.fixture
     def mock_image_data(self):
@@ -29,8 +24,8 @@ class TestLayoutAnalysisService:
         img.save(img_bytes, format='JPEG')
         return img_bytes.getvalue()
     
-    @patch('src.services.layout_analysis.ChatGoogleGenerativeAI')
-    async def test_segment_document_success(self, mock_llm_class, service, mock_image_data):
+    @patch('src.services.layout_analysis.get_chat_model')
+    async def test_segment_document_success(self, mock_get_chat_model, mock_image_data):
         """测试成功的文档分割"""
         # 模拟 API 响应
         mock_response = Mock()
@@ -49,7 +44,7 @@ class TestLayoutAnalysisService:
         
         mock_llm = Mock()
         mock_llm.ainvoke = AsyncMock(return_value=mock_response)
-        mock_llm_class.return_value = mock_llm
+        mock_get_chat_model.return_value = mock_llm
         
         # 重新创建服务以使用模拟的 LLM
         service = LayoutAnalysisService(api_key="test_api_key")
@@ -69,8 +64,8 @@ class TestLayoutAnalysisService:
         assert result.regions[0].question_id == "q1"
         assert result.regions[1].question_id == "q2"
     
-    @patch('src.services.layout_analysis.ChatGoogleGenerativeAI')
-    async def test_segment_document_no_regions(self, mock_llm_class, service, mock_image_data):
+    @patch('src.services.layout_analysis.get_chat_model')
+    async def test_segment_document_no_regions(self, mock_get_chat_model, mock_image_data):
         """测试未识别到区域的情况"""
         # 模拟 API 响应（空区域）
         mock_response = Mock()
@@ -78,7 +73,7 @@ class TestLayoutAnalysisService:
         
         mock_llm = Mock()
         mock_llm.ainvoke = AsyncMock(return_value=mock_response)
-        mock_llm_class.return_value = mock_llm
+        mock_get_chat_model.return_value = mock_llm
         
         # 重新创建服务以使用模拟的 LLM
         service = LayoutAnalysisService(api_key="test_api_key")
@@ -92,13 +87,13 @@ class TestLayoutAnalysisService:
             )
 
 
-class TestGeminiReasoningClient:
-    """Gemini 推理客户端测试"""
+class TestLLMReasoningClient:
+    """LLM 推理客户端测试"""
     
     @pytest.fixture
     def client(self):
         """创建测试客户端实例"""
-        return GeminiReasoningClient(api_key="test_api_key")
+        return LLMReasoningClient(api_key="test_api_key")
     
     @pytest.fixture
     def sample_image_b64(self):
@@ -110,8 +105,8 @@ class TestGeminiReasoningClient:
         img.save(img_bytes, format='JPEG')
         return base64.b64encode(img_bytes.getvalue()).decode('utf-8')
     
-    @patch('src.services.gemini_reasoning.ChatGoogleGenerativeAI')
-    async def test_vision_extraction(self, mock_llm_class, client, sample_image_b64):
+    @patch('src.services.llm_reasoning.get_chat_model')
+    async def test_vision_extraction(self, mock_get_chat_model, sample_image_b64):
         """测试视觉提取"""
         # 模拟 API 响应
         mock_response = Mock()
@@ -119,10 +114,10 @@ class TestGeminiReasoningClient:
         
         mock_llm = Mock()
         mock_llm.ainvoke = AsyncMock(return_value=mock_response)
-        mock_llm_class.return_value = mock_llm
+        mock_get_chat_model.return_value = mock_llm
         
         # 重新创建客户端以使用模拟的 LLM
-        client = GeminiReasoningClient(api_key="test_api_key")
+        client = LLMReasoningClient(api_key="test_api_key")
         
         # 调用方法
         result = await client.vision_extraction(
@@ -135,8 +130,8 @@ class TestGeminiReasoningClient:
         assert isinstance(result, str)
         assert len(result) > 0
     
-    @patch('src.services.gemini_reasoning.ChatGoogleGenerativeAI')
-    async def test_rubric_mapping(self, mock_llm_class, client):
+    @patch('src.services.llm_reasoning.get_chat_model')
+    async def test_rubric_mapping(self, mock_get_chat_model):
         """测试评分映射"""
         # 模拟 API 响应
         mock_response = Mock()
@@ -161,10 +156,10 @@ class TestGeminiReasoningClient:
         
         mock_llm = Mock()
         mock_llm.ainvoke = AsyncMock(return_value=mock_response)
-        mock_llm_class.return_value = mock_llm
+        mock_get_chat_model.return_value = mock_llm
         
         # 重新创建客户端以使用模拟的 LLM
-        client = GeminiReasoningClient(api_key="test_api_key")
+        client = LLMReasoningClient(api_key="test_api_key")
         
         # 调用方法
         result = await client.rubric_mapping(
@@ -179,8 +174,8 @@ class TestGeminiReasoningClient:
         assert len(result["rubric_mapping"]) == 2
         assert result["initial_score"] == 7.0
     
-    @patch('src.services.gemini_reasoning.ChatGoogleGenerativeAI')
-    async def test_critique(self, mock_llm_class, client):
+    @patch('src.services.llm_reasoning.get_chat_model')
+    async def test_critique(self, mock_get_chat_model):
         """测试自我反思"""
         # 模拟 API 响应
         mock_response = Mock()
@@ -192,10 +187,10 @@ class TestGeminiReasoningClient:
         
         mock_llm = Mock()
         mock_llm.ainvoke = AsyncMock(return_value=mock_response)
-        mock_llm_class.return_value = mock_llm
+        mock_get_chat_model.return_value = mock_llm
         
         # 重新创建客户端以使用模拟的 LLM
-        client = GeminiReasoningClient(api_key="test_api_key")
+        client = LLMReasoningClient(api_key="test_api_key")
         
         # 调用方法
         result = await client.critique(

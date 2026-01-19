@@ -28,7 +28,7 @@ See [No-Database Mode Guide](docs/NO_DATABASE_MODE.md) for details.
 uv sync
 
 # Set Gemini API Key only
-export GEMINI_API_KEY="your-api-key"
+export LLM_API_KEY="your-api-key"
 
 # Start API server
 uvicorn src.api.main:app --reload --port 8001
@@ -42,7 +42,7 @@ uv sync
 
 # Configure environment
 cp .env.example .env
-# Edit .env with your GEMINI_API_KEY, DATABASE_URL, REDIS_URL
+# Edit .env with your LLM_API_KEY, DATABASE_URL, REDIS_URL
 
 # Database migration
 alembic upgrade head

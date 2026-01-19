@@ -6,7 +6,7 @@
 3. 另类解法（不计入总分）
 4. 支持"题目+答案"混合格式的解析
 
-支持 OpenRouter API 和直连 Gemini API。
+支持 OpenRouter API 和直连 LLM API。
 """
 
 import base64
@@ -16,8 +16,8 @@ import os
 from typing import List, Optional, Dict, Any
 from dataclasses import dataclass, field
 
-# 使用 GeminiReasoningClient（与批改流程一致）
-from src.services.gemini_reasoning import GeminiReasoningClient
+# 使用 LLMReasoningClient（与批改流程一致）
+from src.services.llm_reasoning import LLMReasoningClient
 
 
 logger = logging.getLogger(__name__)
@@ -118,7 +118,7 @@ class RubricParserService:
     1. 标准格式：独立的评分标准文档
     2. 嵌入格式：题目上直接标注答案的格式
     
-    支持 OpenRouter API 和直连 Gemini API。
+    支持 OpenRouter API 和直连 LLM API。
     """
     
     def __init__(self, api_key: str = None, model_name: Optional[str] = None):
@@ -129,10 +129,10 @@ class RubricParserService:
             api_key: API 密钥（可选，默认从环境变量获取）
             model_name: 模型名称（可选，使用环境变量配置）
         """
-        # 使用 GeminiReasoningClient（与批改流程一致）
-        self.api_key = api_key or os.getenv("GEMINI_API_KEY", "")
-        self.model_name = model_name or os.getenv("DEFAULT_MODEL", "gemini-3-flash-preview")
-        self.gemini_client = GeminiReasoningClient(api_key=self.api_key)
+        # 使用 LLMReasoningClient（与批改流程一致）
+        self.api_key = api_key or os.getenv("LLM_API_KEY") or os.getenv("OPENROUTER_API_KEY", "")
+        self.model_name = model_name or os.getenv("LLM_DEFAULT_MODEL", "google/gemini-3-flash-preview")
+        self.reasoning_client = LLMReasoningClient(api_key=self.api_key, model_name=self.model_name)
     
     async def parse_rubric(
         self,
@@ -232,63 +232,54 @@ class RubricParserService:
         """解析单批评分标准页面"""
         batch_info = f"（第 {batch_num}/{total_batches} 批）" if total_batches > 1 else ""
         
-        prompt = f"""你是一位专业的阅卷标准分析专家。请仔细分析这些批改标准/答案页面{batch_info}。
+        prompt_template = """You are a rubric analysis expert. Analyze these rubric/answer pages{batch_info}.
 
-## 任务
-1. 识别这些页面中的所有题目
-2. 提取每道题的分值和得分点
-3. 识别扣分规则（如果有）
-4. 识别另类解法（如果有）
+        Task:
+        1. Identify each question and its max score.
+        2. Extract scoring points and deductions.
+        3. Extract alternative solutions if present.
+        4. Extract standard answers if present.
 
-## 分析要求
-- **不要基于任何预设的总分来推断，完全基于页面内容提取。**
-- 每道题必须明确分值
-- 得分点要具体，说明给分条件
-- 另类解法单独列出，不计入主要得分点
-- 只提取这些页面中出现的题目
-- 注意区分主题和子题（如 7(a)、7(b) 应合并为第7题）
-
-## 输出格式（JSON）
-```json
-{{
-    "rubric_format": "standard 或 embedded",
-    "general_notes": "通用批改说明（如果有）",
-    "questions": [
+        Output JSON only in this schema:
         {{
-            "question_id": "1",
-            "max_score": 5,
-            "question_text": "题目内容（简短描述）",
-            "standard_answer": "标准答案（完整）",
-"scoring_points": [
-                {{"point_id": "1.1", "description": "正确列出方程", "score": 2, "is_required": true}},
-                {{"point_id": "1.2", "description": "正确求解", "score": 3, "is_required": true}}
-            ],
-            "deduction_rules": [
-                {{"rule_id": "1.d1", "description": "最终答案错误", "deduction": 1, "conditions": "其他部分正确"}}
-            ],
-            "alternative_solutions": [],
-            "grading_notes": ""
+          "rubric_format": "standard",
+          "general_notes": "",
+          "questions": [
+            {{
+              "question_id": "1",
+              "max_score": 5,
+              "question_text": "",
+              "standard_answer": "",
+              "scoring_points": [
+        {{"point_id": "1.1", "description": "", "score": 2, "is_required": true}}
+              ],
+              "deduction_rules": [
+        {{"rule_id": "1.d1", "description": "", "deduction": 1, "conditions": ""}}
+              ],
+              "alternative_solutions": [
+        {{"description": "", "scoring_criteria": "", "note": ""}}
+              ],
+              "grading_notes": ""
+            }}
+          ]
         }}
-    ]
-}}
-```
 
-## 重要提醒
-- 只提取当前页面中的题目，不要猜测其他页面的内容
-- 另类解法的分值不要重复计算到 max_score 中
-- 标准答案要尽可能完整，包括解题步骤
-- 得分点要明确具体的给分条件和分值"""
+        Rules:
+        - Return valid JSON only (no markdown).
+        - Only extract content present on these pages.
+        - Do not invent questions or points."""
+        prompt = prompt_template.format(batch_info=batch_info)
 
         try:
-            # 使用 GeminiReasoningClient 调用视觉模型（带重试）
+            # 使用 LLMReasoningClient 调用视觉模型（带重试）
             max_retries = 3
             retry_delay = 5  # 秒
             last_error = None
             
             for attempt in range(max_retries):
                 try:
-                    # 使用 GeminiReasoningClient 的 analyze_with_vision 方法
-                    response = await self.gemini_client.analyze_with_vision(
+                    # 使用 LLMReasoningClient 的 analyze_with_vision 方法
+                    response = await self.reasoning_client.analyze_with_vision(
                         images=rubric_images,
                         prompt=prompt,
                         stream_callback=stream_callback,

@@ -1,4 +1,4 @@
-"""Gemini 深度推理客户端 - 使用 Gemini 进行批改推理
+"""LLM 深度推理客户端 - 使用 LLM 进行批改推理
 
 本模块实现了批改工作流的核心推理能力，集成了：
 - RubricRegistry: 动态获取评分标准
@@ -39,9 +39,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class GeminiReasoningClient:
+class LLMReasoningClient:
     """
-    Gemini 深度推理客户端，用于批改智能体的各个推理节点
+    LLM 深度推理客户端，用于批改智能体的各个推理节点
     
     集成了 RubricRegistry 和 GradingSkills，支持：
     - 动态评分标准获取 (Requirement 1.1)
@@ -62,7 +62,7 @@ class GeminiReasoningClient:
         rubric_registry: Optional["RubricRegistry"] = None,
     ):
         """
-        初始化 Gemini 推理客户端
+        初始化 LLM 推理客户端
         
         Args:
             api_key: Google AI API 密钥
@@ -1843,76 +1843,63 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
                 context_info = "\n## 页面索引上下文\n" + "\n".join(context_parts)
         
         # 构建完整 prompt
-        prompt = f"""你是一位专业的阅卷教师，请分析这位学生的所有答题页面并进行完整评分。
+        prompt_template = """You are a grading assistant. Grade the student answers using the rubric below.
 
-## 学生信息
-- 学生标识: {student_key}
-- 答题页数: {len(images)} 页
+        Rubric:
+        {rubric_info}
 
-## 评分标准
-{rubric_info}
-{context_info}
+        Context:
+        {context_info}
 
-## 评分任务
+        Tasks:
+        1. Identify each question and the student answer.
+        2. Score each question strictly by the rubric.
+        3. Provide evidence for each scoring point using verbatim student text.
+        4. Summarize each page.
 
-### 任务说明
-你将收到该学生的所有答题页面图像，请：
-1. 按顺序分析每一页的内容
-2. 识别所有题目及学生的作答
-3. 对每道题逐一评分，严格按照评分标准
-4. 汇总该学生的总分
-
-### 输出格式（JSON）
-```json
-{{
-    "student_key": "{student_key}",
-    "total_score": 学生总得分,
-    "max_score": 涉及题目的满分总和,
-    "confidence": 评分置信度（0.0-1.0）,
-    "question_details": [
+        Return JSON only in this schema:
         {{
-            "question_id": "1",
-            "score": 8,
-            "max_score": 10,
-            "student_answer": "学生写了：...",
-            "is_correct": false,
-            "feedback": "第1步正确得3分，第2步计算错误扣2分...",
-            "source_pages": [0, 1],
-            "scoring_point_results": [
-                {{
-                    "point_id": "1.1",
-                    "description": "第1步计算",
-                    "max_points": 3,
-                    "awarded": 3,
-                    "evidence": "【必填】学生在第1页写道：'x = 3/2'，计算正确"
-                }}
-            ]
-        }}
-    ],
-    "page_summaries": [
+          "student_key": "{student_key}",
+          "total_score": 0,
+          "max_score": 0,
+          "confidence": 0.0,
+          "question_details": [
+            {{
+              "question_id": "1",
+              "score": 0,
+              "max_score": 0,
+              "student_answer": "",
+              "is_correct": false,
+              "feedback": "",
+              "source_pages": [0],
+              "scoring_point_results": [
         {{
-            "page_index": 0,
-            "question_numbers": ["1", "2"],
-            "summary": "本页包含第1-2题的作答"
+          "point_id": "1.1",
+          "description": "",
+          "max_points": 0,
+          "awarded": 0,
+          "evidence": ""
         }}
-    ],
-    "student_info": {{
-        "name": "张三",
-        "student_id": "2024001"
-    }},
-    "overall_feedback": "该学生整体表现良好，主要在第3题计算方面有失误"
-}}
-```
+              ]
+            }}
+          ],
+          "page_summaries": [
+            {{"page_index": 0, "question_numbers": ["1"], "summary": ""}}
+          ],
+          "student_info": {{"name": "", "student_id": ""}},
+          "overall_feedback": ""
+        }}
 
-## 重要评分原则
-1. **严格使用评分标准中的分值**：每道题的 max_score 必须等于评分标准规定值
-2. **完整评分**：必须对所有页面中出现的每道题都进行评分
-3. **跨页题目**：如果一道题跨越多页，合并评分，在 source_pages 中记录所有相关页码
-4. **学生作答原文**：student_answer 必须逐字摘录，不要总结或改写；换行用 \\n 表示，无法辨识则留空并在 feedback 说明
-5. **证据必填**：每个得分点的 evidence 必须引用学生原文
-6. **总分核算**：total_score 必须等于所有 question_details 中 score 的总和
-
-注意：图像按顺序提供，第1张是第1页，以此类推。"""
+        Rules:
+        - Return valid JSON only (no markdown).
+        - total_score must equal the sum of question scores.
+        - max_score must equal the sum of question max_score.
+        - If a value is unknown, use an empty string or 0."""
+        prompt = prompt_template.format(
+            rubric_info=rubric_info,
+            context_info=context_info,
+            student_key=student_key,
+        )
 
         try:
             # 构建消息内容

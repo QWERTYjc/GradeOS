@@ -20,6 +20,10 @@ export const resolveWsBaseUrl = () => {
     if (explicit) {
         return stripTrailingSlash(explicit);
     }
+    const legacy = process.env.NEXT_PUBLIC_WS_URL;
+    if (legacy) {
+        return stripTrailingSlash(legacy);
+    }
 
     const fallbackOrigin = typeof window !== 'undefined'
         ? window.location.origin

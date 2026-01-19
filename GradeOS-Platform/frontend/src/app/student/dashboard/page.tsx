@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { useAuthStore } from '@/store/authStore';
 import { Homework, ClassEntity } from '@/types';
+import { classApi, homeworkApi } from '@/services/api';
 
 export default function StudentDashboard() {
   const { user, updateUser } = useAuthStore();
@@ -19,53 +20,121 @@ export default function StudentDashboard() {
   const [feedbackModal, setFeedbackModal] = useState<{ open: boolean; score?: number; feedback?: string }>({ open: false });
 
   useEffect(() => {
-    setTimeout(() => {
-      if (user?.classIds && user.classIds.length > 0) {
-        setMyClasses([
-          { id: '1', name: 'Advanced Physics 2024', teacherId: 't1', inviteCode: 'PHY24A', studentCount: 32 }
-        ]);
-        setHomeworks([
-          { id: '1', classId: '1', className: 'Advanced Physics 2024', title: 'Newton\'s Laws Problem Set', description: 'Complete problems 1-10', deadline: '2024-12-30', createdAt: '', status: 'pending' },
-          { id: '2', classId: '1', className: 'Advanced Physics 2024', title: 'Energy Quiz', description: 'Online quiz', deadline: '2024-12-28', createdAt: '', status: 'submitted', score: 88, feedback: 'Great work! Minor errors in Q3.' }
-        ]);
-      }
+    if (!user?.id) {
       setLoading(false);
-    }, 500);
+      return;
+    }
+    let active = true;
+    setLoading(true);
+    const load = async () => {
+      try {
+        const [classes, homeworkList] = await Promise.all([
+          classApi.getMyClasses(user.id),
+          homeworkApi.getList({ student_id: user.id }),
+        ]);
+
+        const mappedClasses = classes.map((cls) => ({
+          id: cls.class_id,
+          name: cls.class_name,
+          teacherId: cls.teacher_id,
+          inviteCode: cls.invite_code,
+          studentCount: cls.student_count,
+        }));
+
+        const submissionsList = await Promise.all(
+          homeworkList.map((hw) => homeworkApi.getSubmissions(hw.homework_id).catch(() => []))
+        );
+
+        const mappedHomeworks = homeworkList.map((hw, index) => {
+          const submissions = submissionsList[index] || [];
+          const submission = submissions.find((item) => item.student_id === user.id);
+          return {
+            id: hw.homework_id,
+            classId: hw.class_id,
+            className: hw.class_name,
+            title: hw.title,
+            description: hw.description,
+            deadline: hw.deadline,
+            createdAt: hw.created_at,
+            status: submission ? 'submitted' : 'pending',
+            score: submission?.score,
+            feedback: submission?.feedback,
+          };
+        });
+
+        if (!active) return;
+        setMyClasses(mappedClasses);
+        setHomeworks(mappedHomeworks);
+      } catch (error) {
+        console.error('Failed to load student dashboard data', error);
+        if (active) {
+          setMyClasses([]);
+          setHomeworks([]);
+        }
+      } finally {
+        if (active) setLoading(false);
+      }
+    };
+
+    load();
+    return () => {
+      active = false;
+    };
   }, [user]);
 
   const handleJoinClass = async () => {
     if (!inviteCode || inviteCode.length < 6) return;
     setJoining(true);
-    await new Promise(r => setTimeout(r, 1000));
-    
-    const newClass: ClassEntity = {
-      id: Date.now().toString(),
-      name: 'New Class',
-      teacherId: 't1',
-      inviteCode: inviteCode.toUpperCase(),
-      studentCount: 25
-    };
-    
-    setMyClasses([...myClasses, newClass]);
-    updateUser({ classIds: [...(user?.classIds || []), newClass.id] });
-    setInviteCode('');
-    setJoining(false);
+    if (!user?.id) {
+      setJoining(false);
+      return;
+    }
+    try {
+      const result = await classApi.joinClass(inviteCode.toUpperCase(), user.id);
+      const classInfo = result.class;
+      const newClass: ClassEntity = {
+        id: classInfo.id,
+        name: classInfo.name,
+        teacherId: '',
+        inviteCode: inviteCode.toUpperCase(),
+        studentCount: 0,
+      };
+      setMyClasses((prev) => [...prev, newClass]);
+      updateUser({ classIds: [...(user?.classIds || []), newClass.id] });
+      setInviteCode('');
+    } catch (error) {
+      console.error('Failed to join class', error);
+    } finally {
+      setJoining(false);
+    }
   };
 
   const handleSubmit = async () => {
     if (!submissionContent.trim()) return;
     setIsSubmitting(true);
-    await new Promise(r => setTimeout(r, 2000));
-    
-    setHomeworks(homeworks.map(hw => 
-      hw.id === activeHw?.id 
-        ? { ...hw, status: 'submitted', score: Math.floor(Math.random() * 20) + 80, feedback: 'AI Analysis: Good understanding of core concepts.' }
-        : hw
-    ));
-    
-    setIsSubmitting(false);
-    setSubmitModalOpen(false);
-    setSubmissionContent('');
+    if (!user?.id || !activeHw) {
+      setIsSubmitting(false);
+      return;
+    }
+    try {
+      const response = await homeworkApi.submit({
+        homework_id: activeHw.id,
+        student_id: user.id,
+        student_name: user.name || user.username || user.id,
+        content: submissionContent,
+      });
+      setHomeworks(homeworks.map(hw =>
+        hw.id === activeHw?.id
+          ? { ...hw, status: 'submitted', score: response.score, feedback: response.feedback }
+          : hw
+      ));
+      setSubmitModalOpen(false);
+      setSubmissionContent('');
+    } catch (error) {
+      console.error('Failed to submit homework', error);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   // No classes view

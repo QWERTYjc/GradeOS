@@ -12,7 +12,7 @@ import logging
 import base64
 from typing import Dict, Any, List, Optional, Callable, Awaitable
 
-from src.services.gemini_reasoning import GeminiReasoningClient
+from src.services.llm_reasoning import LLMReasoningClient
 from src.services.grading_self_report import generate_self_report
 from src.services.student_summary import generate_student_summary
 
@@ -35,7 +35,7 @@ class GradingWorker:
         model_name: Optional[str] = None,
         parsed_rubric: Optional[Dict[str, Any]] = None,
     ):
-        self.reasoning_client = GeminiReasoningClient(
+        self.reasoning_client = LLMReasoningClient(
             api_key=api_key,
             model_name=model_name,
         )

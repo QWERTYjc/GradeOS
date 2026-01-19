@@ -7,7 +7,7 @@ from src.graphs.retry import (
     with_retry,
     create_retryable_node,
     DEFAULT_RETRY_CONFIG,
-    GEMINI_API_RETRY_CONFIG,
+    LLM_API_RETRY_CONFIG,
 )
 from src.graphs.state import GradingGraphState
 
@@ -208,6 +208,6 @@ def test_predefined_configs():
     assert DEFAULT_RETRY_CONFIG.initial_interval == 1.0
     
     # 验证 Gemini API 配置
-    assert GEMINI_API_RETRY_CONFIG.maximum_attempts == 5
-    assert GEMINI_API_RETRY_CONFIG.timeout == 300.0
-    assert ValueError in GEMINI_API_RETRY_CONFIG.non_retryable_errors
+    assert LLM_API_RETRY_CONFIG.maximum_attempts == 5
+    assert LLM_API_RETRY_CONFIG.timeout == 300.0
+    assert ValueError in LLM_API_RETRY_CONFIG.non_retryable_errors

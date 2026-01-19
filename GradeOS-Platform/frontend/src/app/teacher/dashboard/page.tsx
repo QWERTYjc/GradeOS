@@ -5,9 +5,7 @@ import { useRouter } from 'next/navigation';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { useAuthStore } from '@/store/authStore';
 import { ClassEntity } from '@/types';
-
-// Mock data
-const generateInviteCode = () => Math.random().toString(36).substring(2, 8).toUpperCase();
+import { classApi } from '@/services/api';
 
 export default function TeacherDashboard() {
   const { user } = useAuthStore();
@@ -18,28 +16,55 @@ export default function TeacherDashboard() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Simulate loading classes
-    setTimeout(() => {
-      setClasses([
-        { id: '1', name: 'Advanced Physics 2024', teacherId: user?.id || '', inviteCode: 'PHY24A', studentCount: 32 },
-        { id: '2', name: 'Mathematics Grade 11', teacherId: user?.id || '', inviteCode: 'MTH11B', studentCount: 28 },
-      ]);
+    if (!user?.id) {
+      setClasses([]);
       setLoading(false);
-    }, 500);
+      return;
+    }
+    let active = true;
+    setLoading(true);
+    classApi.getTeacherClasses(user.id)
+      .then((items) => {
+        if (!active) return;
+        const mapped = items.map((cls) => ({
+          id: cls.class_id,
+          name: cls.class_name,
+          teacherId: cls.teacher_id,
+          inviteCode: cls.invite_code,
+          studentCount: cls.student_count,
+        }));
+        setClasses(mapped);
+      })
+      .catch((error) => {
+        console.error('Failed to load classes', error);
+        setClasses([]);
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
   }, [user]);
 
-  const handleCreateClass = () => {
+  const handleCreateClass = async () => {
     if (!newClassName.trim()) return;
-    const newClass: ClassEntity = {
-      id: Date.now().toString(),
-      name: newClassName,
-      teacherId: user?.id || '',
-      inviteCode: generateInviteCode(),
-      studentCount: 0
-    };
-    setClasses([...classes, newClass]);
-    setNewClassName('');
-    setIsModalOpen(false);
+    if (!user?.id) return;
+    try {
+      const created = await classApi.createClass(newClassName, user.id);
+      const newClass: ClassEntity = {
+        id: created.class_id,
+        name: created.class_name,
+        teacherId: created.teacher_id,
+        inviteCode: created.invite_code,
+        studentCount: created.student_count,
+      };
+      setClasses((prev) => [...prev, newClass]);
+      setNewClassName('');
+      setIsModalOpen(false);
+    } catch (error) {
+      console.error('Failed to create class', error);
+    }
   };
 
   const copyCode = (code: string) => {

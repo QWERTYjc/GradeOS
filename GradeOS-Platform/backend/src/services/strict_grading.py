@@ -201,7 +201,9 @@ class StrictGradingService:
                     error_str = str(e)
                     if "503" in error_str or "overloaded" in error_str.lower() or "disconnected" in error_str.lower():
                         if attempt < max_retries - 1:
-                            logger.warning(f"Gemini API 错误，{retry_delay}秒后重试 ({attempt + 1}/{max_retries}): {error_str[:100]}")
+                            logger.warning(
+                                f"LLM API error; retrying in {retry_delay}s ({attempt + 1}/{max_retries}): {error_str[:100]}"
+                            )
                             import asyncio
                             await asyncio.sleep(retry_delay)
                             retry_delay *= 2

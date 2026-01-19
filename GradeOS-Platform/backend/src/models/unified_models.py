@@ -166,7 +166,7 @@ class GradingTask(BaseModel):
     subject: Optional[str] = None
     total_questions: int = 0
     status: str = "pending"
-    ai_model: str = "google/gemini-2.5-flash-lite"
+    ai_model: str = "google/gemini-3-flash-preview"
     processing_mode: str = "standard"
     confidence_score: Optional[float] = None
     processing_time_ms: Optional[int] = None

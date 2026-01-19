@@ -1,7 +1,7 @@
 export const MODELS = {
-  EDITING: 'gemini-3-flash-preview', 
-  GENERATION: 'gemini-3-pro-image-preview', 
-  TEXT_BASIC: 'gemini-3-flash-preview',
+  EDITING: 'google/gemini-3-flash-preview',
+  GENERATION: 'google/gemini-3-flash-preview',
+  TEXT_BASIC: 'google/gemini-3-flash-preview',
 };
 
 export const TEXTIN_CONFIG = {

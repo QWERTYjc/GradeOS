@@ -32,7 +32,7 @@ from src.services.question_merger import QuestionMerger, CrossPageQuestion
 from src.services.result_merger import ResultMerger
 from src.services.student_boundary_detector import StudentBoundaryDetector
 from src.skills.grading_skills import GradingSkills
-from src.services.gemini_reasoning import GeminiReasoningClient
+from src.services.llm_reasoning import LLMReasoningClient
 
 
 def create_test_page_image(

@@ -56,17 +56,9 @@ async def submit_for_grading(
         pool = await get_db_pool()
         
         if pool is None:
-            import uuid
-            import datetime
-            # Offline Mode: Return mock response
-            mock_id = str(uuid.uuid4())
-            return SubmissionResponse(
-                submission_id=mock_id,
-                exam_id=exam_id,
-                student_id=student_id,
-                status="UPLOADED",
-                created_at=datetime.datetime.now(),
-                estimated_completion_time=30
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Database connection unavailable"
             )
 
         # 创建服务实例

@@ -269,7 +269,7 @@ async def submit_batch(
     exam_id: Optional[str] = Form(None, description="考试 ID"),
     rubrics: List[UploadFile] = File(default=[], description="评分标准 PDF（可选）"),
     files: List[UploadFile] = File(..., description="学生作答 PDF"),
-    api_key: Optional[str] = Form(None, description="Gemini API Key"),
+    api_key: Optional[str] = Form(None, description="LLM API Key"),
     teacher_id: Optional[str] = Form(None, description="?? ID"),
     auto_identify: bool = Form(True, description="是否自动识别学生身份"),
     student_boundaries: Optional[str] = Form(None, description="手动设置的学生边界 (JSON List of page indices)"),
@@ -294,7 +294,7 @@ async def submit_batch(
         exam_id: 考试 ID
         rubrics: 评分标准 PDF 文件列表
         files: 学生作答 PDF 文件列表
-        api_key: Gemini API Key
+        api_key: LLM API Key
         auto_identify: 是否启用自动学生识别
         orchestrator: LangGraph Orchestrator（依赖注入）
         
@@ -319,12 +319,12 @@ async def submit_batch(
         )
     
     if not api_key:
-        api_key = os.getenv("GEMINI_API_KEY") or os.getenv("OPENROUTER_API_KEY")
+        api_key = os.getenv("LLM_API_KEY") or os.getenv("OPENROUTER_API_KEY")
     
     if not api_key:
         raise HTTPException(
             status_code=400,
-            detail="未提供 API Key，请在请求中提供或配置环境变量 GEMINI_API_KEY/OPENROUTER_API_KEY"
+            detail="未提供 API Key，请在请求中提供或配置环境变量 LLM_API_KEY/OPENROUTER_API_KEY"
         )
 
 

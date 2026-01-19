@@ -2,7 +2,7 @@ import React, { useState, useRef, useCallback, useContext, useEffect } from 'rea
 import { Camera, Upload, X, Loader2, Zap, ZapOff, Sparkles, BookOpen, Smartphone, ScanLine, Info, CheckCircle2, FileUp, PlusCircle, Split, Paperclip } from 'lucide-react';
 import { AppContext } from './AppContext';
 import { fileToDataURL } from './imageProcessing';
-import { optimizeDocument } from './geminiService';
+import { optimizeDocument } from './llmService';
 import { COLORS } from './constants';
 import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf';
 

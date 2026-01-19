@@ -361,9 +361,9 @@ async def grade_homework(
     if not orchestrator:
         raise HTTPException(status_code=503, detail="编排器未初始化")
     
-    api_key = os.getenv("GEMINI_API_KEY")
+    api_key = os.getenv("LLM_API_KEY") or os.getenv("OPENROUTER_API_KEY")
     if not api_key:
-        raise HTTPException(status_code=400, detail="未配置 GEMINI_API_KEY")
+        raise HTTPException(status_code=400, detail="未配置 LLM_API_KEY/OPENROUTER_API_KEY")
     
     # 从 unified_api 获取提交记录
     from src.api.routes.unified_api import SUBMISSIONS, HOMEWORKS, CLASS_STUDENTS

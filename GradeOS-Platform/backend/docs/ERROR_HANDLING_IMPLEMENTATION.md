@@ -23,7 +23,7 @@
 - 最大延迟限制: 60秒
 
 **集成位置**:
-- `GeminiReasoningClient._call_vision_api()`: 为 Gemini API 调用添加重试
+- `LLMReasoningClient._call_vision_api()`: 为 Gemini API 调用添加重试
 
 **使用示例**:
 ```python
@@ -113,7 +113,7 @@ failed = [r for r in results if r.is_failure()]
 - 支持导出为 JSON 文件
 
 **集成位置**:
-- `GeminiReasoningClient._call_vision_api()`: 记录 API 调用错误
+- `LLMReasoningClient._call_vision_api()`: 记录 API 调用错误
 - `grade_batch_node()`: 记录批次和页面级错误
 - `export_node()`: 导出错误日志到文件
 
@@ -154,7 +154,7 @@ failed = [r for r in results if r.is_failure()]
 
 ### 修改文件
 
-1. **`src/services/gemini_reasoning.py`**
+1. **`src/services/llm_reasoning.py`**
    - 添加 `@with_retry` 装饰器到 `_call_vision_api()`
    - 集成错误管理器记录 API 错误
 

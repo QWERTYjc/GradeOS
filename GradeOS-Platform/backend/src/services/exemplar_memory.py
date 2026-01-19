@@ -12,13 +12,42 @@ from datetime import datetime, timedelta
 from uuid import uuid4
 
 import asyncpg
-from langchain_google_genai import GoogleGenerativeAIEmbeddings
+
+from src.config.llm import get_llm_config
+from src.services.llm_client import UnifiedLLMClient, get_llm_client
 
 from src.models.exemplar import Exemplar, ExemplarCreateRequest
 from src.utils.pool_manager import UnifiedPoolManager
 
 
 logger = logging.getLogger(__name__)
+
+
+class OpenRouterEmbeddings:
+    """Thin async embedding wrapper for OpenRouter."""
+
+    def __init__(
+        self,
+        *,
+        client: Optional[UnifiedLLMClient] = None,
+        model: Optional[str] = None,
+        api_key: Optional[str] = None,
+    ) -> None:
+        config = get_llm_config()
+        resolved_model = model or config.get_model("embedding")
+        if not resolved_model:
+            raise ValueError("Embedding model is not configured")
+        self.client = client or get_llm_client()
+        self.model = resolved_model
+        self.api_key = api_key
+
+    async def aembed_query(self, text: str) -> List[float]:
+        embeddings = await self.client.embed(
+            inputs=text,
+            model=self.model,
+            api_key_override=self.api_key,
+        )
+        return embeddings[0] if embeddings else []
 
 
 class ExemplarMemory:
@@ -34,7 +63,7 @@ class ExemplarMemory:
     def __init__(
         self,
         pool_manager: Optional[UnifiedPoolManager] = None,
-        embedding_model: Optional[GoogleGenerativeAIEmbeddings] = None
+        embedding_model: Optional[OpenRouterEmbeddings] = None
     ):
         """
         初始化判例记忆服务
@@ -45,15 +74,11 @@ class ExemplarMemory:
         """
         self.pool_manager = pool_manager or UnifiedPoolManager()
         self.embedding_model = embedding_model
-        
-        # 延迟初始化 embedding_model
         if self.embedding_model is None:
             try:
-                self.embedding_model = GoogleGenerativeAIEmbeddings(
-                    model="models/text-embedding-004"
-                )
+                self.embedding_model = OpenRouterEmbeddings()
             except Exception as e:
-                logger.warning(f"无法初始化 embedding 模型: {e}")
+                logger.warning(f"embedding model unavailable: {e}")
                 self.embedding_model = None
         
         logger.info("ExemplarMemory 服务初始化完成")

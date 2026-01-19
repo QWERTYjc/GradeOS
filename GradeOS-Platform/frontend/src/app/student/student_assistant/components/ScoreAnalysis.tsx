@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { ResponsiveContainer, RadarChart, PolarGrid, PolarAngleAxis, Radar, Legend } from 'recharts';
-import { MOCK_SCORES, COLORS, ICONS, I18N } from '../constants';
+import { COLORS, ICONS, I18N } from '../constants';
 import { GlassCard, ScanningOverlay } from './VisualEffects';
-import { StudyPlan, Language } from '../types';
-import { geminiService } from '../services/gemini';
+import { StudyPlan, Language, ScoreEntry } from '../types';
+import { assistantApi, analysisApi } from '@/services/api';
+import { useAuthStore } from '@/store/authStore';
 
 interface Props {
   lang: Language;
@@ -12,16 +13,71 @@ interface Props {
 const ScoreAnalysis: React.FC<Props> = ({ lang }) => {
   const [analyzing, setAnalyzing] = useState(false);
   const [plan, setPlan] = useState<StudyPlan | null>(null);
+  const [planError, setPlanError] = useState<string | null>(null);
+  const [scores, setScores] = useState<ScoreEntry[]>([]);
+  const [loadingScores, setLoadingScores] = useState(false);
+  const { user } = useAuthStore();
   const t = I18N[lang];
+
+  useEffect(() => {
+    if (!user?.id) {
+      setScores([]);
+      return;
+    }
+    let active = true;
+    setLoadingScores(true);
+    analysisApi.getDiagnosisReport(user.id)
+      .then((report) => {
+        if (!active) return;
+        const average = Math.round((report.overall_assessment?.mastery_score || 0) * 100);
+        const dateValue = new Date().toISOString().slice(0, 10);
+        const mapped = (report.knowledge_map || []).map((entry, idx) => ({
+          id: `${entry.knowledge_area}-${idx}`,
+          subject: entry.knowledge_area,
+          score: Math.round((entry.mastery_level || 0) * 100),
+          averageScore: average,
+          date: dateValue,
+          weakPoints: entry.weak_points || [],
+        }));
+        setScores(mapped);
+      })
+      .catch((error) => {
+        console.error('Failed to load diagnosis report', error);
+        setScores([]);
+      })
+      .finally(() => {
+        if (active) setLoadingScores(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [user?.id]);
+
+  const parseJsonResponse = (text: string): StudyPlan | null => {
+    try {
+      return JSON.parse(text) as StudyPlan;
+    } catch {
+      const match = text.match(/\{[\s\S]*\}/);
+      if (!match) return null;
+      try {
+        return JSON.parse(match[0]) as StudyPlan;
+      } catch {
+        return null;
+      }
+    }
+  };
 
   const handleAnalyze = async () => {
     setAnalyzing(true);
+    setPlanError(null);
     try {
-      // Create a prompt for Gemini to generate a study plan
-      const scoresData = MOCK_SCORES.map(s => 
-        `${s.subject}: ${s.score}% (average: ${s.averageScore}%, weak points: ${s.weakPoints.join(', ')})`
+      if (!user?.id) {
+        throw new Error('Missing user');
+      }
+      const scoresData = scores.map(s =>
+        `${s.subject}: ${s.score}% (average: ${s.averageScore}%, weak points: ${s.weakPoints.join(', ') || 'none'})`
       ).join('\n');
-      
+
       const prompt = `Based on these student performance scores, create a personalized weekly study plan:
 
 ${scoresData}
@@ -45,46 +101,26 @@ Format the response as a JSON object with this structure:
 }
 
 Focus on the weak points and provide actionable, specific recommendations.`;
-
-      const response = await geminiService.generateResponse(prompt, lang);
-      
-      try {
-        // Try to parse JSON response
-        const planData = JSON.parse(response);
-        setPlan(planData);
-      } catch (parseError) {
-        // If JSON parsing fails, create a fallback plan
-        console.warn('Failed to parse Gemini response as JSON, using fallback');
-        const mockPlan: StudyPlan = {
-          dailyPlan: [
-            { period: 'Morning (7-9 AM)', content: 'Review weak subjects identified in analysis', target: 'Complete practice problems' },
-            { period: 'Afternoon (2-4 PM)', content: 'Focus on strongest subjects for confidence building', target: 'Maintain performance level' },
-            { period: 'Evening (7-9 PM)', content: 'Review and consolidate daily learning', target: 'Summarize key concepts' },
-          ],
-          weeklyReview: 'Focus on areas with lowest scores compared to average',
-          monthlyCheckPoint: 'Improve overall performance by 5-10 points'
-        };
-        setPlan(mockPlan);
+      const response = await assistantApi.chat({
+        student_id: user.id,
+        class_id: user.classIds?.[0],
+        message: prompt,
+        history: [],
+      });
+      const planData = parseJsonResponse(response.content);
+      if (!planData) {
+        throw new Error('Invalid plan response');
       }
+      setPlan(planData);
     } catch (error) {
       console.error("Failed to generate plan", error);
-      // Fallback plan if Gemini fails
-      const fallbackPlan: StudyPlan = {
-        dailyPlan: [
-          { period: 'Morning (7-9 AM)', content: 'Review Calculus fundamentals', target: 'Complete 10 practice problems' },
-          { period: 'Afternoon (2-4 PM)', content: 'Physics problem solving', target: 'Thermodynamics chapter review' },
-          { period: 'Evening (7-9 PM)', content: 'Chemistry organic reactions', target: 'Memorize 20 reaction mechanisms' },
-        ],
-        weeklyReview: 'Focus on weak areas identified in recent tests',
-        monthlyCheckPoint: 'Target: Improve Math score by 10 points'
-      };
-      setPlan(fallbackPlan);
+      setPlanError(t.brainFreeze);
     } finally {
       setAnalyzing(false);
     }
   };
 
-  const radarData = MOCK_SCORES.map(s => ({
+  const radarData = scores.map(s => ({
     subject: s.subject,
     score: s.score,
     average: s.averageScore,
@@ -130,10 +166,15 @@ Focus on the weak points and provide actionable, specific recommendations.`;
           </h3>
           {!plan ? (
             <div className="flex flex-col items-center justify-center h-[280px] text-center space-y-4">
-              <p className="text-gray-500 max-w-xs">{t.turnScoreData}</p>
+              <p className="text-gray-500 max-w-xs">
+                {scores.length ? t.turnScoreData : (lang === 'en' ? 'No score data available yet.' : '暫無成績數據')}
+              </p>
+              {planError && (
+                <p className="text-xs text-red-500">{planError}</p>
+              )}
               <button
                 onClick={handleAnalyze}
-                disabled={analyzing}
+                disabled={analyzing || !scores.length}
                 className="bg-blue-600 text-white px-8 py-3 rounded-full font-medium shadow-lg hover:shadow-blue-500/50 transition-all active:scale-95 disabled:opacity-50"
               >
                 {analyzing ? t.analyzing : t.analyzeAndPlan}
@@ -166,7 +207,17 @@ Focus on the weak points and provide actionable, specific recommendations.`;
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        {MOCK_SCORES.map((score) => (
+        {loadingScores && (
+          <div className="col-span-full flex items-center justify-center h-24 text-gray-400 text-sm">
+            {t.analyzing}
+          </div>
+        )}
+        {!loadingScores && scores.length === 0 && (
+          <div className="col-span-full flex items-center justify-center h-24 text-gray-400 text-sm">
+            {lang === 'en' ? 'No performance data yet.' : '暫無成績資料'}
+          </div>
+        )}
+        {scores.map((score) => (
           <GlassCard key={score.id} className="p-4 border-l-4 border-blue-600">
             <div className="flex justify-between items-center mb-2">
               <span className="font-bold">{score.subject}</span>

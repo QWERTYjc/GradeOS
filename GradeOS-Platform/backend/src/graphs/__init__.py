@@ -17,7 +17,7 @@ from .retry import (
     with_retry,
     create_retryable_node,
     DEFAULT_RETRY_CONFIG,
-    GEMINI_API_RETRY_CONFIG,
+    LLM_API_RETRY_CONFIG,
     FAST_FAIL_RETRY_CONFIG,
     PERSISTENCE_RETRY_CONFIG,
 )
@@ -50,7 +50,7 @@ __all__ = [
     "with_retry",
     "create_retryable_node",
     "DEFAULT_RETRY_CONFIG",
-    "GEMINI_API_RETRY_CONFIG",
+    "LLM_API_RETRY_CONFIG",
     "FAST_FAIL_RETRY_CONFIG",
     "PERSISTENCE_RETRY_CONFIG",
     

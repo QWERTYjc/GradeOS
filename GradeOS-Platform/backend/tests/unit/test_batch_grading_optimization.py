@@ -251,8 +251,8 @@ class TestGradeBatchNode:
             "max_retries": 2
         }
         
-        # Mock GeminiReasoningClient - 需要 mock 实际导入的模块
-        with patch("src.services.gemini_reasoning.GeminiReasoningClient") as mock_client:
+        # Mock LLMReasoningClient - 需要 mock 实际导入的模块
+        with patch("src.services.llm_reasoning.LLMReasoningClient") as mock_client:
             mock_instance = AsyncMock()
             mock_client.return_value = mock_instance
             
@@ -291,8 +291,8 @@ class TestGradeBatchNode:
             "max_retries": 2
         }
         
-        # Mock GeminiReasoningClient 抛出异常
-        with patch("src.services.gemini_reasoning.GeminiReasoningClient") as mock_client:
+        # Mock LLMReasoningClient 抛出异常
+        with patch("src.services.llm_reasoning.LLMReasoningClient") as mock_client:
             mock_client.side_effect = Exception("API 调用失败")
             
             result = await grade_batch_node(state)
@@ -318,8 +318,8 @@ class TestGradeBatchNode:
             "max_retries": 2
         }
         
-        # Mock GeminiReasoningClient 抛出异常
-        with patch("src.services.gemini_reasoning.GeminiReasoningClient") as mock_client:
+        # Mock LLMReasoningClient 抛出异常
+        with patch("src.services.llm_reasoning.LLMReasoningClient") as mock_client:
             mock_client.side_effect = Exception("API 调用失败")
             
             result = await grade_batch_node(state)
@@ -350,8 +350,8 @@ class TestGradeBatchNode:
             "max_retries": 2
         }
         
-        # Mock GeminiReasoningClient
-        with patch("src.services.gemini_reasoning.GeminiReasoningClient") as mock_client:
+        # Mock LLMReasoningClient
+        with patch("src.services.llm_reasoning.LLMReasoningClient") as mock_client:
             mock_instance = AsyncMock()
             mock_client.return_value = mock_instance
             
@@ -395,8 +395,8 @@ class TestGradeBatchNode:
             "max_retries": 2
         }
         
-        # Mock GeminiReasoningClient
-        with patch("src.services.gemini_reasoning.GeminiReasoningClient") as mock_client:
+        # Mock LLMReasoningClient
+        with patch("src.services.llm_reasoning.LLMReasoningClient") as mock_client:
             mock_instance = AsyncMock()
             mock_client.return_value = mock_instance
             
@@ -451,7 +451,7 @@ class TestWorkerIndependence:
                 "max_retries": 2
             }
             
-            with patch("src.services.gemini_reasoning.GeminiReasoningClient") as mock_client:
+            with patch("src.services.llm_reasoning.LLMReasoningClient") as mock_client:
                 mock_instance = AsyncMock()
                 mock_client.return_value = mock_instance
                 

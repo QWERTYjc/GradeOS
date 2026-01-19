@@ -8,7 +8,7 @@ metadata:
     component: worker
     worker-type: cognitive
 spec:
-  replicas: 2  # 最小副本数，KEDA 将覆盖此值
+  replicas: 2  # 最小副本数，KEDA 将覆盖此�?
   selector:
     matchLabels:
       app: cognitive-worker
@@ -39,11 +39,11 @@ spec:
             secretKeyRef:
               name: grading-secrets
               key: REDIS_URL
-        - name: GEMINI_API_KEY
+        - name: LLM_API_KEY
           valueFrom:
             secretKeyRef:
               name: grading-secrets
-              key: GEMINI_API_KEY
+              key: LLM_API_KEY
         - name: S3_ACCESS_KEY
           valueFrom:
             secretKeyRef:
@@ -68,7 +68,7 @@ spec:
           limits:
             memory: "2Gi"
             cpu: "2000m"
-        # 健康检查 - Worker 进程存活检查 (需求 8.1)
+        # 健康检�?- Worker 进程存活检�?(需�?8.1)
         livenessProbe:
           exec:
             command:
@@ -80,7 +80,7 @@ spec:
           timeoutSeconds: 10
           failureThreshold: 3
           successThreshold: 1
-        # 启动探针 - 给 Worker 更多时间初始化连接池
+        # 启动探针 - �?Worker 更多时间初始化连接池
         startupProbe:
           exec:
             command:

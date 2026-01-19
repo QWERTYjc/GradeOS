@@ -123,7 +123,7 @@ CREATE TABLE IF NOT EXISTS grading_tasks (
     subject VARCHAR(50),
     total_questions INTEGER DEFAULT 0,
     status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'processing', 'completed', 'failed', 'cancelled')),
-    ai_model VARCHAR(100) DEFAULT 'google/gemini-2.5-flash-lite',
+    ai_model VARCHAR(100) DEFAULT 'google/gemini-3-flash-preview',
     processing_mode VARCHAR(20) DEFAULT 'standard',
     confidence_score DECIMAL(5,4),
     processing_time_ms INTEGER,

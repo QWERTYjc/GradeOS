@@ -16,7 +16,7 @@ export enum Subject {
 
 export interface ScoreEntry {
   id: string;
-  subject: Subject;
+  subject: Subject | string;
   score: number;
   averageScore: number;
   date: string;
@@ -44,7 +44,7 @@ export interface StudyPlan {
 
 export interface ElectiveCombo {
   comboId: string;
-  subjects: Subject[];
+  subjects: Array<Subject | string>;
   advantage: string;
   suitableMajors: string[];
   difficulty: number; // 1-5

@@ -3,7 +3,7 @@
 from src.services.cache import CacheService
 from src.services.rate_limiter import RateLimiter
 from src.services.layout_analysis import LayoutAnalysisService
-from src.services.gemini_reasoning import GeminiReasoningClient
+from src.services.llm_reasoning import LLMReasoningClient
 from src.services.multi_layer_cache import MultiLayerCacheService, CacheStrategy
 from src.services.distributed_transaction import (
     DistributedTransactionCoordinator,
@@ -21,7 +21,7 @@ __all__ = [
     "CacheService",
     "RateLimiter",
     "LayoutAnalysisService",
-    "GeminiReasoningClient",
+    "LLMReasoningClient",
     "MultiLayerCacheService",
     "CacheStrategy",
     "DistributedTransactionCoordinator",

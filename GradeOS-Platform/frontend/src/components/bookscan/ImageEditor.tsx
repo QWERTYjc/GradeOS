@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { X, Wand2, Loader2, Check, ArrowRight, ScanLine, Crop, Sparkles } from 'lucide-react';
 import { ScannedImage } from './types';
-import { editImage, optimizeDocument } from './geminiService';
+import { editImage, optimizeDocument } from './llmService';
 
 interface ImageEditorProps {
   image: ScannedImage;

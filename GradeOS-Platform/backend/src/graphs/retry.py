@@ -1,6 +1,6 @@
 """LangGraph 重试策略实现
 
-本模块提供节点级重试和超时控制，用于处理 Gemini API 限流等临时故障。
+本模块提供节点级重试和超时控制，用于处理 LLM API 限流等临时故障。
 """
 
 from dataclasses import dataclass, field
@@ -236,8 +236,8 @@ DEFAULT_RETRY_CONFIG = RetryConfig(
     timeout=None
 )
 
-# Gemini API 配置：处理 API 限流
-GEMINI_API_RETRY_CONFIG = RetryConfig(
+# LLM API 配置：处理 API 限流
+LLM_API_RETRY_CONFIG = RetryConfig(
     initial_interval=2.0,
     backoff_coefficient=2.0,
     maximum_interval=120.0,

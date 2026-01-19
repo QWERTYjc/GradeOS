@@ -1,11 +1,11 @@
 """
 Agent Skills 集成测试
 
-验证 Agent Skills 在实际批改流程中是否生效：
-1. 检查 Skills 是否正确注册
-2. 验证 GeminiReasoningClient 是否集成了 GradingSkills
+验证 Agent Skills 在实际批改流程中是否生效�?
+1. 检�?Skills 是否正确注册
+2. 验证 LLMReasoningClient 是否集成�?GradingSkills
 3. 测试 Skills 调用日志记录
-4. 验证 Skills 在批改流程中的实际使用
+4. 验证 Skills 在批改流程中的实际使�?
 
 Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 5.6
 """
@@ -23,7 +23,7 @@ from src.skills.grading_skills import (
     create_grading_skills,
 )
 from src.services.rubric_registry import RubricRegistry
-from src.services.gemini_reasoning import GeminiReasoningClient
+from src.services.llm_reasoning import LLMReasoningClient
 from src.models.grading_models import (
     QuestionRubric,
     ScoringPoint,
@@ -49,17 +49,17 @@ async def test_skill_registration():
         "merge_all_cross_page_results",
     ]
     
-    print(f"\n已注册的 Skills ({len(skills)} 个):")
+    print(f"\n已注册的 Skills ({len(skills)} �?:")
     for skill in skills:
-        status = "✅" if skill in expected_skills else "⚠️"
+        status = "�? if skill in expected_skills else "⚠️"
         print(f"  {status} {skill}")
     
     missing = set(expected_skills) - set(skills)
     if missing:
-        print(f"\n❌ 缺少的 Skills: {missing}")
+        print(f"\n�?缺少�?Skills: {missing}")
         return False
     
-    print("\n✅ 所有核心 Skills 已正确注册")
+    print("\n�?所有核�?Skills 已正确注�?)
     return True
 
 
@@ -79,8 +79,8 @@ async def test_grading_skills_creation():
         question_text="测试题目1",
         standard_answer="标准答案1",
         scoring_points=[
-            ScoringPoint(description="得分点1", score=5.0),
-            ScoringPoint(description="得分点2", score=5.0),
+            ScoringPoint(description="得分�?", score=5.0),
+            ScoringPoint(description="得分�?", score=5.0),
         ]
     )
     rubric_registry.register_rubrics([rubric1])
@@ -88,7 +88,7 @@ async def test_grading_skills_creation():
     # 创建 GradingSkills
     skills = create_grading_skills(rubric_registry=rubric_registry)
     
-    print(f"\n✅ GradingSkills 实例创建成功")
+    print(f"\n�?GradingSkills 实例创建成功")
     print(f"  - RubricRegistry: {skills.rubric_registry is not None}")
     print(f"  - QuestionMerger: {skills.question_merger is not None}")
     print(f"  - LLM Client: {skills.llm_client is not None}")
@@ -97,9 +97,9 @@ async def test_grading_skills_creation():
 
 
 async def test_skill_execution():
-    """测试 3: 验证 Skill 执行和日志记录"""
+    """测试 3: 验证 Skill 执行和日志记�?""
     print("\n" + "="*60)
-    print("测试 3: 验证 Skill 执行和日志记录")
+    print("测试 3: 验证 Skill 执行和日志记�?)
     print("="*60)
     
     # 创建测试环境
@@ -110,8 +110,8 @@ async def test_skill_execution():
         question_text="测试题目1",
         standard_answer="标准答案1",
         scoring_points=[
-            ScoringPoint(description="得分点1", score=5.0),
-            ScoringPoint(description="得分点2", score=5.0),
+            ScoringPoint(description="得分�?", score=5.0),
+            ScoringPoint(description="得分�?", score=5.0),
         ]
     )
     rubric_registry.register_rubrics([rubric1])
@@ -132,63 +132,63 @@ async def test_skill_execution():
         print(f"  - 满分: {result.data.rubric.max_score}")
         print(f"  - 是否默认: {result.data.is_default}")
     
-    # 检查调用日志
+    # 检查调用日�?
     registry = get_skill_registry()
     logs = registry.get_logs(limit=5)
     
-    print(f"\n最近的 Skill 调用日志 ({len(logs)} 条):")
+    print(f"\n最近的 Skill 调用日志 ({len(logs)} �?:")
     for log in logs:
-        status = "✅" if log.success else "❌"
+        status = "�? if log.success else "�?
         print(f"  {status} {log.skill_name} - {log.execution_time_ms:.2f}ms")
     
     if not logs:
         print("  ⚠️ 没有找到调用日志")
         return False
     
-    print("\n✅ Skill 执行和日志记录正常")
+    print("\n�?Skill 执行和日志记录正�?)
     return True
 
 
 async def test_gemini_client_integration():
-    """测试 4: 验证 GeminiReasoningClient 集成"""
+    """测试 4: 验证 LLMReasoningClient 集成"""
     print("\n" + "="*60)
-    print("测试 4: 验证 GeminiReasoningClient 集成")
+    print("测试 4: 验证 LLMReasoningClient 集成")
     print("="*60)
     
-    # 检查环境变量
-    api_key = os.getenv("GEMINI_API_KEY")
+    # 检查环境变�?
+    api_key = os.getenv("LLM_API_KEY")
     if not api_key:
-        print("  ⚠️ 未设置 GEMINI_API_KEY 环境变量，跳过此测试")
+        print("  ⚠️ 未设�?LLM_API_KEY 环境变量，跳过此测试")
         return True
     
-    # 创建 RubricRegistry 和 GradingSkills
+    # 创建 RubricRegistry �?GradingSkills
     rubric_registry = RubricRegistry(total_score=100.0)
     grading_skills = create_grading_skills(rubric_registry=rubric_registry)
     
-    # 创建 GeminiReasoningClient
-    client = GeminiReasoningClient(
+    # 创建 LLMReasoningClient
+    client = LLMReasoningClient(
         api_key=api_key,
         rubric_registry=rubric_registry,
         grading_skills=grading_skills
     )
     
-    print(f"\n✅ GeminiReasoningClient 创建成功")
+    print(f"\n�?LLMReasoningClient 创建成功")
     print(f"  - RubricRegistry: {client.rubric_registry is not None}")
     print(f"  - GradingSkills: {client.grading_skills is not None}")
     
-    # 验证 Skills 的 LLM 客户端已设置
+    # 验证 Skills �?LLM 客户端已设置
     if grading_skills.llm_client is not None:
-        print(f"  - GradingSkills.llm_client: ✅ 已设置")
+        print(f"  - GradingSkills.llm_client: �?已设�?)
     else:
-        print(f"  - GradingSkills.llm_client: ⚠️ 未设置")
+        print(f"  - GradingSkills.llm_client: ⚠️ 未设�?)
     
     return True
 
 
 async def test_cross_page_detection():
-    """测试 5: 验证跨页题目检测 Skill"""
+    """测试 5: 验证跨页题目检�?Skill"""
     print("\n" + "="*60)
-    print("测试 5: 验证跨页题目检测 Skill")
+    print("测试 5: 验证跨页题目检�?Skill")
     print("="*60)
     
     skills = create_grading_skills()
@@ -229,16 +229,16 @@ async def test_cross_page_detection():
     
     if result.success:
         cross_page_questions = result.data
-        print(f"  - 检测到 {len(cross_page_questions)} 个跨页题目")
+        print(f"  - 检测到 {len(cross_page_questions)} 个跨页题�?)
         for cpq in cross_page_questions:
-            print(f"    • 题目 {cpq.question_id}: 页面 {cpq.page_indices}, 置信度 {cpq.confidence:.2f}")
+            print(f"    �?题目 {cpq.question_id}: 页面 {cpq.page_indices}, 置信�?{cpq.confidence:.2f}")
     
-    print("\n✅ 跨页题目检测 Skill 正常工作")
+    print("\n�?跨页题目检�?Skill 正常工作")
     return True
 
 
 async def main():
-    """运行所有测试"""
+    """运行所有测�?""
     print("\n" + "="*60)
     print("Agent Skills 集成测试")
     print("="*60)
@@ -246,9 +246,9 @@ async def main():
     tests = [
         ("Skills 注册", test_skill_registration),
         ("GradingSkills 创建", test_grading_skills_creation),
-        ("Skill 执行和日志", test_skill_execution),
+        ("Skill 执行和日�?, test_skill_execution),
         ("GeminiClient 集成", test_gemini_client_integration),
-        ("跨页题目检测", test_cross_page_detection),
+        ("跨页题目检�?, test_cross_page_detection),
     ]
     
     results = []
@@ -257,7 +257,7 @@ async def main():
             result = await test_func()
             results.append((name, result))
         except Exception as e:
-            print(f"\n❌ 测试失败: {e}")
+            print(f"\n�?测试失败: {e}")
             import traceback
             traceback.print_exc()
             results.append((name, False))
@@ -271,16 +271,16 @@ async def main():
     total = len(results)
     
     for name, result in results:
-        status = "✅ 通过" if result else "❌ 失败"
+        status = "�?通过" if result else "�?失败"
         print(f"  {status} - {name}")
     
     print(f"\n总计: {passed}/{total} 测试通过")
     
     if passed == total:
-        print("\n🎉 所有测试通过！Agent Skills 在实机中正常工作。")
+        print("\n🎉 所有测试通过！Agent Skills 在实机中正常工作�?)
         return 0
     else:
-        print(f"\n⚠️ {total - passed} 个测试失败")
+        print(f"\n⚠️ {total - passed} 个测试失�?)
         return 1
 
 

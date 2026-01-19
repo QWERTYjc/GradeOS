@@ -27,6 +27,3 @@ export interface VideoExtractionConfig {
 
 export type ImageSize = '1K' | '2K' | '4K';
 
-export interface GeminiConfig {
-  apiKey?: string;
-}

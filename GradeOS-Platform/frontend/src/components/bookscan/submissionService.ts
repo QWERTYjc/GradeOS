@@ -11,7 +11,7 @@ export interface SubmissionResponse {
   feedback?: string;
 }
 
-const API_BASE = 'http://localhost:8001';
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001/api';
 
 /**
  * 提交扫描图片到批改系统
@@ -22,7 +22,7 @@ export const submitToGradingSystem = async (
   studentId: string = 'guest',
   studentName: string = 'Guest'
 ): Promise<SubmissionResponse> => {
-  const response = await fetch(`${API_BASE}/api/homework/submit-scan`, {
+  const response = await fetch(`${API_BASE}/homework/submit-scan`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -44,7 +44,7 @@ export const submitToGradingSystem = async (
  * 获取提交历史
  */
 export const getSubmissionHistory = async (studentId: string) => {
-  const response = await fetch(`${API_BASE}/api/submissions/history?student_id=${studentId}`);
+  const response = await fetch(`${API_BASE}/submissions/history?student_id=${studentId}`);
   return response.json();
 };
 
@@ -52,6 +52,6 @@ export const getSubmissionHistory = async (studentId: string) => {
  * 获取所有提交记录
  */
 export const getAllSubmissions = async () => {
-  const response = await fetch(`${API_BASE}/api/submissions/all`);
+  const response = await fetch(`${API_BASE}/submissions/all`);
   return response.json();
 };

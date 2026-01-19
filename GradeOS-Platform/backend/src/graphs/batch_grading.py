@@ -403,7 +403,7 @@ async def index_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     """
     batch_id = state["batch_id"]
     processed_images = state.get("processed_images", [])
-    api_key = state.get("api_key") or os.getenv("GEMINI_API_KEY")
+    api_key = state.get("api_key") or os.getenv("LLM_API_KEY") or os.getenv("OPENROUTER_API_KEY")
 
     logger.info(
         f"[index] 开始索引: batch_id={batch_id}, 页数={len(processed_images)}"
@@ -844,7 +844,7 @@ async def rubric_parse_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     batch_id = state["batch_id"]
     rubric_images = state.get("rubric_images", [])
     rubric_text = state.get("rubric", "")
-    api_key = state.get("api_key") or os.getenv("GEMINI_API_KEY")
+    api_key = state.get("api_key") or os.getenv("LLM_API_KEY") or os.getenv("OPENROUTER_API_KEY")
     
     logger.info(f"[rubric_parse] 开始解析评分标准: batch_id={batch_id}, 评分标准页数={len(rubric_images)}")
     
@@ -1153,7 +1153,7 @@ async def rubric_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     """
     batch_id = state["batch_id"]
     parsed_rubric = state.get("parsed_rubric", {})
-    api_key = state.get("api_key") or os.getenv("GEMINI_API_KEY")
+    api_key = state.get("api_key") or os.getenv("LLM_API_KEY") or os.getenv("OPENROUTER_API_KEY")
     enable_review = state.get("inputs", {}).get("enable_review", True)
     grading_mode = _resolve_grading_mode(state.get("inputs", {}), parsed_rubric)
 
@@ -2353,7 +2353,7 @@ async def _grade_batch_node_impl(state: Dict[str, Any]) -> Dict[str, Any]:
     images = state["images"]
     rubric = state.get("rubric", "")
     page_index_contexts = state.get("page_index_contexts", {})
-    api_key = state.get("api_key") or os.getenv("GEMINI_API_KEY")
+    api_key = state.get("api_key") or os.getenv("LLM_API_KEY") or os.getenv("OPENROUTER_API_KEY")
     retry_count = state.get("retry_count", 0)
     max_retries = state.get("max_retries", 2)
     
@@ -2413,7 +2413,7 @@ async def _grade_batch_node_impl(state: Dict[str, Any]) -> Dict[str, Any]:
         
         # Worker 独立性保证 (Requirement 3.2)
         # 每个 Worker 独立创建实例，不共享可变状态
-        from src.services.gemini_reasoning import GeminiReasoningClient
+        from src.services.llm_reasoning import LLMReasoningClient
         from src.utils.error_handling import execute_with_isolation, get_error_manager
         from src.services.rubric_registry import RubricRegistry
         # 注意：已移除 Agent Skill，直接使用 rubric_registry
@@ -2478,8 +2478,8 @@ async def _grade_batch_node_impl(state: Dict[str, Any]) -> Dict[str, Any]:
                 f"[grade_batch] 已重建 RubricRegistry，注册 {len(question_rubrics)} 道题目"
             )
         
-        # 创建 GeminiReasoningClient（已移除 Agent Skill）
-        reasoning_client = GeminiReasoningClient(
+        # 创建 LLMReasoningClient（已移除 Agent Skill）
+        reasoning_client = LLMReasoningClient(
             api_key=api_key,
             rubric_registry=rubric_registry,
         )
@@ -3579,7 +3579,7 @@ async def _regrade_selected_questions(
     if not regrade_items:
         return student_results
 
-    api_key = state.get("api_key") or os.getenv("GEMINI_API_KEY")
+    api_key = state.get("api_key") or os.getenv("LLM_API_KEY") or os.getenv("OPENROUTER_API_KEY")
     if not api_key:
         logger.warning("[review] regrade skipped: missing API key")
         return student_results
@@ -3594,7 +3594,7 @@ async def _regrade_selected_questions(
     questions_data = parsed_rubric.get("questions", []) if isinstance(parsed_rubric, dict) else []
 
     try:
-        from src.services.gemini_reasoning import GeminiReasoningClient
+        from src.services.llm_reasoning import LLMReasoningClient
         from src.services.rubric_registry import RubricRegistry
         from src.models.grading_models import QuestionRubric, ScoringPoint
     except Exception as exc:
@@ -3628,7 +3628,7 @@ async def _regrade_selected_questions(
     if question_rubrics:
         rubric_registry.register_rubrics(question_rubrics)
 
-    reasoning_client = GeminiReasoningClient(
+    reasoning_client = LLMReasoningClient(
         api_key=api_key,
         rubric_registry=rubric_registry,
     )
@@ -4603,7 +4603,7 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     batch_id = state["batch_id"]
     student_results = state.get("student_results", []) or []
     parsed_rubric = state.get("parsed_rubric", {}) or {}
-    api_key = state.get("api_key") or os.getenv("GEMINI_API_KEY")
+    api_key = state.get("api_key") or os.getenv("LLM_API_KEY") or os.getenv("OPENROUTER_API_KEY")
     grading_mode = _resolve_grading_mode(state.get("inputs", {}), parsed_rubric)
 
     if grading_mode.startswith("assist"):
@@ -4656,10 +4656,10 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
             },
         }
 
-    from src.services.gemini_reasoning import GeminiReasoningClient
+    from src.services.llm_reasoning import LLMReasoningClient
     from src.api.routes.batch_langgraph import broadcast_progress
 
-    reasoning_client = GeminiReasoningClient(api_key=api_key, rubric_registry=None)
+    reasoning_client = LLMReasoningClient(api_key=api_key, rubric_registry=None)
     max_workers = int(os.getenv("LOGIC_REVIEW_MAX_WORKERS", "3"))
     semaphore = asyncio.Semaphore(max_workers)
 

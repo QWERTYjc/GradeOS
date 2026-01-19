@@ -166,7 +166,7 @@ Normalize question numbers (e.g., "Question 1" -> "1"). Ignore A/B/C/D options.
                     error_str = str(e)
                     if "503" in error_str or "overloaded" in error_str.lower():
                         if attempt < max_retries - 1:
-                            logger.warning(f"Gemini API 过载，{retry_delay}秒后重试 ({attempt + 1}/{max_retries})")
+                            logger.warning(f"LLM API 过载，{retry_delay}秒后重试 ({attempt + 1}/{max_retries})")
                             await asyncio.sleep(retry_delay)
                             retry_delay *= 2
                             continue

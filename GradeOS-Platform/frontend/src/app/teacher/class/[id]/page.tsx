@@ -3,6 +3,8 @@
 import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import DashboardLayout from '@/components/layout/DashboardLayout';
+import { useAuthStore } from '@/store/authStore';
+import { classApi, statisticsApi } from '@/services/api';
 
 interface Student {
   id: string;
@@ -20,35 +22,69 @@ interface ClassDetail {
   students: Student[];
 }
 
+interface ClassStats {
+  class_id: string;
+  total_students: number;
+  submitted_count: number;
+  graded_count: number;
+  average_score: number;
+  max_score: number;
+  min_score: number;
+  pass_rate: number;
+  score_distribution: Record<string, number>;
+}
+
 export default function ClassDetailPage() {
   const params = useParams();
   const router = useRouter();
   const classId = params.id as string;
+  const { user } = useAuthStore();
 
   const [classDetail, setClassDetail] = useState<ClassDetail | null>(null);
+  const [stats, setStats] = useState<ClassStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'students' | 'homework' | 'grading_history' | 'stats'>('students');
   const [showInviteModal, setShowInviteModal] = useState(false);
 
   useEffect(() => {
-    // Mock data - 实际应调用 API
-    setTimeout(() => {
-      setClassDetail({
-        class_id: classId,
-        class_name: 'Advanced Physics 2024',
-        invite_code: 'PHY24A',
-        student_count: 32,
-        students: [
-          { id: 's-001', name: 'Alice Chen', username: 'alice', avgScore: 92, submissionRate: 100 },
-          { id: 's-002', name: 'Bob Wang', username: 'bob', avgScore: 78, submissionRate: 95 },
-          { id: 's-003', name: 'Carol Liu', username: 'carol', avgScore: 85, submissionRate: 100 },
-          { id: 's-004', name: 'David Zhang', username: 'david', avgScore: 88, submissionRate: 90 },
-          { id: 's-005', name: 'Eva Li', username: 'eva', avgScore: 95, submissionRate: 100 },
-        ],
-      });
-      setLoading(false);
-    }, 500);
-  }, [classId]);
+    if (!classId) return;
+    let active = true;
+    setLoading(true);
+    const load = async () => {
+      try {
+        const [students, classStats] = await Promise.all([
+          classApi.getClassStudents(classId),
+          statisticsApi.getClassStatistics(classId).catch(() => null),
+        ]);
+
+        let classInfo = null;
+        if (user?.id) {
+          const classes = await classApi.getTeacherClasses(user.id);
+          classInfo = classes.find((item) => item.class_id === classId) || null;
+        }
+
+        if (!active) return;
+        setClassDetail({
+          class_id: classId,
+          class_name: classInfo?.class_name || classId,
+          invite_code: classInfo?.invite_code || '',
+          student_count: classInfo?.student_count || students.length,
+          students,
+        });
+        setStats(classStats);
+      } catch (error) {
+        console.error('Failed to load class detail', error);
+        if (active) setClassDetail(null);
+      } finally {
+        if (active) setLoading(false);
+      }
+    };
+
+    load();
+    return () => {
+      active = false;
+    };
+  }, [classId, user?.id]);
 
   if (loading) {
     return (
@@ -225,15 +261,15 @@ export default function ClassDetailPage() {
               </div>
               <div className="bg-green-50 rounded-lg p-4">
                 <p className="text-sm text-green-600">平均分</p>
-                <p className="text-2xl font-bold text-green-700">82.5</p>
+                <p className="text-2xl font-bold text-green-700">{stats?.average_score ?? 0}</p>
               </div>
               <div className="bg-purple-50 rounded-lg p-4">
                 <p className="text-sm text-purple-600">及格率</p>
-                <p className="text-2xl font-bold text-purple-700">87.5%</p>
+                <p className="text-2xl font-bold text-purple-700">{stats ? `${(stats.pass_rate * 100).toFixed(1)}%` : '0%'}</p>
               </div>
               <div className="bg-orange-50 rounded-lg p-4">
                 <p className="text-sm text-orange-600">作业数</p>
-                <p className="text-2xl font-bold text-orange-700">12</p>
+                <p className="text-2xl font-bold text-orange-700">{stats?.graded_count ?? 0}</p>
               </div>
             </div>
             <div className="mt-6 text-center">

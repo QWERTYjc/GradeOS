@@ -1,4 +1,4 @@
-"""Utilities for handling model thinking content."""
+﻿"""Utilities for handling model thinking content."""
 
 from __future__ import annotations
 
@@ -8,14 +8,11 @@ from typing import Any, Dict, Tuple
 
 
 def get_thinking_kwargs(model_name: str, enable_thinking: bool = True) -> Dict[str, Any]:
-    """Return safe kwargs for Gemini-compatible models."""
+    """Return safe kwargs for optional thinking content."""
     if not enable_thinking:
         return {}
     kwargs: Dict[str, Any] = {}
-    if model_name and model_name.startswith("gemini"):
-        kwargs["convert_system_message_to_human"] = True
-    if os.getenv("GEMINI_INCLUDE_THOUGHTS", "").lower() in ("1", "true", "yes"):
-        # Keep payload minimal to avoid incompatible params.
+    if os.getenv("LLM_INCLUDE_THOUGHTS", "").lower() in ("1", "true", "yes"):
         kwargs["response_mime_type"] = "text/plain"
     return kwargs
 

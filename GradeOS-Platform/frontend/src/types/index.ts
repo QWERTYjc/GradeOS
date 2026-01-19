@@ -92,7 +92,7 @@ export enum Subject {
 
 export interface ScoreEntry {
   id: string;
-  subject: Subject;
+  subject: Subject | string;
   score: number;
   averageScore: number;
   date: string;

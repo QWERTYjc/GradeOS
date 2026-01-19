@@ -15,7 +15,7 @@
 
 ```python
 from src.agents.grading_agent import GradingAgent
-from src.services.gemini_reasoning import GeminiReasoningClient
+from src.services.llm_reasoning import LLMReasoningClient
 from src.utils.enhanced_checkpointer import EnhancedPostgresCheckpointer
 from src.utils.pool_manager import UnifiedPoolManager
 
@@ -33,7 +33,7 @@ checkpointer = EnhancedPostgresCheckpointer(
 )
 
 # 创建批改智能体
-reasoning_client = GeminiReasoningClient(api_key="your-api-key")
+reasoning_client = LLMReasoningClient(api_key="your-api-key")
 agent = GradingAgent(
     reasoning_client=reasoning_client,
     checkpointer=checkpointer,

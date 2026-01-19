@@ -73,12 +73,12 @@ quotaValue: 10 requests per minute
 
 ### 1. Gemini 推理客户端
 
-**文件**: `src/services/gemini_reasoning.py`
+**文件**: `src/services/llm_reasoning.py`
 
 ```python
 from langchain_google_genai import ChatGoogleGenerativeAI
 
-class GeminiReasoningClient:
+class LLMReasoningClient:
     def __init__(self, api_key: str, model_name: str = "gemini-3-flash-preview"):
         self.llm = ChatGoogleGenerativeAI(
             model=model_name,
@@ -108,7 +108,7 @@ class LayoutAnalysisService:
 **文件**: `test_workflow_integration.py`
 
 ```python
-reasoning_client = GeminiReasoningClient(
+reasoning_client = LLMReasoningClient(
     api_key=api_key,
     model_name="gemini-3-flash-preview"
 )

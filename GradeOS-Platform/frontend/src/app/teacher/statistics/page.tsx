@@ -2,6 +2,8 @@
 
 import React, { useState, useEffect } from 'react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
+import { useAuthStore } from '@/store/authStore';
+import { classApi, statisticsApi } from '@/services/api';
 import {
   ResponsiveContainer,
   BarChart,
@@ -33,38 +35,52 @@ const COLORS = ['#22c55e', '#3b82f6', '#f59e0b', '#ef4444', '#6b7280'];
 export default function TeacherStatisticsPage() {
   const [stats, setStats] = useState<ClassStats | null>(null);
   const [loading, setLoading] = useState(true);
-  const [selectedClass, setSelectedClass] = useState('c-001');
-
-  const classes = [
-    { id: 'c-001', name: 'Advanced Physics 2024' },
-    { id: 'c-002', name: 'Mathematics Grade 11' }
-  ];
+  const [classes, setClasses] = useState<Array<{ id: string; name: string }>>([]);
+  const [selectedClass, setSelectedClass] = useState<string>('');
+  const { user } = useAuthStore();
 
   useEffect(() => {
-    setLoading(true);
-    // 模拟加载统计数据
-    setTimeout(() => {
-      setStats({
-        class_id: selectedClass,
-        class_name: classes.find(c => c.id === selectedClass)?.name || '',
-        total_students: 32,
-        submitted_count: 28,
-        graded_count: 28,
-        average_score: 82.5,
-        max_score: 98,
-        min_score: 65,
-        pass_rate: 0.875,
-        score_distribution: {
-          '90-100': 8,
-          '80-89': 12,
-          '70-79': 5,
-          '60-69': 3,
-          '0-59': 0
+    if (!user?.id) return;
+    let active = true;
+    classApi.getTeacherClasses(user.id)
+      .then((items) => {
+        if (!active) return;
+        const mapped = items.map((cls) => ({ id: cls.class_id, name: cls.class_name }));
+        setClasses(mapped);
+        if (!selectedClass && mapped.length) {
+          setSelectedClass(mapped[0].id);
         }
+      })
+      .catch((error) => {
+        console.error('Failed to load classes', error);
+        setClasses([]);
       });
-      setLoading(false);
-    }, 800);
-  }, [selectedClass]);
+    return () => {
+      active = false;
+    };
+  }, [user?.id, selectedClass]);
+
+  useEffect(() => {
+    if (!selectedClass) return;
+    let active = true;
+    setLoading(true);
+    statisticsApi.getClassStatistics(selectedClass)
+      .then((data) => {
+        if (!active) return;
+        const className = classes.find((c) => c.id === selectedClass)?.name || '';
+        setStats({ ...data, class_name: className });
+      })
+      .catch((error) => {
+        console.error('Failed to load statistics', error);
+        setStats(null);
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [selectedClass, classes]);
 
   const distributionData = stats ? Object.entries(stats.score_distribution).map(([range, count]) => ({
     range,
@@ -72,18 +88,18 @@ export default function TeacherStatisticsPage() {
   })) : [];
 
   const pieData = stats ? [
-    { name: '已提交', value: stats.submitted_count },
-    { name: '未提交', value: stats.total_students - stats.submitted_count }
+    { name: '???', value: stats.submitted_count },
+    { name: '???', value: stats.total_students - stats.submitted_count }
   ] : [];
 
   return (
     <DashboardLayout>
       <div className="space-y-6 max-w-6xl mx-auto">
-        {/* 页面标题 */}
+        {/* ???? */}
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-slate-800">📊 班级学情分析</h1>
-            <p className="text-slate-500 text-sm mt-1">实时监控班级学习状态与成绩分布</p>
+            <h1 className="text-2xl font-bold text-slate-800">?? ??????</h1>
+            <p className="text-slate-500 text-sm mt-1">???????????????</p>
           </div>
           <div className="flex gap-2">
             {classes.map(cls => (
@@ -108,31 +124,31 @@ export default function TeacherStatisticsPage() {
           </div>
         ) : stats && (
           <>
-            {/* KPI 卡片 */}
+            {/* KPI ?? */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <div className="bg-white rounded-xl border border-slate-200 p-5">
-                <p className="text-xs font-bold text-slate-400 uppercase mb-1">班级人数</p>
+                <p className="text-xs font-bold text-slate-400 uppercase mb-1">????</p>
                 <p className="text-2xl font-bold text-slate-800">{stats.total_students}</p>
               </div>
               <div className="bg-white rounded-xl border border-slate-200 p-5">
-                <p className="text-xs font-bold text-slate-400 uppercase mb-1">平均分</p>
+                <p className="text-xs font-bold text-slate-400 uppercase mb-1">???</p>
                 <p className="text-2xl font-bold text-blue-600">{stats.average_score}</p>
               </div>
               <div className="bg-white rounded-xl border border-slate-200 p-5">
-                <p className="text-xs font-bold text-slate-400 uppercase mb-1">及格率</p>
+                <p className="text-xs font-bold text-slate-400 uppercase mb-1">???</p>
                 <p className="text-2xl font-bold text-green-500">{(stats.pass_rate * 100).toFixed(1)}%</p>
               </div>
               <div className="bg-white rounded-xl border border-slate-200 p-5">
-                <p className="text-xs font-bold text-slate-400 uppercase mb-1">最高/最低</p>
+                <p className="text-xs font-bold text-slate-400 uppercase mb-1">??/??</p>
                 <p className="text-2xl font-bold text-slate-800">{stats.max_score}/{stats.min_score}</p>
               </div>
             </div>
 
-            {/* 图表区域 */}
+            {/* ???? */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {/* 成绩分布 */}
+              {/* ???? */}
               <div className="bg-white rounded-xl border border-slate-200 p-6">
-                <h3 className="font-bold text-slate-800 mb-6">📈 成绩分布</h3>
+                <h3 className="font-bold text-slate-800 mb-6">?? ????</h3>
                 <div className="h-64">
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={distributionData}>
@@ -146,9 +162,9 @@ export default function TeacherStatisticsPage() {
                 </div>
               </div>
 
-              {/* 提交情况 */}
+              {/* ???? */}
               <div className="bg-white rounded-xl border border-slate-200 p-6">
-                <h3 className="font-bold text-slate-800 mb-6">📋 提交情况</h3>
+                <h3 className="font-bold text-slate-800 mb-6">?? ????</h3>
                 <div className="h-64 flex items-center justify-center">
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
@@ -172,52 +188,40 @@ export default function TeacherStatisticsPage() {
                 </div>
                 <div className="text-center mt-4">
                   <p className="text-sm text-slate-500">
-                    已提交 <span className="font-bold text-green-500">{stats.submitted_count}</span> / {stats.total_students} 人
+                    ???<span className="font-bold text-green-500">{stats.submitted_count}</span> / {stats.total_students} ?
                   </p>
                 </div>
               </div>
             </div>
 
-            {/* 常见错误分析 */}
+            {/* ?????? */}
             <div className="bg-white rounded-xl border border-slate-200 p-6">
-              <h3 className="font-bold text-slate-800 mb-4">🔍 班级常见错误类型</h3>
+              <h3 className="font-bold text-slate-800 mb-4">?? ????????</h3>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className="p-4 bg-red-50 rounded-xl border border-red-100">
-                  <div className="flex items-center gap-2 mb-2">
-                    <span className="text-red-500 font-bold">01</span>
-                    <span className="font-medium text-slate-800">概念理解错误</span>
+                {(stats.score_distribution ? Object.entries(stats.score_distribution).slice(0, 3) : []).map(([range], index) => (
+                  <div key={range} className="p-4 bg-slate-50 rounded-xl border border-slate-100">
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="text-slate-500 font-bold">{String(index + 1).padStart(2, '0')}</span>
+                      <span className="font-medium text-slate-800">{range} ??</span>
+                    </div>
+                    <p className="text-sm text-slate-500">????????????</p>
                   </div>
-                  <p className="text-sm text-slate-500">占比 35%，主要集中在二次函数顶点式</p>
-                </div>
-                <div className="p-4 bg-amber-50 rounded-xl border border-amber-100">
-                  <div className="flex items-center gap-2 mb-2">
-                    <span className="text-amber-500 font-bold">02</span>
-                    <span className="font-medium text-slate-800">计算失误</span>
-                  </div>
-                  <p className="text-sm text-slate-500">占比 28%，符号运算和分数计算</p>
-                </div>
-                <div className="p-4 bg-blue-50 rounded-xl border border-blue-100">
-                  <div className="flex items-center gap-2 mb-2">
-                    <span className="text-blue-500 font-bold">03</span>
-                    <span className="font-medium text-slate-800">审题不清</span>
-                  </div>
-                  <p className="text-sm text-slate-500">占比 20%，遗漏关键条件</p>
-                </div>
+                ))}
               </div>
             </div>
 
-            {/* 教学建议 */}
+            {/* ???? */}
             <div className="bg-slate-900 rounded-xl p-6 text-white">
               <h3 className="font-bold mb-4 flex items-center gap-2">
                 <span className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-sm">AI</span>
-                教学优化建议
+                ??????
               </h3>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="p-4 bg-white/5 rounded-xl border border-white/10">
-                  <p className="text-white/80 text-sm">建议在下节课重点复习二次函数顶点式的推导过程，强调配方法的应用</p>
+                  <p className="text-white/80 text-sm">????????????????????</p>
                 </div>
                 <div className="p-4 bg-white/5 rounded-xl border border-white/10">
-                  <p className="text-white/80 text-sm">针对计算失误较多的学生，可安排专项计算训练，提高运算准确率</p>
+                  <p className="text-white/80 text-sm">?????????????????????</p>
                 </div>
               </div>
             </div>

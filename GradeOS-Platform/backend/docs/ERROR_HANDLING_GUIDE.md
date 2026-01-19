@@ -261,12 +261,12 @@ error_data = error_manager.export_to_dict()
 
 ## 集成示例
 
-### 在 GeminiReasoningClient 中使用
+### 在 LLMReasoningClient 中使用
 
 ```python
 from src.utils.error_handling import with_retry, get_error_manager
 
-class GeminiReasoningClient:
+class LLMReasoningClient:
     @with_retry(max_retries=3, initial_delay=1.0)
     async def _call_vision_api(self, image_b64: str, prompt: str) -> str:
         """调用视觉 API（带重试）"""
