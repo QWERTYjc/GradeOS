@@ -457,19 +457,19 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({ className }) => {
                                         </div>
                                     )}
 
-                                    {/* 批次进度信息 */}
+                                    {/* 处理进度信息 */}
                                     {batchProgress && selectedNode.id === 'grade_batch' && (
                                         <div className="bg-gradient-to-br from-blue-50/60 to-cyan-50/60 rounded-2xl p-5 border border-blue-100/50 shadow-sm relative overflow-hidden">
                                             <div className="absolute top-0 right-0 p-3 opacity-5">
                                                 <Activity className="w-32 h-32 text-blue-500" />
                                             </div>
-                                            <label className="text-xs font-bold text-blue-600/80 uppercase tracking-wider mb-4 block relative z-10">批次处理进度</label>
+                                            <label className="text-xs font-bold text-blue-600/80 uppercase tracking-wider mb-4 block relative z-10">处理进度</label>
                                             <div className="flex justify-between items-end mb-3 relative z-10">
                                                 <div className="flex flex-col">
                                                     <span className="text-4xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-cyan-600 tracking-tight">
-                                                        Batch {batchProgress.batchIndex + 1}
+                                                        Run {batchProgress.batchIndex + 1}
                                                     </span>
-                                                    <span className="text-xs font-bold text-blue-400 mt-1 uppercase tracking-wider">Current Batch</span>
+                                                    <span className="text-xs font-bold text-blue-400 mt-1 uppercase tracking-wider">Current Run</span>
                                                 </div>
 
                                                 <div className="flex flex-col items-end">

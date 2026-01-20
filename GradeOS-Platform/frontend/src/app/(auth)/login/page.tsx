@@ -3,21 +3,10 @@
 import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { Fira_Code, Fira_Sans } from 'next/font/google';
 import { Building2, GraduationCap, ShieldCheck, LockKeyhole, ArrowRight } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
 import { Role, User } from '@/types';
 import { authApi } from '@/services/api';
-
-const firaSans = Fira_Sans({
-  subsets: ['latin'],
-  weight: ['300', '400', '500', '600', '700'],
-});
-
-const firaCode = Fira_Code({
-  subsets: ['latin'],
-  weight: ['400', '500', '600'],
-});
 
 export default function LoginPage() {
   const [username, setUsername] = useState('');
@@ -57,7 +46,7 @@ export default function LoginPage() {
   };
 
   return (
-    <div className={`${firaSans.className} min-h-screen bg-slate-950 text-white relative overflow-hidden`}>
+    <div className="min-h-screen bg-slate-950 text-white relative overflow-hidden">
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(59,130,246,0.25),_transparent_55%)]" />
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_bottom,_rgba(15,118,110,0.25),_transparent_55%)]" />
       <div className="absolute inset-0 bg-[linear-gradient(120deg,_rgba(15,23,42,0.96),_rgba(15,23,42,0.72),_rgba(15,23,42,0.96))]" />
@@ -111,14 +100,14 @@ export default function LoginPage() {
                       <Building2 className="h-4 w-4" />
                       Teacher
                     </div>
-                    <div className={`${firaCode.className} mt-2 text-slate-300`}>teacher / 123456</div>
+                    <div className="font-mono mt-2 text-slate-300">teacher / 123456</div>
                   </div>
                   <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
                     <div className="flex items-center gap-2 text-cyan-300 font-semibold">
                       <GraduationCap className="h-4 w-4" />
                       Student
                     </div>
-                    <div className={`${firaCode.className} mt-2 text-slate-300`}>student / 123456</div>
+                    <div className="font-mono mt-2 text-slate-300">student / 123456</div>
                   </div>
                 </div>
               </div>

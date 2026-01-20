@@ -298,7 +298,7 @@ export default function ResultsReviewPage({ params }: { params: Promise<{ batchI
           <div>
             <h1 className="text-xl font-bold text-slate-900">批改结果确认</h1>
             <div className="flex items-center gap-2 text-xs text-slate-500">
-              <span className="font-mono">Batch: {batchId}</span>
+              <span className="font-mono">Run: {batchId}</span>
               <span>·</span>
               <span>{status || "running"}</span>
             </div>

@@ -8,7 +8,13 @@
 """
 
 import asyncio
+import os
 from pathlib import Path
+
+DATA_DIR = Path(__file__).resolve().parents[2] / "docs" / "research"
+RUBRIC_PDF = DATA_DIR / "\u6279\u6539\u6807\u51c6.pdf"
+ANSWER_PDF = DATA_DIR / "\u5b66\u751f\u4f5c\u7b54.pdf"
+
 from typing import List
 
 import fitz
@@ -20,7 +26,7 @@ from src.services.rubric_parser import RubricParserService
 from src.services.strict_grading import StrictGradingService
 
 
-API_KEY = "AIzaSyD5D9_uYqcRgyivexpVq5iPvqL6uKD85QE"
+API_KEY = os.getenv("LLM_API_KEY") or os.getenv("OPENROUTER_API_KEY", "")
 TOTAL_SCORE = 105
 TOTAL_QUESTIONS = 19
 
@@ -51,9 +57,8 @@ async def main():
     print("=" * 70)
     print(f"预期: {TOTAL_QUESTIONS} 道题，总分 {TOTAL_SCORE} 分，2 名学生")
     print("=" * 70)
-    
-    rubric_path = Path("批改标准.pdf")
-    answer_path = Path("学生作答.pdf")
+    rubric_path = RUBRIC_PDF
+    answer_path = ANSWER_PDF
     
     if not rubric_path.exists() or not answer_path.exists():
         print("❌ 缺少必要文件")

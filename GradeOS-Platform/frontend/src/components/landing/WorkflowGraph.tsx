@@ -35,7 +35,7 @@ interface WorkerData {
 const NODES_CONFIG = [
     { id: 'rubric_parse', label: 'Rubric Parse', icon: BookOpen, x: 10, y: 50 },
     { id: 'rubric_review', label: 'Rubric Review', icon: Undo2, x: 30, y: 50 },
-    { id: 'grade_batch', label: 'Batch Grading', icon: Cpu, x: 50, y: 50 },
+    { id: 'grade_batch', label: 'Student Grading', icon: Cpu, x: 50, y: 50 },
     { id: 'logic_review', label: 'Logic Review', icon: Undo2, x: 70, y: 50 },
     { id: 'export', label: 'Export', icon: Share2, x: 90, y: 50 },
 ];

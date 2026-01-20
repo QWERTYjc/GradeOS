@@ -17,6 +17,7 @@ from typing import List, Optional, Dict, Any
 from dataclasses import dataclass, field
 
 # 使用 LLMReasoningClient（与批改流程一致）
+from src.config.models import get_default_model
 from src.services.llm_reasoning import LLMReasoningClient
 
 
@@ -131,7 +132,7 @@ class RubricParserService:
         """
         # 使用 LLMReasoningClient（与批改流程一致）
         self.api_key = api_key or os.getenv("LLM_API_KEY") or os.getenv("OPENROUTER_API_KEY", "")
-        self.model_name = model_name or os.getenv("LLM_DEFAULT_MODEL", "google/gemini-3-flash-preview")
+        self.model_name = model_name or get_default_model()
         self.reasoning_client = LLMReasoningClient(api_key=self.api_key, model_name=self.model_name)
     
     async def parse_rubric(

@@ -4,12 +4,17 @@ import httpx
 import json
 from pathlib import Path
 
+DATA_DIR = Path(__file__).resolve().parents[2] / "docs" / "research"
+RUBRIC_PDF = DATA_DIR / "\u6279\u6539\u6807\u51c6.pdf"
+ANSWER_PDF = DATA_DIR / "\u5b66\u751f\u4f5c\u7b54.pdf"
+
+
 async def test_batch_submit():
     """测试批量提交 API"""
     
     # 检查测试文件是否存在
-    rubric_file = Path("批改标准.pdf")
-    answer_file = Path("学生作答.pdf")
+    rubric_file = RUBRIC_PDF
+    answer_file = ANSWER_PDF
     
     if not rubric_file.exists():
         print(f"❌ 找不到文件: {rubric_file}")

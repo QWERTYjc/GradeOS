@@ -38,6 +38,7 @@ from .sqlite import (
     HomeworkSubmission,
     save_homework_submission,
     get_homework_submissions,
+    upsert_homework_submission_grade,
     list_student_submissions,
     update_homework_submission_status,
 )
@@ -77,6 +78,7 @@ __all__ = [
     "HomeworkSubmission",
     "save_homework_submission",
     "get_homework_submissions",
+    "upsert_homework_submission_grade",
     "list_student_submissions",
     "update_homework_submission_status",
 ]

@@ -13,14 +13,14 @@ export default function Hero() {
     const ctaHref = user ? (isTeacher ? "/console" : "/student/dashboard") : "/login";
 
     const stats = [
-        { value: '90s', label: '平均批改', detail: '50页批次' },
+        { value: '90s', label: '平均批改', detail: '50 pages' },
         { value: '3-8', label: '并行Worker', detail: '自动扩展' },
         { value: '98%', label: 'Rubric匹配', detail: '逐点引用' },
     ];
 
     const pipeline = [
         { label: 'Rubric Parse', detail: 'Streaming rules', tone: 'emerald' },
-        { label: 'Worker Pool', detail: 'Batch x3 live', tone: 'azure' },
+        { label: 'Worker Pool', detail: '3 live workers', tone: 'azure' },
         { label: 'Consistency Check', detail: 'Confidence sync', tone: 'amber' },
     ];
 

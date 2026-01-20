@@ -10,7 +10,6 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { RubricOverview } from './RubricOverview';
 import { AppContext, AppContextType } from '../bookscan/AppContext';
 import { MathText } from '@/components/common/MathText';
-import { GlassCard } from '@/components/design-system/GlassCard';
 import { SmoothButton } from '@/components/design-system/SmoothButton';
 import { gradingApi } from '@/services/api';
 
@@ -20,6 +19,14 @@ interface ResultCardProps {
     onExpand: () => void;
     isExpanded: boolean;
 }
+
+const PlainCard: React.FC<React.HTMLAttributes<HTMLDivElement> & { hoverEffect?: boolean }> = ({
+    className,
+    hoverEffect: _hoverEffect,
+    ...props
+}) => (
+    <div className={clsx('rounded-lg border border-slate-200 bg-white shadow-sm', className)} {...props} />
+);
 
 const normalizeEvidenceText = (text?: string) => {
     if (!text) return '';
@@ -226,37 +233,37 @@ const QuestionDetail: React.FC<{ question: QuestionResult; gradingMode?: string 
     })();
 
     return (
-        <div className="pl-4 py-4 space-y-3 hover:bg-slate-50/50 transition-colors rounded-r-xl border-l-2 border-slate-100 hover:border-blue-400">
+        <div className="p-4 space-y-3">
             <div className="flex items-center justify-between gap-4">
                 <div className="flex items-center gap-2.5">
-                    <span className="font-bold text-slate-700 text-sm">第 {questionLabel} 题</span>
+                    <span className="font-semibold text-slate-700 text-sm">第 {questionLabel} 题</span>
                     {question.isCrossPage && (
-                        <span className="text-[10px] px-2 py-0.5 rounded border border-purple-200 text-purple-600 bg-purple-50 flex items-center gap-1 uppercase tracking-wide font-bold">
+                        <span className="text-[11px] px-2 py-0.5 rounded border border-purple-200 text-purple-600 bg-purple-50 flex items-center gap-1 font-medium">
                             <Layers className="w-3 h-3" />
                             跨页
                         </span>
                     )}
                     {typeMeta && (
                         <span className={clsx(
-                            "text-[10px] px-2 py-0.5 rounded border uppercase tracking-wide font-bold",
+                            "text-[11px] px-2 py-0.5 rounded border font-medium",
                             typeMeta.className
                         )}>
                             {typeMeta.label}
                         </span>
                     )}
                     {isAssist && (
-                        <span className="text-[10px] px-2 py-0.5 rounded border border-slate-200 text-slate-500 bg-slate-50 uppercase tracking-wide font-bold">
+                        <span className="text-[11px] px-2 py-0.5 rounded border border-slate-200 text-slate-500 bg-slate-50 font-medium">
                             Assist
                         </span>
                     )}
                 </div>
-                <span className={clsx('text-sm font-black font-mono', scoreClass)}>
+                <span className={clsx('text-sm font-semibold', scoreClass)}>
                     {scoreLabel}
                 </span>
             </div>
 
             {/* Meta Info */}
-            <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-400">
+            <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-500">
                 {question.pageIndices && question.pageIndices.length > 0 && (
                     <div className="flex items-center gap-1.5">
                         <FileText className="w-3 h-3" />
@@ -264,16 +271,16 @@ const QuestionDetail: React.FC<{ question: QuestionResult; gradingMode?: string 
                     </div>
                 )}
                 {!isAssist && question.confidence !== undefined && (
-                    <div className={clsx("flex items-center gap-1.5", question.confidence < 0.8 ? "text-amber-500" : "text-emerald-500")}>
+                    <div className={clsx("flex items-center gap-1.5", question.confidence < 0.8 ? "text-amber-600" : "text-emerald-600")}>
                         {question.confidence < 0.8 ? <AlertCircle className="w-3 h-3" /> : <CheckCircle className="w-3 h-3" />}
-                        Confidence: <span className="font-mono font-bold">{(question.confidence * 100).toFixed(0)}%</span>
+                        Confidence: <span className="font-mono font-semibold">{(question.confidence * 100).toFixed(0)}%</span>
                     </div>
                 )}
             </div>
 
             {question.studentAnswer && (
-                <div className="bg-slate-50/80 rounded-lg p-3 border border-slate-100">
-                    <span className="text-[10px] uppercase font-bold text-slate-400 mb-1 block tracking-wider">Student Answer</span>
+                <div className="rounded-md p-3 border border-slate-200 bg-white">
+                    <span className="text-[11px] font-semibold text-slate-500 mb-1 block">Student Answer</span>
                     <div className="space-y-2">
                         {renderParagraphs(question.studentAnswer)}
                     </div>
@@ -283,10 +290,9 @@ const QuestionDetail: React.FC<{ question: QuestionResult; gradingMode?: string 
             {showScoringDetails ? (
                 question.scoringPointResults && question.scoringPointResults.length > 0 ? (
                     <div className="mt-3 space-y-2">
-                        <div className="text-[10px] uppercase tracking-[0.2em] font-bold text-slate-400 pl-1">评分步骤</div>
+                        <div className="text-xs font-semibold text-slate-500">评分步骤</div>
                         {question.scoringPointResults.map((spr, idx) => (
-                            <div key={idx} className="group relative pl-4 border-l border-slate-200 py-1 hover:border-blue-300 transition-colors">
-                                <div className="absolute -left-[5px] top-2.5 w-2.5 h-2.5 rounded-full bg-white border-2 border-slate-200 group-hover:border-blue-400 transition-colors" />
+                            <div key={idx} className="rounded-md border border-slate-200 p-3">
                                 <div className="flex items-start justify-between gap-4">
                                     <div className="space-y-1">
                                         <div className="text-xs text-slate-700 font-medium leading-relaxed">
@@ -307,12 +313,12 @@ const QuestionDetail: React.FC<{ question: QuestionResult; gradingMode?: string 
                                                 <Info className="w-3 h-3 inline ml-1.5 text-slate-300 hover:text-blue-400 cursor-help" />
                                             </Popover>
                                         </div>
-                                        <div className="text-[11px] text-slate-500 bg-slate-50 inline-block px-1.5 py-0.5 rounded border border-slate-100">
+                                        <div className="text-[11px] text-slate-500">
                                             判定: {spr.decision || (spr.awarded > 0 ? '得分' : '不得分')}
                                             {spr.reason && <span className="ml-1 opacity-75">- {spr.reason}</span>}
                                         </div>
                                     </div>
-                                    <div className={clsx("font-mono font-bold text-sm whitespace-nowrap", spr.awarded > 0 ? "text-emerald-600" : "text-slate-300")}>
+                                    <div className={clsx("font-mono font-semibold text-sm whitespace-nowrap", spr.awarded > 0 ? "text-emerald-600" : "text-slate-400")}>
                                         {spr.awarded}/{spr.maxPoints ?? spr.scoringPoint?.score ?? 0}
                                     </div>
                                 </div>
@@ -339,26 +345,26 @@ const QuestionDetail: React.FC<{ question: QuestionResult; gradingMode?: string 
                         ))}
                     </div>
                 ) : (
-                    <div className="mt-2 text-xs text-amber-600 bg-amber-50 px-2 py-1.5 rounded border border-amber-100 flex items-center gap-2">
-                        <AlertTriangle className="w-3.5 h-3.5" />
+                    <div className="mt-2 text-xs text-slate-500 flex items-center gap-2">
+                        <AlertTriangle className="w-3.5 h-3.5 text-slate-400" />
                         Scores available but step breakdown missing.
                     </div>
                 )
             ) : (
-                <div className="mt-2 text-xs text-slate-400 italic">
+                <div className="mt-2 text-xs text-slate-500 italic">
                     {isAssist ? 'No scoring breakdown in Assist mode.' : 'No detailed analysis for this question type.'}
                 </div>
             )}
 
             {showScoringDetails && (question.reviewSummary || (question.reviewCorrections && question.reviewCorrections.length > 0)) && (
-                <div className="mt-3 p-3 bg-indigo-50/50 rounded-lg border border-indigo-100 shadow-sm">
-                    <div className="text-[10px] font-bold text-indigo-500 uppercase tracking-wider mb-1 flex items-center gap-1.5">
-                        <Sparkles className="w-3 h-3" /> 逻辑复核
+                <div className="mt-3 p-3 rounded-md border border-slate-200 bg-slate-50">
+                    <div className="text-[11px] font-semibold text-slate-600 mb-1 flex items-center gap-1.5">
+                        <Sparkles className="w-3 h-3 text-slate-400" /> 逻辑复核
                     </div>
                     {question.reviewSummary ? (
-                        <p className="text-indigo-900/80 text-[11px] leading-relaxed"><MathText text={question.reviewSummary} /></p>
+                        <p className="text-slate-600 text-[11px] leading-relaxed"><MathText text={question.reviewSummary} /></p>
                     ) : (
-                        <ul className="text-indigo-900/80 text-[11px] leading-relaxed space-y-1">
+                        <ul className="text-slate-600 text-[11px] leading-relaxed space-y-1">
                             {question.reviewCorrections?.map((c, idx) => (
                                 <li key={`${c.pointId}-${idx}`}>[{c.pointId}] {c.reviewReason || 'Logic adjustment applied.'}</li>
                             ))}
@@ -369,7 +375,7 @@ const QuestionDetail: React.FC<{ question: QuestionResult; gradingMode?: string 
 
             {question.feedback && (!isChoice || isAssist) && (
                 <div className="mt-3 pt-3 border-t border-slate-100">
-                    <div className="text-[10px] uppercase font-bold text-slate-400 mb-1">Feedback</div>
+                    <div className="text-[11px] font-semibold text-slate-500 mb-1">Feedback</div>
                     <p className="text-xs text-slate-600 leading-relaxed font-medium">
                         <MathText text={question.feedback} />
                     </p>
@@ -414,7 +420,7 @@ const ResultCard: React.FC<ResultCardProps> = ({ result, rank, onExpand, isExpan
             <div className="min-w-0">
                 <div className="flex items-center gap-3">
                     <h3 className="font-semibold text-slate-900 truncate">{result.studentName}</h3>
-                    <span className="text-[10px] font-semibold tracking-wide text-slate-500 uppercase">{gradeLabel}</span>
+                    <span className="text-[11px] font-medium text-slate-500">{gradeLabel}</span>
                 </div>
                 <div className="mt-1 text-[11px] text-slate-500 flex flex-wrap gap-3">
                     {pageRange && <span>Pages {pageRange}</span>}
@@ -984,8 +990,8 @@ export const ResultsView: React.FC = () => {
 
     if (rubricOpen) {
         return (
-            <div className="h-full min-h-0 flex flex-col bg-slate-50">
-                <div className="bg-white/80 backdrop-blur-md border-b border-slate-200/60 px-6 py-4 flex items-center justify-between shrink-0 z-20">
+            <div className="h-full min-h-0 flex flex-col bg-white">
+                <div className="bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between shrink-0 z-20">
                     <div className="flex items-center gap-4">
                         <SmoothButton
                             onClick={() => {
@@ -1028,7 +1034,7 @@ export const ResultsView: React.FC = () => {
                 </div>
 
                 <div className="flex-1 min-h-0 overflow-hidden flex">
-                    <div className="w-1/2 h-full min-h-0 overflow-y-auto p-6 border-r border-slate-200 custom-scrollbar space-y-6 bg-slate-100/50">
+                    <div className="w-1/2 h-full min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain p-6 border-r border-slate-200 custom-scrollbar space-y-6 bg-white">
                         {rubricImages.length === 0 ? (
                             <div className="flex flex-col items-center justify-center h-full text-slate-400 gap-2">
                                 <FileText className="w-10 h-10 opacity-30" />
@@ -1036,17 +1042,17 @@ export const ResultsView: React.FC = () => {
                             </div>
                         ) : (
                             rubricImages.map((img, idx) => (
-                                <GlassCard key={idx} className="overflow-hidden p-0 bg-white" hoverEffect={false}>
-                                    <div className="px-4 py-2 border-b border-slate-100 bg-white/50 backdrop-blur-sm text-xs font-bold text-slate-500 flex justify-between">
+                                <PlainCard key={idx} className="overflow-hidden p-0 bg-white" hoverEffect={false}>
+                                    <div className="px-4 py-2 border-b border-slate-100 bg-slate-50 text-xs font-semibold text-slate-500 flex justify-between">
                                         <span>Page {idx + 1}</span>
                                     </div>
                                     <img src={img} alt={`Rubric page ${idx + 1}`} className="w-full h-auto" />
-                                </GlassCard>
+                                </PlainCard>
                             ))
                         )}
                     </div>
 
-                    <div className="w-1/2 h-full min-h-0 overflow-y-auto bg-white p-8 custom-scrollbar">
+                    <div className="w-1/2 h-full min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain bg-white p-8 custom-scrollbar">
                         <div className="max-w-2xl mx-auto space-y-6">
                             {(rubricError || rubricMessage) && (
                                 <div className={clsx(
@@ -1105,7 +1111,7 @@ export const ResultsView: React.FC = () => {
                                         const isSelected = rubricSelectedIds.has(q.questionId);
                                         const isExpanded = rubricExpandedIds.has(q.questionId);
                                         return (
-                                            <GlassCard
+                                            <PlainCard
                                                 key={q.questionId}
                                                 className={clsx(
                                                     "p-4 border border-slate-100 !bg-white shadow-sm",
@@ -1225,7 +1231,7 @@ export const ResultsView: React.FC = () => {
                                                         </div>
                                                     </div>
                                                 )}
-                                            </GlassCard>
+                                            </PlainCard>
                                         );
                                     })}
                                 </div>
@@ -1240,8 +1246,8 @@ export const ResultsView: React.FC = () => {
     if (reviewMode) {
         if (!reviewStudent) {
             return (
-                <div className="h-full min-h-0 flex flex-col bg-slate-50">
-                    <div className="bg-white/80 backdrop-blur-md border-b border-slate-200/60 px-6 py-4 flex items-center justify-between shrink-0 z-20">
+                <div className="h-full min-h-0 flex flex-col bg-white">
+                    <div className="bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between shrink-0 z-20">
                         <div className="flex items-center gap-4">
                             <SmoothButton onClick={handleToggleReviewMode} variant="ghost" size="sm" className="!p-2">
                                 <ArrowLeft className="w-5 h-5 text-slate-500" />
@@ -1259,8 +1265,8 @@ export const ResultsView: React.FC = () => {
         const selectedKeyPrefix = `${clampedReviewIndex}:`;
 
         return (
-            <div className="h-full min-h-0 flex flex-col bg-slate-50">
-                <div className="bg-white/80 backdrop-blur-md border-b border-slate-200/60 px-6 py-4 flex items-center justify-between shrink-0 z-20">
+            <div className="h-full min-h-0 flex flex-col bg-white">
+                <div className="bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between shrink-0 z-20">
                     <div className="flex items-center gap-4">
                         <SmoothButton onClick={handleToggleReviewMode} variant="ghost" size="sm" className="!p-2">
                             <ArrowLeft className="w-5 h-5 text-slate-500" />
@@ -1294,8 +1300,8 @@ export const ResultsView: React.FC = () => {
                 </div>
 
                 <div className="flex-1 min-h-0 overflow-hidden flex">
-                    <div className="w-1/2 h-full min-h-0 overflow-y-auto p-6 border-r border-slate-200 custom-scrollbar space-y-6 bg-slate-100/50">
-                        <div className="flex items-center justify-between text-xs font-semibold text-slate-500 uppercase tracking-[0.2em]">
+                    <div className="w-1/2 h-full min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain p-6 border-r border-slate-200 custom-scrollbar space-y-6 bg-white">
+                        <div className="flex items-center justify-between text-xs font-medium text-slate-500">
                             <span>学生作答</span>
                             <span>{reviewStudent.studentName}</span>
                         </div>
@@ -1308,8 +1314,8 @@ export const ResultsView: React.FC = () => {
                             reviewPageIndices.map((pageIdx) => {
                                 const imageUrl = uploadedImages[pageIdx] || currentSession?.images[pageIdx]?.url;
                                 return (
-                                    <GlassCard key={pageIdx} className="overflow-hidden p-0 bg-white" hoverEffect={false}>
-                                        <div className="px-4 py-2 border-b border-slate-100 bg-white/50 backdrop-blur-sm text-xs font-bold text-slate-500 flex justify-between">
+                                    <PlainCard key={pageIdx} className="overflow-hidden p-0 bg-white" hoverEffect={false}>
+                                        <div className="px-4 py-2 border-b border-slate-100 bg-slate-50 text-xs font-semibold text-slate-500 flex justify-between">
                                             <span>Page {pageIdx + 1}</span>
                                         </div>
                                         {imageUrl ? (
@@ -1317,13 +1323,13 @@ export const ResultsView: React.FC = () => {
                                         ) : (
                                             <div className="p-10 text-center text-slate-400">Image missing</div>
                                         )}
-                                    </GlassCard>
+                                    </PlainCard>
                                 );
                             })
                         )}
                     </div>
 
-                    <div className="w-1/2 h-full min-h-0 overflow-y-auto bg-white p-8 custom-scrollbar">
+                    <div className="w-1/2 h-full min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain bg-white p-8 custom-scrollbar">
                         <div className="max-w-2xl mx-auto space-y-6">
                             {(reviewError || reviewMessage) && (
                                 <div className={clsx(
@@ -1380,7 +1386,7 @@ export const ResultsView: React.FC = () => {
                                     const key = `${selectedKeyPrefix}${q.questionId}`;
                                     const isSelected = reviewSelectedKeys.has(key);
                                     return (
-                                        <GlassCard
+                                        <PlainCard
                                             key={q.questionId}
                                             className={clsx(
                                                 "p-4 border border-slate-100 !bg-white shadow-sm",
@@ -1438,7 +1444,7 @@ export const ResultsView: React.FC = () => {
                                                     />
                                                 </div>
                                             </div>
-                                        </GlassCard>
+                                        </PlainCard>
                                     );
                                 })}
                             </div>
@@ -1467,9 +1473,9 @@ export const ResultsView: React.FC = () => {
             .sort((a, b) => a - b);
 
         return (
-            <div className="h-full min-h-0 flex flex-col bg-slate-50">
+            <div className="h-full min-h-0 flex flex-col bg-white">
                 {/* Navigation Header */}
-                <div className="bg-white/80 backdrop-blur-md border-b border-slate-200/60 px-6 py-4 flex items-center justify-between shrink-0 z-20">
+                <div className="bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between shrink-0 z-20">
                     <div className="flex items-center gap-4">
                         <SmoothButton onClick={() => setDetailViewIndex(null)} variant="ghost" size="sm" className="!p-2">
                             <ArrowLeft className="w-5 h-5 text-slate-500" />
@@ -1477,7 +1483,7 @@ export const ResultsView: React.FC = () => {
                         <div>
                             <h2 className="text-xl font-bold text-slate-800 flex items-center gap-3">
                                 {detailViewStudent.studentName}
-                                <span className={clsx("text-xs px-2 py-0.5 rounded font-bold uppercase tracking-wider bg-slate-100 text-slate-500 border border-slate-200")}>
+                                <span className={clsx("text-xs px-2 py-0.5 rounded font-medium bg-slate-100 text-slate-500 border border-slate-200")}>
                                     {isAssist ? 'Assist Mode' : 'Grading'}
                                 </span>
                             </h2>
@@ -1499,7 +1505,7 @@ export const ResultsView: React.FC = () => {
 
                 <div className="flex-1 min-h-0 overflow-hidden flex">
                     {/* Image Panel */}
-                    <div className="w-1/2 h-full min-h-0 overflow-y-auto p-6 border-r border-slate-200 custom-scrollbar space-y-6 bg-slate-100/50">
+                    <div className="w-1/2 h-full min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain p-6 border-r border-slate-200 custom-scrollbar space-y-6 bg-white">
                         {uniquePages.length === 0 && (
                             <div className="flex flex-col items-center justify-center h-full text-slate-400 gap-2">
                                 <FileText className="w-10 h-10 opacity-30" />
@@ -1509,32 +1515,32 @@ export const ResultsView: React.FC = () => {
                         {uniquePages.map(pageIdx => {
                             const imageUrl = uploadedImages[pageIdx] || currentSession?.images[pageIdx]?.url;
                             return (
-                                <GlassCard key={pageIdx} className="overflow-hidden p-0 bg-white" hoverEffect={false}>
-                                    <div className="px-4 py-2 border-b border-slate-100 bg-white/50 backdrop-blur-sm text-xs font-bold text-slate-500 flex justify-between">
+                                <PlainCard key={pageIdx} className="overflow-hidden p-0 bg-white" hoverEffect={false}>
+                                    <div className="px-4 py-2 border-b border-slate-100 bg-slate-50 text-xs font-semibold text-slate-500 flex justify-between">
                                         <span>Page {pageIdx + 1}</span>
                                     </div>
                                     {imageUrl ? <img src={imageUrl} alt={`Page ${pageIdx + 1}`} className="w-full h-auto" /> : <div className="p-10 text-center text-slate-400">Image missing</div>}
-                                </GlassCard>
+                                </PlainCard>
                             )
                         })}
                     </div>
 
                     {/* Details Panel */}
-                    <div className="w-1/2 h-full min-h-0 overflow-y-auto bg-white p-8 custom-scrollbar">
+                    <div className="w-1/2 h-full min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain bg-white p-8 custom-scrollbar">
                         <div className="max-w-2xl mx-auto space-y-8">
                             {/* Score Header */}
-                            <div className="text-center pb-8 border-b border-slate-100">
-                                <div className="text-6xl font-black text-slate-800 tracking-tighter mb-1">
+                            <div className="text-center pb-6 border-b border-slate-100">
+                                <div className="text-4xl font-semibold text-slate-800 tracking-tight mb-1">
                                     {isAssist ? '--' : detailViewStudent.score}
-                                    {!isAssist && <span className="text-2xl text-slate-300 font-bold ml-1">/ {detailViewStudent.maxScore}</span>}
+                                    {!isAssist && <span className="text-lg text-slate-400 font-medium ml-1">/ {detailViewStudent.maxScore}</span>}
                                 </div>
-                                <div className="text-sm font-bold text-slate-400 uppercase tracking-[0.2em]">{isAssist ? 'Assisted Grading' : 'Total Score'}</div>
+                                <div className="text-xs font-medium text-slate-500 tracking-wide">{isAssist ? 'Assisted Grading' : 'Total Score'}</div>
                             </div>
 
                             {detailViewStudent.selfAudit && (
-                                <GlassCard className="p-4 border border-slate-100 bg-slate-50/80" hoverEffect={false}>
+                                <PlainCard className="p-4 border border-slate-200 bg-white" hoverEffect={false}>
                                     <div className="flex items-center justify-between mb-2">
-                                        <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">Confession</div>
+                                        <div className="text-[11px] font-semibold text-slate-500">Review Notes</div>
                                         {detailViewStudent.selfAudit.overallComplianceGrade !== undefined && (
                                             <div className="text-xs font-semibold text-slate-500">
                                                 合规评分 {Math.round(detailViewStudent.selfAudit.overallComplianceGrade)} / 7
@@ -1555,19 +1561,19 @@ export const ResultsView: React.FC = () => {
                                             ))}
                                         </ul>
                                     )}
-                                </GlassCard>
+                                </PlainCard>
                             )}
 
                             {/* Questions */}
                             <div className="space-y-4">
                                 <div className="flex items-center gap-2 mb-2">
-                                    <Layers className="w-4 h-4 text-blue-500" />
-                                    <h3 className="text-sm font-black text-slate-800 uppercase tracking-wider">Analysis Detail</h3>
+                                    <Layers className="w-4 h-4 text-slate-500" />
+                                    <h3 className="text-sm font-semibold text-slate-700">Analysis Detail</h3>
                                 </div>
                                 {detailViewStudent.questionResults?.map((q, idx) => (
-                                    <GlassCard key={idx} className="p-0 overflow-hidden !bg-white border-none shadow-sm ring-1 ring-slate-100" hoverEffect={false}>
+                                    <PlainCard key={idx} className="p-0 overflow-hidden border border-slate-200 shadow-none" hoverEffect={false}>
                                         <QuestionDetail question={q} gradingMode={detailViewStudent.gradingMode} />
-                                    </GlassCard>
+                                    </PlainCard>
                                 ))}
                             </div>
                         </div>
@@ -1588,19 +1594,19 @@ export const ResultsView: React.FC = () => {
     if (results.length === 0) {
         return (
             <div className="flex flex-col items-center justify-center h-full text-slate-400 gap-4">
-                <GlassCard className="p-8 flex flex-col items-center gap-4">
+                <PlainCard className="p-8 flex flex-col items-center gap-4">
                     <RocketOutlined className="text-4xl opacity-50" />
                     <p className="font-medium">暂无批改结果</p>
                     <SmoothButton onClick={() => setCurrentTab('process')} variant="ghost">
                         <ArrowLeft className="w-4 h-4 mr-2" /> 返回批改过程
                     </SmoothButton>
-                </GlassCard>
+                </PlainCard>
             </div>
         );
     }
 
     return (
-        <div className="h-full overflow-y-auto p-6 space-y-8 custom-scrollbar">
+        <div className="h-full overflow-y-auto p-6 space-y-8 custom-scrollbar bg-white">
             {/* Class Report Modal */}
             <AnimatePresence>
                 {showClassReport && (
@@ -1618,7 +1624,7 @@ export const ResultsView: React.FC = () => {
                             className="w-full max-w-2xl"
                             onClick={e => e.stopPropagation()}
                         >
-                            <GlassCard className="p-6 space-y-4 shadow-2xl">
+                            <PlainCard className="p-6 space-y-4">
                                 <div className="flex items-center justify-between pb-4 border-b border-slate-100/60">
                                     <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
                                         <BarChartOutlined className="text-blue-500" /> 班级结果分析
@@ -1632,36 +1638,36 @@ export const ResultsView: React.FC = () => {
                                         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
                                             <div className="bg-slate-50 rounded-xl p-3 text-center border border-slate-100">
                                                 <div className="text-xl font-black text-slate-700">{classReport.averageScore?.toFixed(1)}</div>
-                                                <div className="text-[10px] font-bold text-slate-400 uppercase mt-1">Avg Score</div>
+                                                <div className="text-[10px] font-medium text-slate-400 mt-1">Avg Score</div>
                                             </div>
                                             <div className="bg-slate-50 rounded-xl p-3 text-center border border-slate-100">
                                                 <div className="text-xl font-black text-slate-700">{classReport.averagePercentage?.toFixed(1)}%</div>
-                                                <div className="text-[10px] font-bold text-slate-400 uppercase mt-1">Avg Rate</div>
+                                                <div className="text-[10px] font-medium text-slate-400 mt-1">Avg Rate</div>
                                             </div>
                                             <div className="bg-emerald-50 rounded-xl p-3 text-center border border-emerald-100">
                                                 <div className="text-xl font-black text-emerald-600">{((classReport.passRate ?? 0) * 100).toFixed(1)}%</div>
-                                                <div className="text-[10px] font-bold text-emerald-500 uppercase mt-1">Pass Rate</div>
+                                                <div className="text-[10px] font-medium text-emerald-500 mt-1">Pass Rate</div>
                                             </div>
                                             <div className="bg-blue-50 rounded-xl p-3 text-center border border-blue-100">
                                                 <div className="text-xl font-black text-blue-600">{classReport.totalStudents}</div>
-                                                <div className="text-[10px] font-bold text-blue-500 uppercase mt-1">Students</div>
+                                                <div className="text-[10px] font-medium text-blue-500 mt-1">Students</div>
                                             </div>
                                         </div>
-                                        <p className="text-sm text-slate-600 leading-relaxed bg-white/50 p-4 rounded-xl border border-slate-100">
+                                        <p className="text-sm text-slate-600 leading-relaxed bg-white p-4 rounded-xl border border-slate-100">
                                             {classReport.summary}
                                         </p>
                                     </div>
                                 ) : (
                                     <div className="text-center py-10 text-slate-400">暂无分析数据</div>
                                 )}
-                            </GlassCard>
+                            </PlainCard>
                         </motion.div>
                     </motion.div>
                 )}
             </AnimatePresence>
 
             {/* Dashboard Header */}
-            <div className="border border-slate-200/80 bg-white/90">
+            <div className="border border-slate-200 bg-white">
                 <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 px-6 py-5 border-b border-slate-200/70">
                     <div className="flex items-center gap-3">
                         <div className="h-10 w-10 grid place-items-center rounded-lg bg-slate-900 text-white">
@@ -1669,7 +1675,7 @@ export const ResultsView: React.FC = () => {
                         </div>
                         <div>
                             <h2 className="text-xl font-bold text-slate-900 tracking-tight">批改总览</h2>
-                            <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-[0.2em]">Grading Overview</p>
+                            <p className="text-[11px] font-medium text-slate-500">Grading Overview</p>
                         </div>
                     </div>
 
@@ -1689,10 +1695,10 @@ export const ResultsView: React.FC = () => {
                     </div>
                 </div>
 
-                <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 divide-x divide-slate-200/70">
+                    <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 divide-x divide-slate-200/70">
                     {metrics.map((metric) => (
                         <div key={metric.label} className="px-4 py-4">
-                            <div className="flex items-center justify-between text-[11px] font-semibold text-slate-500 uppercase tracking-[0.2em]">
+                            <div className="flex items-center justify-between text-[11px] font-medium text-slate-500">
                                 {metric.label}
                                 <metric.icon className="text-base text-slate-400" />
                             </div>

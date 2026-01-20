@@ -1,5 +1,13 @@
 @import "tailwindcss";
 @import "katex/dist/katex.min.css";
+@import "@fontsource/fira-sans/300.css";
+@import "@fontsource/fira-sans/400.css";
+@import "@fontsource/fira-sans/500.css";
+@import "@fontsource/fira-sans/600.css";
+@import "@fontsource/fira-sans/700.css";
+@import "@fontsource/fira-code/400.css";
+@import "@fontsource/fira-code/500.css";
+@import "@fontsource/fira-code/600.css";
 
 :root {
   --foreground-rgb: 11, 15, 23;
@@ -17,14 +25,26 @@
   --color-neon: #3B82F6;
   --color-cyan: #22D3EE;
   --color-line: #E5E7EB;
+  --font-body: "Fira Sans", sans-serif;
+  --font-mono: "Fira Code", monospace;
+  --font-display: "Fira Sans", sans-serif;
+  --font-space: "Fira Sans", sans-serif;
 }
 
 body {
   color: rgb(var(--foreground-rgb));
   background: rgb(var(--background-start-rgb));
-  font-family: 'Inter', sans-serif;
+  font-family: var(--font-body);
   overflow-x: hidden;
   /* Prevent horizontal scroll */
+}
+
+.font-sans {
+  font-family: var(--font-body);
+}
+
+.font-mono {
+  font-family: var(--font-mono);
 }
 
 .math-block {

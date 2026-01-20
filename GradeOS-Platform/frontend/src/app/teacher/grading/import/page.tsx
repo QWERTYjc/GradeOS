@@ -118,7 +118,7 @@ export default function GradingImportPage() {
       return;
     }
     if (!batchId.trim()) {
-      setError('请填写批次 ID');
+      setError('请填写提交 ID');
       return;
     }
     setLoadingResults(true);
@@ -154,7 +154,7 @@ export default function GradingImportPage() {
       return;
     }
     if (!batchId.trim()) {
-      setError('请填写批次 ID');
+      setError('请填写提交 ID');
       return;
     }
     if (resultEntries.length === 0) {
@@ -268,10 +268,10 @@ export default function GradingImportPage() {
 
             <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
               <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Step 02</p>
-              <h2 className="mt-2 text-lg font-semibold text-slate-800">输入批次并加载结果</h2>
+              <h2 className="mt-2 text-lg font-semibold text-slate-800">输入提交 ID 并加载结果</h2>
               <div className="mt-4 grid gap-3 lg:grid-cols-[1.4fr_1fr]">
                 <div>
-                  <label className="text-xs font-semibold text-slate-500">批次 ID</label>
+                  <label className="text-xs font-semibold text-slate-500">提交 ID</label>
                   <input
                     value={batchId}
                     onChange={(e) => setBatchId(e.target.value)}

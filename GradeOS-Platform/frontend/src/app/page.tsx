@@ -8,13 +8,9 @@ import WorkflowGraph from '@/components/landing/WorkflowGraph';
 import DemoDock from '@/components/landing/DemoDock';
 import { CheckCircle, Zap, Shield, BarChart, Users, BookOpen } from 'lucide-react';
 import Link from 'next/link';
-import { Space_Grotesk, Unbounded } from 'next/font/google';
 import clsx from 'clsx';
 import { useAuthStore } from '@/store/authStore';
 import { Role } from '@/types';
-
-const spaceGrotesk = Space_Grotesk({ subsets: ['latin'], variable: '--font-space' });
-const unbounded = Unbounded({ subsets: ['latin'], variable: '--font-display' });
 
 const features = [
   {
@@ -56,9 +52,7 @@ export default function LandingPage() {
   return (
     <main
       className={clsx(
-        'landing-shell relative text-ink min-h-screen selection:bg-azure selection:text-white overflow-x-hidden',
-        spaceGrotesk.variable,
-        unbounded.variable
+        'landing-shell relative text-ink min-h-screen selection:bg-azure selection:text-white overflow-x-hidden'
       )}
     >
       <ParticleField />

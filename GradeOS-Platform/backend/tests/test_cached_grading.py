@@ -4,7 +4,13 @@
 """
 
 import asyncio
+import os
 from pathlib import Path
+
+DATA_DIR = Path(__file__).resolve().parents[2] / "docs" / "research"
+RUBRIC_PDF = DATA_DIR / "\u6279\u6539\u6807\u51c6.pdf"
+ANSWER_PDF = DATA_DIR / "\u5b66\u751f\u4f5c\u7b54.pdf"
+
 from typing import List
 
 import fitz
@@ -14,10 +20,9 @@ from io import BytesIO
 from src.services.rubric_parser import RubricParserService
 from src.services.student_identification import StudentIdentificationService
 from src.services.cached_grading import CachedGradingService
-from src.services.strict_grading import StrictGradingService
 
 
-API_KEY = "AIzaSyD5D9_uYqcRgyivexpVq5iPvqL6uKD85QE"
+API_KEY = os.getenv("LLM_API_KEY") or os.getenv("OPENROUTER_API_KEY", "")
 TOTAL_SCORE = 105
 TOTAL_QUESTIONS = 19
 
@@ -46,9 +51,8 @@ async def test_cached_grading():
     print("\n" + "=" * 70)
     print("缓存批改测试 - 对比 Token 消耗")
     print("=" * 70)
-    
-    rubric_path = Path("批改标准.pdf")
-    answer_path = Path("学生作答.pdf")
+    rubric_path = RUBRIC_PDF
+    answer_path = ANSWER_PDF
     
     if not rubric_path.exists() or not answer_path.exists():
         print("❌ 缺少必要文件")

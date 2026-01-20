@@ -1578,8 +1578,6 @@ Do not invent new problems; only enrich the provided ones."""
 
 # ============ Statistics ============
 
-# ============ Statistics ============
-
 @router.get("/teacher/statistics/class/{class_id}", tags=["Statistics"])
 async def get_class_statistics(class_id: str, homework_id: Optional[str] = None):
     """Get class statistics based on real submissions."""
@@ -1600,6 +1598,27 @@ async def get_class_statistics(class_id: str, homework_id: Optional[str] = None)
     submitted_count = len(rows)
     scores = [row["score"] for row in rows if row["score"] is not None]
     graded_count = len(scores)
+
+    if not scores:
+        histories = list_sqlite_grading_history(class_id=class_id, limit=200)
+        history_ids = []
+        for history in histories:
+            result_meta = history.result_data or {}
+            assignment_id_value = result_meta.get("homework_id") or result_meta.get("assignment_id")
+            if homework_id and assignment_id_value != homework_id:
+                continue
+            history_ids.append(history.id)
+
+        fallback_scores = []
+        for history_id in history_ids:
+            for item in get_sqlite_student_results(history_id):
+                if item.score is not None:
+                    fallback_scores.append(item.score)
+
+        if fallback_scores:
+            scores = fallback_scores
+            graded_count = len(scores)
+            submitted_count = max(submitted_count, len(scores))
 
     if scores:
         average_score = round(sum(scores) / len(scores), 2)

@@ -1,16 +1,21 @@
 """批量学生识别实测脚本 - 基于题目顺序循环检测"""
 
 import asyncio
+import os
 from pathlib import Path
 
+DATA_DIR = Path(__file__).resolve().parents[2] / "docs" / "research"
+ANSWER_PDF = DATA_DIR / "\u5b66\u751f\u4f5c\u7b54.pdf"
+
+
+from src.config.models import get_lite_model
 from src.services.student_identification import StudentIdentificationService
 
 
 async def main():
     """主测试函数"""
-    
-    api_key = "AIzaSyD5D9_uYqcRgyivexpVq5iPvqL6uKD85QE"
-    student_answer_path = Path("学生作答.pdf")
+    api_key = os.getenv("LLM_API_KEY") or os.getenv("OPENROUTER_API_KEY", "")
+    student_answer_path = ANSWER_PDF
     
     if not student_answer_path.exists():
         print(f"❌ 文件不存在: {student_answer_path}")
@@ -51,7 +56,7 @@ async def main():
     print("\n🔍 步骤 2: 初始化服务...")
     service = StudentIdentificationService(
         api_key=api_key,
-        model_name="gemini-3.0-flash"
+        model_name=get_lite_model(),
     )
     
     # 执行批量识别

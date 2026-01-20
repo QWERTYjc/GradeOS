@@ -10,6 +10,8 @@
   },
   "dependencies": {
     "@ant-design/icons": "^5.3.6",
+    "@fontsource/fira-code": "^5.2.6",
+    "@fontsource/fira-sans": "^5.2.6",
     "@react-three/drei": "^10.7.7",
     "@react-three/fiber": "^9.4.2",
     "@types/three": "^0.182.0",

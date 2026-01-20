@@ -8,6 +8,7 @@
 """
 
 import os
+import uuid
 import json
 import sqlite3
 import logging
@@ -959,6 +960,78 @@ def update_homework_submission_status(
                 WHERE class_id = ? AND homework_id = ? AND student_id = ?
             """, (status, class_id, homework_id, student_id))
 
+
+# ==================== 作业批改更新 ====================
+
+
+def upsert_homework_submission_grade(
+    class_id: str,
+    homework_id: str,
+    student_id: str,
+    student_name: Optional[str],
+    score: Optional[float],
+    feedback: Optional[str],
+    grading_batch_id: Optional[str] = None,
+) -> None:
+    """Upsert homework submission score and feedback."""
+    if not class_id or not homework_id or not student_id:
+        return
+
+    now = datetime.now().isoformat()
+    with get_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT id, student_name
+            FROM homework_submissions
+            WHERE class_id = ? AND homework_id = ? AND student_id = ?
+            """,
+            (class_id, homework_id, student_id),
+        ).fetchone()
+
+        if row:
+            existing_name = row["student_name"]
+            conn.execute(
+                """
+                UPDATE homework_submissions
+                SET score = ?, feedback = ?, status = ?, grading_batch_id = ?, student_name = ?
+                WHERE id = ?
+                """,
+                (
+                    score,
+                    feedback,
+                    "graded",
+                    grading_batch_id,
+                    student_name or existing_name,
+                    row["id"],
+                ),
+            )
+            return
+
+        submission_id = str(uuid.uuid4())[:8]
+        conn.execute(
+            """
+            INSERT INTO homework_submissions
+            (id, class_id, homework_id, student_id, student_name,
+             images, content, submission_type, page_count, submitted_at, status, grading_batch_id, score, feedback)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                submission_id,
+                class_id,
+                homework_id,
+                student_id,
+                student_name,
+                None,
+                None,
+                "scan",
+                0,
+                now,
+                "graded",
+                grading_batch_id,
+                score,
+                feedback,
+            ),
+        )
 
 # 初始化数据库
 try:

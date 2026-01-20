@@ -46,7 +46,7 @@ type ParsedRubricDraft = {
 const workflowSteps = [
   { id: "rubric_parse", label: "Rubric Parse" },
   { id: "rubric_review", label: "Rubric Review" },
-  { id: "grade_batch", label: "Batch Grading" },
+  { id: "grade_batch", label: "Student Grading" },
   { id: "logic_review", label: "Logic Review" },
   { id: "review", label: "Results Review" },
   { id: "export", label: "Export" },
@@ -778,7 +778,7 @@ export default function RubricReviewPage({ params }: { params: Promise<{ batchId
           <div>
             <h1 className="text-xl font-bold text-slate-900">批改标准解析确认</h1>
             <div className="flex items-center gap-2 text-xs text-slate-500">
-              <span className="font-mono">Batch: {batchId}</span>
+              <span className="font-mono">Run: {batchId}</span>
               <span>·</span>
               <span>{status || "running"}</span>
             </div>

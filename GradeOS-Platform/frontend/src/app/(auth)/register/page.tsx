@@ -3,21 +3,10 @@
 import React, { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Fira_Code, Fira_Sans } from 'next/font/google';
 import { UserPlus, GraduationCap, Building2, ArrowRight } from 'lucide-react';
 import { authApi } from '@/services/api';
 import { useAuthStore } from '@/store/authStore';
 import { Role, User } from '@/types';
-
-const firaSans = Fira_Sans({
-  subsets: ['latin'],
-  weight: ['300', '400', '500', '600', '700'],
-});
-
-const firaCode = Fira_Code({
-  subsets: ['latin'],
-  weight: ['400', '500', '600'],
-});
 
 export default function RegisterPage() {
   const [username, setUsername] = useState('');
@@ -60,7 +49,7 @@ export default function RegisterPage() {
   };
 
   return (
-    <div className={`${firaSans.className} min-h-screen bg-slate-950 text-white relative overflow-hidden`}>
+    <div className="min-h-screen bg-slate-950 text-white relative overflow-hidden">
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(34,197,94,0.2),_transparent_55%)]" />
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_bottom,_rgba(14,165,233,0.25),_transparent_55%)]" />
       <div className="absolute inset-0 bg-[linear-gradient(130deg,_rgba(15,23,42,0.95),_rgba(15,23,42,0.72),_rgba(15,23,42,0.95))]" />
@@ -97,7 +86,7 @@ export default function RegisterPage() {
                     </div>
                     <div className="mt-1 text-xs text-slate-400">Manage classes and grading pipelines</div>
                   </div>
-                  <div className={`${firaCode.className} text-xs`}>T</div>
+                  <div className="font-mono text-xs">T</div>
                 </button>
                 <button
                   type="button"
@@ -115,7 +104,7 @@ export default function RegisterPage() {
                     </div>
                     <div className="mt-1 text-xs text-slate-400">Track mistakes and request help</div>
                   </div>
-                  <div className={`${firaCode.className} text-xs`}>S</div>
+                  <div className="font-mono text-xs">S</div>
                 </button>
               </div>
             </div>

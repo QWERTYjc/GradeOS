@@ -32,7 +32,8 @@ from src.db.sqlite import (
     save_student_result, 
     GradingHistory, 
     StudentGradingResult,
-    update_homework_submission_status
+    upsert_homework_submission_grade,
+    list_class_students,
 )
 
 
@@ -812,77 +813,119 @@ async def stream_langgraph_progress(
                 if not class_report and final_state.get("export_data"):
                     class_report = final_state.get("export_data", {}).get("class_report")
                 
-                # 🚀 班级批改模式：保存成绩到数据库
-                if class_id and homework_id:
-                    try:
-                        logger.info(f"保存班级批改结果: class_id={class_id}, homework_id={homework_id}")
-                        
-                        # 1. 保存批改历史
-                        history_id = str(uuid.uuid4())
-                        now = datetime.now().isoformat()
-                        history = GradingHistory(
-                            id=history_id,
-                            batch_id=batch_id,
-                            status="completed",
-                            class_ids=[class_id],
-                            created_at=now,
-                            completed_at=now,
-                            total_students=len(formatted_results),
-                            average_score=class_report.get("average_score") if class_report else None,
-                            result_data={
-                                "summary": class_report,
-                                "class_id": class_id,
-                                "homework_id": homework_id,
-                            } if class_report or class_id or homework_id else None,
+                # 保存批改历史与学生结果（支持班级/非班级模式）
+                try:
+                    logger.info(
+                        f"保存批改结果: batch_id={batch_id}, class_id={class_id}, homework_id={homework_id}"
+                    )
+
+                    now = datetime.now().isoformat()
+                    scores = [
+                        s.get("score") for s in formatted_results
+                        if isinstance(s.get("score"), (int, float))
+                    ]
+                    average_score = None
+                    if isinstance(class_report, dict):
+                        average_score = class_report.get("average_score")
+                    if average_score is None and scores:
+                        average_score = round(sum(scores) / len(scores), 2)
+
+                    history_id = str(uuid.uuid4())
+                    history = GradingHistory(
+                        id=history_id,
+                        batch_id=batch_id,
+                        status="completed",
+                        class_ids=[class_id] if class_id else None,
+                        created_at=now,
+                        completed_at=now,
+                        total_students=len(formatted_results),
+                        average_score=average_score,
+                        result_data={
+                            "summary": class_report,
+                            "class_id": class_id,
+                            "homework_id": homework_id,
+                        } if class_report or class_id or homework_id else None,
+                    )
+                    save_grading_history(history)
+
+                    student_map_by_index = {}
+                    student_map_by_name = {}
+                    if student_mapping:
+                        for idx, mapping in enumerate(student_mapping):
+                            student_map_by_index[idx] = mapping
+                            name_key = (mapping.get("studentName") or "").strip().lower()
+                            if name_key:
+                                student_map_by_name[name_key] = mapping
+
+                    roster = list_class_students(class_id) if class_id else []
+                    roster_by_name = {
+                        (student.name or student.username or "").strip().lower(): student
+                        for student in roster
+                        if (student.name or student.username)
+                    }
+
+                    for idx, result in enumerate(formatted_results):
+                        student_name = (
+                            result.get("studentName")
+                            or result.get("student_name")
+                            or f"Student {idx + 1}"
                         )
-                        save_grading_history(history)
-                        
-                        # 2. 映射学生并保存结果
-                        # student_mapping: [{studentId, studentName, startIndex, endIndex}]
-                        # formatted_results: [{studentId, studentName, score, ...}] (studentId is generic 'student_1')
-                        
-                        student_map_lookup = {} # index -> student_info
-                        if student_mapping:
-                            for idx, mapping in enumerate(student_mapping):
-                                student_map_lookup[idx] = mapping
-                                
-                        for idx, result in enumerate(formatted_results):
-                            # 尝试匹配真实学生
-                            real_student = student_map_lookup.get(idx)
-                            student_id = real_student["studentId"] if real_student else None
-                            student_name = real_student["studentName"] if real_student else result.get("studentName")
-                            
-                            # 保存学生结果
-                            student_summary = result.get("studentSummary") or result.get("student_summary") or {}
-                            self_audit = result.get("selfAudit") or result.get("self_audit") or {}
-                            student_result = StudentGradingResult(
-                                id=str(uuid.uuid4()),
-                                grading_history_id=history_id,
-                                student_key=student_name or result.get("studentName") or f"Student {idx + 1}",
-                                score=result.get("score"),
-                                max_score=result.get("maxScore") or result.get("max_score"),
+                        student_id = result.get("studentId") or result.get("student_id")
+
+                        if not student_id and student_map_by_index.get(idx):
+                            mapping = student_map_by_index[idx]
+                            student_id = mapping.get("studentId")
+                            student_name = mapping.get("studentName") or student_name
+                        if not student_id and student_name:
+                            mapping = student_map_by_name.get(student_name.strip().lower())
+                            if mapping:
+                                student_id = mapping.get("studentId")
+                                student_name = mapping.get("studentName") or student_name
+                        if not student_id and student_name:
+                            roster_hit = roster_by_name.get(student_name.strip().lower())
+                            if roster_hit:
+                                student_id = roster_hit.id
+                                student_name = roster_hit.name or roster_hit.username or student_name
+                        if not student_id and class_id and idx < len(roster):
+                            roster_hit = roster[idx]
+                            student_id = roster_hit.id
+                            student_name = roster_hit.name or roster_hit.username or student_name
+                        if not student_id and class_id:
+                            student_id = f"auto-{idx + 1}"
+
+                        student_summary = result.get("studentSummary") or result.get("student_summary") or {}
+                        self_audit = result.get("selfAudit") or result.get("self_audit") or {}
+                        student_result = StudentGradingResult(
+                            id=str(uuid.uuid4()),
+                            grading_history_id=history_id,
+                            student_key=student_name,
+                            score=result.get("score"),
+                            max_score=result.get("maxScore") or result.get("max_score"),
+                            class_id=class_id,
+                            student_id=student_id if class_id else None,
+                            summary=student_summary.get("overall") if isinstance(student_summary, dict) else None,
+                            self_report=self_audit.get("summary") if isinstance(self_audit, dict) else None,
+                            result_data=result,
+                        )
+                        save_student_result(student_result)
+
+                        if class_id and homework_id and student_id:
+                            feedback = None
+                            if isinstance(student_summary, dict):
+                                feedback = student_summary.get("overall")
+                            upsert_homework_submission_grade(
                                 class_id=class_id,
+                                homework_id=homework_id,
                                 student_id=student_id,
-                                summary=student_summary.get("overall") if isinstance(student_summary, dict) else None,
-                                self_report=self_audit.get("summary") if isinstance(self_audit, dict) else None,
-                                result_data=result,
+                                student_name=student_name,
+                                score=result.get("score"),
+                                feedback=feedback,
+                                grading_batch_id=batch_id,
                             )
-                            save_student_result(student_result)
-                            
-                            # 更新作业提交状态
-                            if student_id:
-                                update_homework_submission_status(
-                                    class_id=class_id,
-                                    homework_id=homework_id,
-                                    student_id=student_id,
-                                    status="graded",
-                                    grading_batch_id=batch_id
-                                )
-                                
-                        logger.info(f"班级批改结果已保存: history_id={history_id}")
-                        
-                    except Exception as e:
-                        logger.error(f"保存班级批改结果失败: {e}", exc_info=True)
+
+                    logger.info(f"批改结果已保存: history_id={history_id}")
+                except Exception as e:
+                    logger.error(f"保存批改结果失败: {e}", exc_info=True)
 
                 # #region agent log - 假设E: WebSocket 消息发送
                 _write_debug_log({

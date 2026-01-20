@@ -442,7 +442,7 @@ const normalizeImageSource = (value: string) => {
 const initialNodes: WorkflowNode[] = [
     { id: 'rubric_parse', label: 'Rubric Parse', status: 'pending', isParallelContainer: true, children: [] },
     { id: 'rubric_review', label: 'Rubric Review', status: 'pending' },
-    { id: 'grade_batch', label: 'Batch Grading', status: 'pending', isParallelContainer: true, children: [] },
+    { id: 'grade_batch', label: 'Student Grading', status: 'pending', isParallelContainer: true, children: [] },
     { id: 'logic_review', label: 'Logic Review', status: 'pending', isParallelContainer: true, children: [] },
     { id: 'review', label: 'Results Review', status: 'pending' },
     { id: 'export', label: 'Export', status: 'pending' },
@@ -710,13 +710,13 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
         const inferredLabel = isWorker && parsedIndex !== null
             ? `Worker ${parsedIndex + 1}`
             : isBatch && parsedIndex !== null
-                ? `Batch ${parsedIndex + 1}`
+                ? `Student ${parsedIndex + 1}`
                 : isReview && parsedIndex !== null
                     ? `Review ${parsedIndex + 1}`
                     : isRubricReview && parsedIndex !== null
                         ? `Rubric Review ${parsedIndex + 1}`
                         : isRubricBatch && parsedIndex !== null
-                            ? `Batch ${parsedIndex + 1}`
+                            ? `Rubric Page ${parsedIndex + 1}`
                             : agentId;
 
         return {
@@ -1068,7 +1068,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
                     successCount: 0,
                     failureCount: 0,
                 });
-                get().addLog(`Starting batch ${batchIndex + 1}/${totalBatches}`, 'INFO');
+                get().addLog(`Starting run ${batchIndex + 1}/${totalBatches}`, 'INFO');
             }
         });
 
@@ -1151,7 +1151,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
                 nodeId === 'rubric_parse' ? 'Rubric Parse' :
                     nodeId === 'rubric_review' ? 'Rubric Review' :
                         nodeId === 'logic_review' ? 'Logic Review' :
-                            nodeId === 'grade_batch' ? `Grading Page ${pageIndex !== undefined ? pageIndex + 1 : ''}` :
+                            nodeId === 'grade_batch' ? `Student Page ${pageIndex !== undefined ? pageIndex + 1 : ''}` :
                                 nodeId || 'Node'
             );
             get().appendLLMThought(nodeId, displayNodeName, contentStr, pageIndex, streamType, agentId, agentLabel);
@@ -1211,9 +1211,9 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
                 });
             }
             if (typeof batchIndex === 'number') {
-                get().addLog(`Batch ${batchIndex + 1} completed: success ${successCount}, failed ${failureCount}, total ${totalScore || 0}`, 'INFO');
+                get().addLog(`Run ${batchIndex + 1} completed: success ${successCount}, failed ${failureCount}, total ${totalScore || 0}`, 'INFO');
             } else {
-                get().addLog(`Batch completed: success ${successCount ?? 0}, failed ${failureCount ?? 0}, total ${totalScore || 0}`, 'INFO');
+                get().addLog(`Run completed: success ${successCount ?? 0}, failed ${failureCount ?? 0}, total ${totalScore || 0}`, 'INFO');
             }
         });
 
@@ -1485,7 +1485,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
         wsClient.on('batch_completed', (data) => {
             console.log('Batch Completed:', data);
             const { batchSize, successCount, totalScore, pages } = data;
-            get().addLog(`Batch completed: ${successCount}/${batchSize} pages succeeded, total ${totalScore}`, 'INFO');
+            get().addLog(`Run completed: ${successCount}/${batchSize} pages succeeded, total ${totalScore}`, 'INFO');
         });
 
         // 处理审核完成事件

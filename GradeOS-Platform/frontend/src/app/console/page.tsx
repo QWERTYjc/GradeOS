@@ -6,7 +6,6 @@ import { useConsoleStore } from '@/store/consoleStore';
 import { useAuthStore } from '@/store/authStore';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Space_Grotesk, Unbounded } from 'next/font/google';
 import {
     Images,
     ScanLine,
@@ -24,9 +23,6 @@ const WorkflowGraph = dynamic(() => import('@/components/console/WorkflowGraph')
 const ResultsView = dynamic(() => import('@/components/console/ResultsView'), { ssr: false });
 const LLMThoughtsPanel = dynamic(() => import('@/components/console/LLMThoughtsPanel'), { ssr: false });
 const ReviewOverlay = dynamic(() => import('@/components/console/ReviewOverlay'), { ssr: false });
-
-const spaceGrotesk = Space_Grotesk({ subsets: ['latin'], variable: '--font-space' });
-const unbounded = Unbounded({ subsets: ['latin'], variable: '--font-display' });
 
 // --- Components ---
 
@@ -508,8 +504,6 @@ export default function ConsolePage() {
     return (
         <AppContext.Provider value={contextValue}>
             <div className={clsx(
-                spaceGrotesk.variable,
-                unbounded.variable,
                 "min-h-screen w-full relative overflow-auto console-shell"
             )}>
                 <div className="pointer-events-none absolute inset-0 console-aurora" />
