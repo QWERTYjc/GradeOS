@@ -28,8 +28,11 @@ RUN mkdir -p /app/uploads
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 
-# 暴露端口
+# 暴露端口 (Railway 会自动设置 PORT 环境变量)
 EXPOSE 8001
 
-# 启动命令
-CMD ["uvicorn", "src.api.main:app", "--host", "0.0.0.0", "--port", "8001"]
+# 设置默认端口
+ENV PORT=8001
+
+# 启动命令 - 使用 shell 形式以支持环境变量替换
+CMD uvicorn src.api.main:app --host 0.0.0.0 --port $PORT
