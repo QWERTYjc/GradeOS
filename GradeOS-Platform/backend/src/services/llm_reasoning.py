@@ -13,6 +13,7 @@ Requirements: 1.1, 1.2, 1.3, 9.1
 import base64
 import json
 import logging
+import os
 import re
 from typing import Dict, Any, List, Optional, TYPE_CHECKING, AsyncIterator, Callable, Awaitable, Literal
 
@@ -52,8 +53,8 @@ class LLMReasoningClient:
     """
     
     # 类常量：避免魔法数字
-    MAX_QUESTIONS_IN_PROMPT = 20  # 提示词中最多显示的题目数
-    MAX_CRITERIA_PER_QUESTION = 10  # 每道题最多显示的评分要点数
+    MAX_QUESTIONS_IN_PROMPT = 0  # 提示词中最多显示的题目数
+    MAX_CRITERIA_PER_QUESTION = 0  # 每道题最多显示的评分要点数
     
     def __init__(
         self,
@@ -71,18 +72,52 @@ class LLMReasoningClient:
         """
         if model_name is None:
             model_name = get_default_model()
+        self._max_output_tokens = self._read_int_env("GRADING_MAX_OUTPUT_TOKENS", 16000)
+        if self._max_output_tokens <= 0:
+            self._max_output_tokens = 16000
+        self._max_prompt_questions = self._read_int_env(
+            "GRADING_PROMPT_MAX_QUESTIONS",
+            self.MAX_QUESTIONS_IN_PROMPT,
+        )
+        self._max_prompt_criteria = self._read_int_env(
+            "GRADING_PROMPT_MAX_CRITERIA",
+            self.MAX_CRITERIA_PER_QUESTION,
+        )
         self.llm = get_chat_model(
             api_key=api_key,
             model_name=model_name,
             temperature=0.2,
             purpose="vision",
             enable_thinking=True,
+            max_output_tokens=self._max_output_tokens,
         )
         self.model_name = model_name
         self.temperature = 0.2  # 低温度以保持一致性
         
         # 集成 RubricRegistry (Requirement 1.1)（已移除 Agent Skill）
         self._rubric_registry = rubric_registry
+
+    @staticmethod
+    def _read_int_env(key: str, default: int) -> int:
+        raw = os.getenv(key)
+        if raw is None:
+            return default
+        try:
+            return int(raw)
+        except ValueError:
+            return default
+
+    def _limit_questions_for_prompt(self, questions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        max_questions = self._max_prompt_questions
+        if max_questions <= 0:
+            return questions
+        return questions[:max_questions]
+
+    def _limit_criteria_for_prompt(self, criteria: List[Any]) -> List[Any]:
+        max_criteria = self._max_prompt_criteria
+        if max_criteria <= 0:
+            return criteria
+        return criteria[:max_criteria]
     
     @property
     def rubric_registry(self) -> Optional["RubricRegistry"]:
@@ -809,7 +844,7 @@ class LLMReasoningClient:
         elif parsed_rubric and parsed_rubric.get("questions"):
             # 从题目信息构建评分标准
             questions_info = []
-            for q in parsed_rubric.get("questions", [])[:self.MAX_QUESTIONS_IN_PROMPT]:
+            for q in self._limit_questions_for_prompt(parsed_rubric.get("questions", [])):
                 q_info = f"第{q.get('question_id', '?')}题 (满分{q.get('max_score', 0)}分):"
                 
                 # 添加评分要点
@@ -817,13 +852,13 @@ class LLMReasoningClient:
                 scoring_points = q.get("scoring_points", [])
                 
                 if scoring_points:
-                    for idx, sp in enumerate(scoring_points[:self.MAX_CRITERIA_PER_QUESTION], 1):
+                    for idx, sp in enumerate(self._limit_criteria_for_prompt(scoring_points), 1):
                         point_id = sp.get("point_id") or sp.get("pointId") or f"{q.get('question_id', '?')}.{idx}"
                         q_info += (
                             f"\n  - [{point_id}] [{sp.get('score', 0)}分] {sp.get('description', '')}"
                         )
                 elif criteria:
-                    for criterion in criteria[:self.MAX_CRITERIA_PER_QUESTION]:
+                    for criterion in self._limit_criteria_for_prompt(criteria):
                         q_info += f"\n  - {criterion}"
                 
                 # 添加标准答案摘要
@@ -1242,7 +1277,7 @@ class LLMReasoningClient:
 
         questions = parsed_rubric.get("questions", [])
         lines = []
-        for q in questions[:self.MAX_QUESTIONS_IN_PROMPT]:
+        for q in self._limit_questions_for_prompt(questions):
             qid = self._normalize_question_id(q.get("question_id") or q.get("id"))
             if not qid:
                 continue
@@ -1256,7 +1291,7 @@ class LLMReasoningClient:
                 lines.append(f"- 题号 {qid}")
 
         if not lines and questions:
-            for q in questions[:self.MAX_QUESTIONS_IN_PROMPT]:
+            for q in self._limit_questions_for_prompt(questions):
                 qid = self._normalize_question_id(q.get("question_id") or q.get("id"))
                 if qid:
                     lines.append(f"- 题号 {qid}")
@@ -1371,7 +1406,7 @@ class LLMReasoningClient:
             })
 
         if not selected:
-            for q in questions[:self.MAX_QUESTIONS_IN_PROMPT]:
+            for q in self._limit_questions_for_prompt(questions):
                 qid = self._normalize_question_id(q.get("question_id") or q.get("id"))
                 if not qid:
                     continue
@@ -1530,7 +1565,7 @@ class LLMReasoningClient:
                 answer_ids.append(normalized)
 
         if not answer_ids and parsed_rubric and parsed_rubric.get("questions"):
-            for q in parsed_rubric.get("questions", [])[:self.MAX_QUESTIONS_IN_PROMPT]:
+            for q in self._limit_questions_for_prompt(parsed_rubric.get("questions", [])):
                 qid = self._normalize_question_id(q.get("question_id") or q.get("id"))
                 if qid and qid not in answer_ids:
                     answer_ids.append(qid)
@@ -1643,7 +1678,7 @@ Mode: {mode_label}
                 answer_ids.append(normalized)
 
         if not answer_ids and parsed_rubric and parsed_rubric.get("questions"):
-            for q in parsed_rubric.get("questions", [])[:self.MAX_QUESTIONS_IN_PROMPT]:
+            for q in self._limit_questions_for_prompt(parsed_rubric.get("questions", [])):
                 qid = self._normalize_question_id(q.get("question_id") or q.get("id"))
                 if qid and qid not in answer_ids:
                     answer_ids.append(qid)
@@ -1868,9 +1903,12 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
               "question_id": "1",
               "score": 0,
               "max_score": 0,
+              "confidence": 0.0,
               "student_answer": "",
               "is_correct": false,
               "feedback": "",
+              "self_critique": "",
+              "self_critique_confidence": 0.0,
               "source_pages": [0],
               "scoring_point_results": [
         {{
@@ -1894,6 +1932,7 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
         - Return valid JSON only (no markdown).
         - total_score must equal the sum of question scores.
         - max_score must equal the sum of question max_score.
+        - Include every rubric question in question_details; if unanswered, score 0 and explain in self_critique.
         - If a value is unknown, use an empty string or 0."""
         prompt = prompt_template.format(
             rubric_info=rubric_info,
@@ -1961,6 +2000,14 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
             result.setdefault("total_score", 0)
             result.setdefault("max_score", 0)
             result.setdefault("question_details", [])
+            result = await self._ensure_student_result_complete(
+                result=result,
+                parsed_rubric=parsed_rubric,
+                student_key=student_key,
+                images=images,
+                context_info=context_info,
+                stream_callback=stream_callback,
+            )
             
             logger.info(
                 f"[grade_student] 学生 {student_key} 批改完成: "
@@ -1991,7 +2038,234 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
                 "question_details": [],
             }
 
-    def _build_student_grading_rubric_info(self, parsed_rubric: Dict[str, Any]) -> str:
+
+    @staticmethod
+    def _safe_float(value: Any, default: float = 0.0) -> float:
+        try:
+            if value is None:
+                return default
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+    def _sum_question_detail_scores(self, details: List[Dict[str, Any]]) -> tuple[float, float]:
+        total = 0.0
+        max_total = 0.0
+        for detail in details:
+            total += self._safe_float(detail.get("score", 0))
+            max_total += self._safe_float(detail.get("max_score", detail.get("maxScore", 0)))
+        return total, max_total
+
+    def _collect_question_detail_ids(self, details: List[Dict[str, Any]]) -> set[str]:
+        ids: set[str] = set()
+        for detail in details:
+            if not isinstance(detail, dict):
+                continue
+            qid = self._normalize_question_id(
+                detail.get("question_id") or detail.get("questionId") or detail.get("id")
+            )
+            if qid:
+                ids.add(qid)
+        return ids
+
+    def _get_expected_question_ids(self, parsed_rubric: Dict[str, Any]) -> List[str]:
+        questions = parsed_rubric.get("questions") or []
+        expected = []
+        for question in questions:
+            qid = self._normalize_question_id(
+                question.get("question_id") or question.get("id")
+            )
+            if qid:
+                expected.append(qid)
+        return expected
+
+    def _merge_question_details(
+        self,
+        existing: List[Dict[str, Any]],
+        incoming: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        merged = list(existing)
+        existing_ids = self._collect_question_detail_ids(existing)
+        for detail in incoming:
+            if not isinstance(detail, dict):
+                continue
+            qid = self._normalize_question_id(
+                detail.get("question_id") or detail.get("questionId") or detail.get("id")
+            )
+            if qid and qid in existing_ids:
+                continue
+            merged.append(detail)
+        return merged
+
+    def _build_missing_question_placeholders(
+        self,
+        missing_ids: List[str],
+        parsed_rubric: Dict[str, Any],
+    ) -> List[Dict[str, Any]]:
+        placeholders = []
+        rubric_map = {}
+        for question in parsed_rubric.get("questions") or []:
+            qid = self._normalize_question_id(
+                question.get("question_id") or question.get("id")
+            )
+            if qid:
+                rubric_map[qid] = question
+        for qid in missing_ids:
+            rubric = rubric_map.get(qid, {})
+            max_score = self._safe_float(rubric.get("max_score", 0))
+            placeholders.append({
+                "question_id": qid,
+                "score": 0.0,
+                "max_score": max_score,
+                "student_answer": "",
+                "is_correct": False,
+                "feedback": "No answer detected.",
+                "confidence": 0.0,
+                "self_critique": "Insufficient evidence to grade; manual review recommended.",
+                "self_critique_confidence": 0.0,
+                "scoring_point_results": [],
+                "page_indices": [],
+                "question_type": rubric.get("question_type") or rubric.get("questionType"),
+            })
+        return placeholders
+
+    async def _grade_missing_questions(
+        self,
+        images: List[bytes],
+        student_key: str,
+        parsed_rubric: Dict[str, Any],
+        missing_ids: List[str],
+        context_info: str,
+        stream_callback: Optional[Callable[[str, str], Awaitable[None]]] = None,
+    ) -> List[Dict[str, Any]]:
+        if not missing_ids:
+            return []
+        missing_ids_text = ", ".join(missing_ids)
+        rubric_info = self._build_student_grading_rubric_info(
+            parsed_rubric,
+            question_ids=missing_ids,
+        )
+        prompt = (
+            "You are a grading assistant. Grade ONLY the following questions for "
+            f"{student_key}: {missing_ids_text}.\n\n"
+            f"Rubric:\n{rubric_info}\n\n"
+            f"Context:\n{context_info}\n\n"
+            "Return JSON only with this structure:\n"
+            "{\"question_details\": [{\"question_id\": \"1\", \"score\": 0, \"max_score\": 0, "
+            "\"student_answer\": \"\", \"is_correct\": false, \"feedback\": \"\", "
+            "\"confidence\": 0.0, \"self_critique\": \"\", "
+            "\"self_critique_confidence\": 0.0, \"scoring_point_results\": []}]}\n"
+            "Rules:\n"
+            "- Only include the specified questions.\n"
+            "- If an answer is missing or unclear, score 0 and explain in self_critique.\n"
+            "- Return valid JSON only.\n"
+        )
+        content = [{"type": "text", "text": prompt}]
+        for img_bytes in images:
+            if isinstance(img_bytes, bytes):
+                img_b64 = base64.b64encode(img_bytes).decode("utf-8")
+            else:
+                img_b64 = img_bytes
+            content.append({
+                "type": "image_url",
+                "image_url": f"data:image/jpeg;base64,{img_b64}",
+            })
+        message = HumanMessage(content=content)
+        full_response = ""
+        async for chunk in self.llm.astream([message]):
+            content_chunk = chunk.content
+            if not content_chunk:
+                continue
+            if isinstance(content_chunk, str):
+                full_response += content_chunk
+                if stream_callback:
+                    await stream_callback("output", content_chunk)
+            elif isinstance(content_chunk, list):
+                for part in content_chunk:
+                    text_part = ""
+                    if isinstance(part, str):
+                        text_part = part
+                    elif isinstance(part, dict) and "text" in part:
+                        text_part = part["text"]
+                    if text_part:
+                        full_response += text_part
+                        if stream_callback:
+                            await stream_callback("output", text_part)
+        if not full_response:
+            return []
+        try:
+            json_text = self._extract_json_from_text(full_response)
+            payload = self._load_json_with_repair(json_text)
+        except Exception:
+            return []
+        raw_details = (
+            payload.get("question_details")
+            or payload.get("questionDetails")
+            or payload.get("questions")
+            or []
+        )
+        if not isinstance(raw_details, list):
+            return []
+        normalized_missing = {self._normalize_question_id(qid) for qid in missing_ids if qid}
+        normalized = []
+        for detail in raw_details:
+            if not isinstance(detail, dict):
+                continue
+            normalized_detail = self._normalize_question_detail(detail, None)
+            qid = self._normalize_question_id(normalized_detail.get("question_id"))
+            if qid and qid in normalized_missing:
+                normalized.append(normalized_detail)
+        return normalized
+
+    async def _ensure_student_result_complete(
+        self,
+        result: Dict[str, Any],
+        parsed_rubric: Dict[str, Any],
+        student_key: str,
+        images: List[bytes],
+        context_info: str,
+        stream_callback: Optional[Callable[[str, str], Awaitable[None]]] = None,
+    ) -> Dict[str, Any]:
+        max_passes = self._read_int_env("GRADING_COMPLETION_PASSES", 1)
+        if max_passes <= 0:
+            return result
+        expected_ids = self._get_expected_question_ids(parsed_rubric)
+        if not expected_ids:
+            return result
+        details = result.get("question_details") or []
+        if not isinstance(details, list):
+            details = []
+        existing_ids = self._collect_question_detail_ids(details)
+        missing_ids = [qid for qid in expected_ids if qid not in existing_ids]
+        if not missing_ids:
+            return result
+        completion_details = await self._grade_missing_questions(
+            images=images,
+            student_key=student_key,
+            parsed_rubric=parsed_rubric,
+            missing_ids=missing_ids,
+            context_info=context_info,
+            stream_callback=stream_callback,
+        )
+        if completion_details:
+            merged = self._merge_question_details(details, completion_details)
+        else:
+            merged = self._merge_question_details(
+                details,
+                self._build_missing_question_placeholders(missing_ids, parsed_rubric),
+            )
+        result["question_details"] = merged
+        result["missing_question_ids"] = missing_ids
+        total_score, max_score = self._sum_question_detail_scores(merged)
+        result["total_score"] = total_score
+        result["max_score"] = max_score
+        return result
+
+    def _build_student_grading_rubric_info(
+        self,
+        parsed_rubric: Dict[str, Any],
+        question_ids: Optional[List[str]] = None,
+    ) -> str:
         """构建学生批改用的评分标准信息"""
         if not parsed_rubric:
             return "请根据答案的正确性、完整性和清晰度进行评分"
@@ -2000,6 +2274,17 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
             return parsed_rubric["rubric_context"]
         
         questions = parsed_rubric.get("questions", [])
+        if question_ids:
+            normalized_ids = {
+                self._normalize_question_id(qid)
+                for qid in question_ids
+                if qid
+            }
+            questions = [
+                q for q in questions
+                if self._normalize_question_id(q.get("question_id") or q.get("id"))
+                in normalized_ids
+            ]
         if not questions:
             return "请根据答案的正确性、完整性和清晰度进行评分"
         
@@ -2009,14 +2294,14 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
             ""
         ]
         
-        for q in questions[:self.MAX_QUESTIONS_IN_PROMPT]:
+        for q in self._limit_questions_for_prompt(questions):
             qid = q.get("question_id") or q.get("id") or "?"
             max_score = q.get("max_score", 0)
             lines.append(f"第{qid}题 (满分{max_score}分):")
             
             # 评分要点
             scoring_points = q.get("scoring_points", [])
-            for idx, sp in enumerate(scoring_points[:self.MAX_CRITERIA_PER_QUESTION], 1):
+            for idx, sp in enumerate(self._limit_criteria_for_prompt(scoring_points), 1):
                 point_id = sp.get("point_id") or f"{qid}.{idx}"
                 lines.append(
                     f"  - [{point_id}] [{sp.get('score', 0)}分] {sp.get('description', '')}"
@@ -2194,13 +2479,13 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
             rubric_context = parsed_rubric["rubric_context"]
             questions = parsed_rubric.get("questions", [])
             point_lines = []
-            for q in questions[:self.MAX_QUESTIONS_IN_PROMPT]:
+            for q in self._limit_questions_for_prompt(questions):
                 q_id = q.get("question_id", "?")
                 scoring_points = q.get("scoring_points", [])
                 if not scoring_points:
                     continue
                 entries = []
-                for sp in scoring_points[:self.MAX_CRITERIA_PER_QUESTION]:
+                for sp in self._limit_criteria_for_prompt(scoring_points):
                     point_id = sp.get("point_id", "")
                     description = sp.get("description", "")
                     score = sp.get("score", 0)
@@ -2226,14 +2511,14 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
         total_score = parsed_rubric.get("total_score", 0)
         lines = [f"共 {len(questions)} 题，总分 {total_score} 分。\n"]
         
-        for q in questions[:self.MAX_QUESTIONS_IN_PROMPT]:
+        for q in self._limit_questions_for_prompt(questions):
             q_id = q.get("question_id", "?")
             max_score = q.get("max_score", 0)
             lines.append(f"第 {q_id} 题（满分 {max_score} 分）")
             
             # 添加得分点（包含 point_id）
             scoring_points = q.get("scoring_points", [])
-            for sp in scoring_points[:self.MAX_CRITERIA_PER_QUESTION]:
+            for sp in self._limit_criteria_for_prompt(scoring_points):
                 point_id = sp.get("point_id", "")
                 point_label = f"[{point_id}]" if point_id else ""
                 expected_value = sp.get("expected_value") or sp.get("expectedValue") or ""

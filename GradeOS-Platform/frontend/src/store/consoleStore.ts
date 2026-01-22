@@ -80,6 +80,10 @@ export interface QuestionResult {
         pointId: string;
         reviewReason?: string;
     }>;
+    needsReview?: boolean;
+    reviewReasons?: string[];
+    auditFlags?: string[];
+    honestyNote?: string;
     typoNotes?: string[];
     scoringPoints?: ScoringPoint[];
     /** 得分点明细列表（新格式） */
@@ -1386,6 +1390,10 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
                                 pointId: c.point_id || c.pointId || '',
                                 reviewReason: c.review_reason || c.reviewReason
                             })),
+                            needsReview: q.needsReview ?? q.needs_review ?? false,
+                            reviewReasons: q.reviewReasons || q.review_reasons || [],
+                            auditFlags: q.auditFlags || q.audit_flags || [],
+                            honestyNote: q.honestyNote || q.honesty_note,
                             pageIndices: q.page_indices || q.pageIndices,
                             isCrossPage: q.is_cross_page || q.isCrossPage,
                             mergeSource: q.merge_source || q.mergeSource,

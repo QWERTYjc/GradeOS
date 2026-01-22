@@ -201,6 +201,7 @@ export default function ConsolePage() {
     const gradingMode = useConsoleStore((state) => state.gradingMode);
     const setGradingMode = useConsoleStore((state) => state.setGradingMode);
     const currentTab = useConsoleStore((state) => state.currentTab);
+    const isResultsView = currentTab === 'results';
     const setCurrentTab = useConsoleStore((state) => state.setCurrentTab);
 
     // Initial Sessions State
@@ -504,7 +505,8 @@ export default function ConsolePage() {
     return (
         <AppContext.Provider value={contextValue}>
             <div className={clsx(
-                "min-h-screen w-full relative overflow-auto console-shell"
+                "w-full relative console-shell flex flex-col",
+                isResultsView ? "h-screen overflow-hidden" : "min-h-screen overflow-auto"
             )}>
                 <div className="pointer-events-none absolute inset-0 console-aurora" />
                 <div className="pointer-events-none absolute inset-0 console-grid" />
@@ -551,7 +553,12 @@ export default function ConsolePage() {
                 </AnimatePresence>
 
                 {/* Main Content Area - Centered */}
-                <main className="relative z-10 w-full min-h-screen flex flex-col items-center justify-center">
+                <main
+                    className={clsx(
+                        "relative z-10 w-full flex flex-col items-center",
+                        isResultsView ? "flex-1 min-h-0 justify-start" : "min-h-screen justify-center"
+                    )}
+                >
 
                     {/* Scanner/Uploader - Only visible when IDLE */}
                     <AnimatePresence mode="wait">
@@ -622,7 +629,7 @@ export default function ConsolePage() {
                                 initial={{ opacity: 0, scale: 0.95 }}
                                 animate={{ opacity: 1, scale: 1 }}
                                 exit={{ opacity: 0 }}
-                                className="w-full max-w-6xl px-6 py-6 h-full overflow-hidden flex flex-col"
+                                className="w-full max-w-6xl px-6 py-6 flex-1 min-h-0 overflow-hidden flex flex-col"
                             >
                                 <div className="bg-white/60 backdrop-blur-md rounded-3xl border border-gray-200 shadow-xl overflow-hidden p-1 flex-1 min-h-0">
                                     <ResultsView />

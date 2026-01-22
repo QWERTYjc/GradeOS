@@ -4477,6 +4477,8 @@ def _build_logic_review_prompt(
 ) -> str:
     student_key = student.get("student_key") or student.get("student_name") or "Unknown"
     max_questions = limits.get("max_questions", 20)
+    if max_questions <= 0:
+        max_questions = len(question_details)
     max_answer_chars = limits.get("max_answer_chars", 400)
     max_feedback_chars = limits.get("max_feedback_chars", 200)
     max_rubric_chars = limits.get("max_rubric_chars", 240)
@@ -4631,7 +4633,7 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
 
     rubric_map = _build_rubric_question_map(parsed_rubric)
     limits = {
-        "max_questions": int(os.getenv("LOGIC_REVIEW_MAX_QUESTIONS", "20")),
+        "max_questions": int(os.getenv("LOGIC_REVIEW_MAX_QUESTIONS", "0")),
         "max_answer_chars": int(os.getenv("LOGIC_REVIEW_MAX_ANSWER_CHARS", "4000")),
         "max_feedback_chars": int(os.getenv("LOGIC_REVIEW_MAX_FEEDBACK_CHARS", "200")),
         "max_rubric_chars": int(os.getenv("LOGIC_REVIEW_MAX_RUBRIC_CHARS", "240")),
@@ -4757,6 +4759,14 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                 review_map[qid] = item
 
             updated_student = dict(student)
+            import copy
+            updated_student["draft_question_details"] = copy.deepcopy(question_details)
+            updated_student["draft_total_score"] = sum(
+                _safe_float(q.get("score", 0)) for q in question_details
+            )
+            updated_student["draft_max_score"] = sum(
+                _safe_float(q.get("max_score", 0)) for q in question_details
+            )
             updated_details = []
             for q in question_details:
                 qid = _normalize_question_id(q.get("question_id") or q.get("questionId"))
@@ -5022,7 +5032,29 @@ async def export_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                     "is_correct": q.get("is_correct", False),
                     "is_cross_page": q.get("is_cross_page", False),
                     "page_indices": q.get("page_indices", []),
-                    "confidence": q.get("confidence", 1.0)
+                    "confidence": q.get("confidence", 1.0),
+                    "confidence_reason": q.get("confidence_reason") or q.get("confidenceReason"),
+                    "self_critique": q.get("self_critique") or q.get("selfCritique"),
+                    "self_critique_confidence": (
+                        q.get("self_critique_confidence") or q.get("selfCritiqueConfidence")
+                    ),
+                    "review_summary": q.get("review_summary") or q.get("reviewSummary"),
+                    "review_corrections": q.get("review_corrections") or q.get("reviewCorrections") or [],
+                    "review_reasons": q.get("review_reasons") or q.get("reviewReasons") or [],
+                    "needs_review": (
+                        q.get("needs_review")
+                        if q.get("needs_review") is not None
+                        else q.get("needsReview")
+                    ),
+                    "audit_flags": q.get("audit_flags") or q.get("auditFlags") or [],
+                    "typo_notes": q.get("typo_notes") or q.get("typoNotes") or [],
+                    "rubric_refs": q.get("rubric_refs") or q.get("rubricRefs") or [],
+                    "honesty_note": q.get("honesty_note") or q.get("honestyNote"),
+                    "question_type": q.get("question_type") or q.get("questionType"),
+                    "merge_source": q.get("merge_source") or q.get("mergeSource"),
+                    "scoring_point_results": (
+                        q.get("scoring_point_results") or q.get("scoring_results") or []
+                    ),
                 })
         # 否则从 page_results 提取
         elif student.get("page_results"):
@@ -5035,7 +5067,32 @@ async def export_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                             "max_score": q.get("max_score", 0),
                             "feedback": q.get("feedback", ""),
                             "student_answer": q.get("student_answer", ""),
-                            "is_correct": q.get("is_correct", False)
+                            "is_correct": q.get("is_correct", False),
+                            "confidence": q.get("confidence", 1.0),
+                            "confidence_reason": q.get("confidence_reason") or q.get("confidenceReason"),
+                            "self_critique": q.get("self_critique") or q.get("selfCritique"),
+                            "self_critique_confidence": (
+                                q.get("self_critique_confidence") or q.get("selfCritiqueConfidence")
+                            ),
+                            "review_summary": q.get("review_summary") or q.get("reviewSummary"),
+                            "review_corrections": q.get("review_corrections") or q.get("reviewCorrections") or [],
+                            "review_reasons": q.get("review_reasons") or q.get("reviewReasons") or [],
+                            "needs_review": (
+                                q.get("needs_review")
+                                if q.get("needs_review") is not None
+                                else q.get("needsReview")
+                            ),
+                            "audit_flags": q.get("audit_flags") or q.get("auditFlags") or [],
+                            "typo_notes": q.get("typo_notes") or q.get("typoNotes") or [],
+                            "rubric_refs": q.get("rubric_refs") or q.get("rubricRefs") or [],
+                            "honesty_note": q.get("honesty_note") or q.get("honestyNote"),
+                            "question_type": q.get("question_type") or q.get("questionType"),
+                            "is_cross_page": q.get("is_cross_page", False),
+                            "page_indices": q.get("page_indices") or [page.get("page_index")],
+                            "merge_source": q.get("merge_source") or q.get("mergeSource"),
+                            "scoring_point_results": (
+                                q.get("scoring_point_results") or q.get("scoring_results") or []
+                            ),
                         })
         
         export_data["students"].append({
@@ -5051,6 +5108,10 @@ async def export_node(state: BatchGradingGraphState) -> Dict[str, Any]:
             "end_page": student.get("end_page", 0),
             "student_summary": summary,
             "self_audit": audit,
+            "draft_question_details": student.get("draft_question_details"),
+            "draft_total_score": student.get("draft_total_score"),
+            "draft_max_score": student.get("draft_max_score"),
+            "missing_question_ids": student.get("missing_question_ids"),
         })
 
     class_report = _build_class_report(student_results)

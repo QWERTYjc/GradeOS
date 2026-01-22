@@ -1087,6 +1087,7 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
                         if q.get("audit_flags") is not None
                         else q.get("auditFlags") or []
                     ),
+                    "honesty_note": q.get("honesty_note") or q.get("honestyNote"),
                     "typo_notes": q.get("typo_notes") or q.get("typoNotes"),
                     "studentAnswer": q.get("student_answer", ""),
                     "question_type": q.get("question_type") or q.get("questionType"),
@@ -1127,6 +1128,7 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
                         if q.get("audit_flags") is not None
                         else q.get("auditFlags") or []
                     ),
+                    "honesty_note": q.get("honesty_note") or q.get("honestyNote"),
                     "typo_notes": q.get("typo_notes") or q.get("typoNotes"),
                     "studentAnswer": q.get("student_answer", ""),
                     "question_type": q.get("question_type") or q.get("questionType"),
@@ -1166,6 +1168,7 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
                         if q.get("audit_flags") is not None
                         else q.get("auditFlags") or []
                     ),
+                    "honesty_note": q.get("honesty_note") or q.get("honestyNote"),
                     "typo_notes": q.get("typo_notes") or q.get("typoNotes"),
                     "studentAnswer": q.get("student_answer", ""),
                     "question_type": q.get("question_type") or q.get("questionType"),
@@ -1212,6 +1215,7 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
                                 if q.get("audit_flags") is not None
                                 else q.get("auditFlags") or []
                             ),
+                            "honesty_note": q.get("honesty_note") or q.get("honestyNote"),
                             "typo_notes": q.get("typo_notes") or q.get("typoNotes"),
                             "studentAnswer": q.get("student_answer", ""),
                             "question_type": q.get("question_type") or q.get("questionType"),

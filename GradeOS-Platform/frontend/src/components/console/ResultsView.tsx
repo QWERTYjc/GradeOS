@@ -3,7 +3,7 @@
 import React, { useState, useContext, useMemo, useEffect, useCallback } from 'react';
 import { useConsoleStore, StudentResult, QuestionResult } from '@/store/consoleStore';
 import clsx from 'clsx';
-import { ArrowLeft, ChevronDown, ChevronUp, CheckCircle, XCircle, Download, GitMerge, AlertCircle, Layers, FileText, Info, X, Sparkles, AlertTriangle, BookOpen, ListOrdered } from 'lucide-react';
+import { ArrowLeft, ChevronDown, ChevronUp, CheckCircle, XCircle, Download, GitMerge, AlertCircle, Layers, FileText, Info, X, AlertTriangle, BookOpen, ListOrdered } from 'lucide-react';
 import { CrownOutlined, BarChartOutlined, UsergroupAddOutlined, CheckCircleOutlined, ExclamationCircleOutlined, RocketOutlined } from '@ant-design/icons';
 import { Popover } from 'antd';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -32,6 +32,8 @@ const normalizeEvidenceText = (text?: string) => {
     if (!text) return '';
     return text.replace(/^【原文引用】\s*/, '').trim();
 };
+
+const LOW_CONFIDENCE_THRESHOLD = 0.7;
 
 type ReviewQuestionDraft = {
     questionId: string;
@@ -219,6 +221,14 @@ const QuestionDetail: React.FC<{ question: QuestionResult; gradingMode?: string 
     const isChoice = ['choice', 'single_choice', 'multiple_choice', 'mcq'].includes(normalizedType);
     const isAssist = (gradingMode || '').startsWith('assist')
         || (question.maxScore <= 0 && !(question.scoringPointResults?.length || question.scoringPoints?.length));
+    const reviewReasons = question.reviewReasons || [];
+    const isLowConfidence = !isAssist && (
+        reviewReasons.includes('low_confidence')
+        || (question.confidence !== undefined && question.confidence < LOW_CONFIDENCE_THRESHOLD)
+    );
+    const confessionText = question.selfCritique
+        || question.confidenceReason
+        || '证据不足，建议复核。';
     const showScoringDetails = !isAssist && !isChoice;
     const scoreLabel = isAssist ? 'Assist' : (question.maxScore > 0 ? `${question.score} / ${question.maxScore}` : 'N/A');
     const scoreClass = isAssist || question.maxScore <= 0
@@ -270,7 +280,7 @@ const QuestionDetail: React.FC<{ question: QuestionResult; gradingMode?: string 
                         Pages: <span className="font-mono text-slate-500">{question.pageIndices.map(p => p + 1).join(', ')}</span>
                     </div>
                 )}
-                {!isAssist && question.confidence !== undefined && (
+                {isLowConfidence && question.confidence !== undefined && (
                     <div className={clsx("flex items-center gap-1.5", question.confidence < 0.8 ? "text-amber-600" : "text-emerald-600")}>
                         {question.confidence < 0.8 ? <AlertCircle className="w-3 h-3" /> : <CheckCircle className="w-3 h-3" />}
                         Confidence: <span className="font-mono font-semibold">{(question.confidence * 100).toFixed(0)}%</span>
@@ -356,20 +366,12 @@ const QuestionDetail: React.FC<{ question: QuestionResult; gradingMode?: string 
                 </div>
             )}
 
-            {showScoringDetails && (question.reviewSummary || (question.reviewCorrections && question.reviewCorrections.length > 0)) && (
-                <div className="mt-3 p-3 rounded-md border border-slate-200 bg-slate-50">
-                    <div className="text-[11px] font-semibold text-slate-600 mb-1 flex items-center gap-1.5">
-                        <Sparkles className="w-3 h-3 text-slate-400" /> 逻辑复核
-                    </div>
-                    {question.reviewSummary ? (
-                        <p className="text-slate-600 text-[11px] leading-relaxed"><MathText text={question.reviewSummary} /></p>
-                    ) : (
-                        <ul className="text-slate-600 text-[11px] leading-relaxed space-y-1">
-                            {question.reviewCorrections?.map((c, idx) => (
-                                <li key={`${c.pointId}-${idx}`}>[{c.pointId}] {c.reviewReason || 'Logic adjustment applied.'}</li>
-                            ))}
-                        </ul>
-                    )}
+            {isLowConfidence && (
+                <div className="mt-3 p-3 rounded-md border border-amber-200 bg-amber-50">
+                    <div className="text-[11px] font-semibold text-amber-700 mb-1">自白提示</div>
+                    <p className="text-xs text-amber-800 leading-relaxed">
+                        <MathText text={confessionText} />
+                    </p>
                 </div>
             )}
 
@@ -1536,33 +1538,6 @@ export const ResultsView: React.FC = () => {
                                 </div>
                                 <div className="text-xs font-medium text-slate-500 tracking-wide">{isAssist ? 'Assisted Grading' : 'Total Score'}</div>
                             </div>
-
-                            {detailViewStudent.selfAudit && (
-                                <PlainCard className="p-4 border border-slate-200 bg-white" hoverEffect={false}>
-                                    <div className="flex items-center justify-between mb-2">
-                                        <div className="text-[11px] font-semibold text-slate-500">Review Notes</div>
-                                        {detailViewStudent.selfAudit.overallComplianceGrade !== undefined && (
-                                            <div className="text-xs font-semibold text-slate-500">
-                                                合规评分 {Math.round(detailViewStudent.selfAudit.overallComplianceGrade)} / 7
-                                            </div>
-                                        )}
-                                    </div>
-                                    {detailViewStudent.selfAudit.summary && (
-                                        <p className="text-xs text-slate-600 leading-relaxed whitespace-pre-wrap">
-                                            {detailViewStudent.selfAudit.summary}
-                                        </p>
-                                    )}
-                                    {detailViewStudent.selfAudit.uncertaintiesAndConflicts && detailViewStudent.selfAudit.uncertaintiesAndConflicts.length > 0 && (
-                                        <ul className="mt-3 space-y-1 text-[11px] text-slate-500 list-disc pl-4">
-                                            {detailViewStudent.selfAudit.uncertaintiesAndConflicts.slice(0, 4).map((item, idx) => (
-                                                <li key={`confession-${idx}`}>
-                                                    {item.issue || item.impact || '存在未披露的不确定性'}
-                                                </li>
-                                            ))}
-                                        </ul>
-                                    )}
-                                </PlainCard>
-                            )}
 
                             {/* Questions */}
                             <div className="space-y-4">

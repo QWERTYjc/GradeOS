@@ -179,6 +179,10 @@ export interface QuestionResult {
   selfCritique?: string;
   selfCritiqueConfidence?: number;
   rubricRefs?: string[];
+  needsReview?: boolean;
+  reviewReasons?: string[];
+  auditFlags?: string[];
+  honestyNote?: string;
   typoNotes?: string[];
   studentAnswer?: string;
   questionType?: string;
