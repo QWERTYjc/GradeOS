@@ -1,4 +1,5 @@
-import React, { useContext, useState, useEffect, useMemo } from 'react';
+import React, { useContext, useState, useEffect, useMemo, useRef } from 'react';
+import { motion, useReducedMotion, useScroll, useTransform } from 'framer-motion';
 import { AppContext } from './AppContext';
 import { Trash2, CheckSquare, Square, Wand2, Plus, Images, ArrowLeft, ArrowRight, Move, Sparkles, Loader2, Eye, Send, Split, Users } from 'lucide-react';
 import ImageEditor from './ImageEditor';
@@ -26,6 +27,42 @@ interface GalleryProps {
   onGradingModeChange?: (mode: string) => void;
 }
 
+interface PreviewCardProps {
+  children: React.ReactNode;
+  className?: string;
+  containerRef: React.RefObject<HTMLElement>;
+}
+
+const PreviewCard = ({ children, className, containerRef }: PreviewCardProps) => {
+  const ref = useRef<HTMLDivElement>(null);
+  const reduceMotion = useReducedMotion();
+  const { scrollYProgress } = useScroll({
+    target: ref,
+    container: containerRef,
+    offset: ["start end", "center center", "end start"],
+  });
+  const scale = useTransform(
+    scrollYProgress,
+    [0, 0.5, 1],
+    reduceMotion ? [1, 1, 1] : [0.96, 1.02, 0.96]
+  );
+  const y = useTransform(
+    scrollYProgress,
+    [0, 0.5, 1],
+    reduceMotion ? [0, 0, 0] : [10, 0, -10]
+  );
+
+  return (
+    <motion.div
+      ref={ref}
+      style={{ scale, y }}
+      className={`transform-gpu will-change-transform ${className || ""}`}
+    >
+      {children}
+    </motion.div>
+  );
+};
+
 export default function Gallery({
   session,
   onSubmitBatch,
@@ -45,6 +82,7 @@ export default function Gallery({
   const [isReorderMode, setIsReorderMode] = useState(false);
   const [isSplitMode, setIsSplitMode] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   if (!context) return null;
   const {
@@ -168,9 +206,9 @@ export default function Gallery({
   };
 
   return (
-    <div className="flex flex-col h-full bg-slate-50 relative text-[#0B0F17]">
+    <div className="flex flex-col h-full bg-white relative text-[#0B0F17]">
       {/* Header Toolbar - Reduced Density */}
-      <div className="px-3 py-2 bg-white border-b border-slate-200 flex flex-col gap-2 shadow-sm z-10 sticky top-0">
+      <div className="px-4 py-3 bg-white flex flex-col gap-2 border-b border-slate-100 z-10 sticky top-0">
 
         <div className="flex flex-col md:flex-row items-center justify-between gap-3">
           {/* Left: Spacer or Title if needed in future (Empty for clean look as requested) */}
@@ -182,16 +220,16 @@ export default function Gallery({
             <button
               onClick={handleDirectSubmit}
               disabled={isRubricMode || isSubmitting || (currentSession?.images.length === 0)}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-gradient-to-r from-emerald-500 to-teal-600 text-white rounded-md shadow hover:shadow-lg transition-all whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed font-medium"
+              className="flex items-center gap-1.5 px-3 py-2 text-xs bg-slate-900 text-white rounded shadow-sm hover:bg-slate-800 transition-all whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed font-medium"
             >
               {isSubmitting ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
               {isRubricMode ? 'Rubric Ready' : (isSubmitting ? 'Uploading...' : (submitLabel || 'Submit'))}
             </button>
 
-            <div className="w-px h-5 bg-slate-300 mx-1"></div>
+
 
             {!isRubricMode && onInteractionToggle && (
-              <label className="flex items-center gap-2 rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-600 shadow-sm">
+              <label className="flex items-center gap-2 px-2 py-1 text-xs text-slate-600 hover:text-slate-900 transition-colors">
                 <input
                   type="checkbox"
                   checked={interactionEnabled}
@@ -203,7 +241,7 @@ export default function Gallery({
             )}
 
             {!isRubricMode && onGradingModeChange && (
-              <label className="flex items-center gap-2 rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-600 shadow-sm">
+              <label className="flex items-center gap-2 px-2 py-1 text-xs text-slate-600 hover:text-slate-900 transition-colors">
                 <span className="text-[10px] uppercase tracking-wide text-slate-400">Mode</span>
                 <select
                   value={gradingMode}
@@ -225,7 +263,7 @@ export default function Gallery({
                   setIsSplitMode(!isSplitMode);
                   if (isReorderMode) setIsReorderMode(false);
                 }}
-                className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded-md transition-colors whitespace-nowrap font-medium ${isSplitMode ? 'bg-blue-900 text-blue-50 ring-1 ring-blue-700' : 'text-slate-600 hover:bg-slate-100'}`}
+                className={`flex items-center gap-1.5 px-2 py-1 text-xs font-semibold uppercase tracking-wider transition-all whitespace-nowrap ${isSplitMode ? 'text-slate-900 border-b-2 border-slate-900' : 'text-slate-500 hover:text-slate-700 border-b-2 border-transparent'}`}
                 title="Click images to split into separate students"
               >
                 <Split size={14} className={isSplitMode ? "rotate-90" : ""} />
@@ -239,18 +277,18 @@ export default function Gallery({
                 setIsReorderMode(!isReorderMode);
                 if (isSplitMode) setIsSplitMode(false);
               }}
-              className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded-md transition-colors whitespace-nowrap font-medium ${isReorderMode ? 'bg-indigo-100 text-indigo-700 ring-1 ring-indigo-200' : 'text-slate-600 hover:bg-slate-100'}`}
+              className={`flex items-center gap-1.5 px-2 py-1 text-xs font-semibold uppercase tracking-wider transition-all whitespace-nowrap ${isReorderMode ? 'text-slate-900 border-b-2 border-slate-900' : 'text-slate-500 hover:text-slate-700 border-b-2 border-transparent'}`}
             >
               <Move size={14} />
               {isReorderMode ? 'Done' : 'Order'}
             </button>
 
-            <div className="w-px h-5 bg-slate-300 mx-1"></div>
+
 
             <button
               onClick={selectAll}
               disabled={isReorderMode || isSplitMode}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-slate-600 hover:bg-slate-100 rounded-md transition-colors whitespace-nowrap disabled:opacity-30 font-medium"
+              className="flex items-center gap-1.5 px-2 py-1 text-xs text-slate-500 hover:text-slate-700 transition-colors whitespace-nowrap disabled:opacity-30 font-medium border-b-2 border-transparent"
             >
               {currentSession && selectedImages.size === currentSession.images.length && currentSession.images.length > 0 ? <CheckSquare size={14} /> : <Square size={14} />}
               All
@@ -259,7 +297,7 @@ export default function Gallery({
             <button
               onClick={handleBulkDelete}
               disabled={selectedImages.size === 0 || isReorderMode || isSplitMode}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-red-600 hover:bg-red-50 rounded-md disabled:opacity-30 transition-colors whitespace-nowrap font-medium"
+              className="flex items-center gap-1.5 px-2 py-1 text-xs text-slate-400 hover:text-red-600 disabled:opacity-30 transition-colors whitespace-nowrap font-medium border-b-2 border-transparent"
             >
               <Trash2 size={14} />
             </button>
@@ -268,7 +306,10 @@ export default function Gallery({
       </div>
 
       {/* Grid */}
-      <div className="flex-1 overflow-y-auto p-4 bg-slate-50 space-y-8">
+      <div
+        ref={scrollContainerRef}
+        className="flex-1 overflow-y-auto p-3 sm:p-4 lg:p-6 bg-white space-y-8"
+      >
         {currentSession && currentSession.images.length > 0 ? (
           (() => {
             // Group images by student (logic: splitImageIds marks start of NEW student)
@@ -296,28 +337,29 @@ export default function Gallery({
                 <div key={groupIdx} className="relative pl-3">
                   {/* Visual Indentation Marker (Left Line) */}
                   {!isRubricMode && (
-                    <div className="absolute left-0 top-3 bottom-3 w-1 bg-blue-900/30 rounded-full"></div>
+                    <div className="absolute left-0 top-3 bottom-3 w-1 bg-slate-300 rounded-full"></div>
                   )}
 
                   {/* Student Header (New Line) */}
                   {!isRubricMode && (
                     <div className="flex items-center gap-2 mb-3">
-                      <div className="bg-blue-900 text-blue-50 text-[10px] font-bold px-2 py-0.5 rounded border border-blue-800 uppercase tracking-wider shadow-sm">
+                      <div className="bg-slate-900 text-white text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider shadow-sm">
                         {studentNameMapping[groupIdx]?.studentName || `Student ${groupIdx + 1}`}
                       </div>
                       <div className="h-px bg-slate-200 flex-1 border-t border-dashed border-slate-300"></div>
                     </div>
                   )}
 
-                  <div className="grid grid-cols-6 sm:grid-cols-8 md:grid-cols-10 lg:grid-cols-12 gap-1 auto-rows-max">
+                  <div className="grid grid-cols-3 sm:grid-cols-5 md:grid-cols-8 lg:grid-cols-12 gap-1.5 auto-rows-max">
                     {group.map((img, groupImgIndex) => {
                       const actualIndex = startImageIndex + groupImgIndex;
                       const isStart = groupImgIndex === 0;
                       const isSelected = selectedImages.has(img.id);
 
                       return (
-                        <div
+                        <PreviewCard
                           key={img.id}
+                          containerRef={scrollContainerRef}
                           className={`relative group bg-white rounded-sm overflow-hidden select-none transition-all duration-200
                                     ${isSelected ? 'ring-2 ring-indigo-500 z-10' : 'hover:ring-1 hover:ring-slate-300'}
                                     ${isSplitMode && isStart ? 'ring-2 ring-amber-500 z-10' : ''}
@@ -337,6 +379,13 @@ export default function Gallery({
                               alt=""
                               className={`w-full h-full object-cover transition-opacity ${img.isOptimizing ? 'opacity-70 blur-sm' : 'opacity-100'}`}
                               loading="lazy"
+                              onError={(e) => {
+                                e.currentTarget.style.display = 'none';
+                                e.currentTarget.parentElement?.classList.add('flex', 'items-center', 'justify-center');
+                                const icon = document.createElement('div');
+                                icon.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-slate-400"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>';
+                                e.currentTarget.parentElement?.appendChild(icon);
+                              }}
                             />
 
                             {/* Processing Spinner */}
@@ -393,7 +442,7 @@ export default function Gallery({
                           </div>
 
                           {/* No Footer Text - Pure Image Density */}
-                        </div>
+                        </PreviewCard>
                       );
                     })}
                   </div>

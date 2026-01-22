@@ -1235,18 +1235,57 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
 
         student_summary = r.get("student_summary") or r.get("studentSummary")
         self_audit = r.get("self_audit") or r.get("selfAudit")
+        self_report = r.get("self_report") or r.get("selfReport") or r.get("confession")
+        
+        # 🔥 第一次批改记录（逻辑复核前的原始结果）
+        draft_question_details = r.get("draft_question_details") or r.get("draftQuestionDetails")
+        draft_question_results = []
+        if draft_question_details:
+            for dq in draft_question_details:
+                draft_scoring_results = dq.get("scoring_point_results") or dq.get("scoring_results") or []
+                draft_question_results.append({
+                    "questionId": str(dq.get("question_id", "")),
+                    "score": dq.get("score", 0),
+                    "maxScore": dq.get("max_score", 0),
+                    "feedback": dq.get("feedback", ""),
+                    "confidence": dq.get("confidence", 0),
+                    "self_critique": dq.get("self_critique") or dq.get("selfCritique"),
+                    "self_critique_confidence": dq.get("self_critique_confidence") or dq.get("selfCritiqueConfidence"),
+                    "studentAnswer": dq.get("student_answer", ""),
+                    "question_type": dq.get("question_type") or dq.get("questionType"),
+                    "scoring_point_results": draft_scoring_results,
+                    "page_indices": dq.get("page_indices", []),
+                })
+        
+        # 计算页面范围显示字符串
+        start_page = r.get("start_page")
+        end_page = r.get("end_page")
+        page_range = ""
+        if start_page is not None:
+            if end_page is not None and end_page != start_page:
+                page_range = f"{start_page + 1}-{end_page + 1}"
+            else:
+                page_range = str(start_page + 1)
+        
         formatted.append({
             "studentName": r.get("student_key") or r.get("student_name") or r.get("student_id", "Unknown"),
             "score": final_score,
             "maxScore": final_max if final_max > 0 else 0,
-            "startPage": r.get("start_page"),   # 🔥 新增：学生页面范围
-            "endPage": r.get("end_page"),       # 🔥 新增：学生页面范围
+            "startPage": start_page,
+            "endPage": end_page,
+            "pageRange": page_range,
             "questionResults": question_results,
             "confidence": r.get("confidence", 0),
             "needsConfirmation": r.get("needs_confirmation", False),
             "gradingMode": r.get("grading_mode") or r.get("gradingMode"),
             "studentSummary": student_summary,
-            "selfAudit": self_audit
+            "selfAudit": self_audit,
+            # 🔥 新增：批改透明度字段
+            "selfReport": self_report,
+            "draftQuestionDetails": draft_question_results if draft_question_results else None,
+            "draftTotalScore": r.get("draft_total_score") or r.get("draftTotalScore"),
+            "draftMaxScore": r.get("draft_max_score") or r.get("draftMaxScore"),
+            "logicReviewedAt": r.get("logic_reviewed_at") or r.get("logicReviewedAt"),
         })
     # #region agent log - 假设D: _format_results_for_frontend 输出
     _write_debug_log({

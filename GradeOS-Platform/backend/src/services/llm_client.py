@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import logging
+import os
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Dict, List, Optional, Union
 
@@ -57,6 +59,39 @@ class UnifiedLLMClient:
         }
         headers.update(self.config.get_headers())
         return headers
+
+    @staticmethod
+    async def _safe_read_response_text(response: Optional[httpx.Response]) -> str:
+        if response is None:
+            return "<no response>"
+        try:
+            body = await response.aread()
+            return body.decode("utf-8", errors="replace")
+        except Exception:
+            try:
+                return response.text
+            except Exception:
+                return "<unreadable response>"
+
+    @staticmethod
+    def _read_int_env(key: str, default: int) -> int:
+        raw = os.getenv(key)
+        if raw is None:
+            return default
+        try:
+            return int(raw)
+        except ValueError:
+            return default
+
+    @staticmethod
+    def _read_float_env(key: str, default: float) -> float:
+        raw = os.getenv(key)
+        if raw is None:
+            return default
+        try:
+            return float(raw)
+        except ValueError:
+            return default
 
     def _format_messages(self, messages: List[LLMMessage]) -> List[Dict[str, Any]]:
         formatted: List[Dict[str, Any]] = []
@@ -153,12 +188,9 @@ class UnifiedLLMClient:
                 finish_reason=choice.get("finish_reason"),
             )
         except httpx.HTTPStatusError as exc:
-            try:
-                body = await exc.response.aread()
-                text = body.decode("utf-8", errors="replace")
-            except Exception:
-                text = exc.response.text if exc.response else "<unreadable response>"
-            logger.error("[LLM] HTTP error %s: %s", exc.response.status_code, text)
+            text = await self._safe_read_response_text(exc.response)
+            status_code = exc.response.status_code if exc.response else "unknown"
+            logger.error("[LLM] HTTP error %s: %s", status_code, text)
             raise
         except Exception as exc:
             logger.error("[LLM] invoke failed: %s", exc)
@@ -204,36 +236,65 @@ class UnifiedLLMClient:
             len(payload["messages"]),
         )
 
-        try:
-            async with client.stream(
-                "POST",
-                f"{self.config.base_url}/chat/completions",
-                headers=self._build_headers(api_key_override),
-                json=payload,
-            ) as response:
-                response.raise_for_status()
-                async for line in response.aiter_lines():
-                    if not line.startswith("data: "):
-                        continue
-                    data_str = line[6:]
-                    if data_str == "[DONE]":
-                        break
-                    try:
-                        import json
+        max_retries = max(0, self._read_int_env("LLM_STREAM_MAX_RETRIES", 2))
+        retry_delay = max(0.1, self._read_float_env("LLM_STREAM_RETRY_DELAY", 2.0))
+        max_delay = max(retry_delay, self._read_float_env("LLM_STREAM_RETRY_MAX_DELAY", 30.0))
+        attempt = 0
 
-                        data = json.loads(data_str)
-                        delta = data.get("choices", [{}])[0].get("delta", {})
-                        content = delta.get("content", "")
-                        if content:
-                            yield content
-                    except Exception:
-                        continue
-        except httpx.HTTPStatusError as exc:
-            logger.error("[LLM] stream HTTP error %s: %s", exc.response.status_code, exc.response.text)
-            raise
-        except Exception as exc:
-            logger.error("[LLM] stream failed: %s", exc)
-            raise
+        while True:
+            try:
+                async with client.stream(
+                    "POST",
+                    f"{self.config.base_url}/chat/completions",
+                    headers=self._build_headers(api_key_override),
+                    json=payload,
+                ) as response:
+                    response.raise_for_status()
+                    async for line in response.aiter_lines():
+                        if not line.startswith("data: "):
+                            continue
+                        data_str = line[6:]
+                        if data_str == "[DONE]":
+                            break
+                        try:
+                            import json
+
+                            data = json.loads(data_str)
+                            delta = data.get("choices", [{}])[0].get("delta", {})
+                            content = delta.get("content", "")
+                            if content:
+                                yield content
+                        except Exception:
+                            continue
+                return
+            except httpx.HTTPStatusError as exc:
+                status_code = exc.response.status_code if exc.response else None
+                text = await self._safe_read_response_text(exc.response)
+                retry_after = None
+                if exc.response is not None:
+                    retry_after_header = exc.response.headers.get("Retry-After")
+                    if retry_after_header:
+                        try:
+                            retry_after = float(retry_after_header)
+                        except ValueError:
+                            retry_after = None
+                logger.error("[LLM] stream HTTP error %s: %s", status_code, text)
+                if status_code in {429, 502, 503, 504} and attempt < max_retries:
+                    wait_time = retry_after or retry_delay
+                    logger.warning(
+                        "[LLM] stream retrying in %.1fs (%s/%s)",
+                        wait_time,
+                        attempt + 1,
+                        max_retries,
+                    )
+                    await asyncio.sleep(wait_time)
+                    retry_delay = min(retry_delay * 2, max_delay)
+                    attempt += 1
+                    continue
+                raise
+            except Exception as exc:
+                logger.error("[LLM] stream failed: %s", exc)
+                raise
 
     async def embed(
         self,
@@ -264,7 +325,9 @@ class UnifiedLLMClient:
             data = response.json()
             return [item.get("embedding", []) for item in data.get("data", [])]
         except httpx.HTTPStatusError as exc:
-            logger.error("[LLM] embeddings HTTP error %s: %s", exc.response.status_code, exc.response.text)
+            text = await self._safe_read_response_text(exc.response)
+            status_code = exc.response.status_code if exc.response else "unknown"
+            logger.error("[LLM] embeddings HTTP error %s: %s", status_code, text)
             raise
         except Exception as exc:
             logger.error("[LLM] embeddings failed: %s", exc)

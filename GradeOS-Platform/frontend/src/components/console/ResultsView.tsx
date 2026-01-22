@@ -20,14 +20,6 @@ interface ResultCardProps {
     isExpanded: boolean;
 }
 
-const PlainCard: React.FC<React.HTMLAttributes<HTMLDivElement> & { hoverEffect?: boolean }> = ({
-    className,
-    hoverEffect: _hoverEffect,
-    ...props
-}) => (
-    <div className={clsx('rounded-lg border border-slate-200 bg-white shadow-sm', className)} {...props} />
-);
-
 const normalizeEvidenceText = (text?: string) => {
     if (!text) return '';
     return text.replace(/^【原文引用】\s*/, '').trim();
@@ -227,9 +219,13 @@ const QuestionDetail: React.FC<{ question: QuestionResult; gradingMode?: string 
         || (question.confidence !== undefined && question.confidence < LOW_CONFIDENCE_THRESHOLD)
     );
     const confessionText = question.selfCritique
+        || question.honestyNote
         || question.confidenceReason
         || '证据不足，建议复核。';
     const showScoringDetails = !isAssist && !isChoice;
+    const hasDetails = Boolean(question.studentAnswer)
+        || (showScoringDetails && ((question.scoringPointResults?.length || 0) > 0 || (question.scoringPoints?.length || 0) > 0));
+    const [detailsOpen, setDetailsOpen] = useState(false);
     const scoreLabel = isAssist ? 'Assist' : (question.maxScore > 0 ? `${question.score} / ${question.maxScore}` : 'N/A');
     const scoreClass = isAssist || question.maxScore <= 0
         ? 'text-slate-400'
@@ -267,9 +263,20 @@ const QuestionDetail: React.FC<{ question: QuestionResult; gradingMode?: string 
                         </span>
                     )}
                 </div>
-                <span className={clsx('text-sm font-semibold', scoreClass)}>
-                    {scoreLabel}
-                </span>
+                <div className="flex items-center gap-3">
+                    {hasDetails && (
+                        <button
+                            type="button"
+                            onClick={() => setDetailsOpen((prev) => !prev)}
+                            className="text-[11px] font-semibold text-slate-400 hover:text-slate-700 transition-colors"
+                        >
+                            {detailsOpen ? 'Hide details' : 'Show details'}
+                        </button>
+                    )}
+                    <span className={clsx('text-sm font-semibold', scoreClass)}>
+                        {scoreLabel}
+                    </span>
+                </div>
             </div>
 
             {/* Meta Info */}
@@ -288,6 +295,8 @@ const QuestionDetail: React.FC<{ question: QuestionResult; gradingMode?: string 
                 )}
             </div>
 
+            {detailsOpen && (
+                <>
             {question.studentAnswer && (
                 <div className="rounded-md p-3 border border-slate-200 bg-white">
                     <span className="text-[11px] font-semibold text-slate-500 mb-1 block">Student Answer</span>
@@ -366,6 +375,8 @@ const QuestionDetail: React.FC<{ question: QuestionResult; gradingMode?: string 
                 </div>
             )}
 
+                </>
+            )}
             {isLowConfidence && (
                 <div className="mt-3 p-3 rounded-md border border-amber-200 bg-amber-50">
                     <div className="text-[11px] font-semibold text-amber-700 mb-1">自白提示</div>
@@ -410,7 +421,7 @@ const ResultCard: React.FC<ResultCardProps> = ({ result, rank, onExpand, isExpan
     return (
         <div
             className={clsx(
-                'grid grid-cols-[56px_1fr_auto] items-center gap-4 px-4 py-3 border-b border-slate-200/70 hover:bg-slate-50/60 transition',
+                'grid grid-cols-[56px_1fr_auto] items-center gap-4 px-4 py-3 border-b border-slate-100 hover:bg-slate-50/60 transition',
                 result.needsConfirmation && 'bg-amber-50/50'
             )}
             onClick={() => onExpand?.()}
@@ -519,6 +530,8 @@ export const ResultsView: React.FC = () => {
     const currentSession = sessions.find((s: any) => s.id === currentSessionId);
 
     const [detailViewIndex, setDetailViewIndex] = useState<number | null>(null);
+    const [auditOpen, setAuditOpen] = useState(false);
+    const [auditQuery, setAuditQuery] = useState('');
     const [showClassReport, setShowClassReport] = useState(false);
     const [reviewMode, setReviewMode] = useState(false);
     const [reviewDraft, setReviewDraft] = useState<ReviewStudentDraft[]>([]);
@@ -687,6 +700,11 @@ export const ResultsView: React.FC = () => {
             setDetailViewIndex(0);
         }
     }, [reviewMode, detailViewIndex, sortedResults.length]);
+
+    useEffect(() => {
+        setAuditOpen(false);
+        setAuditQuery('');
+    }, [detailViewIndex]);
 
     const handleToggleReviewMode = () => {
         setReviewMessage(null);
@@ -1044,12 +1062,12 @@ export const ResultsView: React.FC = () => {
                             </div>
                         ) : (
                             rubricImages.map((img, idx) => (
-                                <PlainCard key={idx} className="overflow-hidden p-0 bg-white" hoverEffect={false}>
-                                    <div className="px-4 py-2 border-b border-slate-100 bg-slate-50 text-xs font-semibold text-slate-500 flex justify-between">
-                                        <span>Page {idx + 1}</span>
+                                <div key={idx} className={clsx("pb-6 border-b border-slate-100/80 space-y-2", idx === rubricImages.length - 1 && "border-b-0 pb-0")}>
+                                    <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-[0.2em]">
+                                        Page {idx + 1}
                                     </div>
                                     <img src={img} alt={`Rubric page ${idx + 1}`} className="w-full h-auto" />
-                                </PlainCard>
+                                </div>
                             ))
                         )}
                     </div>
@@ -1113,13 +1131,12 @@ export const ResultsView: React.FC = () => {
                                         const isSelected = rubricSelectedIds.has(q.questionId);
                                         const isExpanded = rubricExpandedIds.has(q.questionId);
                                         return (
-                                            <PlainCard
+                                            <div
                                                 key={q.questionId}
                                                 className={clsx(
-                                                    "p-4 border border-slate-100 !bg-white shadow-sm",
-                                                    isSelected && "ring-1 ring-rose-200 bg-rose-50/30"
+                                                    "py-4 border-b border-slate-100 last:border-b-0",
+                                                    isSelected && "bg-rose-50/40"
                                                 )}
-                                                hoverEffect={false}
                                             >
                                                 <div className="flex items-start justify-between gap-3">
                                                     <div className="flex items-center gap-3">
@@ -1233,7 +1250,7 @@ export const ResultsView: React.FC = () => {
                                                         </div>
                                                     </div>
                                                 )}
-                                            </PlainCard>
+                                            </div>
                                         );
                                     })}
                                 </div>
@@ -1313,19 +1330,20 @@ export const ResultsView: React.FC = () => {
                                 <span>暂无作答图片</span>
                             </div>
                         ) : (
-                            reviewPageIndices.map((pageIdx) => {
+                            reviewPageIndices.map((pageIdx, pageIdxIndex) => {
                                 const imageUrl = uploadedImages[pageIdx] || currentSession?.images[pageIdx]?.url;
+                                const isLastPage = pageIdxIndex === reviewPageIndices.length - 1;
                                 return (
-                                    <PlainCard key={pageIdx} className="overflow-hidden p-0 bg-white" hoverEffect={false}>
-                                        <div className="px-4 py-2 border-b border-slate-100 bg-slate-50 text-xs font-semibold text-slate-500 flex justify-between">
-                                            <span>Page {pageIdx + 1}</span>
+                                    <div key={pageIdx} className={clsx("pb-6 border-b border-slate-100/80 space-y-2", isLastPage && "border-b-0 pb-0")}>
+                                        <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-[0.2em]">
+                                            Page {pageIdx + 1}
                                         </div>
                                         {imageUrl ? (
                                             <img src={imageUrl} alt={`Page ${pageIdx + 1}`} className="w-full h-auto" />
                                         ) : (
                                             <div className="p-10 text-center text-slate-400">Image missing</div>
                                         )}
-                                    </PlainCard>
+                                    </div>
                                 );
                             })
                         )}
@@ -1388,13 +1406,12 @@ export const ResultsView: React.FC = () => {
                                     const key = `${selectedKeyPrefix}${q.questionId}`;
                                     const isSelected = reviewSelectedKeys.has(key);
                                     return (
-                                        <PlainCard
+                                        <div
                                             key={q.questionId}
                                             className={clsx(
-                                                "p-4 border border-slate-100 !bg-white shadow-sm",
-                                                isSelected && "ring-1 ring-rose-200 bg-rose-50/30"
+                                                "py-4 border-b border-slate-100 last:border-b-0",
+                                                isSelected && "bg-rose-50/40"
                                             )}
-                                            hoverEffect={false}
                                         >
                                             <div className="flex items-start justify-between gap-3">
                                                 <div className="flex items-center gap-3">
@@ -1446,7 +1463,7 @@ export const ResultsView: React.FC = () => {
                                                     />
                                                 </div>
                                             </div>
-                                        </PlainCard>
+                                        </div>
                                     );
                                 })}
                             </div>
@@ -1473,6 +1490,33 @@ export const ResultsView: React.FC = () => {
         const uniquePages = Array.from(new Set([...pageIndices, ...fallbackPages]))
             .filter(p => Number.isFinite(p))
             .sort((a, b) => a - b);
+        const auditItems = (detailViewStudent.questionResults || []).filter((q) => (
+            Boolean(q.selfCritique)
+            || Boolean(q.reviewSummary)
+            || Boolean(q.honestyNote)
+            || (q.reviewCorrections && q.reviewCorrections.length > 0)
+            || (q.reviewReasons && q.reviewReasons.length > 0)
+            || (q.auditFlags && q.auditFlags.length > 0)
+        ));
+        const auditQueryValue = auditQuery.trim().toLowerCase();
+        const filteredAuditItems = auditQueryValue
+            ? auditItems.filter((q) => {
+                const haystack = [
+                    q.questionId,
+                    q.selfCritique,
+                    q.reviewSummary,
+                    q.honestyNote,
+                    ...(q.reviewReasons || []),
+                    ...(q.auditFlags || []),
+                    ...(q.reviewCorrections || []).map((c) => `${c.pointId || ''} ${c.reviewReason || ''}`),
+                ]
+                    .filter(Boolean)
+                    .join(' ')
+                    .toLowerCase();
+                return haystack.includes(auditQueryValue);
+            })
+            : [];
+        const studentAudit = detailViewStudent.selfAudit;
 
         return (
             <div className="h-full min-h-0 flex flex-col bg-white">
@@ -1514,15 +1558,20 @@ export const ResultsView: React.FC = () => {
                                 <span>No pages found for this student.</span>
                             </div>
                         )}
-                        {uniquePages.map(pageIdx => {
+                        {uniquePages.map((pageIdx, pageIdxIndex) => {
                             const imageUrl = uploadedImages[pageIdx] || currentSession?.images[pageIdx]?.url;
+                            const isLastPage = pageIdxIndex === uniquePages.length - 1;
                             return (
-                                <PlainCard key={pageIdx} className="overflow-hidden p-0 bg-white" hoverEffect={false}>
-                                    <div className="px-4 py-2 border-b border-slate-100 bg-slate-50 text-xs font-semibold text-slate-500 flex justify-between">
-                                        <span>Page {pageIdx + 1}</span>
+                                <div key={pageIdx} className={clsx("pb-6 border-b border-slate-100/80 space-y-2", isLastPage && "border-b-0 pb-0")}>
+                                    <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-[0.2em]">
+                                        Page {pageIdx + 1}
                                     </div>
-                                    {imageUrl ? <img src={imageUrl} alt={`Page ${pageIdx + 1}`} className="w-full h-auto" /> : <div className="p-10 text-center text-slate-400">Image missing</div>}
-                                </PlainCard>
+                                    {imageUrl ? (
+                                        <img src={imageUrl} alt={`Page ${pageIdx + 1}`} className="w-full h-auto" />
+                                    ) : (
+                                        <div className="p-10 text-center text-slate-400">Image missing</div>
+                                    )}
+                                </div>
                             )
                         })}
                     </div>
@@ -1539,6 +1588,242 @@ export const ResultsView: React.FC = () => {
                                 <div className="text-xs font-medium text-slate-500 tracking-wide">{isAssist ? 'Assisted Grading' : 'Total Score'}</div>
                             </div>
 
+                            {/* 🔥 批改透明度区块 - 显示第一次批改、自白、逻辑复核 */}
+                            {(detailViewStudent.draftQuestionDetails || detailViewStudent.selfReport || detailViewStudent.logicReviewedAt) && (
+                                <div className="border border-blue-100 bg-blue-50/30 rounded-xl p-4 space-y-4">
+                                    <div className="flex items-center gap-2 text-blue-700 font-semibold text-sm">
+                                        <AlertCircle className="w-4 h-4" />
+                                        批改透明度
+                                    </div>
+                                    
+                                    {/* 第一次批改 vs 最终结果对比 */}
+                                    {detailViewStudent.draftTotalScore !== undefined && detailViewStudent.draftTotalScore !== detailViewStudent.score && (
+                                        <div className="bg-white rounded-lg p-3 border border-blue-100">
+                                            <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400 mb-2">分数变化</div>
+                                            <div className="flex items-center gap-3">
+                                                <div className="text-center">
+                                                    <div className="text-lg font-bold text-slate-400 line-through">
+                                                        {detailViewStudent.draftTotalScore}
+                                                    </div>
+                                                    <div className="text-[10px] text-slate-400">初次批改</div>
+                                                </div>
+                                                <div className="text-slate-300">→</div>
+                                                <div className="text-center">
+                                                    <div className="text-lg font-bold text-emerald-600">
+                                                        {detailViewStudent.score}
+                                                    </div>
+                                                    <div className="text-[10px] text-emerald-600">逻辑复核后</div>
+                                                </div>
+                                                <div className={clsx(
+                                                    "ml-auto px-2 py-1 rounded text-xs font-semibold",
+                                                    detailViewStudent.score > detailViewStudent.draftTotalScore
+                                                        ? "bg-emerald-100 text-emerald-700"
+                                                        : "bg-rose-100 text-rose-700"
+                                                )}>
+                                                    {detailViewStudent.score > detailViewStudent.draftTotalScore ? '+' : ''}
+                                                    {(detailViewStudent.score - detailViewStudent.draftTotalScore).toFixed(1)}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* 自白报告 */}
+                                    {detailViewStudent.selfReport && (
+                                        <div className="bg-amber-50 rounded-lg p-3 border border-amber-200">
+                                            <div className="text-[10px] uppercase tracking-[0.2em] text-amber-600 mb-2 flex items-center gap-1">
+                                                <AlertTriangle className="w-3 h-3" />
+                                                AI 自白报告
+                                            </div>
+                                            {detailViewStudent.selfReport.overallStatus && (
+                                                <div className="text-xs text-amber-800 mb-2">
+                                                    状态: {detailViewStudent.selfReport.overallStatus}
+                                                </div>
+                                            )}
+                                            {detailViewStudent.selfReport.overallConfidence !== undefined && (
+                                                <div className="text-xs text-amber-800 mb-2">
+                                                    整体置信度: {(detailViewStudent.selfReport.overallConfidence * 100).toFixed(0)}%
+                                                </div>
+                                            )}
+                                            {detailViewStudent.selfReport.highRiskQuestions && detailViewStudent.selfReport.highRiskQuestions.length > 0 && (
+                                                <div className="mt-2">
+                                                    <div className="text-[10px] text-amber-600 font-semibold mb-1">高风险题目:</div>
+                                                    <div className="space-y-1">
+                                                        {detailViewStudent.selfReport.highRiskQuestions.map((item, idx) => (
+                                                            <div key={idx} className="text-xs text-amber-700 flex items-start gap-2">
+                                                                <span className="font-mono text-amber-500">Q{item.questionId}</span>
+                                                                <span>{item.description}</span>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            )}
+                                            {detailViewStudent.selfReport.issues && detailViewStudent.selfReport.issues.length > 0 && (
+                                                <div className="mt-2">
+                                                    <div className="text-[10px] text-amber-600 font-semibold mb-1">问题:</div>
+                                                    <div className="space-y-1">
+                                                        {detailViewStudent.selfReport.issues.map((item, idx) => (
+                                                            <div key={idx} className="text-xs text-amber-700">
+                                                                {item.questionId && <span className="font-mono text-amber-500 mr-1">Q{item.questionId}:</span>}
+                                                                {item.message}
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+
+                                    {/* 逻辑复核时间 */}
+                                    {detailViewStudent.logicReviewedAt && (
+                                        <div className="text-[11px] text-slate-500 flex items-center gap-2">
+                                            <CheckCircle className="w-3 h-3 text-emerald-500" />
+                                            逻辑复核完成于: {new Date(detailViewStudent.logicReviewedAt).toLocaleString('zh-CN')}
+                                        </div>
+                                    )}
+
+                                    {/* 第一次批改详情（可展开） */}
+                                    {detailViewStudent.draftQuestionDetails && detailViewStudent.draftQuestionDetails.length > 0 && (
+                                        <details className="bg-white rounded-lg border border-slate-200">
+                                            <summary className="px-3 py-2 text-xs font-semibold text-slate-600 cursor-pointer hover:bg-slate-50">
+                                                查看初次批改详情 ({detailViewStudent.draftQuestionDetails.length} 题)
+                                            </summary>
+                                            <div className="px-3 pb-3 space-y-2 max-h-60 overflow-y-auto">
+                                                {detailViewStudent.draftQuestionDetails.map((dq, idx) => {
+                                                    const finalQ = detailViewStudent.questionResults?.find(q => q.questionId === dq.questionId);
+                                                    const scoreChanged = finalQ && finalQ.score !== dq.score;
+                                                    return (
+                                                        <div key={idx} className={clsx(
+                                                            "text-xs p-2 rounded border",
+                                                            scoreChanged ? "border-amber-200 bg-amber-50/50" : "border-slate-100"
+                                                        )}>
+                                                            <div className="flex items-center justify-between">
+                                                                <span className="font-mono text-slate-500">Q{dq.questionId}</span>
+                                                                <div className="flex items-center gap-2">
+                                                                    <span className={clsx(scoreChanged && "line-through text-slate-400")}>
+                                                                        {dq.score}/{dq.maxScore}
+                                                                    </span>
+                                                                    {scoreChanged && finalQ && (
+                                                                        <>
+                                                                            <span className="text-slate-300">→</span>
+                                                                            <span className="font-semibold text-emerald-600">
+                                                                                {finalQ.score}/{finalQ.maxScore}
+                                                                            </span>
+                                                                        </>
+                                                                    )}
+                                                                </div>
+                                                            </div>
+                                                            {dq.selfCritique && (
+                                                                <div className="mt-1 text-[11px] text-amber-700 italic">
+                                                                    自白: {dq.selfCritique}
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        </details>
+                                    )}
+                                </div>
+                            )}
+
+                            <div className="border-b border-slate-100 pb-4">
+                                <div className="flex items-center justify-between gap-4">
+                                    <div className="text-sm font-semibold text-slate-700">Audit Query</div>
+                                    <button
+                                        type="button"
+                                        onClick={() => setAuditOpen((prev) => !prev)}
+                                        className="text-[11px] font-semibold text-slate-400 hover:text-slate-700 transition-colors"
+                                    >
+                                        {auditOpen ? 'Hide' : 'Open'}
+                                    </button>
+                                </div>
+                                {auditOpen && (
+                                    <div className="mt-3 space-y-3">
+                                        <div className="text-[11px] text-slate-500">
+                                            {auditItems.length > 0 ? `${auditItems.length} audit entries` : 'No audit entries'}
+                                        </div>
+                                        <input
+                                            value={auditQuery}
+                                            onChange={(event) => setAuditQuery(event.target.value)}
+                                            className="w-full border-b border-slate-200 bg-transparent px-0 py-2 text-sm text-slate-700 focus:border-slate-700 focus:outline-none"
+                                            placeholder="Search question id or keywords"
+                                        />
+                                        {(studentAudit?.summary || studentAudit?.honestyNote) && (
+                                            <div className="space-y-1">
+                                                <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">Overall</div>
+                                                <div className="space-y-1">
+                                                    {renderParagraphs(studentAudit.summary || studentAudit.honestyNote || '')}
+                                                </div>
+                                            </div>
+                                        )}
+                                        {auditQueryValue ? (
+                                            filteredAuditItems.length > 0 ? (
+                                                <div className="space-y-4">
+                                                    {filteredAuditItems.map((q, idx) => {
+                                                        const tags = Array.from(new Set([...(q.reviewReasons || []), ...(q.auditFlags || [])]));
+                                                        return (
+                                                            <div key={`${q.questionId || idx}`} className="border-b border-slate-100 pb-3 last:border-b-0">
+                                                                <div className="text-xs font-semibold text-slate-700">Q{q.questionId || idx + 1}</div>
+                                                                {q.selfCritique && (
+                                                                    <div className="mt-2 space-y-1">
+                                                                        <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">Self-critique</div>
+                                                                        <div className="space-y-1">
+                                                                            {renderParagraphs(q.selfCritique)}
+                                                                        </div>
+                                                                    </div>
+                                                                )}
+                                                                {q.reviewSummary && (
+                                                                    <div className="mt-2 space-y-1">
+                                                                        <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">Logic Review</div>
+                                                                        <div className="space-y-1">
+                                                                            {renderParagraphs(q.reviewSummary)}
+                                                                        </div>
+                                                                    </div>
+                                                                )}
+                                                                {q.reviewCorrections && q.reviewCorrections.length > 0 && (
+                                                                    <div className="mt-2 space-y-1 text-xs text-slate-600">
+                                                                        <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">Corrections</div>
+                                                                        <div className="space-y-1">
+                                                                            {q.reviewCorrections.map((c) => (
+                                                                                <div key={`${q.questionId}-${c.pointId || 'point'}`} className="flex items-start gap-2">
+                                                                                    <span className="font-mono text-slate-400">{c.pointId || '-'}</span>
+                                                                                    <span>{c.reviewReason || 'Review adjustment'}</span>
+                                                                                </div>
+                                                                            ))}
+                                                                        </div>
+                                                                    </div>
+                                                                )}
+                                                                {q.honestyNote && (
+                                                                    <div className="mt-2 space-y-1">
+                                                                        <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">Honesty Note</div>
+                                                                        <div className="space-y-1">
+                                                                            {renderParagraphs(q.honestyNote)}
+                                                                        </div>
+                                                                    </div>
+                                                                )}
+                                                                {tags.length > 0 && (
+                                                                    <div className="mt-2 flex flex-wrap gap-2">
+                                                                        {tags.map((tag) => (
+                                                                            <span key={`${q.questionId}-${tag}`} className="text-[10px] text-slate-500 border border-slate-200 px-2 py-1">
+                                                                                {tag}
+                                                                            </span>
+                                                                        ))}
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        );
+                                                    })}
+                                                </div>
+                                            ) : (
+                                                <div className="text-xs text-slate-400">No matches for current query.</div>
+                                            )
+                                        ) : (
+                                            <div className="text-xs text-slate-400">Enter a query to view audit details.</div>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+
                             {/* Questions */}
                             <div className="space-y-4">
                                 <div className="flex items-center gap-2 mb-2">
@@ -1546,9 +1831,9 @@ export const ResultsView: React.FC = () => {
                                     <h3 className="text-sm font-semibold text-slate-700">Analysis Detail</h3>
                                 </div>
                                 {detailViewStudent.questionResults?.map((q, idx) => (
-                                    <PlainCard key={idx} className="p-0 overflow-hidden border border-slate-200 shadow-none" hoverEffect={false}>
+                                    <div key={idx} className="border-b border-slate-100 pb-4 last:border-b-0">
                                         <QuestionDetail question={q} gradingMode={detailViewStudent.gradingMode} />
-                                    </PlainCard>
+                                    </div>
                                 ))}
                             </div>
                         </div>
@@ -1569,13 +1854,13 @@ export const ResultsView: React.FC = () => {
     if (results.length === 0) {
         return (
             <div className="flex flex-col items-center justify-center h-full text-slate-400 gap-4">
-                <PlainCard className="p-8 flex flex-col items-center gap-4">
+                <div className="p-8 flex flex-col items-center gap-4">
                     <RocketOutlined className="text-4xl opacity-50" />
                     <p className="font-medium">暂无批改结果</p>
                     <SmoothButton onClick={() => setCurrentTab('process')} variant="ghost">
                         <ArrowLeft className="w-4 h-4 mr-2" /> 返回批改过程
                     </SmoothButton>
-                </PlainCard>
+                </div>
             </div>
         );
     }
@@ -1599,7 +1884,7 @@ export const ResultsView: React.FC = () => {
                             className="w-full max-w-2xl"
                             onClick={e => e.stopPropagation()}
                         >
-                            <PlainCard className="p-6 space-y-4">
+                            <div className="bg-white p-6 space-y-4">
                                 <div className="flex items-center justify-between pb-4 border-b border-slate-100/60">
                                     <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
                                         <BarChartOutlined className="text-blue-500" /> 班级结果分析
@@ -1611,38 +1896,38 @@ export const ResultsView: React.FC = () => {
                                 {classReport ? (
                                     <div className="space-y-6">
                                         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-                                            <div className="bg-slate-50 rounded-xl p-3 text-center border border-slate-100">
+                                            <div className="bg-slate-50/60 p-3 text-center">
                                                 <div className="text-xl font-black text-slate-700">{classReport.averageScore?.toFixed(1)}</div>
                                                 <div className="text-[10px] font-medium text-slate-400 mt-1">Avg Score</div>
                                             </div>
-                                            <div className="bg-slate-50 rounded-xl p-3 text-center border border-slate-100">
+                                            <div className="bg-slate-50/60 p-3 text-center">
                                                 <div className="text-xl font-black text-slate-700">{classReport.averagePercentage?.toFixed(1)}%</div>
                                                 <div className="text-[10px] font-medium text-slate-400 mt-1">Avg Rate</div>
                                             </div>
-                                            <div className="bg-emerald-50 rounded-xl p-3 text-center border border-emerald-100">
+                                            <div className="bg-emerald-50/60 p-3 text-center">
                                                 <div className="text-xl font-black text-emerald-600">{((classReport.passRate ?? 0) * 100).toFixed(1)}%</div>
                                                 <div className="text-[10px] font-medium text-emerald-500 mt-1">Pass Rate</div>
                                             </div>
-                                            <div className="bg-blue-50 rounded-xl p-3 text-center border border-blue-100">
+                                            <div className="bg-blue-50/60 p-3 text-center">
                                                 <div className="text-xl font-black text-blue-600">{classReport.totalStudents}</div>
                                                 <div className="text-[10px] font-medium text-blue-500 mt-1">Students</div>
                                             </div>
                                         </div>
-                                        <p className="text-sm text-slate-600 leading-relaxed bg-white p-4 rounded-xl border border-slate-100">
+                                        <p className="text-sm text-slate-600 leading-relaxed bg-white p-4">
                                             {classReport.summary}
                                         </p>
                                     </div>
                                 ) : (
                                     <div className="text-center py-10 text-slate-400">暂无分析数据</div>
                                 )}
-                            </PlainCard>
+                            </div>
                         </motion.div>
                     </motion.div>
                 )}
             </AnimatePresence>
 
             {/* Dashboard Header */}
-            <div className="border border-slate-200 bg-white">
+            <div className="bg-white">
                 <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 px-6 py-5 border-b border-slate-200/70">
                     <div className="flex items-center gap-3">
                         <div className="h-10 w-10 grid place-items-center rounded-lg bg-slate-900 text-white">
@@ -1698,7 +1983,7 @@ export const ResultsView: React.FC = () => {
                     )}
                 </div>
 
-                <div className="border border-slate-200/80 bg-white">
+                <div className="bg-white">
                     {sortedResults.map((result, index) => (
                         <div key={`${result.studentName}-${index}`} onClick={() => handleViewDetail(result)} className="cursor-pointer">
                             <ResultCard result={result} rank={index + 1} isExpanded={false} onExpand={() => { }} />
@@ -1709,7 +1994,7 @@ export const ResultsView: React.FC = () => {
 
 {/* Cross Page Alerts */}
             {crossPageQuestions.length > 0 && (
-                <div className="border border-slate-200/80 bg-white p-4">
+                <div className="bg-white border-t border-slate-100 pt-4">
                     <div className="flex items-center gap-2 text-slate-700 font-semibold mb-3">
                         <Layers className="w-4 h-4" />
                         跨页题提醒

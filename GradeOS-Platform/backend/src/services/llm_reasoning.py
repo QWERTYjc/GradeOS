@@ -72,9 +72,10 @@ class LLMReasoningClient:
         """
         if model_name is None:
             model_name = get_default_model()
-        self._max_output_tokens = self._read_int_env("GRADING_MAX_OUTPUT_TOKENS", 16000)
-        if self._max_output_tokens <= 0:
-            self._max_output_tokens = 16000
+        # 移除 token 限制：设置为 None 表示不限制输出长度
+        # 可通过环境变量 GRADING_MAX_OUTPUT_TOKENS 覆盖（设为 0 或负数表示不限制）
+        raw_max_tokens = self._read_int_env("GRADING_MAX_OUTPUT_TOKENS", 0)
+        self._max_output_tokens = raw_max_tokens if raw_max_tokens > 0 else None
         self._max_prompt_questions = self._read_int_env(
             "GRADING_PROMPT_MAX_QUESTIONS",
             self.MAX_QUESTIONS_IN_PROMPT,
@@ -1482,9 +1483,11 @@ class LLMReasoningClient:
         """
         question_hints = self._build_question_hints(parsed_rubric, page_context)
         index_context = self._format_page_index_context(page_context)
+        # 预先构建题号提示，避免 f-string 中使用反斜杠
+        hints_section = f"可用题号提示:\n{question_hints}" if question_hints else ""
         prompt = f"""你是阅卷助理，只做“答案证据抽取”，不要评分。
 {index_context}
-{f"可用题号提示:\\n{question_hints}" if question_hints else ""}
+{hints_section}
 
 要求：
 1. 只写图中明确可见的原文/公式/步骤，无法辨认就注明不清晰。
@@ -1799,6 +1802,201 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
         
         Args:
             image: 图像或文本字节
+
+输出 JSON：
+```json
+{{
+  "score": 0,
+  "max_score": 0,
+  "confidence": 0.0,
+  "question_numbers": ["1"],
+  "question_details": [
+    {{
+      "question_id": "1",
+      "score": 0,
+      "max_score": 0,
+      "confidence": 0.0,
+      "question_type": "objective",
+      "student_answer": "",
+      "feedback": "",
+      "used_alternative_solution": false,
+      "alternative_solution_ref": "",
+      "typo_notes": ["发现的错别字/拼写错误（如有）"],
+      "scoring_point_results": [
+        {{
+          "point_id": "1.1",
+          "rubric_reference": "[1.1] 评分点描述",
+          "decision": "得分/未得分",
+          "awarded": 0,
+          "max_points": 0,
+          "evidence": "【原文引用】...",
+          "reason": ""
+        }}
+      ]
+    }}
+  ],
+  "page_summary": "",
+  "flags": []
+}}
+```
+"""
+        response_text = await self._call_text_api(prompt, stream_callback)
+        fallback = {
+            "score": 0.0,
+            "max_score": 0.0,
+            "confidence": 0.0,
+            "question_numbers": [],
+            "question_details": [],
+            "page_summary": "",
+            "flags": ["parse_error"],
+        }
+        return self._safe_json_loads(response_text, fallback)
+
+    async def assist_from_evidence(
+        self,
+        evidence: Dict[str, Any],
+        parsed_rubric: Optional[Dict[str, Any]] = None,
+        page_context: Optional[Dict[str, Any]] = None,
+        mode: Literal["teacher", "student"] = "teacher",
+        stream_callback: Optional[Callable[[str, str], Awaitable[None]]] = None
+    ) -> Dict[str, Any]:
+        """
+        Provide assistive feedback without grading or scoring.
+        """
+        answer_ids: List[str] = []
+        for item in evidence.get("answers", []):
+            qid = self._normalize_question_id(item.get("question_id"))
+            if qid:
+                answer_ids.append(qid)
+
+        question_numbers = evidence.get("question_numbers") or (page_context or {}).get("question_numbers") or []
+        for qid in question_numbers:
+            normalized = self._normalize_question_id(qid)
+            if normalized and normalized not in answer_ids:
+                answer_ids.append(normalized)
+
+        if not answer_ids and parsed_rubric and parsed_rubric.get("questions"):
+            for q in self._limit_questions_for_prompt(parsed_rubric.get("questions", [])):
+                qid = self._normalize_question_id(q.get("question_id") or q.get("id"))
+                if qid and qid not in answer_ids:
+                    answer_ids.append(qid)
+
+        rubric_payload = self._build_rubric_payload(parsed_rubric, answer_ids)
+        mode_label = "TEACHER_ASSIST" if mode == "teacher" else "STUDENT_ASSIST"
+        output_constraints = (
+            "Output constraints: feedback<=160 chars (teacher) or <=600 chars (student); "
+            "student_answer<=200 chars; error_hints<=3 items."
+        )
+        prompt = f"""你是批改助理，只做问题分析与建议，不要打分、不输出分数。
+Mode: {mode_label}
+{output_constraints}
+只基于“答案证据”和可用评分标准（如有）给出提示；证据不足时明确说明不确定。
+Teacher assist: focus on concise error hints and likely missing steps.
+Student assist: explain mistakes and how to improve, step-by-step if needed.
+
+评分标准(JSON，可为空)：
+{json.dumps(rubric_payload, ensure_ascii=False, indent=2)}
+
+答案证据(JSON)：
+{json.dumps(evidence, ensure_ascii=False, indent=2)}
+
+输出 JSON：
+```json
+{{
+  "question_numbers": ["1"],
+  "question_details": [
+    {{
+      "question_id": "1",
+      "question_type": "objective",
+      "student_answer": "",
+      "feedback": "",
+      "error_hints": ["..."],
+      "confidence": 0.0
+    }}
+  ],
+  "page_summary": "",
+  "flags": []
+}}
+```
+"""
+        response_text = await self._call_text_api(prompt, stream_callback)
+        fallback = {
+            "question_numbers": [],
+            "question_details": [],
+            "page_summary": "",
+            "flags": ["parse_error"],
+        }
+        return self._safe_json_loads(response_text, fallback)
+
+    async def _call_text_api(
+        self, 
+        prompt: str,
+        stream_callback: Optional[Callable[[str, str], Awaitable[None]]] = None
+    ) -> str:
+        """调用文本 API (支持流式回调)"""
+        try:
+            message = HumanMessage(content=prompt)
+            if stream_callback:
+                full_response = ""
+                async for chunk in self.llm.astream([message]):
+                    content = chunk.content
+                    if content:
+                        if isinstance(content, str):
+                            full_response += content
+                            await stream_callback("text", content)
+                        elif isinstance(content, list):
+                             for part in content:
+                                 if isinstance(part, str):
+                                     full_response += part
+                                     await stream_callback("text", part)
+                return self._extract_text_from_response(full_response)
+            else:
+                response = await self.llm.ainvoke([message])
+                return self._extract_text_from_response(response.content)
+        except Exception as e:
+            logger.error(f"Text API call failed: {e}")
+            raise
+
+    async def _call_vision_api(self, image_b64: str, prompt: str) -> str:
+        """调用视觉 API (包装流式调用以触发事件)"""
+        full_response = ""
+        async for chunk in self._call_vision_api_stream(image_b64, prompt):
+            full_response += chunk
+        return full_response
+
+    async def _call_text_api_stream(self, prompt: str) -> AsyncIterator[str]:
+        """流式调用文本模型 API"""
+        message = HumanMessage(content=prompt)
+        async for chunk in self.llm.astream([message]):
+            yield self._extract_text_from_response(chunk.content)
+
+    async def _call_vision_api_stream(self, image_b64: str, prompt: str) -> AsyncIterator[str]:
+        """流式调用视觉模型 API"""
+        message = HumanMessage(
+            content=[
+                {"type": "text", "text": prompt},
+                {
+                    "type": "image_url",
+                    "image_url": f"data:image/png;base64,{image_b64}"
+                }
+            ]
+        )
+        async for chunk in self.llm.astream([message]):
+            yield self._extract_text_from_response(chunk.content)
+
+    async def grade_page_stream(
+        self,
+        image: bytes,
+        rubric: str,
+        max_score: float = 10.0,
+        parsed_rubric: Optional[Dict[str, Any]] = None,
+        page_context: Optional[Dict[str, Any]] = None
+    ) -> AsyncIterator[str]:
+        """
+        流式批改单页 (P4)
+        
+        Args:
+            image: 图像或文本字节
             rubric: 评分细则
             max_score: 满分
             parsed_rubric: 解析后的评分标准
@@ -1820,233 +2018,15 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
             async for chunk in self._call_vision_api_stream(img_b64, prompt):
                 yield chunk
 
-    async def grade_student(
-        self,
-        images: List[bytes],
-        student_key: str,
-        parsed_rubric: Dict[str, Any],
-        page_indices: Optional[List[int]] = None,
-        page_contexts: Optional[Dict[int, Dict[str, Any]]] = None,
-        stream_callback: Optional[Callable[[str, str], Awaitable[None]]] = None
-    ) -> Dict[str, Any]:
-        """
-        批改整个学生的所有页面（一次 LLM call）
-        
-        将该学生所有页面图像和评分标准一起发送给 LLM，
-        由 LLM 统一分析并返回完整的批改结果。
-        
-        Args:
-            images: 学生的所有页面图像（bytes 列表）
-            student_key: 学生标识
-            parsed_rubric: 解析后的评分标准
-            page_indices: 页面索引列表（可选）
-            page_contexts: 各页面的索引上下文（可选）
-            stream_callback: 流式回调函数
-            
-        Returns:
-            Dict: 学生的完整批改结果，包含所有题目的评分
-        """
-        if not images:
-            logger.warning(f"[grade_student] 学生 {student_key} 没有图像")
-            return {
-                "student_key": student_key,
-                "status": "failed",
-                "error": "没有图像",
-                "score": 0,
-                "max_score": 0,
-                "question_details": [],
-            }
-        
-        logger.info(f"[grade_student] 开始批改学生 {student_key}，共 {len(images)} 页")
-        
-        # 构建评分标准信息
-        rubric_info = self._build_student_grading_rubric_info(parsed_rubric)
-        
-        # 构建页面上下文信息
-        context_info = ""
-        if page_contexts and page_indices:
-            context_parts = []
-            for idx, page_idx in enumerate(page_indices):
-                ctx = page_contexts.get(page_idx, {})
-                if ctx:
-                    q_nums = ctx.get("question_numbers", [])
-                    context_parts.append(
-                        f"- 第{idx + 1}张图 (page_index={page_idx}): "
-                        f"题号 {', '.join(str(q) for q in q_nums) if q_nums else '待识别'}"
-                    )
-            if context_parts:
-                context_info = "\n## 页面索引上下文\n" + "\n".join(context_parts)
-        
-        # 构建完整 prompt
-        prompt_template = """You are a grading assistant. Grade the student answers using the rubric below.
-
-        Rubric:
-        {rubric_info}
-
-        Context:
-        {context_info}
-
-        Tasks:
-        1. Identify each question and the student answer.
-        2. Score each question strictly by the rubric.
-        3. Provide evidence for each scoring point using verbatim student text.
-        4. Summarize each page.
-
-        Return JSON only in this schema:
-        {{
-          "student_key": "{student_key}",
-          "total_score": 0,
-          "max_score": 0,
-          "confidence": 0.0,
-          "question_details": [
-            {{
-              "question_id": "1",
-              "score": 0,
-              "max_score": 0,
-              "confidence": 0.0,
-              "student_answer": "",
-              "is_correct": false,
-              "feedback": "",
-              "self_critique": "",
-              "self_critique_confidence": 0.0,
-              "source_pages": [0],
-              "scoring_point_results": [
-        {{
-          "point_id": "1.1",
-          "description": "",
-          "max_points": 0,
-          "awarded": 0,
-          "evidence": ""
-        }}
-              ]
-            }}
-          ],
-          "page_summaries": [
-            {{"page_index": 0, "question_numbers": ["1"], "summary": ""}}
-          ],
-          "student_info": {{"name": "", "student_id": ""}},
-          "overall_feedback": ""
-        }}
-
-        Rules:
-        - Return valid JSON only (no markdown).
-        - total_score must equal the sum of question scores.
-        - max_score must equal the sum of question max_score.
-        - Include every rubric question in question_details; if unanswered, score 0 and explain in self_critique.
-        - If a value is unknown, use an empty string or 0."""
-        prompt = prompt_template.format(
-            rubric_info=rubric_info,
-            context_info=context_info,
-            student_key=student_key,
-        )
-
-        try:
-            # 构建消息内容
-            content = [{"type": "text", "text": prompt}]
-            
-            # 添加所有图像
-            for idx, img_bytes in enumerate(images):
-                if isinstance(img_bytes, bytes):
-                    img_b64 = base64.b64encode(img_bytes).decode('utf-8')
-                else:
-                    img_b64 = img_bytes
-                content.append({
-                    "type": "image_url",
-                    "image_url": f"data:image/jpeg;base64,{img_b64}"
-                })
-            
-            # 调用 LLM
-            message = HumanMessage(content=content)
-            full_response = ""
-            
-            async for chunk in self.llm.astream([message]):
-                content_chunk = chunk.content
-                if content_chunk:
-                    if isinstance(content_chunk, str):
-                        full_response += content_chunk
-                        if stream_callback:
-                            await stream_callback("output", content_chunk)
-                    elif isinstance(content_chunk, list):
-                        for part in content_chunk:
-                            text = ""
-                            if isinstance(part, str):
-                                text = part
-                            elif isinstance(part, dict) and "text" in part:
-                                text = part["text"]
-                            if text:
-                                full_response += text
-                                if stream_callback:
-                                    await stream_callback("output", text)
-            
-            # 解析 JSON 结果
-            result = None
-            if "---PAGE_BREAK---" in full_response:
-                result = self._parse_page_break_output(full_response, student_key)
-
-            if result is None:
-                json_text = self._extract_json_from_text(full_response)
-                try:
-                    result = self._load_json_with_repair(json_text)
-                except json.JSONDecodeError:
-                    trimmed = self._extract_json_block(json_text)
-                    if trimmed and trimmed != json_text:
-                        result = self._load_json_with_repair(trimmed)
-                    else:
-                        raise
-            
-            # 确保必要字段存在
-            result.setdefault("student_key", student_key)
-            result.setdefault("status", "completed")
-            result.setdefault("total_score", 0)
-            result.setdefault("max_score", 0)
-            result.setdefault("question_details", [])
-            result = await self._ensure_student_result_complete(
-                result=result,
-                parsed_rubric=parsed_rubric,
-                student_key=student_key,
-                images=images,
-                context_info=context_info,
-                stream_callback=stream_callback,
-            )
-            
-            logger.info(
-                f"[grade_student] 学生 {student_key} 批改完成: "
-                f"score={result.get('total_score')}/{result.get('max_score')}, "
-                f"questions={len(result.get('question_details', []))}"
-            )
-            
-            return result
-            
-        except json.JSONDecodeError as e:
-            logger.error(f"[grade_student] JSON 解析失败: {e}")
-            return {
-                "student_key": student_key,
-                "status": "failed",
-                "error": f"JSON 解析失败: {str(e)}",
-                "score": 0,
-                "max_score": 0,
-                "question_details": [],
-            }
-        except Exception as e:
-            logger.error(f"[grade_student] 批改失败: {e}", exc_info=True)
-            return {
-                "student_key": student_key,
-                "status": "failed",
-                "error": str(e),
-                "score": 0,
-                "max_score": 0,
-                "question_details": [],
-            }
-
-
-    @staticmethod
-    def _safe_float(value: Any, default: float = 0.0) -> float:
+    def _safe_float(self, value: Any, default: float = 0.0) -> float:
+        """安全转换为浮点数"""
         try:
             if value is None:
                 return default
             return float(value)
         except (TypeError, ValueError):
             return default
+
 
     def _sum_question_detail_scores(self, details: List[Dict[str, Any]]) -> tuple[float, float]:
         total = 0.0
@@ -3435,3 +3415,307 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
                 is_cross_page=False,
                 student_answer=student_answer,
             )
+
+
+    # ==================== grade_student 方法 ====================
+
+    async def grade_student(
+        self,
+        images: List[bytes],
+        student_key: str,
+        parsed_rubric: Dict[str, Any],
+        page_indices: Optional[List[int]] = None,
+        page_contexts: Optional[Dict[int, Dict[str, Any]]] = None,
+        stream_callback: Optional[Callable[[str, str], Awaitable[None]]] = None,
+    ) -> Dict[str, Any]:
+        """
+        一次性批改整个学生的所有页面
+        
+        将学生的所有答题页面作为一个整体发送给 LLM，获取完整的批改结果。
+        这种方式可以更好地处理跨页题目，并减少 API 调用次数。
+        
+        Args:
+            images: 学生所有答题页面的图像字节列表
+            student_key: 学生标识（如姓名、学号）
+            parsed_rubric: 解析后的评分标准
+            page_indices: 页面索引列表（可选）
+            page_contexts: 页面索引上下文（可选）
+            stream_callback: 流式回调函数 (stream_type, chunk) -> None
+            
+        Returns:
+            Dict: 包含学生完整批改结果
+                - status: "completed" | "failed"
+                - total_score: 总得分
+                - max_score: 满分
+                - confidence: 置信度
+                - question_details: 题目详情列表
+                - overall_feedback: 总体反馈
+                - student_info: 学生信息（如果识别到）
+        """
+        if not images:
+            return {
+                "status": "failed",
+                "error": "没有提供答题图像",
+                "total_score": 0,
+                "max_score": 0,
+                "confidence": 0,
+                "question_details": [],
+            }
+
+        logger.info(
+            f"[grade_student] 开始批改学生 {student_key}，共 {len(images)} 页"
+        )
+
+        # 构建评分标准上下文
+        rubric_context = ""
+        total_score = 0
+        questions_count = 0
+
+        if parsed_rubric:
+            rubric_context = parsed_rubric.get("rubric_context", "")
+            total_score = parsed_rubric.get("total_score", 0)
+            questions_count = len(parsed_rubric.get("questions", []))
+
+            if not rubric_context and parsed_rubric.get("questions"):
+                # 从题目信息构建评分标准上下文
+                rubric_lines = [f"评分标准（总分 {total_score} 分，共 {questions_count} 道题）：\n"]
+                for q in parsed_rubric.get("questions", []):
+                    qid = q.get("question_id", "?")
+                    max_q_score = q.get("max_score", 0)
+                    rubric_lines.append(f"\n第{qid}题（满分 {max_q_score} 分）：")
+
+                    # 添加得分点
+                    for sp in q.get("scoring_points", []):
+                        point_id = sp.get("point_id", "")
+                        desc = sp.get("description", "")
+                        score = sp.get("score", 0)
+                        rubric_lines.append(f"  - [{point_id}] {desc}（{score}分）")
+
+                    # 添加标准答案摘要
+                    std_answer = q.get("standard_answer", "")
+                    if std_answer:
+                        preview = std_answer[:100] + "..." if len(std_answer) > 100 else std_answer
+                        rubric_lines.append(f"  标准答案：{preview}")
+
+                rubric_context = "\n".join(rubric_lines)
+
+        # 构建页面上下文信息
+        page_context_info = ""
+        if page_contexts:
+            context_lines = ["页面索引信息："]
+            for idx, ctx in sorted(page_contexts.items()):
+                q_nums = ctx.get("question_numbers", [])
+                student_info = ctx.get("student_info")
+                is_first = ctx.get("is_first_page", False)
+                context_lines.append(
+                    f"  - 页面 {idx}: 题目={q_nums}, 首页={is_first}"
+                )
+                if student_info:
+                    context_lines.append(
+                        f"    学生: {student_info.get('name', '未知')}, "
+                        f"学号: {student_info.get('student_id', '未知')}"
+                    )
+            page_context_info = "\n".join(context_lines)
+
+        # 构建批改提示词
+        prompt = f"""你是一位专业的阅卷教师，请仔细分析以下学生的答题图像并进行精确评分。
+
+## 学生信息
+- 学生标识：{student_key}
+- 答题页数：{len(images)} 页
+
+## 评分标准
+{rubric_context}
+
+{page_context_info}
+
+## 批改要求
+1. **逐题评分**：对每道题目进行独立评分
+2. **得分点核对**：严格按照评分标准的得分点给分
+3. **跨页处理**：如果一道题跨越多页，需要综合所有页面的内容评分
+4. **另类解法**：如果学生使用了有效的另类解法，同样给分
+5. **详细反馈**：为每道题提供具体的评分说明
+6. **完整记录学生作答**：student_answer 字段必须完整记录学生的原始作答内容，不要省略
+7. **自白与置信度**：每道题必须输出 self_critique（自我反思）和 self_critique_confidence（置信度）
+   - 自白需诚实指出不确定之处、证据不足的地方
+   - 如果对某道题的评分不确定，必须在 self_critique 中说明
+
+## 输出格式（JSON）
+```json
+{{
+    "student_key": "{student_key}",
+    "status": "completed",
+    "total_score": 总得分,
+    "max_score": {total_score},
+    "confidence": 评分置信度（0.0-1.0）,
+    "student_info": {{
+        "name": "识别到的学生姓名（如有）",
+        "student_id": "识别到的学号（如有）",
+        "class_name": "识别到的班级（如有）"
+    }},
+    "question_details": [
+        {{
+            "question_id": "题号",
+            "score": 得分,
+            "max_score": 满分,
+            "student_answer": "【必须完整】学生的原始作答内容，包括所有文字、公式、步骤，不要省略",
+            "is_correct": true/false,
+            "feedback": "评分说明",
+            "confidence": 置信度,
+            "self_critique": "【必须填写】自我反思：对本题评分的不确定之处、可能的遗漏、证据是否充分等",
+            "self_critique_confidence": 自评置信度（0.0-1.0，越低表示越不确定）,
+            "source_pages": [页码列表],
+            "scoring_point_results": [
+                {{
+                    "point_id": "得分点ID",
+                    "description": "得分点描述",
+                    "max_score": 该得分点满分,
+                    "awarded": 获得的分数,
+                    "evidence": "【必须引用原文】评分依据，引用学生答案中的具体内容"
+                }}
+            ]
+        }}
+    ],
+    "overall_feedback": "总体评价和建议",
+    "page_summaries": [
+        {{
+            "page_index": 页码,
+            "question_numbers": ["该页包含的题号"],
+            "summary": "该页内容摘要"
+        }}
+    ]
+}}
+```
+
+## 重要提醒
+- 必须批改全部 {questions_count} 道题
+- 每道题的 score 必须等于各得分点 awarded 之和
+- total_score 必须等于各题 score 之和
+- student_answer 必须完整记录学生的原始作答，不要用"..."省略
+- self_critique 必须诚实反映评分的不确定性
+- 如果无法识别某道题的答案，confidence 和 self_critique_confidence 设为较低值并在 self_critique 中说明原因
+"""
+
+        try:
+            # 将图像转为 base64
+            content = [{"type": "text", "text": prompt}]
+            for idx, img_bytes in enumerate(images):
+                if isinstance(img_bytes, bytes):
+                    img_b64 = base64.b64encode(img_bytes).decode('utf-8')
+                else:
+                    img_b64 = img_bytes
+                content.append({
+                    "type": "image_url",
+                    "image_url": f"data:image/jpeg;base64,{img_b64}"
+                })
+
+            message = HumanMessage(content=content)
+
+            # 流式调用 LLM
+            full_response = ""
+            thinking_content = ""
+
+            async for chunk in self.llm.astream([message]):
+                chunk_content = chunk.content
+                if chunk_content:
+                    if isinstance(chunk_content, str):
+                        full_response += chunk_content
+                        if stream_callback:
+                            await stream_callback("output", chunk_content)
+                    elif isinstance(chunk_content, list):
+                        for part in chunk_content:
+                            if isinstance(part, str):
+                                full_response += part
+                                if stream_callback:
+                                    await stream_callback("output", part)
+                            elif isinstance(part, dict):
+                                if part.get("type") == "thinking":
+                                    thinking_content += part.get("thinking", "")
+                                    if stream_callback:
+                                        await stream_callback("thinking", part.get("thinking", ""))
+                                elif "text" in part:
+                                    full_response += part["text"]
+                                    if stream_callback:
+                                        await stream_callback("output", part["text"])
+
+            # 分离思考内容和输出内容
+            output_text, extracted_thinking = split_thinking_content(full_response)
+            if extracted_thinking:
+                thinking_content = extracted_thinking
+
+            # 解析 JSON 响应
+            json_text = self._extract_json_from_text(output_text)
+
+            # 尝试多种方式解析 JSON
+            result = None
+            try:
+                result = self._load_json_with_repair(json_text)
+            except json.JSONDecodeError:
+                # 尝试提取 JSON 块
+                json_block = self._extract_json_block(json_text)
+                if json_block:
+                    try:
+                        result = self._load_json_with_repair(json_block)
+                    except json.JSONDecodeError:
+                        pass
+
+            # 尝试解析分页输出格式
+            if result is None:
+                result = self._parse_page_break_output(output_text, student_key)
+
+            if result is None:
+                logger.error(f"[grade_student] JSON 解析失败: {json_text[:500]}")
+                return {
+                    "status": "failed",
+                    "error": "无法解析批改结果",
+                    "total_score": 0,
+                    "max_score": total_score,
+                    "confidence": 0,
+                    "question_details": [],
+                    "raw_response": output_text[:1000],
+                }
+
+            # 规范化结果
+            result["status"] = "completed"
+            result["student_key"] = student_key
+
+            # 确保必要字段存在
+            if "total_score" not in result:
+                result["total_score"] = sum(
+                    q.get("score", 0) for q in result.get("question_details", [])
+                )
+            if "max_score" not in result:
+                result["max_score"] = total_score
+            if "confidence" not in result:
+                result["confidence"] = 0.8
+            if "question_details" not in result:
+                result["question_details"] = []
+
+            # 规范化 question_details
+            normalized_details = []
+            for detail in result.get("question_details", []):
+                normalized = self._normalize_question_detail(
+                    detail,
+                    page_indices[0] if page_indices else 0
+                )
+                normalized_details.append(normalized)
+            result["question_details"] = normalized_details
+
+            logger.info(
+                f"[grade_student] 批改完成: student={student_key}, "
+                f"score={result.get('total_score')}/{result.get('max_score')}, "
+                f"questions={len(result.get('question_details', []))}"
+            )
+
+            return result
+
+        except Exception as e:
+            logger.error(f"[grade_student] 批改失败: {e}", exc_info=True)
+            return {
+                "status": "failed",
+                "error": str(e),
+                "total_score": 0,
+                "max_score": total_score,
+                "confidence": 0,
+                "question_details": [],
+            }

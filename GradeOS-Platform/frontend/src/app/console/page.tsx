@@ -103,70 +103,66 @@ const ScannerContainer = ({
     }
 
     return (
-        <div className="h-full w-full flex flex-col bg-[#F5F7FB]">
-            {/* Top Bar: View Switcher & Scan/Preview Toggle - Centered Layout */}
-            <div className="flex items-center justify-between px-6 py-3 bg-white border-b border-gray-100 shadow-sm relative z-20">
+        <div className="h-full w-full flex flex-col bg-white">
+            {/* Top Bar: View Switcher & Scan/Preview Toggle */}
+            <div className="flex flex-col gap-3 px-4 py-4 bg-white border-b border-slate-100 relative z-20 md:px-6">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex items-center gap-6">
+                        <button
+                            onClick={() => setViewMode('exams')}
+                            className={clsx(
+                                "text-sm font-semibold pb-1 border-b-2 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300/70",
+                                viewMode === 'exams'
+                                    ? "border-slate-900 text-slate-900"
+                                    : "border-transparent text-slate-400 hover:text-slate-700"
+                            )}
+                        >
+                            Student Exams
+                        </button>
+                        <button
+                            onClick={() => setViewMode('rubrics')}
+                            className={clsx(
+                                "text-sm font-semibold pb-1 border-b-2 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300/70",
+                                viewMode === 'rubrics'
+                                    ? "border-slate-900 text-slate-900"
+                                    : "border-transparent text-slate-400 hover:text-slate-700"
+                            )}
+                        >
+                            Rubric / Standards
+                        </button>
+                    </div>
 
-                {/* Left: Placeholder for balance or back button if needed */}
-                <div className="w-[200px]"></div>
-
-                {/* Center: View Mode Switcher */}
-                <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 flex bg-slate-100 p-1 rounded-lg">
-                    <button
-                        onClick={() => setViewMode('exams')}
-                        className={clsx(
-                            "px-6 py-1.5 rounded-md text-sm font-bold transition-all min-w-[140px]",
-                            viewMode === 'exams'
-                                ? "bg-white text-blue-600 shadow-sm ring-1 ring-black/5"
-                                : "text-slate-500 hover:text-slate-700"
-                        )}
-                    >
-                        Student Exams
-                    </button>
-                    <button
-                        onClick={() => setViewMode('rubrics')}
-                        className={clsx(
-                            "px-6 py-1.5 rounded-md text-sm font-bold transition-all min-w-[140px]",
-                            viewMode === 'rubrics'
-                                ? "bg-white text-purple-600 shadow-sm ring-1 ring-black/5"
-                                : "text-slate-500 hover:text-slate-700"
-                        )}
-                    >
-                        Rubric / Standards
-                    </button>
-                </div>
-
-                {/* Right: Actions */}
-                <div className="flex items-center gap-2 w-[200px] justify-end">
-                    <button
-                        onClick={() => onTabChange('scan')}
-                        className={clsx(
-                            "flex items-center gap-2 px-4 py-2 rounded-full text-xs font-semibold border transition",
-                            activeTab === 'scan'
-                                ? "bg-gray-800 text-white border-gray-800 shadow"
-                                : "bg-white text-gray-600 border-gray-200 hover:border-gray-300"
-                        )}
-                    >
-                        <ScanLine className="h-3.5 w-3.5" />
-                        Capture
-                    </button>
-                    <button
-                        onClick={() => onTabChange('gallery')}
-                        className={clsx(
-                            "flex items-center gap-2 px-4 py-2 rounded-full text-xs font-semibold border transition",
-                            activeTab === 'gallery'
-                                ? "bg-gray-800 text-white border-gray-800 shadow"
-                                : "bg-white text-gray-600 border-gray-200 hover:border-gray-300"
-                        )}
-                    >
-                        <Images className="h-3.5 w-3.5" />
-                        Review ({imageCount})
-                    </button>
+                    <div className="flex items-center gap-4">
+                        <button
+                            onClick={() => onTabChange('scan')}
+                            className={clsx(
+                                "flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.2em] pb-1 border-b-2 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300/70",
+                                activeTab === 'scan'
+                                    ? "border-slate-900 text-slate-900"
+                                    : "border-transparent text-slate-400 hover:text-slate-700"
+                            )}
+                        >
+                            <ScanLine className="h-3.5 w-3.5" />
+                            Capture
+                        </button>
+                        <button
+                            onClick={() => onTabChange('gallery')}
+                            className={clsx(
+                                "flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.2em] pb-1 border-b-2 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300/70",
+                                activeTab === 'gallery'
+                                    ? "border-slate-900 text-slate-900"
+                                    : "border-transparent text-slate-400 hover:text-slate-700"
+                            )}
+                        >
+                            <Images className="h-3.5 w-3.5" />
+                            Review ({imageCount})
+                        </button>
+                    </div>
                 </div>
             </div>
 
             {/* Content Content - Re-mount on view change to reset gallery state if needed */}
-            <div className="flex-1 min-h-0 bg-white">
+            <div className="flex-1 min-h-0 bg-transparent">
                 {activeTab === 'scan' ? (
                     <Scanner />
                 ) : (
@@ -203,6 +199,7 @@ export default function ConsolePage() {
     const currentTab = useConsoleStore((state) => state.currentTab);
     const isResultsView = currentTab === 'results';
     const setCurrentTab = useConsoleStore((state) => state.setCurrentTab);
+    const isIdleView = status === 'IDLE';
 
     // Initial Sessions State
     const [sessions, setSessions] = useState<Session[]>([]);
@@ -506,13 +503,8 @@ export default function ConsolePage() {
         <AppContext.Provider value={contextValue}>
             <div className={clsx(
                 "w-full relative console-shell flex flex-col",
-                isResultsView ? "h-screen overflow-hidden" : "min-h-screen overflow-auto"
+                isResultsView ? "h-screen overflow-hidden bg-black" : isIdleView ? "h-screen overflow-md bg-white" : "min-h-screen overflow-auto"
             )}>
-                <div className="pointer-events-none absolute inset-0 console-aurora" />
-                <div className="pointer-events-none absolute inset-0 console-grid" />
-                <div className="pointer-events-none absolute -top-32 -left-24 w-[320px] h-[320px] console-orb orb-1" />
-                <div className="pointer-events-none absolute top-24 right-[-120px] w-[260px] h-[260px] console-orb orb-2" />
-                <div className="pointer-events-none absolute bottom-[-140px] left-1/3 w-[360px] h-[360px] console-orb orb-3" />
 
                 <AnimatePresence>
                     {status === 'REVIEWING' && (
@@ -556,7 +548,11 @@ export default function ConsolePage() {
                 <main
                     className={clsx(
                         "relative z-10 w-full flex flex-col items-center",
-                        isResultsView ? "flex-1 min-h-0 justify-start" : "min-h-screen justify-center"
+                        isResultsView
+                            ? "flex-1 min-h-0 justify-start"
+                            : isIdleView
+                                ? "min-h-screen justify-start"
+                                : "min-h-screen justify-center"
                     )}
                 >
 
@@ -568,7 +564,7 @@ export default function ConsolePage() {
                                 initial={{ opacity: 0, scale: 0.95 }}
                                 animate={{ opacity: 1, scale: 1 }}
                                 exit={{ opacity: 0, scale: 0.95, y: -30 }}
-                                className="w-full h-full pt-20"
+                                className="w-full h-full"
                             >
                                 <ScannerContainer
                                     activeTab={activeTab}
@@ -629,15 +625,15 @@ export default function ConsolePage() {
                                 initial={{ opacity: 0, scale: 0.95 }}
                                 animate={{ opacity: 1, scale: 1 }}
                                 exit={{ opacity: 0 }}
-                                className="w-full max-w-6xl px-6 py-6 flex-1 min-h-0 overflow-hidden flex flex-col"
+                                className="w-full flex-1 min-h-0 overflow-hidden flex flex-col"
                             >
-                                <div className="bg-white/60 backdrop-blur-md rounded-3xl border border-gray-200 shadow-xl overflow-hidden p-1 flex-1 min-h-0">
+                                <div className="flex-1 min-h-0 overflow-hidden">
                                     <ResultsView />
                                 </div>
-                                <div className="flex justify-center py-4 shrink-0">
+                                <div className="flex justify-center py-4 shrink-0 border-t border-slate-100 bg-white">
                                     <button
                                         onClick={reset}
-                                        className="px-8 py-3 bg-black text-white rounded-full font-medium hover:bg-gray-800 transition-all shadow-lg hover:shadow-xl hover:-translate-y-0.5"
+                                        className="px-8 py-3 bg-black text-white rounded-full font-medium hover:bg-gray-800 transition-all"
                                     >
                                         Start New Grading
                                     </button>

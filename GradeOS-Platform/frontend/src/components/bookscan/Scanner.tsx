@@ -73,21 +73,28 @@ export default function Scanner() {
       const mediaStream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: 'environment',
-          width: { ideal: 4096 },
-          height: { ideal: 2160 }
+          width: { ideal: 1920 },
+          height: { ideal: 1080 }
         }
       });
       setStream(mediaStream);
       setIsCameraActive(true);
-      if (videoRef.current) {
-        videoRef.current.srcObject = mediaStream;
-        await videoRef.current.play();
-      }
     } catch (err: any) {
-      setFeedbackMessage(`Error: ${err.message}`);
+      setFeedbackMessage(`Camera error: ${err.message}`);
       setIsCameraActive(false);
     }
   };
+
+  // Effect to bind stream to video element when it becomes available
+  useEffect(() => {
+    if (isCameraActive && stream && videoRef.current) {
+      const video = videoRef.current;
+      video.srcObject = stream;
+      video.onloadedmetadata = () => {
+        video.play().catch(e => console.error("Play error:", e));
+      };
+    }
+  }, [isCameraActive, stream]);
 
   const stopCamera = () => {
     if (stream) stream.getTracks().forEach(t => t.stop());
@@ -132,11 +139,19 @@ export default function Scanner() {
   };
 
   const capturePhoto = useCallback(() => {
-    if (!videoRef.current || !context) return;
+    if (!videoRef.current || !context) {
+      setFeedbackMessage('Capture failed: no video ref');
+      return;
+    }
     const video = videoRef.current;
 
     // Create high-res canvas for capture
     const captureCanvas = document.createElement('canvas');
+    if (video.videoWidth === 0 || video.videoHeight === 0) {
+      setFeedbackMessage('Capture failed: video not ready');
+      setTimeout(() => setFeedbackMessage(null), 2000);
+      return;
+    }
     captureCanvas.width = video.videoWidth;
     captureCanvas.height = video.videoHeight;
     const ctx = captureCanvas.getContext('2d');
@@ -147,6 +162,8 @@ export default function Scanner() {
 
     // Provide haptic/visual feedback
     if (navigator.vibrate) navigator.vibrate(50);
+    setFeedbackMessage('Photo captured!');
+    setTimeout(() => setFeedbackMessage(null), 1500);
 
     // Process
     handleImageData(dataUrl, 'camera');
@@ -247,7 +264,7 @@ export default function Scanner() {
 
 
   return (
-    <div className="flex flex-col h-full bg-[#f8fafc] relative">
+    <div className="flex flex-col h-full relative overflow-hidden bg-white">
 
       {/* Hidden Inputs */}
       <input
@@ -261,15 +278,16 @@ export default function Scanner() {
       <canvas ref={canvasRef} className="hidden" />
 
       {/* Main Viewport */}
-      <div className="flex-1 relative flex items-center justify-center overflow-hidden bg-slate-100">
+      <div className="flex-1 min-h-0 relative flex items-center justify-center overflow-hidden bg-white">
 
         {/* Camera View */}
         {isCameraActive ? (
-          <div className="relative w-full h-full">
+          <div className="relative w-full h-full bg-black">
             <video
               ref={videoRef}
               className="w-full h-full object-cover"
               playsInline
+              autoPlay
               muted // Essential for auto-play
             />
 
@@ -293,114 +311,147 @@ export default function Scanner() {
 
           </div>
         ) : (
-          /* IDLE STATE UI - Modern Blue/White */
-          <div className="text-center p-12 max-w-md animate-in fade-in zoom-in duration-300">
-            {isProcessing ? (
-              <div className="flex flex-col items-center">
-                <Loader2 className="animate-spin text-blue-600 mb-4" size={48} />
-                <h3 className="text-xl font-bold text-slate-700">Importing Content...</h3>
-              </div>
-            ) : (
-              <div className="flex flex-col items-center gap-6">
-                <div className="w-24 h-24 bg-blue-50 text-blue-600 rounded-3xl flex items-center justify-center shadow-sm">
-                  <ScanLine size={48} />
-                </div>
-                <div>
-                  <h2 className="text-2xl font-bold text-slate-800 mb-2">Ready to Capture</h2>
-                  <p className="text-slate-500">Scan papers or import existing files</p>
-                </div>
 
-                <div className="grid grid-cols-2 gap-4 w-full">
-                  <button
-                    onClick={startCamera}
-                    className="flex flex-col items-center justify-center gap-2 py-6 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl shadow-lg shadow-blue-200 transition-all hover:-translate-y-1"
-                  >
-                    <Camera size={24} />
-                    <span className="font-bold text-sm">Use Camera</span>
-                  </button>
-                  <button
-                    onClick={() => fileInputRef.current?.click()}
-                    className="flex flex-col items-center justify-center gap-2 py-6 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-2xl shadow-sm transition-all hover:border-blue-200 hover:text-blue-600 hover:-translate-y-1"
-                  >
-                    <FileUp size={24} />
-                    <span className="font-bold text-sm">Import File</span>
-                  </button>
+          <div className="w-full max-w-5xl px-6 sm:px-10 h-full flex flex-col justify-center">
+            {
+              isProcessing ? (
+                <div className="flex flex-col items-center gap-3" >
+                  <Loader2 className="animate-spin text-slate-900" size={40} />
+                  <h3 className="text-lg font-semibold text-slate-800">Importing content...</h3>
                 </div>
-              </div>
-            )}
+              ) : (
+                <div className="flex flex-col gap-10">
+                  <div className="space-y-4 text-center">
+                    <div className="text-xs uppercase tracking-[0.4em] text-blue-600 font-bold">Upload Interface</div>
+                    <h2 className="text-4xl sm:text-5xl font-bold text-slate-900 tracking-tight">Capture or import exams.</h2>
+                    <p className="text-lg text-slate-500 max-w-2xl mx-auto">
+                      Seamlessly scan physical papers or drop in existing PDF files.
+                      <br className="hidden sm:block" />
+                      Our AI will handle the rest.
+                    </p>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full max-w-4xl mx-auto">
+                    {/* Camera Option */}
+                    <div
+                      onClick={startCamera}
+                      className="group relative overflow-hidden rounded-3xl bg-white border border-slate-200 p-8 cursor-pointer transition-all duration-300 hover:shadow-xl hover:border-slate-300 hover:-translate-y-1"
+                    >
+                      <div className="absolute top-0 right-0 p-4 opacity-50 text-slate-200 group-hover:text-blue-100 transition-colors">
+                        <Camera size={120} strokeWidth={1} />
+                      </div>
+                      <div className="relative z-10 flex flex-col gap-4">
+                        <div className="w-14 h-14 rounded-2xl bg-slate-900 text-white flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform duration-300">
+                          <Camera size={28} />
+                        </div>
+                        <div>
+                          <h3 className="text-xl font-bold text-slate-900">Use Camera</h3>
+                          <p className="text-slate-500 mt-1">Scan directly using your device camera.</p>
+                        </div>
+                        <div className="mt-4 flex items-center gap-2 text-sm font-semibold text-blue-600 opacity-0 group-hover:opacity-100 transition-opacity translate-y-2 group-hover:translate-y-0 duration-300">
+                          Start Scanning <ScanLine size={14} />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Import Option */}
+                    <div
+                      onClick={() => fileInputRef.current?.click()}
+                      className="group relative overflow-hidden rounded-3xl bg-white border border-slate-200 p-8 cursor-pointer transition-all duration-300 hover:shadow-xl hover:border-slate-300 hover:-translate-y-1"
+                    >
+                      <div className="absolute top-0 right-0 p-4 opacity-50 text-slate-200 group-hover:text-amber-100 transition-colors">
+                        <FileUp size={120} strokeWidth={1} />
+                      </div>
+                      <div className="relative z-10 flex flex-col gap-4">
+                        <div className="w-14 h-14 rounded-2xl bg-white border-2 border-slate-100 text-slate-900 flex items-center justify-center shadow-sm group-hover:scale-110 transition-transform duration-300">
+                          <FileUp size={28} />
+                        </div>
+                        <div>
+                          <h3 className="text-xl font-bold text-slate-900">Import File</h3>
+                          <p className="text-slate-500 mt-1">Upload PDF, JPG, or PNG files.</p>
+                        </div>
+                        <div className="mt-4 flex items-center gap-2 text-sm font-semibold text-amber-600 opacity-0 group-hover:opacity-100 transition-opacity translate-y-2 group-hover:translate-y-0 duration-300">
+                          Choose File <Paperclip size={14} />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="text-center">
+                    <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-slate-50 border border-slate-100 text-xs font-semibold text-slate-400">
+                      <Info size={14} />
+                      <span>Supports PDF (up to 80 pages), JPG, PNG</span>
+                    </div>
+                  </div>
+                </div>
+              )}
           </div>
-        )}
-      </div>
+        )
+        }
+      </div >
 
-      {/* Modern Control Bar */}
-      <div className="h-20 bg-white border-t border-slate-200 px-6 flex items-center justify-between shadow-[0_-4px_20px_rgba(0,0,0,0.02)] z-20">
-
-        {/* Left: Mode Toggle */}
-        <div className="flex bg-slate-100 rounded-lg p-1">
+      {/* Minimal Control Bar */}
+      < div className="h-14 sm:h-16 bg-white px-4 sm:px-6 flex items-center justify-between border-t border-slate-100 z-20" >
+        <div className="flex items-center gap-4">
           <button
             onClick={() => setScanMode('single')}
-            className={`px-4 py-2 rounded-md text-xs font-bold transition-all ${scanMode === 'single' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}
+            className={`text-[11px] font-semibold uppercase tracking-[0.2em] pb-1 border-b-2 transition-colors ${scanMode === 'single' ? 'border-slate-900 text-slate-900' : 'border-transparent text-slate-400 hover:text-slate-700'}`}
           >
             Single
           </button>
           <button
             onClick={() => setScanMode('book')}
-            className={`px-4 py-2 rounded-md text-xs font-bold transition-all ${scanMode === 'book' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}
+            className={`text-[11px] font-semibold uppercase tracking-[0.2em] pb-1 border-b-2 transition-colors ${scanMode === 'book' ? 'border-slate-900 text-slate-900' : 'border-transparent text-slate-400 hover:text-slate-700'}`}
           >
             Book
           </button>
         </div>
 
-        {/* Center: Trigger (Only if camera active) */}
-        <div className="absolute left-1/2 -translate-x-1/2 -top-8">
+        <div className="absolute left-1/2 -translate-x-1/2 -top-6 sm:-top-7">
           {isCameraActive && (
             <button
               onClick={capturePhoto}
-              className="w-20 h-20 bg-blue-600 rounded-full border-4 border-white shadow-xl flex items-center justify-center text-white hover:scale-105 active:scale-95 transition-all"
+              className="w-14 h-14 sm:w-16 sm:h-16 rounded-full bg-slate-900 text-white flex items-center justify-center ring-2 ring-white/80 hover:scale-105 active:scale-95 transition-transform"
             >
-              <div className="w-16 h-16 rounded-full border-2 border-white/50"></div>
+              <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-full border border-white/40"></div>
             </button>
           )}
         </div>
 
-        {/* Right: Tools */}
-        <div className="flex items-center gap-3">
-
-          {/* New Student Toggle */}
+        <div className="flex items-center gap-4">
           <button
             onClick={() => setWillSplitNext(!willSplitNext)}
             title="Next image starts new student (Shortcut: N)"
-            className={`flex flex-col items-center justify-center w-12 h-12 rounded-xl transition-all border ${willSplitNext ? 'bg-amber-50 border-amber-200 text-amber-600' : 'bg-white border-slate-200 text-slate-400 hover:text-blue-600 hover:border-blue-200'}`}
+            className={`flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.2em] pb-1 border-b-2 transition-colors ${willSplitNext ? 'border-amber-500 text-amber-600' : 'border-transparent text-slate-400 hover:text-slate-600'}`}
           >
-            <Split size={20} className={willSplitNext ? "animate-pulse" : ""} />
-            <span className="text-[9px] font-bold mt-0.5">{willSplitNext ? 'ON' : 'SPLIT'}</span>
+            <Split size={16} />
+            Split
           </button>
-
           <button
             onClick={() => setIsAutoEnhance(!isAutoEnhance)}
-            className={`flex flex-col items-center justify-center w-12 h-12 rounded-xl transition-all border ${isAutoEnhance ? 'bg-indigo-50 border-indigo-200 text-indigo-600' : 'bg-white border-slate-200 text-slate-400 hover:text-blue-600 hover:border-blue-200'}`}
+            className={`flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.2em] pb-1 border-b-2 transition-colors ${isAutoEnhance ? 'border-emerald-500 text-emerald-600' : 'border-transparent text-slate-400 hover:text-slate-600'}`}
           >
-            <Sparkles size={20} />
-            <span className="text-[9px] font-bold mt-0.5">AI</span>
+            <Sparkles size={16} />
+            AI
           </button>
 
           {isCameraActive && (
             <button
               onClick={stopCamera}
-              className="flex flex-col items-center justify-center w-12 h-12 rounded-xl bg-slate-100 text-slate-500 hover:bg-red-50 hover:text-red-500 transition-colors"
+              className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.2em] pb-1 border-b-2 border-transparent text-red-500 hover:text-red-600 transition-colors"
             >
-              <X size={20} />
+              <X size={16} />
+              Stop
             </button>
           )}
         </div>
-
-      </div>
+      </div >
 
       {feedbackMessage && (
-        <div className="absolute top-6 left-1/2 -translate-x-1/2 bg-black/80 text-white px-6 py-3 rounded-full text-sm font-medium backdrop-blur-md animate-in fade-in slide-in-from-top-4">
+        <div className="absolute top-6 left-1/2 -translate-x-1/2 bg-slate-900/90 text-white px-6 py-3 rounded-full text-sm font-medium backdrop-blur-md animate-in fade-in slide-in-from-top-4">
           {feedbackMessage}
         </div>
       )}
-    </div>
+    </div >
   );
 }

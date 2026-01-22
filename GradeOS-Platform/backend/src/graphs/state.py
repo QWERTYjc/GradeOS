@@ -112,7 +112,7 @@ class BatchGradingGraphState(TypedDict, total=False):
     # ===== 批次配置与进度 (Requirements: 3.1, 3.4, 10.1) =====
     batch_config: Dict[str, Any]         # 批次配置（batch_size, max_workers 等）
     batch_progress: Annotated[Dict[str, Any], last_value]  # 批次进度信息（使用 last_value reducer 处理并发）
-    batch_retry_needed: Dict[str, Any]   # 需要重试的批次信息
+    batch_retry_needed: Annotated[Dict[str, Any], last_value]   # 需要重试的批次信息（使用 last_value reducer 处理并发）
 
     # ===== 批改结果核验 =====
     

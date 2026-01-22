@@ -133,6 +133,11 @@ class RubricParserService:
         # 使用 LLMReasoningClient（与批改流程一致）
         self.api_key = api_key or os.getenv("LLM_API_KEY") or os.getenv("OPENROUTER_API_KEY", "")
         self.model_name = model_name or get_default_model()
+        
+        # 移除 token 限制：设置为 0 表示不限制输出长度
+        # 这样可以确保 LLM 能完整输出所有题目的解析结果
+        os.environ["GRADING_MAX_OUTPUT_TOKENS"] = "0"
+        
         self.reasoning_client = LLMReasoningClient(api_key=self.api_key, model_name=self.model_name)
     
     async def parse_rubric(
@@ -233,42 +238,54 @@ class RubricParserService:
         """解析单批评分标准页面"""
         batch_info = f"（第 {batch_num}/{total_batches} 批）" if total_batches > 1 else ""
         
-        prompt_template = """You are a rubric analysis expert. Analyze these rubric/answer pages{batch_info}.
+        prompt_template = """你是一位专业的评分标准分析专家。请仔细分析这些评分标准/答案页面{batch_info}。
 
-        Task:
-        1. Identify each question and its max score.
-        2. Extract scoring points and deductions.
-        3. Extract alternative solutions if present.
-        4. Extract standard answers if present.
+## 重要：你正在分析的是一份完整的评分标准文档
+- 这份文档包含 **多道题目**（可能有 10-20 道或更多）
+- 你必须 **逐页仔细阅读**，确保识别出 **每一道题目**
+- **不要遗漏任何题目**，即使它们分布在不同的页面上
 
-        Output JSON only in this schema:
-        {{
-          "rubric_format": "standard",
-          "general_notes": "",
-          "questions": [
-            {{
-              "question_id": "1",
-              "max_score": 5,
-              "question_text": "",
-              "standard_answer": "",
-              "scoring_points": [
-        {{"point_id": "1.1", "description": "", "score": 2, "is_required": true}}
-              ],
-              "deduction_rules": [
-        {{"rule_id": "1.d1", "description": "", "deduction": 1, "conditions": ""}}
-              ],
-              "alternative_solutions": [
-        {{"description": "", "scoring_criteria": "", "note": ""}}
-              ],
-              "grading_notes": ""
-            }}
-          ]
-        }}
+## 任务
+1. **识别所有题目**：仔细查找每一道题目，包括大题和小题
+   - 题号格式可能是：1、2、3... 或 一、二、三... 或 (1)、(2)、(3)... 或 第1题、第2题...
+   - 注意：有些题目可能跨页显示
+2. **提取分值**：每道题的满分分值
+3. **提取得分点**：每道题的评分要点和对应分值
+4. **提取标准答案**：如果有标准答案，完整提取
+5. **提取扣分规则**：如果有扣分说明，提取扣分条件和分值
 
-        Rules:
-        - Return valid JSON only (no markdown).
-        - Only extract content present on these pages.
-        - Do not invent questions or points."""
+## 输出格式（仅返回 JSON，不要 markdown 代码块）
+{{
+  "rubric_format": "standard",
+  "general_notes": "通用批改说明（如有）",
+  "total_questions_found": 实际识别到的题目数量,
+  "questions": [
+    {{
+      "question_id": "1",
+      "max_score": 5,
+      "question_text": "题目内容（如有）",
+      "standard_answer": "标准答案（完整提取）",
+      "scoring_points": [
+        {{"point_id": "1.1", "description": "得分点描述", "score": 2, "is_required": true}}
+      ],
+      "deduction_rules": [
+        {{"rule_id": "1.d1", "description": "扣分条件", "deduction": 1, "conditions": "触发条件"}}
+      ],
+      "alternative_solutions": [
+        {{"description": "另类解法描述", "scoring_criteria": "得分条件", "note": "备注"}}
+      ],
+      "grading_notes": "批改注意事项"
+    }}
+  ]
+}}
+
+## 严格规则
+- **必须返回有效的 JSON**（不要 markdown 代码块，不要 ```json）
+- **必须识别所有题目**，不要遗漏
+- **逐页检查**：确保每一页的内容都被分析
+- 如果一道大题包含多个小题（如 7a, 7b），每个小题单独列出
+- max_score 必须是数字类型
+- 不要编造不存在的题目"""
         prompt = prompt_template.format(batch_info=batch_info)
 
         try:
@@ -313,6 +330,13 @@ class RubricParserService:
                 )
             
             logger.debug(f"LLM 原始响应: {result_text[:500]}...")
+            
+            # 🔍 诊断日志：输出完整响应以便调试
+            logger.info(f"[rubric_parse] LLM 响应长度: {len(result_text)} 字符")
+            if len(result_text) < 2000:
+                logger.info(f"[rubric_parse] LLM 完整响应: {result_text}")
+            else:
+                logger.info(f"[rubric_parse] LLM 响应前 2000 字符: {result_text[:2000]}...")
             
             # 提取 JSON
             json_text = result_text

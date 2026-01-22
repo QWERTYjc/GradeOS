@@ -91,10 +91,13 @@ def get_chat_model(
     max_output_tokens: Optional[int] = None,
 ) -> Any:
     resolved_model = _resolve_openrouter_model(purpose, model_name)
+    # 如果 max_output_tokens 为 None 或 0，使用较大的默认值以避免截断
+    # 设置为 65536 以支持大多数模型的最大输出
+    effective_max_tokens = max_output_tokens if max_output_tokens and max_output_tokens > 0 else 65536
     return OpenRouterChatAdapter(
         purpose=purpose,
         model=resolved_model,
         temperature=temperature,
-        max_tokens=max_output_tokens or 4096,
+        max_tokens=effective_max_tokens,
         api_key_override=api_key,
     )

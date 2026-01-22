@@ -162,7 +162,7 @@ class RubricRegistry:
             self._update_timestamp()
             logger.info(f"注册评分标准: {rubric.question_id}")
     
-    def register_rubrics(self, rubrics: List[QuestionRubric]) -> None:
+    def register_rubrics(self, rubrics: List[QuestionRubric], log: bool = True) -> None:
         """
         批量注册评分标准
         
@@ -174,7 +174,8 @@ class RubricRegistry:
                 normalized_id = self._normalize_question_id(rubric.question_id)
                 self._rubrics[normalized_id] = rubric
             self._update_timestamp()
-            logger.info(f"批量注册 {len(rubrics)} 个评分标准")
+            if log:
+                logger.info(f"批量注册 {len(rubrics)} 个评分标准")
 
     def update_rubric(
         self, 

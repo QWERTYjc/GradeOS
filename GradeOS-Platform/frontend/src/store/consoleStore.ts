@@ -140,14 +140,37 @@ export interface StudentResult {
     questionResults?: QuestionResult[];
     studentSummary?: StudentSummary;
     selfAudit?: SelfAudit;
-    /** 起始页 - 新增 */
+    /** 起始页 */
     startPage?: number;
-    /** 结束页 - 新增 */
+    /** 结束页 */
     endPage?: number;
-    /** 置信度 - 新增 */
+    /** 置信度 */
     confidence?: number;
-    /** 是否需要人工确认 - 新增 */
+    /** 是否需要人工确认 */
     needsConfirmation?: boolean;
+    /** 自白报告 */
+    selfReport?: {
+        overallStatus?: string;
+        issues?: Array<{ questionId?: string; message?: string }>;
+        warnings?: Array<{ questionId?: string; message?: string }>;
+        highRiskQuestions?: Array<{ questionId?: string; description?: string }>;
+        potentialErrors?: Array<{ questionId?: string; description?: string }>;
+        overallConfidence?: number;
+        generatedAt?: string;
+        source?: string;
+    };
+    /** 第一次批改记录（逻辑复核前的原始结果）*/
+    draftQuestionDetails?: QuestionResult[];
+    /** 第一次批改总分 */
+    draftTotalScore?: number;
+    /** 第一次批改满分 */
+    draftMaxScore?: number;
+    /** 逻辑复核时间 */
+    logicReviewedAt?: string;
+    /** 页面范围（显示用）*/
+    pageRange?: string;
+    /** 页面列表 */
+    pages?: string;
 }
 
 export interface KnowledgePointSummary {
@@ -1328,21 +1351,46 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
             // 保存最终结果
             if (data.results && Array.isArray(data.results)) {
                 // 转换后端格式到前端格式
-                const formattedResults: StudentResult[] = data.results.map((r: any) => ({
-                    studentName: r.studentName || r.student_name || r.student_key || 'Unknown',
-                    score: r.score || r.total_score || 0,
-                    maxScore: r.maxScore || r.max_score || r.max_total_score || 100,
-                    gradingMode: r.gradingMode || r.grading_mode,
-                    percentage: r.percentage,
-                    totalRevisions: r.totalRevisions,
-                    startPage: r.start_page || r.startPage,
-                    endPage: r.end_page || r.endPage,
-                    confidence: r.confidence,
-                    needsConfirmation: r.needs_confirmation || r.needsConfirmation,
-                    studentSummary: normalizeStudentSummary(r.studentSummary || r.student_summary),
-                    selfAudit: normalizeSelfAudit(r.selfAudit || r.self_audit),
-                    questionResults: (r.questionResults || r.question_results || []).map((q: any) => {
-                        const rawPointResults = q.scoring_point_results
+                const formattedResults: StudentResult[] = data.results.map((r: any) => {
+                    // 处理 draftQuestionDetails
+                    const draftDetails = r.draftQuestionDetails || r.draft_question_details;
+                    const draftQuestionDetails = Array.isArray(draftDetails)
+                        ? draftDetails.map((dq: any) => ({
+                            questionId: dq.questionId || dq.question_id || '',
+                            score: dq.score || 0,
+                            maxScore: dq.maxScore || dq.max_score || 0,
+                            feedback: dq.feedback || '',
+                            studentAnswer: dq.studentAnswer || dq.student_answer || '',
+                            selfCritique: dq.self_critique || dq.selfCritique,
+                            selfCritiqueConfidence: dq.self_critique_confidence || dq.selfCritiqueConfidence,
+                            confidence: dq.confidence,
+                            questionType: dq.questionType || dq.question_type,
+                            pageIndices: dq.page_indices || dq.pageIndices || [],
+                        }))
+                        : undefined;
+
+                    return {
+                        studentName: r.studentName || r.student_name || r.student_key || 'Unknown',
+                        score: r.score || r.total_score || 0,
+                        maxScore: r.maxScore || r.max_score || r.max_total_score || 100,
+                        gradingMode: r.gradingMode || r.grading_mode,
+                        percentage: r.percentage,
+                        totalRevisions: r.totalRevisions,
+                        startPage: r.start_page || r.startPage,
+                        endPage: r.end_page || r.endPage,
+                        pageRange: r.pageRange || r.page_range,
+                        confidence: r.confidence,
+                        needsConfirmation: r.needs_confirmation || r.needsConfirmation,
+                        studentSummary: normalizeStudentSummary(r.studentSummary || r.student_summary),
+                        selfAudit: normalizeSelfAudit(r.selfAudit || r.self_audit),
+                        // 🔥 新增：批改透明度字段
+                        selfReport: r.selfReport || r.self_report,
+                        draftQuestionDetails,
+                        draftTotalScore: r.draftTotalScore || r.draft_total_score,
+                        draftMaxScore: r.draftMaxScore || r.draft_max_score,
+                        logicReviewedAt: r.logicReviewedAt || r.logic_reviewed_at,
+                        questionResults: (r.questionResults || r.question_results || []).map((q: any) => {
+                            const rawPointResults = q.scoring_point_results
                             || q.scoringPointResults
                             || q.scoring_results
                             || q.scoringResults
@@ -1401,7 +1449,8 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
                             scoringPointResults: pointResults
                         };
                     })
-                }));
+                    };
+                });
 
                 // #region agent log - 假设E: 前端 setFinalResults
                 fetch('http://127.0.0.1:7242/ingest/58ab5b36-845e-4544-9ec4-a0b6e7a57748', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'consoleStore.ts:setFinalResults', message: '前端设置最终结果', data: { count: formattedResults.length, students: formattedResults.map((r: any) => ({ name: r.studentName, score: r.score })) }, timestamp: Date.now(), sessionId: 'debug-session', hypothesisId: 'E' }) }).catch(() => { });
