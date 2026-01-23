@@ -1,0 +1,23 @@
+
+> gradeos-platform@1.0.0 build
+> next build
+
+   ▲ Next.js 16.0.10 (Turbopack)
+   - Environments: .env.local
+
+   Creating an optimized production build ...
+ ✓ Compiled successfully in 13.7s
+   Running TypeScript ...
+Failed to compile.
+
+./src/app/student/scan/page.tsx:189:26
+Type error: Type '{ sessions: Session[]; currentSessionId: string | null; createNewSession: (name?: string | undefined) => void; addImageToSession: (img: ScannedImage) => void; ... 5 more ...; reorderImages: (sessionId: string, fromIndex: number, toIndex: number) => void; }' is missing the following properties from type 'AppContextType': splitImageIds, markImageAsSplit
+
+[0m [90m 187 |[39m
+ [90m 188 |[39m   [36mreturn[39m (
+[31m[1m>[22m[39m[90m 189 |[39m     [33m<[39m[33mAppContext[39m[33m.[39m[33mProvider[39m value[33m=[39m{contextValue}[33m>[39m
+ [90m     |[39m                          [31m[1m^[22m[39m
+ [90m 190 |[39m       [33m<[39m[33mdiv[39m className[33m=[39m[32m"flex flex-col h-screen bg-[#F5F7FB]"[39m[33m>[39m
+ [90m 191 |[39m         [33m<[39m[33mdiv[39m className[33m=[39m[32m"bg-white border-b border-slate-100 px-4 py-3 flex items-center justify-between sticky top-0 z-30"[39m[33m>[39m
+ [90m 192 |[39m           [33m<[39m[33mdiv[39m className[33m=[39m[32m"flex items-center gap-3"[39m[33m>[39m[0m
+Next.js build worker exited with code: 1 and signal: null

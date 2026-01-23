@@ -665,11 +665,11 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
             set((current) => {
                 const updatedNodes = current.workflowNodes.map((n, index) => {
                     if (index === targetIndex) {
-                        return { ...n, status, message: message || n.message };
+                        return { ...n, status: status as NodeStatus, message: message || n.message };
                     }
                     if (index < targetIndex && (status === 'running' || status === 'completed')) {
                         if (n.status === 'pending' || n.status === 'running') {
-                            return { ...n, status: 'completed' };
+                            return { ...n, status: 'completed' as NodeStatus };
                         }
                     }
                     return n;
@@ -1391,64 +1391,64 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
                         logicReviewedAt: r.logicReviewedAt || r.logic_reviewed_at,
                         questionResults: (r.questionResults || r.question_results || []).map((q: any) => {
                             const rawPointResults = q.scoring_point_results
-                            || q.scoringPointResults
-                            || q.scoring_results
-                            || q.scoringResults
-                            || [];
-                        const pointResults = Array.isArray(rawPointResults)
-                            ? rawPointResults.map((spr: any) => ({
-                                pointId: spr.point_id || spr.pointId || spr.scoring_point?.point_id || spr.scoringPoint?.pointId,
-                                description: spr.description || spr.scoring_point?.description || spr.scoringPoint?.description || '',
-                                awarded: spr.awarded ?? spr.score ?? 0,
-                                maxPoints: spr.max_points ?? spr.maxPoints ?? spr.scoring_point?.score ?? spr.scoringPoint?.score ?? 0,
-                                evidence: spr.evidence || '',
-                                rubricReference: spr.rubric_reference || spr.rubricReference || spr.rubricRef || '',
-                                rubricReferenceSource: spr.rubric_reference_source || spr.rubricReferenceSource,
-                                decision: spr.decision || spr.result || spr.judgement || spr.judgment,
-                                reason: spr.reason || spr.rationale || spr.explanation,
-                                reviewAdjusted: spr.review_adjusted || spr.reviewAdjusted,
-                                reviewBefore: spr.review_before || spr.reviewBefore,
-                                reviewReason: spr.review_reason || spr.reviewReason,
-                                reviewBy: spr.review_by || spr.reviewBy,
-                                scoringPoint: {
-                                    description: spr.scoring_point?.description || spr.scoringPoint?.description || '',
-                                    score: spr.scoring_point?.score || spr.scoringPoint?.score || 0,
-                                    maxScore: spr.scoring_point?.score || spr.scoringPoint?.score || 0,
-                                    isCorrect: (spr.awarded ?? spr.score ?? 0) > 0,
-                                    isRequired: spr.scoring_point?.is_required || spr.scoringPoint?.isRequired,
-                                },
-                            }))
-                            : [];
+                                || q.scoringPointResults
+                                || q.scoring_results
+                                || q.scoringResults
+                                || [];
+                            const pointResults = Array.isArray(rawPointResults)
+                                ? rawPointResults.map((spr: any) => ({
+                                    pointId: spr.point_id || spr.pointId || spr.scoring_point?.point_id || spr.scoringPoint?.pointId,
+                                    description: spr.description || spr.scoring_point?.description || spr.scoringPoint?.description || '',
+                                    awarded: spr.awarded ?? spr.score ?? 0,
+                                    maxPoints: spr.max_points ?? spr.maxPoints ?? spr.scoring_point?.score ?? spr.scoringPoint?.score ?? 0,
+                                    evidence: spr.evidence || '',
+                                    rubricReference: spr.rubric_reference || spr.rubricReference || spr.rubricRef || '',
+                                    rubricReferenceSource: spr.rubric_reference_source || spr.rubricReferenceSource,
+                                    decision: spr.decision || spr.result || spr.judgement || spr.judgment,
+                                    reason: spr.reason || spr.rationale || spr.explanation,
+                                    reviewAdjusted: spr.review_adjusted || spr.reviewAdjusted,
+                                    reviewBefore: spr.review_before || spr.reviewBefore,
+                                    reviewReason: spr.review_reason || spr.reviewReason,
+                                    reviewBy: spr.review_by || spr.reviewBy,
+                                    scoringPoint: {
+                                        description: spr.scoring_point?.description || spr.scoringPoint?.description || '',
+                                        score: spr.scoring_point?.score || spr.scoringPoint?.score || 0,
+                                        maxScore: spr.scoring_point?.score || spr.scoringPoint?.score || 0,
+                                        isCorrect: (spr.awarded ?? spr.score ?? 0) > 0,
+                                        isRequired: spr.scoring_point?.is_required || spr.scoringPoint?.isRequired,
+                                    },
+                                }))
+                                : [];
 
-                        return {
-                            questionId: q.questionId || q.question_id || '',
-                            score: q.score || 0,
-                            maxScore: q.maxScore || q.max_score || 0,
-                            feedback: q.feedback || '',
-                            studentAnswer: q.studentAnswer || q.student_answer || '',
-                            questionType: q.questionType || q.question_type || '',
-                            confidence: q.confidence,
-                            confidenceReason: q.confidence_reason || q.confidenceReason,
-                            selfCritique: q.self_critique || q.selfCritique,
-                            selfCritiqueConfidence: q.self_critique_confidence || q.selfCritiqueConfidence,
-                            rubricRefs: q.rubric_refs || q.rubricRefs,
-                            typoNotes: q.typo_notes || q.typoNotes,
-                            reviewSummary: q.review_summary || q.reviewSummary,
-                            reviewCorrections: (q.review_corrections || q.reviewCorrections || []).map((c: any) => ({
-                                pointId: c.point_id || c.pointId || '',
-                                reviewReason: c.review_reason || c.reviewReason
-                            })),
-                            needsReview: q.needsReview ?? q.needs_review ?? false,
-                            reviewReasons: q.reviewReasons || q.review_reasons || [],
-                            auditFlags: q.auditFlags || q.audit_flags || [],
-                            honestyNote: q.honestyNote || q.honesty_note,
-                            pageIndices: q.page_indices || q.pageIndices,
-                            isCrossPage: q.is_cross_page || q.isCrossPage,
-                            mergeSource: q.merge_source || q.mergeSource,
-                            scoringPoints: q.scoringPoints || q.scoring_points,
-                            scoringPointResults: pointResults
-                        };
-                    })
+                            return {
+                                questionId: q.questionId || q.question_id || '',
+                                score: q.score || 0,
+                                maxScore: q.maxScore || q.max_score || 0,
+                                feedback: q.feedback || '',
+                                studentAnswer: q.studentAnswer || q.student_answer || '',
+                                questionType: q.questionType || q.question_type || '',
+                                confidence: q.confidence,
+                                confidenceReason: q.confidence_reason || q.confidenceReason,
+                                selfCritique: q.self_critique || q.selfCritique,
+                                selfCritiqueConfidence: q.self_critique_confidence || q.selfCritiqueConfidence,
+                                rubricRefs: q.rubric_refs || q.rubricRefs,
+                                typoNotes: q.typo_notes || q.typoNotes,
+                                reviewSummary: q.review_summary || q.reviewSummary,
+                                reviewCorrections: (q.review_corrections || q.reviewCorrections || []).map((c: any) => ({
+                                    pointId: c.point_id || c.pointId || '',
+                                    reviewReason: c.review_reason || c.reviewReason
+                                })),
+                                needsReview: q.needsReview ?? q.needs_review ?? false,
+                                reviewReasons: q.reviewReasons || q.review_reasons || [],
+                                auditFlags: q.auditFlags || q.audit_flags || [],
+                                honestyNote: q.honestyNote || q.honesty_note,
+                                pageIndices: q.page_indices || q.pageIndices,
+                                isCrossPage: q.is_cross_page || q.isCrossPage,
+                                mergeSource: q.merge_source || q.mergeSource,
+                                scoringPoints: q.scoringPoints || q.scoring_points,
+                                scoringPointResults: pointResults
+                            };
+                        })
                     };
                 });
 

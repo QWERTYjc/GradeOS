@@ -4,7 +4,7 @@ import { AppContext } from './AppContext';
 import { fileToDataURL } from './imageProcessing';
 import { optimizeDocument } from './llmService';
 import { COLORS } from './constants';
-import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf';
+import * as pdfjsLib from 'pdfjs-dist';
 
 type ScanMode = 'single' | 'book';
 
@@ -27,7 +27,7 @@ const renderPdfToImages = async (file: File, maxPages = 80) => {
     if (!context) continue;
     canvas.width = viewport.width;
     canvas.height = viewport.height;
-    await page.render({ canvasContext: context, viewport }).promise;
+    await page.render({ canvasContext: context, viewport } as any).promise;
     images.push(canvas.toDataURL('image/jpeg', 0.9));
   }
 

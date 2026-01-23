@@ -17,7 +17,7 @@ type NodeStatus = 'idle' | 'queued' | 'running' | 'success' | 'failed' | 'retryi
 interface NodeData {
     id: string;
     label: string;
-    icon: React.ElementType;
+    icon: React.ComponentType<any>;
     status: NodeStatus;
     logs: string[];
     x: number; // Relative position 0-100
@@ -206,7 +206,7 @@ const WorkerPool = ({ workers }: { workers: WorkerData[] }) => {
 
 const ConnectionCanvas = ({ nodes, packets }: { nodes: NodeData[], packets: any[] }) => {
     const canvasRef = useRef<HTMLCanvasElement>(null);
-    const requestRef = useRef<number>();
+    const requestRef = useRef<number | undefined>(undefined);
 
     useEffect(() => {
         const canvas = canvasRef.current;

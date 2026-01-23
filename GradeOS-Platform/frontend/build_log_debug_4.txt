@@ -1,0 +1,25 @@
+
+> gradeos-platform@1.0.0 build
+> next build
+
+   ▲ Next.js 16.0.10 (Turbopack)
+   - Environments: .env.local
+
+   Creating an optimized production build ...
+ ✓ Compiled successfully in 15.6s
+   Running TypeScript ...
+Failed to compile.
+
+./src/components/bookscan/Gallery.tsx:362:27
+Type error: Type 'RefObject<HTMLDivElement | null>' is not assignable to type 'RefObject<HTMLElement>'.
+  Type 'HTMLDivElement | null' is not assignable to type 'HTMLElement'.
+    Type 'null' is not assignable to type 'HTMLElement'.
+
+[0m [90m 360 |[39m                         [33m<[39m[33mPreviewCard[39m
+ [90m 361 |[39m                           key[33m=[39m{img[33m.[39mid}
+[31m[1m>[22m[39m[90m 362 |[39m                           containerRef[33m=[39m{scrollContainerRef}
+ [90m     |[39m                           [31m[1m^[22m[39m
+ [90m 363 |[39m                           className[33m=[39m{[32m`relative group bg-white rounded-sm overflow-hidden select-none transition-all duration-200[39m
+ [90m 364 |[39m [32m                                    ${isSelected ? 'ring-2 ring-indigo-500 z-10' : 'hover:ring-1 hover:ring-slate-300'}[39m
+ [90m 365 |[39m [32m                                    ${isSplitMode && isStart ? 'ring-2 ring-amber-500 z-10' : ''}[39m[0m
+Next.js build worker exited with code: 1 and signal: null

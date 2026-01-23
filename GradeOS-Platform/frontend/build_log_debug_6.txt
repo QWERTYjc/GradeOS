@@ -1,0 +1,23 @@
+
+> gradeos-platform@1.0.0 build
+> next build
+
+   ▲ Next.js 16.0.10 (Turbopack)
+   - Environments: .env.local
+
+   Creating an optimized production build ...
+ ✓ Compiled successfully in 14.5s
+   Running TypeScript ...
+Failed to compile.
+
+./src/components/bookscan/Scanner.tsx:7:27
+Type error: Cannot find module 'pdfjs-dist/legacy/build/pdf' or its corresponding type declarations.
+
+[0m [90m  5 |[39m [36mimport[39m { optimizeDocument } [36mfrom[39m [32m'./llmService'[39m[33m;[39m
+ [90m  6 |[39m [36mimport[39m { [33mCOLORS[39m } [36mfrom[39m [32m'./constants'[39m[33m;[39m
+[31m[1m>[22m[39m[90m  7 |[39m [36mimport[39m [33m*[39m [36mas[39m pdfjsLib [36mfrom[39m [32m'pdfjs-dist/legacy/build/pdf'[39m[33m;[39m
+ [90m    |[39m                           [31m[1m^[22m[39m
+ [90m  8 |[39m
+ [90m  9 |[39m type [33mScanMode[39m [33m=[39m [32m'single'[39m [33m|[39m [32m'book'[39m[33m;[39m
+ [90m 10 |[39m[0m
+Next.js build worker exited with code: 1 and signal: null

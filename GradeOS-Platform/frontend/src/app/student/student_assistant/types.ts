@@ -55,3 +55,27 @@ export interface ChatMessage {
   content: string;
   timestamp: Date;
 }
+
+export interface MasteryData {
+  score: number;       // 0-100
+  level: string;       // beginner / developing / proficient / mastery
+  analysis: string;    // 分析说明
+  evidence: string[];  // 证据列表
+  suggestions: string[]; // 改进建议
+}
+
+export interface ConceptNode {
+  id: string;
+  name: string;
+  description: string;
+  understood: boolean;
+  children?: ConceptNode[];
+}
+
+export interface EnhancedChatMessage extends ChatMessage {
+  mastery?: MasteryData;
+  focusMode?: boolean;
+  conceptBreakdown?: ConceptNode[];
+  nextQuestion?: string;
+  responseType?: 'chat' | 'question' | 'assessment' | 'explanation';
+}

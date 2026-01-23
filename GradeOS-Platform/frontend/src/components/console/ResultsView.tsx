@@ -297,83 +297,83 @@ const QuestionDetail: React.FC<{ question: QuestionResult; gradingMode?: string 
 
             {detailsOpen && (
                 <>
-            {question.studentAnswer && (
-                <div className="rounded-md p-3 border border-slate-200 bg-white">
-                    <span className="text-[11px] font-semibold text-slate-500 mb-1 block">Student Answer</span>
-                    <div className="space-y-2">
-                        {renderParagraphs(question.studentAnswer)}
-                    </div>
-                </div>
-            )}
+                    {question.studentAnswer && (
+                        <div className="rounded-md p-3 border border-slate-200 bg-white">
+                            <span className="text-[11px] font-semibold text-slate-500 mb-1 block">Student Answer</span>
+                            <div className="space-y-2">
+                                {renderParagraphs(question.studentAnswer)}
+                            </div>
+                        </div>
+                    )}
 
-            {showScoringDetails ? (
-                question.scoringPointResults && question.scoringPointResults.length > 0 ? (
-                    <div className="mt-3 space-y-2">
-                        <div className="text-xs font-semibold text-slate-500">评分步骤</div>
-                        {question.scoringPointResults.map((spr, idx) => (
-                            <div key={idx} className="rounded-md border border-slate-200 p-3">
-                                <div className="flex items-start justify-between gap-4">
-                                    <div className="space-y-1">
-                                        <div className="text-xs text-slate-700 font-medium leading-relaxed">
-                                            {spr.pointId && <span className="font-mono text-slate-400 mr-2 text-[10px]">[{spr.pointId}]</span>}
-                                            <MathText className="inline" text={spr.scoringPoint?.description || spr.description || "N/A"} />
-                                            <Popover
-                                                title={<span className="font-semibold">评分标准详情</span>}
-                                                content={
-                                                    <div className="max-w-xs text-xs space-y-2 p-1">
-                                                        <div className="font-medium text-slate-700">{spr.scoringPoint?.description || spr.description}</div>
-                                                        <div className="flex justify-between text-slate-500">
-                                                            <span>Max: {spr.maxPoints ?? spr.scoringPoint?.score ?? 0}</span>
-                                                            <span>{spr.scoringPoint?.isRequired ? 'Required' : 'Optional'}</span>
-                                                        </div>
-                                                    </div>
-                                                }
-                                            >
-                                                <Info className="w-3 h-3 inline ml-1.5 text-slate-300 hover:text-blue-400 cursor-help" />
-                                            </Popover>
-                                        </div>
-                                        <div className="text-[11px] text-slate-500">
-                                            判定: {spr.decision || (spr.awarded > 0 ? '得分' : '不得分')}
-                                            {spr.reason && <span className="ml-1 opacity-75">- {spr.reason}</span>}
+                    {showScoringDetails ? (
+                        question.scoringPointResults && question.scoringPointResults.length > 0 ? (
+                            <div className="mt-3 space-y-2">
+                                <div className="text-xs font-semibold text-slate-500">评分步骤</div>
+                                {question.scoringPointResults.map((spr, idx) => (
+                                    <div key={idx} className="rounded-md border border-slate-200 p-3">
+                                        <div className="flex items-start justify-between gap-4">
+                                            <div className="space-y-1">
+                                                <div className="text-xs text-slate-700 font-medium leading-relaxed">
+                                                    {spr.pointId && <span className="font-mono text-slate-400 mr-2 text-[10px]">[{spr.pointId}]</span>}
+                                                    <MathText className="inline" text={spr.scoringPoint?.description || spr.description || "N/A"} />
+                                                    <Popover
+                                                        title={<span className="font-semibold">评分标准详情</span>}
+                                                        content={
+                                                            <div className="max-w-xs text-xs space-y-2 p-1">
+                                                                <div className="font-medium text-slate-700">{spr.scoringPoint?.description || spr.description}</div>
+                                                                <div className="flex justify-between text-slate-500">
+                                                                    <span>Max: {spr.maxPoints ?? spr.scoringPoint?.score ?? 0}</span>
+                                                                    <span>{spr.scoringPoint?.isRequired ? 'Required' : 'Optional'}</span>
+                                                                </div>
+                                                            </div>
+                                                        }
+                                                    >
+                                                        <Info className="w-3 h-3 inline ml-1.5 text-slate-300 hover:text-blue-400 cursor-help" />
+                                                    </Popover>
+                                                </div>
+                                                <div className="text-[11px] text-slate-500">
+                                                    判定: {spr.decision || (spr.awarded > 0 ? '得分' : '不得分')}
+                                                    {spr.reason && <span className="ml-1 opacity-75">- {spr.reason}</span>}
+                                                </div>
+                                            </div>
+                                            <div className={clsx("font-mono font-semibold text-sm whitespace-nowrap", spr.awarded > 0 ? "text-emerald-600" : "text-slate-400")}>
+                                                {spr.awarded}/{spr.maxPoints ?? spr.scoringPoint?.score ?? 0}
+                                            </div>
                                         </div>
                                     </div>
-                                    <div className={clsx("font-mono font-semibold text-sm whitespace-nowrap", spr.awarded > 0 ? "text-emerald-600" : "text-slate-400")}>
-                                        {spr.awarded}/{spr.maxPoints ?? spr.scoringPoint?.score ?? 0}
+                                ))}
+                            </div>
+                        ) : question.scoringPoints && question.scoringPoints.length > 0 ? (
+                            // Fallback for simple scoring points list without rich results
+                            <div className="mt-2 space-y-1">
+                                {question.scoringPoints.map((sp, idx) => (
+                                    <div key={idx} className="flex items-start gap-2 text-xs">
+                                        {sp.isCorrect ? (
+                                            <CheckCircle className="w-3.5 h-3.5 text-emerald-500 mt-0.5 flex-shrink-0" />
+                                        ) : (
+                                            <XCircle className="w-3.5 h-3.5 text-red-500 mt-0.5 flex-shrink-0" />
+                                        )}
+                                        <div className="flex-1">
+                                            <span className={clsx("font-medium", sp.isCorrect ? 'text-emerald-700' : 'text-red-700')}>
+                                                [{sp.score}/{sp.maxScore}] {sp.description}
+                                            </span>
+                                            {sp.explanation && <p className="text-slate-500 mt-0.5 ml-1">{sp.explanation}</p>}
+                                        </div>
                                     </div>
-                                </div>
+                                ))}
                             </div>
-                        ))}
-                    </div>
-                ) : question.scoringPoints && question.scoringPoints.length > 0 ? (
-                    // Fallback for simple scoring points list without rich results
-                    <div className="mt-2 space-y-1">
-                        {question.scoringPoints.map((sp, idx) => (
-                            <div key={idx} className="flex items-start gap-2 text-xs">
-                                {sp.isCorrect ? (
-                                    <CheckCircle className="w-3.5 h-3.5 text-emerald-500 mt-0.5 flex-shrink-0" />
-                                ) : (
-                                    <XCircle className="w-3.5 h-3.5 text-red-500 mt-0.5 flex-shrink-0" />
-                                )}
-                                <div className="flex-1">
-                                    <span className={clsx("font-medium", sp.isCorrect ? 'text-emerald-700' : 'text-red-700')}>
-                                        [{sp.score}/{sp.maxScore}] {sp.description}
-                                    </span>
-                                    {sp.explanation && <p className="text-slate-500 mt-0.5 ml-1">{sp.explanation}</p>}
-                                </div>
+                        ) : (
+                            <div className="mt-2 text-xs text-slate-500 flex items-center gap-2">
+                                <AlertTriangle className="w-3.5 h-3.5 text-slate-400" />
+                                Scores available but step breakdown missing.
                             </div>
-                        ))}
-                    </div>
-                ) : (
-                    <div className="mt-2 text-xs text-slate-500 flex items-center gap-2">
-                        <AlertTriangle className="w-3.5 h-3.5 text-slate-400" />
-                        Scores available but step breakdown missing.
-                    </div>
-                )
-            ) : (
-                <div className="mt-2 text-xs text-slate-500 italic">
-                    {isAssist ? 'No scoring breakdown in Assist mode.' : 'No detailed analysis for this question type.'}
-                </div>
-            )}
+                        )
+                    ) : (
+                        <div className="mt-2 text-xs text-slate-500 italic">
+                            {isAssist ? 'No scoring breakdown in Assist mode.' : 'No detailed analysis for this question type.'}
+                        </div>
+                    )}
 
                 </>
             )}
@@ -986,7 +986,7 @@ export const ResultsView: React.FC = () => {
         const noteLines: string[] = [];
         const trimmedGlobal = rubricGlobalNote.trim();
         if (trimmedGlobal) noteLines.push(trimmedGlobal);
-        rubricDraft.questions.forEach((q) => {
+        rubricDraft.questions.forEach((q: RubricQuestionDraft) => {
             if (!rubricSelectedIds.has(q.questionId)) return;
             const note = q.reviewNote.trim();
             if (note) {
@@ -1127,7 +1127,7 @@ export const ResultsView: React.FC = () => {
 
                             {!rubricLoading && rubricDraft && (
                                 <div className="space-y-4">
-                                    {rubricDraft.questions.map((q) => {
+                                    {rubricDraft.questions.map((q: RubricQuestionDraft) => {
                                         const isSelected = rubricSelectedIds.has(q.questionId);
                                         const isExpanded = rubricExpandedIds.has(q.questionId);
                                         return (
@@ -1202,7 +1202,7 @@ export const ResultsView: React.FC = () => {
                                                         <div>
                                                             <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">评分点</div>
                                                             <div className="mt-2 space-y-1 text-[11px] text-slate-600 leading-snug">
-                                                                {q.scoringPoints.map((sp) => (
+                                                                {q.scoringPoints.map((sp: RubricScoringPointDraft) => (
                                                                     <div key={sp.pointId} className="flex items-start gap-2">
                                                                         <span className="font-mono text-slate-400">{sp.pointId}</span>
                                                                         <span className="flex-1">
@@ -1595,7 +1595,7 @@ export const ResultsView: React.FC = () => {
                                         <AlertCircle className="w-4 h-4" />
                                         批改透明度
                                     </div>
-                                    
+
                                     {/* 第一次批改 vs 最终结果对比 */}
                                     {detailViewStudent.draftTotalScore !== undefined && detailViewStudent.draftTotalScore !== detailViewStudent.score && (
                                         <div className="bg-white rounded-lg p-3 border border-blue-100">
@@ -1955,7 +1955,7 @@ export const ResultsView: React.FC = () => {
                     </div>
                 </div>
 
-                    <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 divide-x divide-slate-200/70">
+                <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 divide-x divide-slate-200/70">
                     {metrics.map((metric) => (
                         <div key={metric.label} className="px-4 py-4">
                             <div className="flex items-center justify-between text-[11px] font-medium text-slate-500">
@@ -1970,7 +1970,7 @@ export const ResultsView: React.FC = () => {
                 </div>
             </div>
 
-{/* Results List */}
+            {/* Results List */}
             <div className="space-y-4">
                 <div className="flex items-center justify-between px-1">
                     <div className="flex items-center gap-2">
@@ -1992,7 +1992,7 @@ export const ResultsView: React.FC = () => {
                 </div>
             </div>
 
-{/* Cross Page Alerts */}
+            {/* Cross Page Alerts */}
             {crossPageQuestions.length > 0 && (
                 <div className="bg-white border-t border-slate-100 pt-4">
                     <div className="flex items-center gap-2 text-slate-700 font-semibold mb-3">
@@ -2015,7 +2015,7 @@ export const ResultsView: React.FC = () => {
                 </div>
             )}
 
-<RubricOverview />
+            <RubricOverview />
         </div>
     );
 };

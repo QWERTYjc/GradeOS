@@ -173,16 +173,6 @@ const ConceptBreakdown: React.FC<ConceptBreakdownProps> = ({
                 </div>
             </div>
 
-            <style jsx>{`
-        @keyframes expandIn {
-          from { opacity: 0; max-height: 0; }
-          to { opacity: 1; max-height: 500px; }
-        }
-        .animate-expandIn {
-          animation: expandIn 0.3s ease-out;
-          overflow: hidden;
-        }
-      `}</style>
         </div>
     );
 };

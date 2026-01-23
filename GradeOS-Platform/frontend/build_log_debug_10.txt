@@ -1,0 +1,23 @@
+
+> gradeos-platform@1.0.0 build
+> next build
+
+   ▲ Next.js 16.0.10 (Turbopack)
+   - Environments: .env.local
+
+   Creating an optimized production build ...
+ ✓ Compiled successfully in 15.7s
+   Running TypeScript ...
+Failed to compile.
+
+./src/components/console/NodeInspector.tsx:304:215
+Type error: Parameter 'issue' implicitly has an 'any' type.
+
+[0m [90m 302 |[39m                                                     {(selectedAgent[33m.[39moutput[33m.[39mselfAudit[33m.[39muncertaintiesAndConflicts [33m||[39m (selectedAgent[33m.[39moutput[33m.[39mselfAudit [36mas[39m any)[33m.[39muncertainties_and_conflicts) [33m&&[39m (
+ [90m 303 |[39m                                                         [33m<[39m[33mdiv[39m className[33m=[39m[32m"space-y-1.5"[39m[33m>[39m
+[31m[1m>[22m[39m[90m 304 |[39m                                                             {(selectedAgent[33m.[39moutput[33m.[39mselfAudit[33m.[39muncertaintiesAndConflicts [33m||[39m (selectedAgent[33m.[39moutput[33m.[39mselfAudit [36mas[39m any)[33m.[39muncertainties_and_conflicts [33m||[39m [])[33m.[39mslice([35m0[39m[33m,[39m [35m3[39m)[33m.[39mmap((issue[33m,[39m idx) [33m=>[39m (
+ [90m     |[39m                                                                                                                                                                                                                       [31m[1m^[22m[39m
+ [90m 305 |[39m                                                                 [33m<[39m[33mdiv[39m key[33m=[39m{[32m`conflict-${idx}`[39m} className[33m=[39m[32m"bg-white/60 border border-amber-100 rounded-lg px-3 py-2 text-xs text-amber-700 flex items-start gap-2"[39m[33m>[39m
+ [90m 306 |[39m                                                                     [33m<[39m[33mAlertTriangle[39m className[33m=[39m[32m"w-3 h-3 mt-0.5 flex-shrink-0 opacity-70"[39m [33m/[39m[33m>[39m
+ [90m 307 |[39m                                                                     [33m<[39m[33mspan[39m[33m>[39m{issue[33m.[39missue [33m||[39m issue[33m.[39mimpact [33m||[39m [32m'存在未披露的不确定性'[39m}[33m<[39m[33m/[39m[33mspan[39m[33m>[39m[0m
+Next.js build worker exited with code: 1 and signal: null

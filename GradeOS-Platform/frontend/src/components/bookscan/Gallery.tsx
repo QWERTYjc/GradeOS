@@ -5,7 +5,7 @@ import { Trash2, CheckSquare, Square, Wand2, Plus, Images, ArrowLeft, ArrowRight
 import ImageEditor from './ImageEditor';
 import ImageViewer from './ImageViewer';
 import { submitToGradingSystem, SubmissionResponse } from './submissionService';
-import { ScannedImage } from './types';
+import { ScannedImage, Session } from './types';
 
 interface StudentNameMapping {
   studentId: string;
@@ -30,7 +30,7 @@ interface GalleryProps {
 interface PreviewCardProps {
   children: React.ReactNode;
   className?: string;
-  containerRef: React.RefObject<HTMLElement>;
+  containerRef: React.RefObject<HTMLElement | null>;
 }
 
 const PreviewCard = ({ children, className, containerRef }: PreviewCardProps) => {
@@ -91,7 +91,7 @@ export default function Gallery({
   } = context;
 
   // Use injected session or fallback to context
-  const currentSession = session || sessions.find(s => s.id === currentSessionId);
+  const currentSession = (session || sessions.find(s => s.id === currentSessionId)) as Session | undefined;
 
   // Notify parent of boundary changes whenever splitImageIds or image order changes
   useEffect(() => {
@@ -100,7 +100,7 @@ export default function Gallery({
     // Always include index 0 implicitly
     const indices = [0];
 
-    currentSession.images.forEach((img, index) => {
+    currentSession.images.forEach((img: ScannedImage, index: number) => {
       if (index > 0 && splitImageIds.has(img.id)) {
         indices.push(index);
       }

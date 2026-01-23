@@ -1,0 +1,23 @@
+
+> gradeos-platform@1.0.0 build
+> next build
+
+   ▲ Next.js 16.0.10 (Turbopack)
+   - Environments: .env.local
+
+   Creating an optimized production build ...
+ ✓ Compiled successfully in 32.0s
+   Running TypeScript ...
+Failed to compile.
+
+./src/components/console/NodeInspector.tsx:292:144
+Type error: Property 'overall_compliance_grade' does not exist on type 'SelfAudit'. Did you mean 'overallComplianceGrade'?
+
+[0m [90m 290 |[39m                                             {selectedAgent[33m.[39moutput[33m?[39m[33m.[39mselfAudit [33m&&[39m (
+ [90m 291 |[39m                                                 [33m<[39m[33mdiv[39m className[33m=[39m[32m"space-y-3 relative z-10"[39m[33m>[39m
+[31m[1m>[22m[39m[90m 292 |[39m                                                     {((selectedAgent[33m.[39moutput[33m.[39mselfAudit[33m.[39moverallComplianceGrade [33m?[39m[33m?[39m selectedAgent[33m.[39moutput[33m.[39mselfAudit[33m.[39moverall_compliance_grade) [33m!==[39m undefined) [33m&&[39m (
+ [90m     |[39m                                                                                                                                                [31m[1m^[22m[39m
+ [90m 293 |[39m                                                         [33m<[39m[33mdiv[39m className[33m=[39m[32m"text-[11px] font-semibold text-amber-700 bg-amber-100/50 rounded-lg px-3 py-2 border border-amber-200/40"[39m[33m>[39m
+ [90m 294 |[39m                                                             合规评分：{[33mMath[39m[33m.[39mround(selectedAgent[33m.[39moutput[33m.[39mselfAudit[33m.[39moverallComplianceGrade [33m?[39m[33m?[39m selectedAgent[33m.[39moutput[33m.[39mselfAudit[33m.[39moverall_compliance_grade)} [33m/[39m [35m7[39m
+ [90m 295 |[39m                                                         [33m<[39m[33m/[39m[33mdiv[39m[33m>[39m[0m
+Next.js build worker exited with code: 1 and signal: null

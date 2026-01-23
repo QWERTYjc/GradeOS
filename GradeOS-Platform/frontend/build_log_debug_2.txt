@@ -1,0 +1,26 @@
+
+> gradeos-platform@1.0.0 build
+> next build
+
+   ▲ Next.js 16.0.10 (Turbopack)
+   - Environments: .env.local
+
+   Creating an optimized production build ...
+ ✓ Compiled successfully in 15.1s
+   Running TypeScript ...
+Failed to compile.
+
+./src/app/student/student_assistant/components/AIChat.tsx:64:9
+Type error: Type '{ role: string; content: string; }[]' is not assignable to type 'AssistantMessage[]'.
+  Type '{ role: string; content: string; }' is not assignable to type 'AssistantMessage'.
+    Types of property 'role' are incompatible.
+      Type 'string' is not assignable to type '"user" | "assistant" | "system"'.
+
+[0m [90m 62 |[39m         class_id[33m:[39m user[33m.[39mclassIds[33m?[39m[33m.[39m[[35m0[39m][33m,[39m
+ [90m 63 |[39m         message[33m:[39m userMsgContent[33m,[39m
+[31m[1m>[22m[39m[90m 64 |[39m         history[33m,[39m
+ [90m    |[39m         [31m[1m^[22m[39m
+ [90m 65 |[39m       })[33m;[39m
+ [90m 66 |[39m
+ [90m 67 |[39m       setMessages(prev [33m=>[39m {[0m
+Next.js build worker exited with code: 1 and signal: null

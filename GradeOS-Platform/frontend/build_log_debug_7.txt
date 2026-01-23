@@ -1,0 +1,24 @@
+
+> gradeos-platform@1.0.0 build
+> next build
+
+   ▲ Next.js 16.0.10 (Turbopack)
+   - Environments: .env.local
+
+   Creating an optimized production build ...
+ ✓ Compiled successfully in 24.4s
+   Running TypeScript ...
+Failed to compile.
+
+./src/components/bookscan/Scanner.tsx:30:23
+Type error: Argument of type '{ canvasContext: CanvasRenderingContext2D; viewport: PageViewport; }' is not assignable to parameter of type 'RenderParameters'.
+  Property 'canvas' is missing in type '{ canvasContext: CanvasRenderingContext2D; viewport: PageViewport; }' but required in type 'RenderParameters'.
+
+[0m [90m 28 |[39m     canvas[33m.[39mwidth [33m=[39m viewport[33m.[39mwidth[33m;[39m
+ [90m 29 |[39m     canvas[33m.[39mheight [33m=[39m viewport[33m.[39mheight[33m;[39m
+[31m[1m>[22m[39m[90m 30 |[39m     [36mawait[39m page[33m.[39mrender({ canvasContext[33m:[39m context[33m,[39m viewport })[33m.[39mpromise[33m;[39m
+ [90m    |[39m                       [31m[1m^[22m[39m
+ [90m 31 |[39m     images[33m.[39mpush(canvas[33m.[39mtoDataURL([32m'image/jpeg'[39m[33m,[39m [35m0.9[39m))[33m;[39m
+ [90m 32 |[39m   }
+ [90m 33 |[39m[0m
+Next.js build worker exited with code: 1 and signal: null

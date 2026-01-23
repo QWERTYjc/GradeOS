@@ -169,12 +169,41 @@ class AssistantChatRequest(BaseModel):
     message: str
     class_id: Optional[str] = None
     history: Optional[List[AssistantMessage]] = None
+    # 新增：学习模式
+    session_mode: Optional[str] = "learning"  # learning / assessment
+    concept_topic: Optional[str] = None  # 当前学习的概念主题
+
+
+class ConceptNode(BaseModel):
+    """概念分解节点（第一性原理）"""
+    id: str
+    name: str
+    description: str
+    understood: bool = False
+    children: Optional[List["ConceptNode"]] = None
+
+
+class MasteryData(BaseModel):
+    """掌握度评估数据"""
+    score: int  # 0-100
+    level: str  # beginner / developing / proficient / mastery
+    analysis: str  # 分析说明
+    evidence: List[str] = []  # 证据列表
+    suggestions: List[str] = []  # 改进建议
 
 
 class AssistantChatResponse(BaseModel):
     content: str
     model: Optional[str] = None
     usage: Optional[Dict[str, int]] = None
+    # 新增：结构化输出
+    mastery: Optional[MasteryData] = None  # 掌握度评估
+    next_question: Optional[str] = None  # 苏格拉底式追问
+    focus_mode: bool = False  # 是否进入专注模式
+    concept_breakdown: Optional[List[ConceptNode]] = None  # 第一性原理概念分解
+    response_type: str = "chat"  # chat / question / assessment / explanation
+
+
 
 
 class GradingImportRecord(BaseModel):
@@ -1300,15 +1329,71 @@ async def revoke_grading_import(import_id: str, request: GradingRevokeRequest):
 
 @router.post("/assistant/chat", response_model=AssistantChatResponse, tags=["Student Assistant"])
 async def assistant_chat(request: AssistantChatRequest):
-    """Student assistant chat."""
+    """Student assistant chat with Socratic questioning and mastery assessment."""
     context = _build_student_context(request.student_id, request.class_id)
-    system_prompt = f"""You are GradeOS Student Assistant, focused on data-driven tutoring.
-Use the provided context as ground truth for scores, wrong questions, recent submissions, and class membership.
-If the context is insufficient, explain what is missing and propose next steps.
-Be concise, structured, and actionable.
+    
+    # 构建增强的 system prompt，包含苏格拉底提问法和第一性原理指导
+    system_prompt = f"""You are GradeOS Student Assistant, an expert tutor using the Socratic method and first principles thinking.
 
-CONTEXT:
-{json.dumps(context, ensure_ascii=False)}"""
+## YOUR TEACHING PHILOSOPHY:
+
+### Socratic Method (苏格拉底提问法):
+1. Never give direct answers immediately
+2. Ask probing questions to guide students to discover answers themselves
+3. Challenge assumptions and encourage deeper thinking
+4. Use "Why?", "What if?", "How do you know?" type questions
+5. Celebrate when students reach insights on their own
+
+### First Principles Thinking (第一性原理):
+1. Break down complex concepts into fundamental truths
+2. Build understanding from the ground up
+3. Identify and question assumptions
+4. Connect abstract concepts to concrete examples
+
+## YOUR RESPONSE FORMAT:
+
+You MUST respond with a valid JSON object containing these fields:
+{{
+  "content": "Your main response text to the student (conversational, supportive tone)",
+  "next_question": "A Socratic follow-up question to deepen understanding (optional, null if not needed)",
+  "focus_mode": true/false (set to true when asking a critical thinking question that needs focused attention),
+  "response_type": "chat" | "question" | "assessment" | "explanation",
+  "mastery": {{
+    "score": 0-100 (based on demonstrated understanding in this conversation),
+    "level": "beginner" | "developing" | "proficient" | "mastery",
+    "analysis": "Brief analysis of current understanding based on student's responses",
+    "evidence": ["List of specific things the student demonstrated understanding of"],
+    "suggestions": ["Specific actionable suggestions for improvement"]
+  }},
+  "concept_breakdown": [
+    {{
+      "id": "unique_id",
+      "name": "Core concept name",
+      "description": "Simple explanation of this fundamental concept",
+      "understood": true/false (based on student's demonstrated understanding)
+    }}
+  ]
+}}
+
+## MASTERY SCORING GUIDELINES:
+- 0-25 (beginner): Student is unfamiliar with the concept, cannot articulate basic ideas
+- 26-50 (developing): Student shows partial understanding, may have misconceptions
+- 51-75 (proficient): Student understands core concepts, can apply them with guidance
+- 76-100 (mastery): Student demonstrates deep understanding, can explain and apply independently
+
+## IMPORTANT:
+- Assess mastery based ONLY on what the student actually demonstrates in their responses
+- Be encouraging but honest in your assessment
+- When session_mode is "assessment", focus more on evaluating understanding
+- When session_mode is "learning", focus more on guiding toward understanding
+- Break down complex topics using first principles when explaining
+- Use the student's language/culture context (respond in the language they use)
+
+## STUDENT CONTEXT:
+{json.dumps(context, ensure_ascii=False)}
+
+## SESSION MODE: {request.session_mode or "learning"}
+## CONCEPT TOPIC: {request.concept_topic or "general"}"""
 
     messages: List[LLMMessage] = [LLMMessage(role="system", content=system_prompt)]
     if request.history:
@@ -1321,15 +1406,60 @@ CONTEXT:
     response = await client.invoke(
         messages=messages,
         purpose="assistant",
-        temperature=0.3,
-        max_tokens=2048,
+        temperature=0.4,
+        max_tokens=2500,
     )
 
-    return AssistantChatResponse(
-        content=response.content,
-        model=response.model,
-        usage=response.usage or {},
-    )
+    # 解析 LLM 返回的 JSON 响应
+    try:
+        data = _parse_llm_json(response.content)
+        
+        # 解析 mastery 数据
+        mastery_data = None
+        if data.get("mastery"):
+            m = data["mastery"]
+            mastery_data = MasteryData(
+                score=m.get("score", 50),
+                level=m.get("level", "developing"),
+                analysis=m.get("analysis", ""),
+                evidence=m.get("evidence", []),
+                suggestions=m.get("suggestions", [])
+            )
+        
+        # 解析 concept_breakdown 数据
+        concept_nodes = None
+        if data.get("concept_breakdown"):
+            concept_nodes = [
+                ConceptNode(
+                    id=c.get("id", str(uuid.uuid4())[:8]),
+                    name=c.get("name", ""),
+                    description=c.get("description", ""),
+                    understood=c.get("understood", False)
+                )
+                for c in data["concept_breakdown"]
+            ]
+        
+        return AssistantChatResponse(
+            content=data.get("content", response.content),
+            model=response.model,
+            usage=response.usage or {},
+            mastery=mastery_data,
+            next_question=data.get("next_question"),
+            focus_mode=data.get("focus_mode", False),
+            concept_breakdown=concept_nodes,
+            response_type=data.get("response_type", "chat")
+        )
+    except Exception as exc:
+        logger.warning("Failed to parse structured response, falling back to plain text: %s", exc)
+        # 回退到简单文本响应
+        return AssistantChatResponse(
+            content=response.content,
+            model=response.model,
+            usage=response.usage or {},
+            response_type="chat"
+        )
+
+
 
 
 # ============ Error Analysis (IntelliLearn) ============

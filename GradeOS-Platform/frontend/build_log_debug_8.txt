@@ -1,0 +1,29 @@
+
+> gradeos-platform@1.0.0 build
+> next build
+
+   ▲ Next.js 16.0.10 (Turbopack)
+   - Environments: .env.local
+
+   Creating an optimized production build ...
+ ✓ Compiled successfully in 18.1s
+   Running TypeScript ...
+Failed to compile.
+
+./src/components/bookscan/textInService.ts:33:7
+Type error: No overload matches this call.
+  Overload 1 of 2, '(input: string | URL | Request, init?: RequestInit | undefined): Promise<Response>', gave the following error.
+    Type 'Uint8Array<ArrayBufferLike>' is not assignable to type 'BodyInit | null | undefined'.
+      Type 'Uint8Array<ArrayBufferLike>' is missing the following properties from type 'URLSearchParams': size, append, delete, get, and 2 more.
+  Overload 2 of 2, '(input: URL | RequestInfo, init?: RequestInit | undefined): Promise<Response>', gave the following error.
+    Type 'Uint8Array<ArrayBufferLike>' is not assignable to type 'BodyInit | null | undefined'.
+      Type 'Uint8Array<ArrayBufferLike>' is missing the following properties from type 'URLSearchParams': size, append, delete, get, and 2 more.
+
+[0m [90m 31 |[39m         [32m'Content-Type'[39m[33m:[39m [32m'application/octet-stream'[39m
+ [90m 32 |[39m       }[33m,[39m
+[31m[1m>[22m[39m[90m 33 |[39m       body[33m:[39m binaryData
+ [90m    |[39m       [31m[1m^[22m[39m
+ [90m 34 |[39m     })[33m;[39m
+ [90m 35 |[39m
+ [90m 36 |[39m     [36mif[39m ([33m![39mresponse[33m.[39mok) {[0m
+Next.js build worker exited with code: 1 and signal: null

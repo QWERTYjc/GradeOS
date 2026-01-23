@@ -112,12 +112,12 @@ const AgentCard: React.FC<{ agent: GradingAgent; onClick: () => void; isSelected
                     <span className="text-xs font-semibold text-slate-700 truncate tracking-tight">{agent.label}</span>
                 </div>
 
-                {agent.output && (
+                {agent.output && typeof (agent.output?.score ?? 0) === 'number' && (
                     <span className={clsx(
                         "text-[10px] font-bold px-1.5 py-0.5 rounded-md",
-                        agent.output.score >= (agent.output.maxScore * 0.6) ? "bg-emerald-100/50 text-emerald-700" : "bg-red-100/50 text-red-700"
+                        (agent.output?.score ?? 0) >= ((agent.output?.maxScore ?? 100) * 0.6) ? "bg-emerald-100/50 text-emerald-700" : "bg-red-100/50 text-red-700"
                     )}>
-                        {agent.output.score}
+                        {agent.output?.score ?? 0}
                     </span>
                 )}
             </div>

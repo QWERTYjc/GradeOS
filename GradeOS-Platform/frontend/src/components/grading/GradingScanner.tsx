@@ -6,7 +6,7 @@ import { useConsoleStore } from '@/store/consoleStore';
 import { useAuthStore } from '@/store/authStore';
 import { useGradingScan } from './index';
 import { api } from '@/services/api';
-import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf';
+import * as pdfjsLib from 'pdfjs-dist';
 import { GlassCard } from '@/components/design-system/GlassCard';
 import { SmoothButton } from '@/components/design-system/SmoothButton';
 import { motion } from 'framer-motion';
@@ -37,7 +37,7 @@ const renderPdfToImages = async (file: File, maxPages = 80): Promise<string[]> =
     if (!context) continue;
     canvas.width = viewport.width;
     canvas.height = viewport.height;
-    await page.render({ canvasContext: context, viewport }).promise;
+    await page.render({ canvasContext: context, viewport } as any).promise;
     images.push(canvas.toDataURL('image/jpeg', 0.92));
   }
 

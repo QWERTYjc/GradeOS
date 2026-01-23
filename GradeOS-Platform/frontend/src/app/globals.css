@@ -8,6 +8,14 @@
 @import "@fontsource/fira-code/400.css";
 @import "@fontsource/fira-code/500.css";
 @import "@fontsource/fira-code/600.css";
+@import "@fontsource/unbounded/400.css";
+@import "@fontsource/unbounded/500.css";
+@import "@fontsource/unbounded/600.css";
+@import "@fontsource/unbounded/700.css";
+@import "@fontsource/unbounded/400.css";
+@import "@fontsource/unbounded/500.css";
+@import "@fontsource/unbounded/600.css";
+@import "@fontsource/unbounded/700.css";
 
 :root {
   --foreground-rgb: 11, 15, 23;
@@ -376,7 +384,7 @@ body {
   position: relative;
 }
 
-.stream-frame > * {
+.stream-frame>* {
   position: relative;
   z-index: 1;
 }
@@ -525,7 +533,7 @@ body {
   background: rgba(239, 246, 255, 0.85);
 }
 
-.stream-item + .stream-item {
+.stream-item+.stream-item {
   margin-top: 12px;
 }
 
@@ -569,60 +577,60 @@ body {
 }
 
 .stream-tag {
-    padding: 2px 6px;
-    border-radius: 4px;
-    border: 1px solid rgba(148, 163, 184, 0.4);
-    color: #475569;
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-  }
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid rgba(148, 163, 184, 0.4);
+  color: #475569;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
 
-  .stream-kind-tag {
-    padding: 2px 6px;
-    border-radius: 999px;
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    border: 1px solid transparent;
-    margin-left: 6px;
-  }
+.stream-kind-tag {
+  padding: 2px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  border: 1px solid transparent;
+  margin-left: 6px;
+}
 
-  .stream-kind-thinking {
-    background: rgba(245, 158, 11, 0.12);
-    color: #b45309;
-    border-color: rgba(245, 158, 11, 0.35);
-  }
+.stream-kind-thinking {
+  background: rgba(245, 158, 11, 0.12);
+  color: #b45309;
+  border-color: rgba(245, 158, 11, 0.35);
+}
 
-  .stream-kind-output {
-    background: rgba(59, 130, 246, 0.12);
-    color: #1d4ed8;
-    border-color: rgba(59, 130, 246, 0.3);
-  }
+.stream-kind-output {
+  background: rgba(59, 130, 246, 0.12);
+  color: #1d4ed8;
+  border-color: rgba(59, 130, 246, 0.3);
+}
 
-  .stream-meta {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 10px;
-    color: #94a3b8;
-  }
+.stream-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  color: #94a3b8;
+}
 
-  .stream-toggle {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 20px;
-    height: 20px;
-    border-radius: 6px;
-    background: rgba(148, 163, 184, 0.15);
-    color: #64748b;
-    border: 1px solid rgba(148, 163, 184, 0.2);
-  }
+.stream-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  background: rgba(148, 163, 184, 0.15);
+  color: #64748b;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+}
 
-  .stream-toggle:hover {
-    background: rgba(148, 163, 184, 0.25);
-  }
+.stream-toggle:hover {
+  background: rgba(148, 163, 184, 0.25);
+}
 
 .stream-body {
   font-size: 11px;
@@ -918,36 +926,81 @@ body {
 }
 
 @keyframes auroraShift {
-  0% { transform: translate3d(0, 0, 0) scale(1); }
-  50% { transform: translate3d(-8%, -6%, 0) scale(1.1); }
-  100% { transform: translate3d(0, 0, 0) scale(1); }
+  0% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+
+  50% {
+    transform: translate3d(-8%, -6%, 0) scale(1.1);
+  }
+
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
 }
 
 @keyframes orbFloat {
-  0% { transform: translate3d(0, 0, 0) scale(1); }
-  50% { transform: translate3d(40px, -30px, 0) scale(1.15); }
-  100% { transform: translate3d(0, 0, 0) scale(1); }
+  0% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+
+  50% {
+    transform: translate3d(40px, -30px, 0) scale(1.15);
+  }
+
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
 }
 
 @keyframes scanlineSweep {
-  0% { transform: translateY(-120%); opacity: 0; }
-  30% { opacity: 0.35; }
-  100% { transform: translateY(120%); opacity: 0; }
+  0% {
+    transform: translateY(-120%);
+    opacity: 0;
+  }
+
+  30% {
+    opacity: 0.35;
+  }
+
+  100% {
+    transform: translateY(120%);
+    opacity: 0;
+  }
 }
 
 @keyframes shimmer {
-  0% { background-position: 0% 50%; }
-  100% { background-position: 200% 50%; }
+  0% {
+    background-position: 0% 50%;
+  }
+
+  100% {
+    background-position: 200% 50%;
+  }
 }
 
 @keyframes pulseHalo {
-  0%, 100% { box-shadow: 0 0 0 rgba(37, 99, 235, 0); }
-  50% { box-shadow: 0 0 24px rgba(37, 99, 235, 0.25); }
+
+  0%,
+  100% {
+    box-shadow: 0 0 0 rgba(37, 99, 235, 0);
+  }
+
+  50% {
+    box-shadow: 0 0 24px rgba(37, 99, 235, 0.25);
+  }
 }
 
 @keyframes panelBreath {
-  0%, 100% { filter: drop-shadow(0 0 0 rgba(59, 130, 246, 0)); }
-  50% { filter: drop-shadow(0 0 24px rgba(59, 130, 246, 0.18)); }
+
+  0%,
+  100% {
+    filter: drop-shadow(0 0 0 rgba(59, 130, 246, 0));
+  }
+
+  50% {
+    filter: drop-shadow(0 0 24px rgba(59, 130, 246, 0.18));
+  }
 }
 
 /* Custom Scrollbar */
@@ -1006,7 +1059,7 @@ body {
 }
 
 .tech-grid {
-  background-image: 
+  background-image:
     linear-gradient(rgba(37, 99, 235, 0.1) 1px, transparent 1px),
     linear-gradient(90deg, rgba(37, 99, 235, 0.1) 1px, transparent 1px);
   background-size: 50px 50px;
@@ -1014,8 +1067,13 @@ body {
 }
 
 @keyframes grid-move {
-  0% { transform: translate(0, 0); }
-  100% { transform: translate(50px, 50px); }
+  0% {
+    transform: translate(0, 0);
+  }
+
+  100% {
+    transform: translate(50px, 50px);
+  }
 }
 
 .scanning-line {
@@ -1029,15 +1087,119 @@ body {
 }
 
 @keyframes scan {
-  0% { left: -100%; }
-  100% { left: 100%; }
+  0% {
+    left: -100%;
+  }
+
+  100% {
+    left: 100%;
+  }
 }
 
 @keyframes fadeIn {
-  from { opacity: 0; transform: translateY(20px); }
-  to { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .animate-fadeIn {
   animation: fadeIn 0.6s ease-out;
+}
+
+/* === New Landing Page Animations & Utilities === */
+@keyframes float {
+
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(-20px);
+  }
+}
+
+@keyframes grid-move {
+  0% {
+    transform: translateY(0);
+  }
+
+  100% {
+    transform: translateY(60px);
+  }
+}
+
+@keyframes glow-pulse {
+
+  0%,
+  100% {
+    opacity: 0.6;
+    transform: scale(1);
+  }
+
+  50% {
+    opacity: 0.8;
+    transform: scale(1.05);
+  }
+}
+
+.animate-float {
+  animation: float 6s ease-in-out infinite;
+}
+
+.animate-grid-move {
+  animation: grid-move 20s linear infinite;
+}
+
+.animate-glow-pulse {
+  animation: glow-pulse 4s ease-in-out infinite;
+}
+
+.glass-panel {
+  background: rgba(11, 15, 23, 0.7);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(59, 130, 246, 0.2);
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+}
+
+.neon-text {
+  text-shadow: 0 0 10px rgba(59, 130, 246, 0.5), 0 0 20px rgba(59, 130, 246, 0.3);
+}
+
+.neon-text-cyan {
+  text-shadow: 0 0 10px rgba(34, 211, 238, 0.5), 0 0 20px rgba(34, 211, 238, 0.3);
+}
+
+.neon-border {
+  box-shadow: 0 0 5px rgba(59, 130, 246, 0.5), inset 0 0 5px rgba(59, 130, 246, 0.2);
+}
+
+.landing-container {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 0 1rem;
+}
+
+
+/* Student Assistant Component Animations */
+@keyframes expandIn {
+  from {
+    opacity: 0;
+    max-height: 0;
+  }
+  to {
+    opacity: 1;
+    max-height: 500px;
+  }
+}
+
+.animate-expandIn {
+  animation: expandIn 0.3s ease-out;
+  overflow: hidden;
 }

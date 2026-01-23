@@ -1,0 +1,23 @@
+
+> gradeos-platform@1.0.0 build
+> next build
+
+   ▲ Next.js 16.0.10 (Turbopack)
+   - Environments: .env.local
+
+   Creating an optimized production build ...
+ ✓ Compiled successfully in 12.5s
+   Running TypeScript ...
+Failed to compile.
+
+./src/components/bookscan/Gallery.tsx:103:36
+Type error: Parameter 'img' implicitly has an 'any' type.
+
+[0m [90m 101 |[39m     [36mconst[39m indices [33m=[39m [[35m0[39m][33m;[39m
+ [90m 102 |[39m
+[31m[1m>[22m[39m[90m 103 |[39m     currentSession[33m.[39mimages[33m.[39mforEach((img[33m,[39m index) [33m=>[39m {
+ [90m     |[39m                                    [31m[1m^[22m[39m
+ [90m 104 |[39m       [36mif[39m (index [33m>[39m [35m0[39m [33m&&[39m splitImageIds[33m.[39mhas(img[33m.[39mid)) {
+ [90m 105 |[39m         indices[33m.[39mpush(index)[33m;[39m
+ [90m 106 |[39m       }[0m
+Next.js build worker exited with code: 1 and signal: null

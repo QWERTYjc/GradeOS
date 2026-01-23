@@ -30,7 +30,7 @@ export const enhanceWithTextIn = async (base64Image: string): Promise<string> =>
         'x-ti-secret-code': TEXTIN_CONFIG.SECRET_CODE,
         'Content-Type': 'application/octet-stream'
       },
-      body: binaryData
+      body: binaryData as any
     });
 
     if (!response.ok) {
@@ -39,7 +39,7 @@ export const enhanceWithTextIn = async (base64Image: string): Promise<string> =>
     }
 
     const result = await response.json();
-    
+
     if (result.code === 200 && result.result && result.result.image_list) {
       // TextIn typically returns an image_list for this service
       const processedBase64 = result.result.image_list[0].image;

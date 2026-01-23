@@ -244,12 +244,35 @@ export interface AssistantChatRequest {
   message: string;
   class_id?: string;
   history?: AssistantMessage[];
+  session_mode?: string;
+  concept_topic?: string;
+}
+
+export interface ConceptNode {
+  id: string;
+  name: string;
+  description: string;
+  understood: boolean;
+  children?: ConceptNode[];
+}
+
+export interface MasteryData {
+  score: number;
+  level: string;
+  analysis: string;
+  evidence: string[];
+  suggestions: string[];
 }
 
 export interface AssistantChatResponse {
   content: string;
   model?: string;
   usage?: Record<string, number>;
+  mastery?: MasteryData;
+  next_question?: string;
+  focus_mode?: boolean;
+  concept_breakdown?: ConceptNode[];
+  response_type?: string;
 }
 
 export const assistantApi = {

@@ -1,0 +1,18 @@
+src/components/console/WorkflowGraph.tsx(118,25): error TS18048: 'agent.output.score' is possibly 'undefined'.
+src/components/console/WorkflowGraph.tsx(118,48): error TS18048: 'agent.output.maxScore' is possibly 'undefined'.
+src/components/design-system/SmoothButton.tsx(60,13): error TS2322: Type 'ReactNode | MotionValueNumber | MotionValueString' is not assignable to type 'ReactNode'.
+  Type 'MotionValueNumber' is not assignable to type 'ReactNode'.
+src/components/grading/GradingScanner.tsx(9,27): error TS2307: Cannot find module 'pdfjs-dist/legacy/build/pdf' or its corresponding type declarations.
+src/components/landing/WorkflowGraph.tsx(165,46): error TS2322: Type 'number' is not assignable to type 'never'.
+src/components/landing/WorkflowGraph.tsx(165,56): error TS2322: Type 'string' is not assignable to type 'never'.
+src/components/landing/WorkflowGraph.tsx(209,24): error TS2554: Expected 1 arguments, but got 0.
+src/lib/gradingResults.ts(30,3): error TS2322: Type '{ studentName: any; score: any; maxScore: any; gradingMode: any; percentage: any; totalRevisions: any; startPage: any; endPage: any; confidence: any; needsConfirmation: any; studentSummary: any; selfAudit: SelfAudit | undefined; questionResults: { ...; }[]; }[]' is not assignable to type 'StudentResult[]'.
+  Type '{ studentName: any; score: any; maxScore: any; gradingMode: any; percentage: any; totalRevisions: any; startPage: any; endPage: any; confidence: any; needsConfirmation: any; studentSummary: any; selfAudit: SelfAudit | undefined; questionResults: { ...; }[]; }' is not assignable to type 'StudentResult'.
+    Types of property 'questionResults' are incompatible.
+      Type '{ questionId: any; score: any; maxScore: any; feedback: any; studentAnswer: any; questionType: any; confidence: any; confidenceReason: any; selfCritique: any; selfCritiqueConfidence: any; rubricRefs: any; ... 11 more ...; scoringPointResults: { ...; }[]; }[]' is not assignable to type 'QuestionResult[]'.
+        Type '{ questionId: any; score: any; maxScore: any; feedback: any; studentAnswer: any; questionType: any; confidence: any; confidenceReason: any; selfCritique: any; selfCritiqueConfidence: any; rubricRefs: any; ... 11 more ...; scoringPointResults: { ...; }[]; }' is not assignable to type 'QuestionResult'.
+          Types of property 'scoringPointResults' are incompatible.
+            Type '{ pointId: any; description: any; awarded: any; maxPoints: any; evidence: any; rubricReference: any; rubricReferenceSource: any; decision: any; reason: any; reviewAdjusted: any; reviewBefore: any; reviewReason: any; reviewBy: any; scoringPoint: { ...; }; }[]' is not assignable to type '{ pointId?: string | undefined; scoringPoint?: ScoringPoint | undefined; description?: string | undefined; awarded: number; maxPoints?: number | undefined; evidence: string; ... 7 more ...; reviewBy?: string | undefined; }[]'.
+              Type '{ pointId: any; description: any; awarded: any; maxPoints: any; evidence: any; rubricReference: any; rubricReferenceSource: any; decision: any; reason: any; reviewAdjusted: any; reviewBefore: any; reviewReason: any; reviewBy: any; scoringPoint: { ...; }; }' is not assignable to type '{ pointId?: string | undefined; scoringPoint?: ScoringPoint | undefined; description?: string | undefined; awarded: number; maxPoints?: number | undefined; evidence: string; ... 7 more ...; reviewBy?: string | undefined; }'.
+                Types of property 'scoringPoint' are incompatible.
+                  Property 'explanation' is missing in type '{ description: any; score: any; maxScore: any; isCorrect: boolean; isRequired: any; }' but required in type 'ScoringPoint'.

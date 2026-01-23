@@ -144,16 +144,6 @@ const FocusMode: React.FC<FocusModeProps> = ({
                 按 <kbd className="px-2 py-1 bg-gray-100 rounded border border-gray-300 font-mono">Enter</kbd> 提交
             </div>
 
-            {/* 动画样式 */}
-            <style jsx>{`
-        @keyframes fadeIn {
-          from { opacity: 0; transform: scale(0.98); }
-          to { opacity: 1; transform: scale(1); }
-        }
-        .animate-fadeIn {
-          animation: fadeIn 0.3s ease-out;
-        }
-      `}</style>
         </div>
     );
 };
