@@ -29,25 +29,16 @@ from src.models.enums import SubmissionStatus
 from src.orchestration.base import Orchestrator
 from src.api.dependencies import get_orchestrator
 from src.utils.image import to_jpeg_bytes, pil_to_jpeg_bytes
-from src.utils.database import db
 from src.utils.pool_manager import UnifiedPoolManager, PoolNotInitializedError
 
-# SQLite 作为降级方案
-from src.db.sqlite import (
-    save_grading_history as sqlite_save_grading_history, 
-    save_student_result as sqlite_save_student_result, 
-    GradingHistory as SqliteGradingHistory, 
-    StudentGradingResult as SqliteStudentGradingResult,
-    upsert_homework_submission_grade,
-    list_class_students,
-)
-
 # PostgreSQL 作为主存储
-from src.db.postgres_grading import (
-    save_grading_history as pg_save_grading_history,
-    save_student_result as pg_save_student_result,
+from src.db import (
     GradingHistory,
     StudentGradingResult,
+    save_grading_history,
+    save_student_result,
+    upsert_homework_submission_grade,
+    list_class_students,
 )
 
 
@@ -207,71 +198,6 @@ async def _load_cached_progress_messages(batch_id: str) -> List[dict]:
         if isinstance(message, dict):
             messages.append(message)
     return messages
-
-
-async def save_grading_history(history: GradingHistory) -> None:
-    """智能存储适配器：优先使用 PostgreSQL，降级时使用 SQLite"""
-    # 尝试 PostgreSQL
-    if db.is_available:
-        try:
-            await pg_save_grading_history(history)
-            logger.info(f"批改历史已保存到 PostgreSQL: batch_id={history.batch_id}")
-            return
-        except Exception as e:
-            logger.error(f"PostgreSQL 保存失败: {e}", exc_info=True)
-            raise
-    
-    # 降级到 SQLite
-    try:
-        sqlite_history = SqliteGradingHistory(
-            id=history.id,
-            batch_id=history.batch_id,
-            status=history.status,
-            class_ids=history.class_ids,
-            created_at=history.created_at,
-            completed_at=history.completed_at,
-            total_students=history.total_students,
-            average_score=history.average_score,
-            result_data=history.result_data,
-        )
-        sqlite_save_grading_history(sqlite_history)
-        logger.info(f"批改历史已保存到 SQLite (降级模式): batch_id={history.batch_id}")
-    except Exception as e:
-        logger.error(f"SQLite 保存也失败: {e}")
-        raise
-
-
-async def save_student_result(result: StudentGradingResult) -> None:
-    """智能存储适配器：优先使用 PostgreSQL，降级时使用 SQLite"""
-    # 尝试 PostgreSQL
-    if db.is_available:
-        try:
-            await pg_save_student_result(result)
-            return
-        except Exception as e:
-            logger.error(f"PostgreSQL 保存学生结果失败: {e}", exc_info=True)
-            raise
-    
-    # 降级到 SQLite
-    try:
-        sqlite_result = SqliteStudentGradingResult(
-            id=result.id,
-            grading_history_id=result.grading_history_id,
-            student_key=result.student_key,
-            score=result.score,
-            max_score=result.max_score,
-            class_id=result.class_id,
-            student_id=result.student_id,
-            summary=result.summary,
-            self_report=result.self_report,
-            result_data=result.result_data,
-            imported_at=result.imported_at,
-            revoked_at=result.revoked_at,
-        )
-        sqlite_save_student_result(sqlite_result)
-    except Exception as e:
-        logger.error(f"SQLite 保存学生结果也失败: {e}")
-        raise
 
 
 def _safe_to_jpeg_bytes(image_bytes: bytes, label: str) -> bytes:
@@ -1052,7 +978,7 @@ async def stream_langgraph_progress(
                             "homework_id": homework_id,
                         } if class_report or class_id or homework_id else None,
                     )
-                    await save_grading_history(history)
+                    save_grading_history(history)
 
                     student_map_by_index = {}
                     student_map_by_name = {}
@@ -1113,7 +1039,7 @@ async def stream_langgraph_progress(
                             self_report=self_audit.get("summary") if isinstance(self_audit, dict) else None,
                             result_data=result,
                         )
-                        await save_student_result(student_result)
+                        save_student_result(student_result)
 
                         if class_id and homework_id and student_id:
                             feedback = None

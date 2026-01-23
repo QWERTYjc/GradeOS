@@ -1,4 +1,4 @@
-"""SQLite 状态持久化模块
+"""PostgreSQL 状态持久化模块
 
 用于存储工作流暂停态和批改结果。
 支持：
@@ -10,41 +10,51 @@
 import os
 import uuid
 import json
-import sqlite3
+import hashlib
 import logging
-from pathlib import Path
 from datetime import datetime
 from typing import Optional, Dict, List, Any
 from dataclasses import dataclass, asdict
 from contextlib import contextmanager
+import psycopg
+from psycopg.rows import dict_row
 
 
 logger = logging.getLogger(__name__)
 
 # 数据库文件路径
-DB_PATH = Path(os.getenv("GRADING_DB_PATH", "data/grading.db"))
 
 
-def _add_column_if_missing(conn: sqlite3.Connection, table: str, column: str, ddl: str) -> None:
-    """Add a column if the table exists but column is missing."""
-    columns = [row["name"] for row in conn.execute(f"PRAGMA table_info({table})")]
-    if column not in columns:
-        conn.execute(f"ALTER TABLE {table} ADD COLUMN {ddl}")
+def _get_connection_string() -> str:
+    database_url = os.getenv("DATABASE_URL", "").strip()
+    if database_url:
+        return database_url
+    host = os.getenv("DB_HOST", "localhost").strip()
+    port = os.getenv("DB_PORT", "5432").strip()
+    name = os.getenv("DB_NAME", "ai_grading").strip()
+    user = os.getenv("DB_USER", "postgres").strip()
+    password = os.getenv("DB_PASSWORD", "postgres").strip()
+    return f"postgresql://{user}:{password}@{host}:{port}/{name}"
 
 
-def ensure_db_dir():
-    """确保数据库目录存在"""
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+class _PGConnectionWrapper:
+    def __init__(self, conn: psycopg.Connection) -> None:
+        self._conn = conn
+
+    def execute(self, query: str, params: Optional[tuple] = None):
+        sql = query.replace("?", "%s")
+        return self._conn.execute(sql, params or ())
+
+    def __getattr__(self, name: str):
+        return getattr(self._conn, name)
 
 
 @contextmanager
 def get_connection():
-    """获取数据库连接（上下文管理器）"""
-    ensure_db_dir()
-    conn = sqlite3.connect(str(DB_PATH))
-    conn.row_factory = sqlite3.Row
+    """Get Postgres connection (context manager)."""
+    conn = psycopg.connect(_get_connection_string(), row_factory=dict_row)
     try:
-        yield conn
+        yield _PGConnectionWrapper(conn)
         conn.commit()
     except Exception:
         conn.rollback()
@@ -151,19 +161,19 @@ def init_db():
                 student_id TEXT NOT NULL,
                 student_name TEXT,
                 images TEXT,  -- JSON array of base64 or file paths
+                content TEXT,
+                submission_type TEXT,
                 page_count INTEGER DEFAULT 0,
                 submitted_at TEXT NOT NULL,
                 status TEXT DEFAULT 'pending',
                 grading_batch_id TEXT,
+                score REAL,
+                feedback TEXT,
                 UNIQUE(class_id, homework_id, student_id)
             )
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_homework_class ON homework_submissions(class_id, homework_id)")
 
-        _add_column_if_missing(conn, "homework_submissions", "content", "content TEXT")
-        _add_column_if_missing(conn, "homework_submissions", "submission_type", "submission_type TEXT")
-        _add_column_if_missing(conn, "homework_submissions", "score", "score REAL")
-        _add_column_if_missing(conn, "homework_submissions", "feedback", "feedback TEXT")
 
         # Users table
         conn.execute("""
@@ -217,7 +227,39 @@ def init_db():
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_homeworks_class ON homeworks(class_id)")
         
-        logger.info(f"SQLite 数据库已初始化: {DB_PATH}")
+        # Assistant progress tables
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS assistant_concepts (
+                student_id TEXT NOT NULL,
+                class_id TEXT NOT NULL DEFAULT '',
+                concept_key TEXT NOT NULL,
+                name TEXT NOT NULL,
+                description TEXT,
+                parent_key TEXT,
+                understood INTEGER DEFAULT 0,
+                last_seen_at TEXT NOT NULL,
+                PRIMARY KEY (student_id, class_id, concept_key)
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_assistant_concepts_student ON assistant_concepts(student_id, class_id)")
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS assistant_mastery_snapshots (
+                id TEXT PRIMARY KEY,
+                student_id TEXT NOT NULL,
+                class_id TEXT NOT NULL DEFAULT '',
+                score INTEGER NOT NULL,
+                level TEXT NOT NULL,
+                analysis TEXT,
+                evidence TEXT,
+                suggestions TEXT,
+                created_at TEXT NOT NULL
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_assistant_mastery_student ON assistant_mastery_snapshots(student_id, class_id, created_at)")
+
+        
+        logger.info("PostgreSQL database initialized.")
 
 
 # ==================== User/Class/Homework data ====================
@@ -431,8 +473,9 @@ def add_student_to_class(class_id: str, student_id: str) -> None:
     with get_connection() as conn:
         conn.execute(
             """
-            INSERT OR IGNORE INTO class_students (class_id, student_id, joined_at)
+            INSERT INTO class_students (class_id, student_id, joined_at)
             VALUES (?, ?, ?)
+            ON CONFLICT (class_id, student_id) DO NOTHING
             """,
             (class_id, student_id, datetime.now().isoformat()),
         )
@@ -577,9 +620,14 @@ def save_workflow_state(state: WorkflowState) -> None:
     
     with get_connection() as conn:
         conn.execute("""
-            INSERT OR REPLACE INTO workflow_state 
+            INSERT INTO workflow_state 
             (id, batch_id, status, pause_point, state_data, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (batch_id) DO UPDATE SET
+                status = EXCLUDED.status,
+                pause_point = EXCLUDED.pause_point,
+                state_data = EXCLUDED.state_data,
+                updated_at = EXCLUDED.updated_at
         """, (
             state.id,
             state.batch_id,
@@ -658,10 +706,17 @@ def save_grading_history(history: GradingHistory) -> None:
     
     with get_connection() as conn:
         conn.execute("""
-            INSERT OR REPLACE INTO grading_history 
+            INSERT INTO grading_history 
             (id, batch_id, class_ids, created_at, completed_at, status, 
              total_students, average_score, result_data)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (batch_id) DO UPDATE SET
+                class_ids = EXCLUDED.class_ids,
+                completed_at = EXCLUDED.completed_at,
+                status = EXCLUDED.status,
+                total_students = EXCLUDED.total_students,
+                average_score = EXCLUDED.average_score,
+                result_data = EXCLUDED.result_data
         """, (
             history.id,
             history.batch_id,
@@ -764,11 +819,19 @@ def save_student_result(result: StudentGradingResult) -> None:
     
     with get_connection() as conn:
         conn.execute("""
-            INSERT OR REPLACE INTO student_grading_results 
+            INSERT INTO student_grading_results 
             (id, grading_history_id, student_key, class_id, student_id,
              score, max_score, summary, self_report, result_data, 
              imported_at, revoked_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (id) DO UPDATE SET
+                score = EXCLUDED.score,
+                max_score = EXCLUDED.max_score,
+                summary = EXCLUDED.summary,
+                self_report = EXCLUDED.self_report,
+                result_data = EXCLUDED.result_data,
+                imported_at = EXCLUDED.imported_at,
+                revoked_at = EXCLUDED.revoked_at
         """, (
             result.id,
             result.grading_history_id,
@@ -846,10 +909,21 @@ def save_homework_submission(submission: HomeworkSubmission) -> None:
     
     with get_connection() as conn:
         conn.execute("""
-            INSERT OR REPLACE INTO homework_submissions 
+            INSERT INTO homework_submissions 
             (id, class_id, homework_id, student_id, student_name, 
              images, content, submission_type, page_count, submitted_at, status, grading_batch_id, score, feedback)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (class_id, homework_id, student_id) DO UPDATE SET
+                student_name = EXCLUDED.student_name,
+                images = EXCLUDED.images,
+                content = EXCLUDED.content,
+                submission_type = EXCLUDED.submission_type,
+                page_count = EXCLUDED.page_count,
+                submitted_at = EXCLUDED.submitted_at,
+                status = EXCLUDED.status,
+                grading_batch_id = EXCLUDED.grading_batch_id,
+                score = EXCLUDED.score,
+                feedback = EXCLUDED.feedback
         """, (
             submission.id,
             submission.class_id,
@@ -1033,9 +1107,156 @@ def upsert_homework_submission_grade(
             ),
         )
 
+
+# ==================== Assistant progress ====================
+
+
+def _normalize_class_id(class_id: Optional[str]) -> str:
+    if class_id and class_id.strip():
+        return class_id.strip()
+    return ""
+
+
+def _concept_key(name: str, parent_key: Optional[str]) -> str:
+    normalized = f"{parent_key or 'root'}::{name.strip().lower()}"
+    digest = hashlib.sha1(normalized.encode("utf-8")).hexdigest()
+    return digest[:16]
+
+
+def upsert_assistant_concepts(
+    student_id: str,
+    class_id: Optional[str],
+    concepts: List[Dict[str, Any]],
+) -> None:
+    if not student_id or not concepts:
+        return
+    normalized_class = _normalize_class_id(class_id)
+    now = datetime.now().isoformat()
+    with get_connection() as conn:
+        for concept in concepts:
+            name = (concept.get("name") or "").strip()
+            if not name:
+                continue
+            parent_key = concept.get("parent_key")
+            concept_key = concept.get("concept_key") or _concept_key(name, parent_key)
+            description = concept.get("description") or ""
+            understood = 1 if concept.get("understood") else 0
+            conn.execute(
+                """
+                INSERT INTO assistant_concepts
+                (student_id, class_id, concept_key, name, description, parent_key, understood, last_seen_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT (student_id, class_id, concept_key) DO UPDATE SET
+                    name = EXCLUDED.name,
+                    description = CASE
+                        WHEN EXCLUDED.description IS NULL OR EXCLUDED.description = ''
+                        THEN assistant_concepts.description
+                        ELSE EXCLUDED.description
+                    END,
+                    parent_key = EXCLUDED.parent_key,
+                    understood = EXCLUDED.understood,
+                    last_seen_at = EXCLUDED.last_seen_at
+                """,
+                (
+                    student_id,
+                    normalized_class,
+                    concept_key,
+                    name,
+                    description,
+                    parent_key,
+                    understood,
+                    now,
+                ),
+            )
+
+
+def list_assistant_concepts(student_id: str, class_id: Optional[str]) -> List[Dict[str, Any]]:
+    normalized_class = _normalize_class_id(class_id)
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT concept_key, name, description, parent_key, understood
+            FROM assistant_concepts
+            WHERE student_id = ? AND class_id = ?
+            ORDER BY name ASC
+            """,
+            (student_id, normalized_class),
+        ).fetchall()
+    return [
+        {
+            "concept_key": row["concept_key"],
+            "name": row["name"],
+            "description": row["description"] or "",
+            "parent_key": row["parent_key"],
+            "understood": bool(row["understood"]),
+        }
+        for row in rows
+    ]
+
+
+def save_assistant_mastery_snapshot(
+    student_id: str,
+    class_id: Optional[str],
+    mastery: Dict[str, Any],
+) -> None:
+    if not student_id or not mastery:
+        return
+    normalized_class = _normalize_class_id(class_id)
+    with get_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO assistant_mastery_snapshots
+            (id, student_id, class_id, score, level, analysis, evidence, suggestions, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                str(uuid.uuid4()),
+                student_id,
+                normalized_class,
+                int(mastery.get("score") or 0),
+                mastery.get("level") or "developing",
+                mastery.get("analysis") or "",
+                json.dumps(mastery.get("evidence") or []),
+                json.dumps(mastery.get("suggestions") or []),
+                datetime.now().isoformat(),
+            ),
+        )
+
+
+def list_assistant_mastery_snapshots(
+    student_id: str,
+    class_id: Optional[str],
+    limit: int = 6,
+) -> List[Dict[str, Any]]:
+    normalized_class = _normalize_class_id(class_id)
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT score, level, analysis, evidence, suggestions, created_at
+            FROM assistant_mastery_snapshots
+            WHERE student_id = ? AND class_id = ?
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (student_id, normalized_class, limit),
+        ).fetchall()
+    snapshots: List[Dict[str, Any]] = []
+    for row in reversed(rows):
+        snapshots.append(
+            {
+                "score": int(row["score"] or 0),
+                "level": row["level"],
+                "analysis": row["analysis"] or "",
+                "evidence": json.loads(row["evidence"]) if row["evidence"] else [],
+                "suggestions": json.loads(row["suggestions"]) if row["suggestions"] else [],
+                "created_at": row["created_at"],
+            }
+        )
+    return snapshots
+
 # 初始化数据库
 try:
     init_db()
 except Exception as e:
-    logger.warning(f"SQLite 数据库初始化失败，将在首次使用时重试: {e}")
+    logger.warning(f"PostgreSQL 数据库初始化失败，将在首次使用时重试: {e}")
 

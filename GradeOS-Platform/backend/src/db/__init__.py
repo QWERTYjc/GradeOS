@@ -1,6 +1,6 @@
 """数据库模块"""
 
-from .sqlite import (
+from .postgres_store import (
     init_db,
     get_connection,
     UserRecord,
@@ -41,6 +41,10 @@ from .sqlite import (
     upsert_homework_submission_grade,
     list_student_submissions,
     update_homework_submission_status,
+    upsert_assistant_concepts,
+    list_assistant_concepts,
+    save_assistant_mastery_snapshot,
+    list_assistant_mastery_snapshots,
 )
 
 __all__ = [
@@ -81,4 +85,8 @@ __all__ = [
     "upsert_homework_submission_grade",
     "list_student_submissions",
     "update_homework_submission_status",
+    "upsert_assistant_concepts",
+    "list_assistant_concepts",
+    "save_assistant_mastery_snapshot",
+    "list_assistant_mastery_snapshots",
 ]

@@ -308,12 +308,35 @@ export interface AssistantChatResponse {
   response_type?: string;
 }
 
+export interface MasterySnapshot {
+  score: number;
+  level: string;
+  analysis: string;
+  evidence: string[];
+  suggestions: string[];
+  created_at: string;
+}
+
+export interface AssistantProgressResponse {
+  student_id: string;
+  class_id?: string;
+  concept_breakdown: ConceptNode[];
+  mastery_history: MasterySnapshot[];
+}
+
 export const assistantApi = {
   chat: (data: AssistantChatRequest) =>
     request<AssistantChatResponse>('/assistant/chat', {
       method: 'POST',
       body: JSON.stringify(data),
     }),
+  getProgress: (studentId: string, classId?: string) => {
+    const params = new URLSearchParams({ student_id: studentId });
+    if (classId) {
+      params.set('class_id', classId);
+    }
+    return request<AssistantProgressResponse>(`/assistant/progress?${params.toString()}`);
+  },
 };
 
 // ============ 统计 API ============

@@ -1,8 +1,6 @@
-"""PostgreSQL 批改历史存储模块
+"""PostgreSQL grading history storage."""
 
-将批改历史从 SQLite 迁移到 PostgreSQL，确保数据在 Railway 部署后持久化。
-提供与 sqlite.py 兼容的接口，方便迁移。
-"""
+
 
 import uuid
 import json

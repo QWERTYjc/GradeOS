@@ -3,7 +3,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { I18N } from '../constants';
 import { ConceptNode, EnhancedChatMessage, Language } from '../types';
-import { assistantApi } from '@/services/api';
+import { assistantApi, AssistantProgressResponse } from '@/services/api';
 import { useAuthStore } from '@/store/authStore';
 import FocusMode from './FocusMode';
 import MasteryIndicator from './MasteryIndicator';
@@ -12,6 +12,15 @@ import ConceptBreakdown from './ConceptBreakdown';
 interface Props {
   lang?: Language;
 }
+
+type ProgressSnapshot = {
+  score: number;
+  level: string;
+  analysis?: string;
+  evidence: string[];
+  suggestions: string[];
+  timestamp: Date;
+};
 
 const AIChat: React.FC<Props> = ({ lang }) => {
   const resolvedLang = useMemo<Language>(() => {
@@ -28,7 +37,10 @@ const AIChat: React.FC<Props> = ({ lang }) => {
   const [isStreaming, setIsStreaming] = useState(false);
   const [focusModeActive, setFocusModeActive] = useState(false);
   const [currentFocusQuestion, setCurrentFocusQuestion] = useState('');
+  const [progressData, setProgressData] = useState<AssistantProgressResponse | null>(null);
+  const [progressLoading, setProgressLoading] = useState(false);
   const { user } = useAuthStore();
+  const activeClassId = user?.classIds?.[0];
 
   useEffect(() => {
     setMessages([
@@ -39,6 +51,40 @@ const AIChat: React.FC<Props> = ({ lang }) => {
       },
     ]);
   }, [resolvedLang, t.chatIntro]);
+
+  useEffect(() => {
+    if (!user?.id) {
+      setProgressData(null);
+      setProgressLoading(false);
+      return;
+    }
+
+    let active = true;
+    const loadProgress = async () => {
+      setProgressLoading(true);
+      try {
+        const data = await assistantApi.getProgress(user.id, activeClassId);
+        if (active) {
+          setProgressData(data);
+        }
+      } catch (error) {
+        console.error('Assistant progress load failed:', error);
+        if (active) {
+          setProgressData(null);
+        }
+      } finally {
+        if (active) {
+          setProgressLoading(false);
+        }
+      }
+    };
+
+    loadProgress();
+
+    return () => {
+      active = false;
+    };
+  }, [user?.id, activeClassId]);
 
   const handleSend = async (userMsgContent: string) => {
     if (!userMsgContent.trim() || isStreaming) return;
@@ -74,7 +120,7 @@ const AIChat: React.FC<Props> = ({ lang }) => {
 
       const response = await assistantApi.chat({
         student_id: user.id,
-        class_id: user.classIds?.[0],
+        class_id: activeClassId,
         message: userMsgContent,
         history,
         session_mode: 'learning',
@@ -132,10 +178,56 @@ const AIChat: React.FC<Props> = ({ lang }) => {
     return undefined;
   }, [messages]);
 
-  const progressSnapshots = useMemo(
-    () => messages.filter((msg) => msg.role === 'assistant' && msg.mastery).slice(-6),
+  const toSafeDate = (value: string) => {
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+  };
+
+  const messageSnapshots = useMemo<ProgressSnapshot[]>(
+    () =>
+      messages
+        .filter((msg) => msg.role === 'assistant' && msg.mastery)
+        .map((msg) => ({
+          score: msg.mastery?.score ?? 0,
+          level: msg.mastery?.level ?? 'developing',
+          analysis: msg.mastery?.analysis,
+          evidence: msg.mastery?.evidence ?? [],
+          suggestions: msg.mastery?.suggestions ?? [],
+          timestamp: msg.timestamp,
+        })),
     [messages],
   );
+
+  const storedSnapshots = useMemo<ProgressSnapshot[]>(
+    () =>
+      (progressData?.mastery_history ?? []).map((item) => ({
+        score: item.score,
+        level: item.level,
+        analysis: item.analysis,
+        evidence: item.evidence ?? [],
+        suggestions: item.suggestions ?? [],
+        timestamp: toSafeDate(item.created_at),
+      })),
+    [progressData],
+  );
+
+  const progressSnapshots = useMemo(() => {
+    const combined = [...storedSnapshots, ...messageSnapshots];
+    const unique = new Map<string, ProgressSnapshot>();
+    combined.forEach((snapshot) => {
+      const key = `${snapshot.timestamp.toISOString()}-${snapshot.score}-${snapshot.level}`;
+      unique.set(key, snapshot);
+    });
+    return Array.from(unique.values())
+      .sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime())
+      .slice(-6);
+  }, [storedSnapshots, messageSnapshots]);
+
+  const latestProgressSnapshot = progressSnapshots[progressSnapshots.length - 1];
+  const conceptBreakdown =
+    latestAssistant?.conceptBreakdown && latestAssistant.conceptBreakdown.length > 0
+      ? latestAssistant.conceptBreakdown
+      : progressData?.concept_breakdown ?? [];
 
   const flattenConcepts = (concepts: ConceptNode[] = []): ConceptNode[] => {
     const queue = [...concepts];
@@ -152,14 +244,29 @@ const AIChat: React.FC<Props> = ({ lang }) => {
   };
 
   const knowledgeGaps = useMemo(() => {
-    if (!latestAssistant?.conceptBreakdown) return [];
-    return flattenConcepts(latestAssistant.conceptBreakdown).filter((node) => node.understood !== true);
-  }, [messages, latestAssistant]);
+    if (!conceptBreakdown.length) return [];
+    return flattenConcepts(conceptBreakdown).filter((node) => node.understood !== true);
+  }, [conceptBreakdown]);
 
-  const focusAreas = useMemo(
-    () => latestAssistant?.mastery?.suggestions ?? [],
-    [messages, latestAssistant],
-  );
+  const focusAreas = useMemo(() => {
+    const latestSuggestions = latestAssistant?.mastery?.suggestions ?? [];
+    if (latestSuggestions.length > 0) {
+      return latestSuggestions;
+    }
+    return latestProgressSnapshot?.suggestions ?? [];
+  }, [latestAssistant, latestProgressSnapshot]);
+
+  const masteryDisplay =
+    latestAssistant?.mastery ??
+    (latestProgressSnapshot
+      ? {
+          score: latestProgressSnapshot.score,
+          level: latestProgressSnapshot.level,
+          analysis: latestProgressSnapshot.analysis,
+          evidence: latestProgressSnapshot.evidence,
+          suggestions: latestProgressSnapshot.suggestions,
+        }
+      : undefined);
 
   const displayContent =
     latestAssistant?.content?.trim() || (isStreaming ? 'Thinking...' : t.chatIntro.replace(/[*#]/g, ''));
@@ -208,13 +315,15 @@ const AIChat: React.FC<Props> = ({ lang }) => {
                         key={`${snapshot.timestamp.getTime()}-progress-${idx}`}
                         className="flex items-center justify-between rounded-xl border border-black/5 bg-white px-3 py-2 text-xs text-black/60"
                       >
-                        <span>{snapshot.mastery?.level ?? 'Developing'}</span>
-                        <span className="text-black/80">{snapshot.mastery?.score ?? 0}</span>
+                        <span>{snapshot.level || 'Developing'}</span>
+                        <span className="text-black/80">{snapshot.score ?? 0}</span>
                       </div>
                     ))}
                   </div>
                 ) : (
-                  <div className="text-sm text-black/40">No mastery snapshots yet.</div>
+                  <div className="text-sm text-black/40">
+                    {progressLoading ? 'Loading progress...' : 'No mastery snapshots yet.'}
+                  </div>
                 )}
               </div>
             </div>
@@ -316,9 +425,9 @@ const AIChat: React.FC<Props> = ({ lang }) => {
                 Mastery snapshot
               </div>
               <div className="mt-4 flex min-h-[160px] items-center justify-center">
-                {latestAssistant?.mastery ? (
+                {masteryDisplay ? (
                   <MasteryIndicator
-                    {...latestAssistant.mastery}
+                    {...masteryDisplay}
                     size="sm"
                     showDetails={true}
                   />
@@ -330,14 +439,13 @@ const AIChat: React.FC<Props> = ({ lang }) => {
               </div>
             </div>
 
-            {latestAssistant?.conceptBreakdown && latestAssistant.conceptBreakdown.length > 0 ? (
-              <ConceptBreakdown
-                concepts={latestAssistant.conceptBreakdown}
-                title="First Principles Map"
-              />
+            {conceptBreakdown.length > 0 ? (
+              <ConceptBreakdown concepts={conceptBreakdown} title="First Principles Map" />
             ) : (
               <div className="rounded-2xl border border-black/10 bg-white/80 p-4 text-sm text-black/40 shadow-sm">
-                First principles map will appear after the next explanation.
+                {progressLoading
+                  ? 'Loading progress map...'
+                  : 'First principles map will appear after the next explanation.'}
               </div>
             )}
 
@@ -348,7 +456,7 @@ const AIChat: React.FC<Props> = ({ lang }) => {
               <div className="mt-4 flex h-20 items-end gap-3">
                 {progressSnapshots.length > 0 ? (
                   progressSnapshots.map((snapshot, idx) => {
-                    const score = snapshot.mastery?.score ?? 0;
+                    const score = snapshot.score ?? 0;
                     const height = Math.max(12, Math.min(72, Math.round(score * 0.7)));
                     return (
                       <div key={`${snapshot.timestamp.getTime()}-${idx}`} className="flex flex-col items-center gap-2">
@@ -361,7 +469,9 @@ const AIChat: React.FC<Props> = ({ lang }) => {
                     );
                   })
                 ) : (
-                  <div className="text-sm text-black/40">No mastery snapshots yet.</div>
+                  <div className="text-sm text-black/40">
+                    {progressLoading ? 'Loading progress...' : 'No mastery snapshots yet.'}
+                  </div>
                 )}
               </div>
             </div>

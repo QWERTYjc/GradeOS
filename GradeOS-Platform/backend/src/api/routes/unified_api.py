@@ -5,28 +5,33 @@ GradeOS 统一 API 路由
 
 import asyncio
 import base64
+import hashlib
 import json
 import logging
 import os
 import re
 import uuid
+import redis.asyncio as redis
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Depends
 from pydantic import BaseModel
+from redis.exceptions import RedisError
 
 from src.api.dependencies import get_orchestrator
 from src.orchestration.base import Orchestrator
 from src.api.routes.batch_langgraph import _format_results_for_frontend
 from src.utils.database import db
-from src.db.sqlite import (
+from src.utils.pool_manager import UnifiedPoolManager, PoolNotInitializedError
+from src.db import (
     HomeworkSubmission,
     save_homework_submission,
-    list_grading_history as list_sqlite_grading_history,
-    get_student_results as get_sqlite_student_results,
-    get_connection as get_sqlite_connection,
+    list_grading_history,
+    get_grading_history,
+    get_student_results,
+    get_connection,
     UserRecord,
     ClassRecord,
     HomeworkRecord,
@@ -48,12 +53,10 @@ from src.db.sqlite import (
     get_homework_submissions,
     list_student_submissions,
     update_homework_submission_status,
-)
-# PostgreSQL 批改历史
-from src.db.postgres_grading import (
-    list_grading_history as list_pg_grading_history,
-    get_grading_history as get_pg_grading_history,
-    get_student_results as get_pg_student_results,
+    upsert_assistant_concepts,
+    list_assistant_concepts,
+    save_assistant_mastery_snapshot,
+    list_assistant_mastery_snapshots,
 )
 from src.services.llm_client import LLMMessage, get_llm_client
 from src.services.student_assistant_agent import (
@@ -218,6 +221,22 @@ class AssistantChatResponse(BaseModel):
 
 
 
+class MasterySnapshot(BaseModel):
+    score: int
+    level: str
+    analysis: str
+    evidence: List[str] = []
+    suggestions: List[str] = []
+    created_at: str
+
+
+class AssistantProgressResponse(BaseModel):
+    student_id: str
+    class_id: Optional[str] = None
+    concept_breakdown: List[ConceptNode] = []
+    mastery_history: List[MasterySnapshot] = []
+
+
 class GradingImportRecord(BaseModel):
     import_id: str
     batch_id: str
@@ -320,6 +339,151 @@ def _parse_llm_json(text: str) -> Dict[str, Any]:
         return json.loads(match.group(0))
 
 
+
+_ASSISTANT_REDIS_CLIENT: Optional[redis.Redis] = None
+_ASSISTANT_REDIS_CHECKED: bool = False
+_ASSISTANT_PROGRESS_TTL_SECONDS = int(os.getenv("ASSISTANT_PROGRESS_TTL_SECONDS", "900"))
+_ASSISTANT_PROGRESS_KEY_PREFIX = os.getenv("ASSISTANT_PROGRESS_KEY_PREFIX", "assistant_progress")
+
+
+def _assistant_progress_key(student_id: str, class_id: Optional[str]) -> str:
+    suffix = class_id.strip() if class_id and class_id.strip() else "global"
+    return f"{_ASSISTANT_PROGRESS_KEY_PREFIX}:{student_id}:{suffix}"
+
+
+def _assistant_concept_key(name: str, parent_key: Optional[str]) -> str:
+    normalized = f"{parent_key or 'root'}::{name.strip().lower()}"
+    return hashlib.sha1(normalized.encode("utf-8")).hexdigest()[:16]
+
+
+async def _get_assistant_redis_client() -> Optional[redis.Redis]:
+    global _ASSISTANT_REDIS_CLIENT, _ASSISTANT_REDIS_CHECKED
+    if _ASSISTANT_REDIS_CHECKED:
+        return _ASSISTANT_REDIS_CLIENT
+    _ASSISTANT_REDIS_CHECKED = True
+    try:
+        pool_manager = await UnifiedPoolManager.get_instance()
+        if pool_manager.is_initialized:
+            _ASSISTANT_REDIS_CLIENT = pool_manager.get_redis_client()
+    except PoolNotInitializedError:
+        _ASSISTANT_REDIS_CLIENT = None
+    except Exception as exc:
+        logger.debug(f"Redis client unavailable: {exc}")
+        _ASSISTANT_REDIS_CLIENT = None
+    return _ASSISTANT_REDIS_CLIENT
+
+
+async def _load_assistant_progress_cache(student_id: str, class_id: Optional[str]) -> Optional[Dict[str, Any]]:
+    redis_client = await _get_assistant_redis_client()
+    if not redis_client:
+        return None
+    try:
+        cached = await redis_client.get(_assistant_progress_key(student_id, class_id))
+    except RedisError as exc:
+        logger.debug(f"Failed to load assistant progress cache: {exc}")
+        return None
+    if not cached:
+        return None
+    try:
+        return json.loads(cached)
+    except Exception:
+        return None
+
+
+async def _store_assistant_progress_cache(
+    student_id: str,
+    class_id: Optional[str],
+    payload: Dict[str, Any],
+) -> None:
+    redis_client = await _get_assistant_redis_client()
+    if not redis_client:
+        return
+    try:
+        await redis_client.setex(
+            _assistant_progress_key(student_id, class_id),
+            _ASSISTANT_PROGRESS_TTL_SECONDS,
+            json.dumps(payload, ensure_ascii=False),
+        )
+    except RedisError as exc:
+        logger.debug(f"Failed to cache assistant progress: {exc}")
+
+
+async def _invalidate_assistant_progress_cache(student_id: str, class_id: Optional[str]) -> None:
+    redis_client = await _get_assistant_redis_client()
+    if not redis_client:
+        return
+    try:
+        await redis_client.delete(_assistant_progress_key(student_id, class_id))
+    except RedisError as exc:
+        logger.debug(f"Failed to invalidate assistant progress cache: {exc}")
+
+
+def _flatten_concepts(
+    nodes: List[AssistantConceptNode],
+    parent_key: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    flattened: List[Dict[str, Any]] = []
+    for node in nodes:
+        name = (node.name or "").strip()
+        if not name:
+            continue
+        concept_key = _assistant_concept_key(name, parent_key)
+        flattened.append({
+            "concept_key": concept_key,
+            "parent_key": parent_key,
+            "name": name,
+            "description": node.description or "",
+            "understood": bool(node.understood),
+        })
+        if node.children:
+            flattened.extend(_flatten_concepts(node.children, concept_key))
+    return flattened
+
+
+def _build_concept_tree(rows: List[Dict[str, Any]]) -> List[ConceptNode]:
+    node_map: Dict[str, ConceptNode] = {}
+    for row in rows:
+        node_map[row["concept_key"]] = ConceptNode(
+            id=row["concept_key"],
+            name=row["name"],
+            description=row.get("description") or "",
+            understood=bool(row.get("understood")),
+            children=[],
+        )
+
+    roots: List[ConceptNode] = []
+    for row in rows:
+        node = node_map[row["concept_key"]]
+        parent_key = row.get("parent_key")
+        if parent_key and parent_key in node_map:
+            parent = node_map[parent_key]
+            if parent.children is None:
+                parent.children = []
+            parent.children.append(node)
+        else:
+            roots.append(node)
+
+    for node in node_map.values():
+        if node.children == []:
+            node.children = None
+    return roots
+
+
+_CONFUSION_PATTERNS = (
+    r"\b(i\s*(don't|do not)\s*know|no idea|not sure|confused|stuck|help|hint)\b",
+    r"(不知道|不懂|不会|不会做|不会解|没思路|没想法|看不懂|搞不懂|太难|求助|求提示)",
+)
+
+
+def _is_confused_message(message: str) -> bool:
+    if not message:
+        return False
+    lowered = message.lower()
+    if re.search(_CONFUSION_PATTERNS[0], lowered):
+        return True
+    return re.search(_CONFUSION_PATTERNS[1], message) is not None
+
+
 def _build_student_context(student_id: str, class_id: Optional[str] = None) -> Dict[str, Any]:
     class_ids: List[str] = []
     class_names: Dict[str, str] = {}
@@ -341,7 +505,7 @@ def _build_student_context(student_id: str, class_id: Optional[str] = None) -> D
     total_score = 0.0
     total_max = 0.0
 
-    with get_sqlite_connection() as conn:
+    with get_connection() as conn:
         if class_id:
             rows = conn.execute(
                 "SELECT * FROM student_grading_results WHERE student_id = ? AND class_id = ?",
@@ -686,7 +850,7 @@ async def create_class(request: ClassCreate):
 async def get_class_students(class_id: str):
     """获取班级学生列表"""
     students = list_class_students(class_id)
-    with get_sqlite_connection() as conn:
+    with get_connection() as conn:
         total_homeworks_row = conn.execute(
             "SELECT COUNT(*) AS total FROM homeworks WHERE class_id = ?",
             (class_id,),
@@ -915,7 +1079,7 @@ async def submit_scan_homework(
     try:
         save_homework_submission(submission_record)
     except Exception as exc:
-        logger.warning(f"保存作业提交到 SQLite 失败: {exc}")
+        logger.warning(f"保存作业提交到 ??? 失败: {exc}")
 
     if orchestrator:
         await _maybe_trigger_grading(request.homework_id, orchestrator)
@@ -1010,7 +1174,7 @@ async def import_grading_results(
             "created_at": now,
             "revoked_at": None,
         }
-        with get_sqlite_connection() as conn:
+        with get_connection() as conn:
             conn.execute(
                 """
                 INSERT INTO grading_imports
@@ -1039,7 +1203,7 @@ async def import_grading_results(
                 result = results_by_key.get(student_name) or results_by_key.get(student_id)
             item_id = str(uuid.uuid4())[:8]
             result_payload = json.dumps(result) if result else None
-            with get_sqlite_connection() as conn:
+            with get_connection() as conn:
                 conn.execute(
                     """
                     INSERT INTO grading_import_items
@@ -1070,50 +1234,12 @@ async def get_grading_history(
     class_id: Optional[str] = None,
     assignment_id: Optional[str] = None,
 ):
-    """获取批改历史列表 - 优先从 PostgreSQL 读取，降级到 SQLite"""
+    """Get grading history list from PostgreSQL."""
     records: List[Dict[str, Any]] = []
 
-    # 1. 优先尝试 PostgreSQL
-    if db.is_available:
-        try:
-            pg_histories = await list_pg_grading_history(class_id=class_id, limit=50)
-            for history in pg_histories:
-                class_ids = history.class_ids or []
-                target_class_id = class_id or (class_ids[0] if class_ids else None)
-                if class_id and class_id not in class_ids:
-                    continue
-                result_meta = history.result_data or {}
-                assignment_id_value = result_meta.get("homework_id") or result_meta.get("assignment_id")
-                if assignment_id and assignment_id_value != assignment_id:
-                    continue
-                class_info = get_class_by_id(target_class_id) if target_class_id else None
-                assignment_title = None
-                if assignment_id_value:
-                    assignment = get_homework(assignment_id_value)
-                    assignment_title = assignment.title if assignment else None
-                records.append({
-                    "import_id": history.id,
-                    "batch_id": history.batch_id,
-                    "class_id": target_class_id or "",
-                    "class_name": class_info.name if class_info else None,
-                    "assignment_id": assignment_id_value,
-                    "assignment_title": assignment_title,
-                    "student_count": history.total_students,
-                    "status": history.status,
-                    "created_at": history.created_at,
-                    "revoked_at": None,
-                })
-            logger.info(f"从 PostgreSQL 读取到 {len(records)} 条批改历史")
-        except Exception as exc:
-            logger.warning(f"PostgreSQL 批改历史读取失败，降级到 SQLite: {exc}")
-
-    # 2. 降级到 SQLite（或补充 SQLite 数据）
     try:
-        sqlite_histories = list_sqlite_grading_history(class_id=class_id, limit=50)
-        existing_batch_ids = {r["batch_id"] for r in records}
-        for history in sqlite_histories:
-            if history.batch_id in existing_batch_ids:
-                continue  # 跳过已从 PostgreSQL 读取的记录
+        histories = list_grading_history(class_id=class_id, limit=50)
+        for history in histories:
             class_ids = history.class_ids or []
             target_class_id = class_id or (class_ids[0] if class_ids else None)
             if class_id and class_id not in class_ids:
@@ -1140,10 +1266,10 @@ async def get_grading_history(
                 "revoked_at": None,
             })
     except Exception as exc:
-        logger.warning(f"SQLite 批改历史读取失败: {exc}")
+        logger.warning(f"PostgreSQL grading detail read failed: {exc}")
 
     try:
-        with get_sqlite_connection() as conn:
+        with get_connection() as conn:
             if class_id:
                 rows = conn.execute(
                     "SELECT * FROM grading_imports WHERE class_id = ? ORDER BY created_at DESC",
@@ -1174,7 +1300,7 @@ async def get_grading_history(
                 "revoked_at": row["revoked_at"],
             })
     except Exception as exc:
-        logger.warning(f"SQLite 导入记录读取失败: {exc}")
+        logger.warning(f"grading import records read failed: {exc}")
 
     records = sorted(records, key=lambda item: item.get("created_at") or "", reverse=True)
     return GradingHistoryResponse(records=[GradingImportRecord(**record) for record in records])
@@ -1188,7 +1314,7 @@ async def get_grading_history_detail(import_id: str):
     if db.is_available:
         try:
             # 尝试通过 batch_id 查找（import_id 可能是 history.id 或 batch_id）
-            pg_history = await get_pg_grading_history(import_id)
+            pg_history = get_grading_history(import_id)
             if pg_history:
                 class_ids = pg_history.class_ids or []
                 result_data = pg_history.result_data or {}
@@ -1212,7 +1338,7 @@ async def get_grading_history_detail(import_id: str):
                     "revoked_at": None,
                 }
                 items = []
-                pg_results = await get_pg_student_results(pg_history.id)
+                pg_results = get_student_results(pg_history.id)
                 for idx, item in enumerate(pg_results):
                     result = item.result_data or {}
                     if isinstance(result, str):
@@ -1245,11 +1371,11 @@ async def get_grading_history_detail(import_id: str):
                     items=[GradingImportItem(**item) for item in items],
                 )
         except Exception as exc:
-            logger.warning(f"PostgreSQL 批改详情读取失败，降级到 SQLite: {exc}")
+            logger.warning(f"PostgreSQL grading detail read failed: {exc}")
 
-    # 2. 降级到 SQLite
+    # 2. Fallback detail
     try:
-        with get_sqlite_connection() as conn:
+        with get_connection() as conn:
             row = conn.execute("SELECT * FROM grading_history WHERE id = ?", (import_id,)).fetchone()
         if row:
             class_ids = json.loads(row["class_ids"]) if row["class_ids"] else []
@@ -1274,7 +1400,7 @@ async def get_grading_history_detail(import_id: str):
                 "revoked_at": None,
             }
             items = []
-            for idx, item in enumerate(get_sqlite_student_results(row["id"])):
+            for idx, item in enumerate(get_student_results(row["id"])):
                 result = item.result_data or {}
                 if isinstance(result, str):
                     try:
@@ -1305,10 +1431,10 @@ async def get_grading_history_detail(import_id: str):
                 items=[GradingImportItem(**item) for item in items],
             )
     except Exception as exc:
-        logger.warning("SQLite grading history detail read failed: %s", exc)
+        logger.warning("grading history detail read failed: %s", exc)
 
     try:
-        with get_sqlite_connection() as conn:
+        with get_connection() as conn:
             row = conn.execute("SELECT * FROM grading_imports WHERE id = ?", (import_id,)).fetchone()
             if row:
                 class_info = get_class_by_id(row["class_id"])
@@ -1361,7 +1487,7 @@ async def get_grading_history_detail(import_id: str):
                     items=[GradingImportItem(**item) for item in items],
                 )
     except Exception as exc:
-        logger.warning("SQLite import detail read failed: %s", exc)
+        logger.warning("import detail read failed: %s", exc)
 
     raise HTTPException(status_code=404, detail="Record not found")
 
@@ -1370,11 +1496,11 @@ async def get_grading_history_detail(import_id: str):
 async def revoke_grading_import(import_id: str, request: GradingRevokeRequest):
     """Revoke import record."""
     try:
-        with get_sqlite_connection() as conn:
+        with get_connection() as conn:
             row = conn.execute("SELECT * FROM grading_history WHERE id = ?", (import_id,)).fetchone()
         if row:
             now = datetime.utcnow().isoformat()
-            with get_sqlite_connection() as conn:
+            with get_connection() as conn:
                 conn.execute(
                     "UPDATE student_grading_results SET revoked_at = ? WHERE grading_history_id = ? AND revoked_at IS NULL",
                     (now, import_id),
@@ -1403,10 +1529,10 @@ async def revoke_grading_import(import_id: str, request: GradingRevokeRequest):
             }
             return GradingImportRecord(**record)
     except Exception as exc:
-        logger.warning("SQLite operation: %s", exc)
+        logger.warning("database operation: %s", exc)
 
     try:
-        with get_sqlite_connection() as conn:
+        with get_connection() as conn:
             row = conn.execute("SELECT * FROM grading_imports WHERE id = ?", (import_id,)).fetchone()
             if row:
                 now = datetime.utcnow().isoformat()
@@ -1437,7 +1563,7 @@ async def revoke_grading_import(import_id: str, request: GradingRevokeRequest):
                 }
                 return GradingImportRecord(**record)
     except Exception as exc:
-        logger.warning("SQLite operation: %s", exc)
+        logger.warning("database operation: %s", exc)
 
     raise HTTPException(status_code=404, detail="Record not found")
 
@@ -1451,6 +1577,17 @@ async def assistant_chat(request: AssistantChatRequest):
     history_payload = None
     if request.history:
         history_payload = [{"role": msg.role, "content": msg.content} for msg in request.history]
+
+    if _is_confused_message(request.message):
+        if history_payload is None:
+            history_payload = []
+        history_payload.append({
+            "role": "system",
+            "content": (
+                "Student indicates they are stuck. Provide a brief explanation of the missing concept, "
+                "then ask a simpler Socratic question."
+            ),
+        })
 
     result = await agent.ainvoke(
         message=request.message,
@@ -1493,6 +1630,23 @@ async def assistant_chat(request: AssistantChatRequest):
     concept_nodes = None
     if result.parsed.concept_breakdown:
         concept_nodes = [_convert_concept(node) for node in result.parsed.concept_breakdown]
+        try:
+            flattened = _flatten_concepts(result.parsed.concept_breakdown)
+            upsert_assistant_concepts(request.student_id, request.class_id, flattened)
+        except Exception as exc:
+            logger.warning("Assistant concept persistence failed: %s", exc)
+
+    if mastery_data:
+        try:
+            save_assistant_mastery_snapshot(
+                request.student_id,
+                request.class_id,
+                mastery_data.dict(),
+            )
+        except Exception as exc:
+            logger.warning("Assistant mastery persistence failed: %s", exc)
+
+    await _invalidate_assistant_progress_cache(request.student_id, request.class_id)
 
     return AssistantChatResponse(
         content=result.parsed.content or result.raw_content,
@@ -1506,7 +1660,31 @@ async def assistant_chat(request: AssistantChatRequest):
     )
 
 
-# ============ Error Analysis (IntelliLearn) ============
+@router.get("/assistant/progress", response_model=AssistantProgressResponse, tags=["Student Assistant"])
+async def assistant_progress(student_id: str, class_id: Optional[str] = None):
+    """Fetch persisted assistant progress for a student."""
+    cached = await _load_assistant_progress_cache(student_id, class_id)
+    if cached:
+        return AssistantProgressResponse(**cached)
+
+    concept_rows: List[Dict[str, Any]] = []
+    mastery_rows: List[Dict[str, Any]] = []
+    try:
+        concept_rows = list_assistant_concepts(student_id, class_id)
+        mastery_rows = list_assistant_mastery_snapshots(student_id, class_id, limit=6)
+    except Exception as exc:
+        logger.warning("Assistant progress read failed: %s", exc)
+
+    response = AssistantProgressResponse(
+        student_id=student_id,
+        class_id=class_id,
+        concept_breakdown=_build_concept_tree(concept_rows),
+        mastery_history=[MasterySnapshot(**item) for item in mastery_rows],
+    )
+
+    await _store_assistant_progress_cache(student_id, class_id, response.dict())
+    return response
+
 
 # ============ Error Analysis (IntelliLearn) ============
 
@@ -1644,7 +1822,7 @@ async def get_class_wrong_problems(class_id: Optional[str] = None):
     if not class_id:
         raise HTTPException(status_code=400, detail="class_id is required")
 
-    with get_sqlite_connection() as conn:
+    with get_connection() as conn:
         rows = conn.execute(
             "SELECT result_data FROM student_grading_results WHERE class_id = ?",
             (class_id,),
@@ -1757,7 +1935,7 @@ async def get_class_statistics(class_id: str, homework_id: Optional[str] = None)
     """Get class statistics based on real submissions."""
     total_students = count_class_students(class_id)
 
-    with get_sqlite_connection() as conn:
+    with get_connection() as conn:
         if homework_id:
             rows = conn.execute(
                 "SELECT score FROM homework_submissions WHERE class_id = ? AND homework_id = ?",
@@ -1774,7 +1952,7 @@ async def get_class_statistics(class_id: str, homework_id: Optional[str] = None)
     graded_count = len(scores)
 
     if not scores:
-        histories = list_sqlite_grading_history(class_id=class_id, limit=200)
+        histories = list_grading_history(class_id=class_id, limit=200)
         history_ids = []
         for history in histories:
             result_meta = history.result_data or {}
@@ -1785,7 +1963,7 @@ async def get_class_statistics(class_id: str, homework_id: Optional[str] = None)
 
         fallback_scores = []
         for history_id in history_ids:
-            for item in get_sqlite_student_results(history_id):
+            for item in get_student_results(history_id):
                 if item.score is not None:
                     fallback_scores.append(item.score)
 
@@ -1855,7 +2033,7 @@ async def merge_statistics(class_id: str, request: Optional[MergeStatisticsReque
     homeworks = list_homeworks(class_id)
     homework_titles = {hw.id: hw.title for hw in homeworks}
 
-    with get_sqlite_connection() as conn:
+    with get_connection() as conn:
         rows = conn.execute(
             "SELECT homework_id, student_id, student_name, score FROM homework_submissions WHERE class_id = ?",
             (class_id,),
