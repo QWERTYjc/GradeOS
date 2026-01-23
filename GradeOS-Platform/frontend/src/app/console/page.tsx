@@ -13,12 +13,12 @@ import {
 } from 'lucide-react';
 import clsx from 'clsx';
 import { AppContext } from '@/components/bookscan/AppContext';
-import Scanner from '@/components/bookscan/Scanner';
-import Gallery from '@/components/bookscan/Gallery';
 import { ScannedImage, Session } from '@/components/bookscan/types';
 import { api } from '@/services/api';
 
-// Dynamic imports
+// Dynamic imports - Scanner and Gallery use pdfjs-dist which requires browser APIs
+const Scanner = dynamic(() => import('@/components/bookscan/Scanner'), { ssr: false });
+const Gallery = dynamic(() => import('@/components/bookscan/Gallery'), { ssr: false });
 const WorkflowGraph = dynamic(() => import('@/components/console/WorkflowGraph'), { ssr: false });
 const ResultsView = dynamic(() => import('@/components/console/ResultsView'), { ssr: false });
 const LLMThoughtsPanel = dynamic(() => import('@/components/console/LLMThoughtsPanel'), { ssr: false });
