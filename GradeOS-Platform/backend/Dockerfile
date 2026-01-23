@@ -20,6 +20,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # 复制源代码
 COPY src/ ./src/
 COPY scripts/ ./scripts/
+COPY alembic/ ./alembic/
+COPY alembic.ini .
 
 # 创建上传目录
 RUN mkdir -p /app/uploads
@@ -28,5 +30,5 @@ RUN mkdir -p /app/uploads
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 
-# 启动命令 - Railway 会自动提供 PORT 环境变量，本地默认使用 8001
-CMD uvicorn src.api.main:app --host 0.0.0.0 --port ${PORT:-8001}
+# 启动脚本：先运行迁移，再启动服务
+CMD alembic upgrade head && uvicorn src.api.main:app --host 0.0.0.0 --port ${PORT:-8001}
