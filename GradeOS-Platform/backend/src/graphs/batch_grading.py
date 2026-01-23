@@ -4807,7 +4807,36 @@ async def self_report_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                 try:
                     json_text = _extract_json_from_response(response_text)
                     payload = json.loads(json_text)
-                    self_report = payload.get("self_report", payload)
+                    # LLM 可能返回 confession 或 self_report 字段
+                    self_report = (
+                        payload.get("confession") 
+                        or payload.get("self_report") 
+                        or payload
+                    )
+                    # 标准化字段名（snake_case -> camelCase 兼容）
+                    if isinstance(self_report, dict):
+                        # 确保 overallStatus 存在
+                        if "overall_confidence" in self_report and "overallStatus" not in self_report:
+                            conf = self_report.get("overall_confidence", 0)
+                            if conf >= 0.8:
+                                self_report["overallStatus"] = "ok"
+                            elif conf >= 0.5:
+                                self_report["overallStatus"] = "caution"
+                            else:
+                                self_report["overallStatus"] = "needs_review"
+                        # 确保 highRiskQuestions 格式正确
+                        if "high_risk_questions" in self_report:
+                            hrq = self_report["high_risk_questions"]
+                            if isinstance(hrq, list) and hrq and isinstance(hrq[0], str):
+                                # 转换为前端期望的格式
+                                self_report["highRiskQuestions"] = [
+                                    {"questionId": q, "description": ""} for q in hrq
+                                ]
+                            else:
+                                self_report["highRiskQuestions"] = hrq
+                        # 复制 overall_confidence 到 overallConfidence
+                        if "overall_confidence" in self_report:
+                            self_report["overallConfidence"] = self_report["overall_confidence"]
                 except Exception as exc:
                     logger.warning(f"[self_report] parse failed student={student_key}: {exc}")
 

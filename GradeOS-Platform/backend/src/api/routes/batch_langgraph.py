@@ -1235,7 +1235,55 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
 
         student_summary = r.get("student_summary") or r.get("studentSummary")
         self_audit = r.get("self_audit") or r.get("selfAudit")
-        self_report = r.get("self_report") or r.get("selfReport") or r.get("confession")
+        self_report_raw = r.get("self_report") or r.get("selfReport") or r.get("confession")
+        
+        # 标准化 selfReport 格式，确保前端能正确显示
+        self_report = None
+        if self_report_raw and isinstance(self_report_raw, dict):
+            self_report = {}
+            # 复制所有原始字段
+            self_report.update(self_report_raw)
+            # 确保 overallStatus 存在
+            if "overallStatus" not in self_report and "overall_status" in self_report_raw:
+                self_report["overallStatus"] = self_report_raw["overall_status"]
+            elif "overallStatus" not in self_report and "overall_confidence" in self_report_raw:
+                conf = self_report_raw.get("overall_confidence", 0)
+                if conf >= 0.8:
+                    self_report["overallStatus"] = "ok"
+                elif conf >= 0.5:
+                    self_report["overallStatus"] = "caution"
+                else:
+                    self_report["overallStatus"] = "needs_review"
+            # 确保 overallConfidence 存在
+            if "overallConfidence" not in self_report and "overall_confidence" in self_report_raw:
+                self_report["overallConfidence"] = self_report_raw["overall_confidence"]
+            # 确保 highRiskQuestions 格式正确
+            hrq = self_report_raw.get("highRiskQuestions") or self_report_raw.get("high_risk_questions")
+            if hrq:
+                if isinstance(hrq, list) and hrq and isinstance(hrq[0], str):
+                    self_report["highRiskQuestions"] = [
+                        {"questionId": q, "description": ""} for q in hrq
+                    ]
+                else:
+                    self_report["highRiskQuestions"] = hrq
+            # 确保 issues 存在
+            if "issues" not in self_report:
+                # 从 potential_errors 或 uncertainties 构建 issues
+                issues = []
+                for err in self_report_raw.get("potential_errors", []):
+                    if isinstance(err, dict):
+                        issues.append({
+                            "questionId": err.get("question_id", ""),
+                            "message": err.get("description", "")
+                        })
+                for unc in self_report_raw.get("uncertainties", []):
+                    if isinstance(unc, dict):
+                        issues.append({
+                            "questionId": unc.get("question_id", ""),
+                            "message": unc.get("uncertainty", "")
+                        })
+                if issues:
+                    self_report["issues"] = issues
         
         # 🔥 第一次批改记录（逻辑复核前的原始结果）
         draft_question_details = r.get("draft_question_details") or r.get("draftQuestionDetails")
