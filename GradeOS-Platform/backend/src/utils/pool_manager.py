@@ -49,11 +49,12 @@ class PoolConfig:
     """连接池配置"""
     # PostgreSQL 配置
     pg_dsn: str = ""
-    pg_min_size: int = 5
-    pg_max_size: int = 20
-    pg_connection_timeout: float = 5.0
-    pg_idle_timeout: float = 300.0  # 5 分钟
-    pg_max_lifetime: float = 3600.0  # 1 小时
+    pg_min_size: int = 2
+    pg_max_size: int = 10
+    pg_connection_timeout: float = 10.0
+    pg_idle_timeout: float = 60.0  # 1 分钟 - 比服务器端超时更短
+    pg_max_lifetime: float = 600.0  # 10 分钟 - 定期刷新连接
+    pg_reconnect_timeout: float = 5.0  # 重连超时
     
     # Redis 配置
     redis_url: str = ""
@@ -101,10 +102,11 @@ class PoolConfig:
         
         return cls(
             pg_dsn=pg_dsn,
-            pg_min_size=int(os.getenv("DB_POOL_MIN_SIZE", "5")),
-            pg_max_size=int(os.getenv("DB_POOL_MAX_SIZE", "20")),
-            pg_connection_timeout=float(os.getenv("DB_CONNECTION_TIMEOUT", "5.0")),
-            pg_idle_timeout=float(os.getenv("DB_IDLE_TIMEOUT", "300.0")),
+            pg_min_size=int(os.getenv("DB_POOL_MIN_SIZE", "2")),
+            pg_max_size=int(os.getenv("DB_POOL_MAX_SIZE", "10")),
+            pg_connection_timeout=float(os.getenv("DB_CONNECTION_TIMEOUT", "10.0")),
+            pg_idle_timeout=float(os.getenv("DB_IDLE_TIMEOUT", "60.0")),
+            pg_max_lifetime=float(os.getenv("DB_MAX_LIFETIME", "600.0")),
             redis_url=redis_url,
             redis_max_connections=int(os.getenv("REDIS_MAX_CONNECTIONS", "50")),
             redis_connection_timeout=float(os.getenv("REDIS_CONNECTION_TIMEOUT", "5.0")),
@@ -267,9 +269,13 @@ class UnifiedPoolManager:
             max_lifetime=self._config.pg_max_lifetime,
             kwargs={"row_factory": dict_row},
             open=False,
+            # 启用连接健康检查 - 在获取连接前验证连接是否有效
+            check=AsyncConnectionPool.check_connection,
+            # 连接重连配置
+            reconnect_timeout=self._config.pg_reconnect_timeout if hasattr(self._config, 'pg_reconnect_timeout') else 5.0,
         )
-        await asyncio.wait_for(self._pg_pool.open(), timeout=3.0)
-        logger.debug("PostgreSQL 连接池初始化完成")
+        await asyncio.wait_for(self._pg_pool.open(), timeout=10.0)
+        logger.info(f"PostgreSQL 连接池初始化完成: min={self._config.pg_min_size}, max={self._config.pg_max_size}, idle_timeout={self._config.pg_idle_timeout}s")
     
     async def _init_redis_pool(self) -> None:
         """初始化 Redis 连接池"""
