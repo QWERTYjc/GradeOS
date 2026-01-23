@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'Antigravity Intelligence',
+  title: 'GradeOS',
   description: 'Next-generation automated grading platform.',
 };
 
