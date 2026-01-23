@@ -1,7 +1,7 @@
 # GradeOS Frontend Dockerfile
 
-# 构建阶段
-FROM node:18-alpine AS builder
+# 构建阶段 - Next.js 16 需要 Node.js 20+
+FROM node:20-alpine AS builder
 
 WORKDIR /app
 
@@ -18,7 +18,7 @@ COPY . .
 RUN npm run build
 
 # 运行阶段
-FROM node:18-alpine AS runner
+FROM node:20-alpine AS runner
 
 WORKDIR /app
 
