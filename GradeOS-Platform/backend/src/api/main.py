@@ -1,5 +1,6 @@
 """FastAPI 应用主入口"""
 
+import os
 import sys
 import asyncio
 
@@ -231,11 +232,13 @@ except ImportError as e:
 
 # 健康检查端点
 @app.get("/health", tags=["health"])
+@app.get("/api/health", tags=["health"])
 async def health_check():
     """
     健康检查
     
     返回系统状态和部署模式信息
+    支持 /health 和 /api/health 两个路径
     """
     deployment_config = get_deployment_mode()
     features = deployment_config.get_feature_availability()
