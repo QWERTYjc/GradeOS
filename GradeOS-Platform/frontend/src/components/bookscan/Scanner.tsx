@@ -4,18 +4,32 @@ import { AppContext } from './AppContext';
 import { fileToDataURL } from './imageProcessing';
 import { optimizeDocument } from './llmService';
 import { COLORS } from './constants';
-import * as pdfjsLib from 'pdfjs-dist';
 
 type ScanMode = 'single' | 'book';
 
-pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
-  'pdfjs-dist/build/pdf.worker.min.mjs',
-  import.meta.url
-).toString();
+// Lazy load pdfjs-dist only on client side to avoid SSR DOMMatrix error
+let pdfjsLib: typeof import('pdfjs-dist') | null = null;
+let pdfjsInitialized = false;
+
+const initPdfJs = async () => {
+  if (pdfjsInitialized) return pdfjsLib;
+  if (typeof window === 'undefined') return null;
+  
+  pdfjsLib = await import('pdfjs-dist');
+  pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
+    'pdfjs-dist/build/pdf.worker.min.mjs',
+    import.meta.url
+  ).toString();
+  pdfjsInitialized = true;
+  return pdfjsLib;
+};
 
 const renderPdfToImages = async (file: File, maxPages = 80) => {
+  const pdfjs = await initPdfJs();
+  if (!pdfjs) throw new Error('PDF.js not available');
+  
   const buffer = await file.arrayBuffer();
-  const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(buffer) }).promise;
+  const pdf = await pdfjs.getDocument({ data: new Uint8Array(buffer) }).promise;
   const pages = Math.min(pdf.numPages, maxPages);
   const images: string[] = [];
 

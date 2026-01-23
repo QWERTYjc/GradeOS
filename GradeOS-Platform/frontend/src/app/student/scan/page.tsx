@@ -1,5 +1,8 @@
 'use client';
 
+// Prevent SSR prerendering - this page uses pdfjs-dist which requires browser APIs
+export const dynamic = 'force-dynamic';
+
 import React, { useState, useEffect, useMemo } from 'react';
 import { Images, ScanLine, Send, ArrowLeft, CheckCircle2, Loader2 } from 'lucide-react';
 import Link from 'next/link';
