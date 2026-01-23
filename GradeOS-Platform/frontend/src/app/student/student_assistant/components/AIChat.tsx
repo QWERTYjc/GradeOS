@@ -153,8 +153,10 @@ const AIChat: React.FC<Props> = ({ lang }) => {
 
   const knowledgeGaps = useMemo(() => {
     if (!latestAssistant?.conceptBreakdown) return [];
-    return flattenConcepts(latestAssistant.conceptBreakdown).filter((node) => !node.understood);
+    return flattenConcepts(latestAssistant.conceptBreakdown).filter((node) => node.understood !== true);
   }, [latestAssistant]);
+
+  const focusAreas = useMemo(() => latestAssistant?.mastery?.suggestions ?? [], [latestAssistant]);
 
   const displayContent =
     latestAssistant?.content?.trim() || (isStreaming ? 'Thinking...' : t.chatIntro.replace(/[*#]/g, ''));
@@ -235,6 +237,26 @@ const AIChat: React.FC<Props> = ({ lang }) => {
                   ))
                 ) : (
                   <div className="text-sm text-black/40">No knowledge gaps detected yet.</div>
+                )}
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-black/10 bg-white/80 p-4 shadow-sm">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.4em] text-black/50">
+                Focus next
+              </div>
+              <div className="mt-4 space-y-2">
+                {focusAreas.length > 0 ? (
+                  focusAreas.slice(0, 6).map((item, idx) => (
+                    <div
+                      key={`focus-${idx}`}
+                      className="rounded-xl border border-black/10 px-3 py-2 text-xs text-black/70"
+                    >
+                      {item}
+                    </div>
+                  ))
+                ) : (
+                  <div className="text-sm text-black/40">Waiting for the next mastery update.</div>
                 )}
               </div>
             </div>
