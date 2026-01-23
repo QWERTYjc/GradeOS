@@ -1,9 +1,9 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Images, ScanLine, Send, ArrowLeft, CheckCircle2, Loader2 } from 'lucide-react';
 import Link from 'next/link';
-import { AppContext } from '@/components/bookscan/AppContext';
+import { AppContext, AppContextType } from '@/components/bookscan/AppContext';
 import Scanner from '@/components/bookscan/Scanner';
 import Gallery from '@/components/bookscan/Gallery';
 import { ScannedImage, Session } from '@/components/bookscan/types';
@@ -15,7 +15,8 @@ export default function StudentScanPage() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<ViewTab>('scan');
-  
+  const [splitImageIds, setSplitImageIds] = useState<Set<string>>(new Set());
+
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitResult, setSubmitResult] = useState<{
     success: boolean;
@@ -53,14 +54,14 @@ export default function StudentScanPage() {
 
   const addImageToSession = (img: ScannedImage) => {
     if (!currentSessionId) return;
-    setSessions(prev => prev.map(s => 
+    setSessions(prev => prev.map(s =>
       s.id === currentSessionId ? { ...s, images: [...s.images, img] } : s
     ));
   };
 
   const addImagesToSession = (imgs: ScannedImage[]) => {
     if (!currentSessionId) return;
-    setSessions(prev => prev.map(s => 
+    setSessions(prev => prev.map(s =>
       s.id === currentSessionId ? { ...s, images: [...s.images, ...imgs] } : s
     ));
   };
@@ -76,16 +77,16 @@ export default function StudentScanPage() {
   };
 
   const deleteImages = (sessionId: string, imageIds: string[]) => {
-    setSessions(prev => prev.map(s => 
+    setSessions(prev => prev.map(s =>
       s.id === sessionId ? { ...s, images: s.images.filter(img => !imageIds.includes(img.id)) } : s
     ));
   };
 
   const updateImage = (sessionId: string, imageId: string, newUrl: string, isOptimizing: boolean = false) => {
-    setSessions(prev => prev.map(s => 
-      s.id === sessionId ? { 
-        ...s, 
-        images: s.images.map(img => img.id === imageId ? { ...img, url: newUrl, isOptimizing } : img) 
+    setSessions(prev => prev.map(s =>
+      s.id === sessionId ? {
+        ...s,
+        images: s.images.map(img => img.id === imageId ? { ...img, url: newUrl, isOptimizing } : img)
       } : s
     ));
   };
@@ -100,6 +101,10 @@ export default function StudentScanPage() {
       }
       return s;
     }));
+  };
+
+  const markImageAsSplit = (imageId: string) => {
+    setSplitImageIds(prev => new Set(prev).add(imageId));
   };
 
   const currentSession = sessions.find(s => s.id === currentSessionId);
@@ -131,7 +136,7 @@ export default function StudentScanPage() {
     }
   };
 
-  const contextValue = {
+  const contextValue: AppContextType = useMemo(() => ({
     sessions,
     currentSessionId,
     createNewSession,
@@ -141,8 +146,10 @@ export default function StudentScanPage() {
     deleteImages,
     setCurrentSessionId,
     updateImage,
-    reorderImages
-  };
+    reorderImages,
+    splitImageIds,
+    markImageAsSplit
+  }), [sessions, currentSessionId, splitImageIds]);
 
   if (submitResult) {
     return (
