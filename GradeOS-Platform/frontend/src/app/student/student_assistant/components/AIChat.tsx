@@ -141,7 +141,7 @@ const AIChat: React.FC<Props> = ({ lang }) => {
     latestAssistant?.content?.trim() || (isStreaming ? 'Thinking...' : t.chatIntro.replace(/[*#]/g, ''));
 
   return (
-    <div className="relative min-h-[calc(100vh-12rem)] bg-white text-black overflow-hidden">
+    <div className="relative min-h-screen bg-white text-black overflow-hidden">
       <div className="assistant-grid absolute inset-0" aria-hidden="true" />
       <div className="assistant-halo absolute -top-24 left-1/2 h-[420px] w-[420px] -translate-x-1/2" aria-hidden="true" />
       <div className="assistant-scanline absolute inset-x-0 top-0" aria-hidden="true" />
@@ -158,7 +158,7 @@ const AIChat: React.FC<Props> = ({ lang }) => {
         />
       )}
 
-      <div className="relative z-10 flex min-h-[calc(100vh-12rem)] flex-col py-10">
+      <div className="relative z-10 flex min-h-screen flex-col px-6 py-10 md:px-12">
         <div className="flex flex-wrap items-center justify-between gap-4 text-[10px] font-semibold uppercase tracking-[0.45em] text-black/60">
           <span>GradeOS Socratic Agent</span>
           <span className="flex items-center gap-2">

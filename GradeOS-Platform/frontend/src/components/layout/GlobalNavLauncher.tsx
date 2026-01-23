@@ -67,6 +67,7 @@ export default function GlobalNavLauncher() {
   const { user } = useAuthStore();
   const [open, setOpen] = useState(false);
   const [recent, setRecent] = useState<RecentEntry[]>([]);
+  const hideLauncher = pathname.startsWith('/student/student_assistant');
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -122,6 +123,10 @@ export default function GlobalNavLauncher() {
 
     return base;
   }, [user?.role]);
+
+  if (hideLauncher) {
+    return null;
+  }
 
   const handleJump = (href: string) => {
     setOpen(false);
