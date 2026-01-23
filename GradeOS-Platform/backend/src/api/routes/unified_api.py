@@ -195,7 +195,7 @@ class MasteryData(BaseModel):
 class AssistantChatResponse(BaseModel):
     content: str
     model: Optional[str] = None
-    usage: Optional[Dict[str, int]] = None
+    usage: Optional[Dict[str, Any]] = None  # 支持 OpenRouter 扩展格式（含浮点数和嵌套字典）
     # 新增：结构化输出
     mastery: Optional[MasteryData] = None  # 掌握度评估
     next_question: Optional[str] = None  # 苏格拉底式追问
