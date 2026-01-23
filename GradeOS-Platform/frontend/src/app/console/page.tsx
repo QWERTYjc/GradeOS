@@ -98,9 +98,10 @@ const ScannerContainer = ({
         await onSubmitBatch(images, studentBoundaries);
     };
 
-    if (!user) {
-        return null;
-    }
+    // Allow access without login for demo purposes
+    // if (!user) {
+    //     return null;
+    // }
 
     return (
         <div className="h-full w-full flex flex-col bg-white">
