@@ -6,7 +6,6 @@ export const metadata: Metadata = {
   description: 'Next-generation automated grading platform.',
 };
 
-import ClientGlobalBackground from '@/components/ClientGlobalBackground';
 import PageTransition from '@/components/layout/PageTransition';
 import GlobalNavLauncher from '@/components/layout/GlobalNavLauncher';
 
@@ -18,7 +17,9 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body>
-        <ClientGlobalBackground />
+        {/* Three.js background temporarily disabled for Railway deployment */}
+        {/* <ClientGlobalBackground /> */}
+        <div className="fixed inset-0 -z-10 bg-gradient-to-br from-slate-50 to-slate-100" />
         <PageTransition>{children}</PageTransition>
         <GlobalNavLauncher />
       </body>
