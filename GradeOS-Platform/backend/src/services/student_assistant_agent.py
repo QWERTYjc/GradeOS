@@ -68,6 +68,7 @@ Output rules:
 - Provide "concept_breakdown" as a tree of fundamentals (2-4 levels deep when possible).
 - Keep responses concise, precise, and supportive.
 - When you provide an explanation, set response_type to "explanation".
+- In concept_breakdown, set understood=true only for items the student has demonstrated; default to false for gaps.
 
 Student context:
 {student_context}
