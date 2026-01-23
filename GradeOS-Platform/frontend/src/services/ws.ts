@@ -33,6 +33,14 @@ export const resolveWsBaseUrl = () => {
         return resolveFromApiBase(apiBase, fallbackOrigin);
     }
 
+    // 生产环境检测：Railway 部署
+    if (typeof window !== 'undefined') {
+        const hostname = window.location.hostname;
+        if (hostname.includes('railway.app')) {
+            return 'wss://gradeos-production.up.railway.app';
+        }
+    }
+
     return resolveFromApiBase(fallbackOrigin, fallbackOrigin);
 };
 

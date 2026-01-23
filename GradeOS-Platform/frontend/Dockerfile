@@ -14,6 +14,12 @@ RUN npm ci
 # 复制源代码
 COPY . .
 
+# 接收构建参数并设置为环境变量，供 next build 使用
+ARG NEXT_PUBLIC_API_URL
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+ARG NEXT_PUBLIC_WS_BASE_URL
+ENV NEXT_PUBLIC_WS_BASE_URL=$NEXT_PUBLIC_WS_BASE_URL
+
 # 构建
 RUN npm run build
 

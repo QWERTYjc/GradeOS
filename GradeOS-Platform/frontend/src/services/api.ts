@@ -3,7 +3,40 @@
  * 连接前端与后端的所有 API 接口
  */
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001/api';
+const getApiBase = () => {
+  // 1. 优先尝试环境变量
+  if (process.env.NEXT_PUBLIC_API_URL) {
+    return process.env.NEXT_PUBLIC_API_URL;
+  }
+
+  // 2. 浏览器环境下提供容错
+  if (typeof window !== 'undefined') {
+    const origin = window.location.origin;
+    const hostname = window.location.hostname;
+    
+    // 如果是 localhost 开发环境
+    if (hostname === 'localhost' || hostname === '127.0.0.1') {
+      return 'http://localhost:8001/api';
+    }
+    
+    // 生产环境检测：Railway 部署的域名
+    // 前端: gradeos.up.railway.app
+    // 后端: gradeos-production.up.railway.app
+    if (hostname.includes('railway.app')) {
+      // 硬编码生产后端 URL，因为前后端是分开部署的
+      return 'https://gradeos-production.up.railway.app/api';
+    }
+    
+    // 其他生产环境（如自定义域名），尝试同源 API
+    console.warn('API_URL not configured, falling back to relative path /api');
+    return `${origin}/api`;
+  }
+
+  // 3. 服务端渲染时的默认值
+  return 'http://localhost:8001/api';
+};
+
+const API_BASE = getApiBase();
 
 // ============ 通用请求方法 ============
 
