@@ -27,13 +27,24 @@ from src.models.enums import SubmissionStatus
 from src.orchestration.base import Orchestrator
 from src.api.dependencies import get_orchestrator
 from src.utils.image import to_jpeg_bytes, pil_to_jpeg_bytes
+from src.utils.database import db
+
+# SQLite 作为降级方案
 from src.db.sqlite import (
-    save_grading_history, 
-    save_student_result, 
-    GradingHistory, 
-    StudentGradingResult,
+    save_grading_history as sqlite_save_grading_history, 
+    save_student_result as sqlite_save_student_result, 
+    GradingHistory as SqliteGradingHistory, 
+    StudentGradingResult as SqliteStudentGradingResult,
     upsert_homework_submission_grade,
     list_class_students,
+)
+
+# PostgreSQL 作为主存储
+from src.db.postgres_grading import (
+    save_grading_history as pg_save_grading_history,
+    save_student_result as pg_save_student_result,
+    GradingHistory,
+    StudentGradingResult,
 )
 
 
@@ -66,6 +77,69 @@ def _write_debug_log(payload: Dict[str, Any]) -> None:
             log_file.write(json.dumps(payload, ensure_ascii=False) + "\n")
     except Exception as exc:
         logger.debug(f"Failed to write debug log: {exc}")
+
+
+async def save_grading_history(history: GradingHistory) -> None:
+    """智能存储适配器：优先使用 PostgreSQL，降级时使用 SQLite"""
+    # 尝试 PostgreSQL
+    if db.is_available:
+        try:
+            await pg_save_grading_history(history)
+            logger.info(f"批改历史已保存到 PostgreSQL: batch_id={history.batch_id}")
+            return
+        except Exception as e:
+            logger.warning(f"PostgreSQL 保存失败，降级到 SQLite: {e}")
+    
+    # 降级到 SQLite
+    try:
+        sqlite_history = SqliteGradingHistory(
+            id=history.id,
+            batch_id=history.batch_id,
+            status=history.status,
+            class_ids=history.class_ids,
+            created_at=history.created_at,
+            completed_at=history.completed_at,
+            total_students=history.total_students,
+            average_score=history.average_score,
+            result_data=history.result_data,
+        )
+        sqlite_save_grading_history(sqlite_history)
+        logger.info(f"批改历史已保存到 SQLite (降级模式): batch_id={history.batch_id}")
+    except Exception as e:
+        logger.error(f"SQLite 保存也失败: {e}")
+        raise
+
+
+async def save_student_result(result: StudentGradingResult) -> None:
+    """智能存储适配器：优先使用 PostgreSQL，降级时使用 SQLite"""
+    # 尝试 PostgreSQL
+    if db.is_available:
+        try:
+            await pg_save_student_result(result)
+            return
+        except Exception as e:
+            logger.warning(f"PostgreSQL 保存学生结果失败，降级到 SQLite: {e}")
+    
+    # 降级到 SQLite
+    try:
+        sqlite_result = SqliteStudentGradingResult(
+            id=result.id,
+            grading_history_id=result.grading_history_id,
+            student_key=result.student_key,
+            score=result.score,
+            max_score=result.max_score,
+            class_id=result.class_id,
+            student_id=result.student_id,
+            summary=result.summary,
+            self_report=result.self_report,
+            result_data=result.result_data,
+            imported_at=result.imported_at,
+            revoked_at=result.revoked_at,
+        )
+        sqlite_save_student_result(sqlite_result)
+    except Exception as e:
+        logger.error(f"SQLite 保存学生结果也失败: {e}")
+        raise
 
 
 def _safe_to_jpeg_bytes(image_bytes: bytes, label: str) -> bytes:

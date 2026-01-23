@@ -20,6 +20,7 @@ from pydantic import BaseModel
 from src.api.dependencies import get_orchestrator
 from src.orchestration.base import Orchestrator
 from src.api.routes.batch_langgraph import _format_results_for_frontend
+from src.utils.database import db
 from src.db.sqlite import (
     HomeworkSubmission,
     save_homework_submission,
@@ -47,6 +48,12 @@ from src.db.sqlite import (
     get_homework_submissions,
     list_student_submissions,
     update_homework_submission_status,
+)
+# PostgreSQL 批改历史
+from src.db.postgres_grading import (
+    list_grading_history as list_pg_grading_history,
+    get_grading_history as get_pg_grading_history,
+    get_student_results as get_pg_student_results,
 )
 from src.services.llm_client import LLMMessage, get_llm_client
 from src.utils.image import to_jpeg_bytes
@@ -1058,12 +1065,50 @@ async def get_grading_history(
     class_id: Optional[str] = None,
     assignment_id: Optional[str] = None,
 ):
-    """获取批改历史列表"""
+    """获取批改历史列表 - 优先从 PostgreSQL 读取，降级到 SQLite"""
     records: List[Dict[str, Any]] = []
 
+    # 1. 优先尝试 PostgreSQL
+    if db.is_available:
+        try:
+            pg_histories = await list_pg_grading_history(class_id=class_id, limit=50)
+            for history in pg_histories:
+                class_ids = history.class_ids or []
+                target_class_id = class_id or (class_ids[0] if class_ids else None)
+                if class_id and class_id not in class_ids:
+                    continue
+                result_meta = history.result_data or {}
+                assignment_id_value = result_meta.get("homework_id") or result_meta.get("assignment_id")
+                if assignment_id and assignment_id_value != assignment_id:
+                    continue
+                class_info = get_class_by_id(target_class_id) if target_class_id else None
+                assignment_title = None
+                if assignment_id_value:
+                    assignment = get_homework(assignment_id_value)
+                    assignment_title = assignment.title if assignment else None
+                records.append({
+                    "import_id": history.id,
+                    "batch_id": history.batch_id,
+                    "class_id": target_class_id or "",
+                    "class_name": class_info.name if class_info else None,
+                    "assignment_id": assignment_id_value,
+                    "assignment_title": assignment_title,
+                    "student_count": history.total_students,
+                    "status": history.status,
+                    "created_at": history.created_at,
+                    "revoked_at": None,
+                })
+            logger.info(f"从 PostgreSQL 读取到 {len(records)} 条批改历史")
+        except Exception as exc:
+            logger.warning(f"PostgreSQL 批改历史读取失败，降级到 SQLite: {exc}")
+
+    # 2. 降级到 SQLite（或补充 SQLite 数据）
     try:
         sqlite_histories = list_sqlite_grading_history(class_id=class_id, limit=50)
+        existing_batch_ids = {r["batch_id"] for r in records}
         for history in sqlite_histories:
+            if history.batch_id in existing_batch_ids:
+                continue  # 跳过已从 PostgreSQL 读取的记录
             class_ids = history.class_ids or []
             target_class_id = class_id or (class_ids[0] if class_ids else None)
             if class_id and class_id not in class_ids:
@@ -1132,7 +1177,72 @@ async def get_grading_history(
 
 @router.get("/grading/history/{import_id}", response_model=GradingHistoryDetailResponse, tags=["Grading History"])
 async def get_grading_history_detail(import_id: str):
-    """Get grading history detail."""
+    """Get grading history detail - 优先从 PostgreSQL 读取"""
+    
+    # 1. 优先尝试 PostgreSQL
+    if db.is_available:
+        try:
+            # 尝试通过 batch_id 查找（import_id 可能是 history.id 或 batch_id）
+            pg_history = await get_pg_grading_history(import_id)
+            if pg_history:
+                class_ids = pg_history.class_ids or []
+                result_data = pg_history.result_data or {}
+                class_id = class_ids[0] if class_ids else ""
+                class_info = get_class_by_id(class_id) if class_id else None
+                assignment_id_value = result_data.get("homework_id") or result_data.get("assignment_id")
+                assignment_title = None
+                if assignment_id_value:
+                    assignment = get_homework(assignment_id_value)
+                    assignment_title = assignment.title if assignment else None
+                record = {
+                    "import_id": pg_history.id,
+                    "batch_id": pg_history.batch_id,
+                    "class_id": class_id,
+                    "class_name": class_info.name if class_info else None,
+                    "assignment_id": assignment_id_value,
+                    "assignment_title": assignment_title,
+                    "student_count": pg_history.total_students or 0,
+                    "status": pg_history.status,
+                    "created_at": pg_history.created_at,
+                    "revoked_at": None,
+                }
+                items = []
+                pg_results = await get_pg_student_results(pg_history.id)
+                for idx, item in enumerate(pg_results):
+                    result = item.result_data or {}
+                    if isinstance(result, str):
+                        try:
+                            result = json.loads(result)
+                        except Exception:
+                            result = {}
+                    student_name = (
+                        result.get("studentName")
+                        or result.get("student_name")
+                        or item.student_key
+                        or item.student_id
+                        or f"Student {idx + 1}"
+                    )
+                    items.append({
+                        "item_id": item.id,
+                        "import_id": pg_history.id,
+                        "batch_id": pg_history.batch_id,
+                        "class_id": class_id,
+                        "student_id": item.student_id or "",
+                        "student_name": student_name,
+                        "status": "revoked" if item.revoked_at else "imported",
+                        "created_at": item.imported_at or pg_history.created_at,
+                        "revoked_at": item.revoked_at,
+                        "result": result,
+                    })
+                logger.info(f"从 PostgreSQL 读取批改详情: import_id={import_id}, items={len(items)}")
+                return GradingHistoryDetailResponse(
+                    record=GradingImportRecord(**record),
+                    items=[GradingImportItem(**item) for item in items],
+                )
+        except Exception as exc:
+            logger.warning(f"PostgreSQL 批改详情读取失败，降级到 SQLite: {exc}")
+
+    # 2. 降级到 SQLite
     try:
         with get_sqlite_connection() as conn:
             row = conn.execute("SELECT * FROM grading_history WHERE id = ?", (import_id,)).fetchone()
