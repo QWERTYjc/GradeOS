@@ -97,13 +97,22 @@ const FocusMode: React.FC<FocusModeProps> = ({
         </div>
 
         <div className="mt-4 text-center">
-          <button
-            type="button"
-            onClick={() => setShowHint(!showHint)}
-            className="text-sm text-black/40 transition-colors hover:text-black/70"
-          >
-            {showHint ? 'Hide hint' : 'Need a hint?'}
-          </button>
+          <div className="flex flex-wrap items-center justify-center gap-4 text-sm text-black/40">
+            <button
+              type="button"
+              onClick={() => setShowHint(!showHint)}
+              className="transition-colors hover:text-black/70"
+            >
+              {showHint ? 'Hide hint' : 'Need a hint?'}
+            </button>
+            <button
+              type="button"
+              onClick={() => onAnswer("I don't know yet. Please explain step-by-step, then ask a simpler question.")}
+              className="transition-colors hover:text-black/70"
+            >
+              I don't know
+            </button>
+          </div>
 
           {showHint && (
             <div className="mt-4 rounded-xl bg-black/5 p-4 text-sm text-black/70 animate-fadeIn">

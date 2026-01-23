@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { I18N } from '../constants';
-import { EnhancedChatMessage, Language } from '../types';
+import { ConceptNode, EnhancedChatMessage, Language } from '../types';
 import { assistantApi } from '@/services/api';
 import { useAuthStore } from '@/store/authStore';
 import FocusMode from './FocusMode';
@@ -137,6 +137,25 @@ const AIChat: React.FC<Props> = ({ lang }) => {
     [messages],
   );
 
+  const flattenConcepts = (concepts: ConceptNode[] = []): ConceptNode[] => {
+    const queue = [...concepts];
+    const flattened: ConceptNode[] = [];
+    while (queue.length) {
+      const current = queue.shift();
+      if (!current) continue;
+      flattened.push(current);
+      if (current.children?.length) {
+        queue.push(...current.children);
+      }
+    }
+    return flattened;
+  };
+
+  const knowledgeGaps = useMemo(() => {
+    if (!latestAssistant?.conceptBreakdown) return [];
+    return flattenConcepts(latestAssistant.conceptBreakdown).filter((node) => !node.understood);
+  }, [latestAssistant]);
+
   const displayContent =
     latestAssistant?.content?.trim() || (isStreaming ? 'Thinking...' : t.chatIntro.replace(/[*#]/g, ''));
 
@@ -167,7 +186,75 @@ const AIChat: React.FC<Props> = ({ lang }) => {
           </span>
         </div>
 
-        <div className="mt-10 grid flex-1 items-start gap-10 lg:grid-cols-[minmax(0,1fr)_280px]">
+        <div className="mt-10 grid flex-1 items-start gap-10 lg:grid-cols-[260px_minmax(0,1fr)_280px]">
+          <aside className="space-y-6">
+            <div className="rounded-2xl border border-black/10 bg-white/80 p-4 shadow-sm">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.4em] text-black/50">
+                Learning progress
+              </div>
+              <div className="mt-4 space-y-3">
+                <div className="text-xs font-semibold uppercase tracking-[0.3em] text-black/40">
+                  Recent mastery
+                </div>
+                {progressSnapshots.length > 0 ? (
+                  <div className="space-y-2">
+                    {progressSnapshots.map((snapshot, idx) => (
+                      <div
+                        key={`${snapshot.timestamp.getTime()}-progress-${idx}`}
+                        className="flex items-center justify-between rounded-xl border border-black/5 bg-white px-3 py-2 text-xs text-black/60"
+                      >
+                        <span>{snapshot.mastery?.level ?? 'Developing'}</span>
+                        <span className="text-black/80">{snapshot.mastery?.score ?? 0}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-sm text-black/40">No mastery snapshots yet.</div>
+                )}
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-black/10 bg-white/80 p-4 shadow-sm">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.4em] text-black/50">
+                Knowledge gaps
+              </div>
+              <div className="mt-4 space-y-2">
+                {knowledgeGaps.length > 0 ? (
+                  knowledgeGaps.slice(0, 8).map((node, idx) => (
+                    <button
+                      key={node.id || node.name || `gap-${idx}`}
+                      type="button"
+                      onClick={() => setInput(`Explain ${node.name} from first principles and check my understanding.`)}
+                      className="w-full rounded-xl border border-black/10 px-3 py-2 text-left text-xs text-black/70 transition hover:border-black/30"
+                    >
+                      <div className="font-semibold text-black">{node.name}</div>
+                      {node.description && (
+                        <div className="mt-1 text-[11px] text-black/50">{node.description}</div>
+                      )}
+                    </button>
+                  ))
+                ) : (
+                  <div className="text-sm text-black/40">No knowledge gaps detected yet.</div>
+                )}
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-black/10 bg-white/80 p-4 shadow-sm">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.4em] text-black/50">
+                Quick actions
+              </div>
+              <div className="mt-4 space-y-2 text-sm text-black/60">
+                <button
+                  type="button"
+                  onClick={() => setInput("I don't know yet. Please explain step-by-step, then ask a simpler question.")}
+                  className="w-full rounded-xl border border-black/10 px-3 py-2 text-left text-xs text-black/70 transition hover:border-black/30"
+                >
+                  I'm stuck — explain it
+                </button>
+              </div>
+            </div>
+          </aside>
+
           <section className="flex h-full flex-col items-center justify-center text-center">
             {latestUser && (
               <div className="max-w-2xl text-black/50">
