@@ -154,9 +154,12 @@ const AIChat: React.FC<Props> = ({ lang }) => {
   const knowledgeGaps = useMemo(() => {
     if (!latestAssistant?.conceptBreakdown) return [];
     return flattenConcepts(latestAssistant.conceptBreakdown).filter((node) => node.understood !== true);
-  }, [latestAssistant]);
+  }, [messages, latestAssistant]);
 
-  const focusAreas = useMemo(() => latestAssistant?.mastery?.suggestions ?? [], [latestAssistant]);
+  const focusAreas = useMemo(
+    () => latestAssistant?.mastery?.suggestions ?? [],
+    [messages, latestAssistant],
+  );
 
   const displayContent =
     latestAssistant?.content?.trim() || (isStreaming ? 'Thinking...' : t.chatIntro.replace(/[*#]/g, ''));
