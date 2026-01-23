@@ -1051,6 +1051,62 @@ body {
 }
 
 /* Student Assistant Styles */
+.assistant-grid {
+  background-image:
+    linear-gradient(to right, rgba(15, 23, 42, 0.08) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(15, 23, 42, 0.08) 1px, transparent 1px);
+  background-size: 80px 80px;
+  opacity: 0.2;
+  pointer-events: none;
+  animation: assistant-grid-shift 26s linear infinite;
+}
+
+.assistant-halo {
+  border-radius: 9999px;
+  background: radial-gradient(circle, rgba(15, 23, 42, 0.1), transparent 65%);
+  filter: blur(2px);
+  opacity: 0.7;
+  animation: assistant-halo 10s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.assistant-scanline {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(15, 23, 42, 0.35), transparent);
+  animation: assistant-scan 6s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@keyframes assistant-grid-shift {
+  0% {
+    transform: translate(0, 0);
+  }
+  100% {
+    transform: translate(80px, 80px);
+  }
+}
+
+@keyframes assistant-halo {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.6;
+  }
+  50% {
+    transform: scale(1.08);
+    opacity: 0.9;
+  }
+}
+
+@keyframes assistant-scan {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
 .text-gradient {
   background: linear-gradient(135deg, #2563eb, #22d3ee);
   -webkit-background-clip: text;

@@ -39,7 +39,7 @@ export const I18N = {
     peerAi: 'Peer Support AI',
     alwaysListening: 'Always Listening',
     chatPlaceholder: 'Ask me anything...',
-    chatIntro: "Hey! I'm your peer assistant. Feeling stressed about exams or just want to chat about your studies? I'm here to listen!",
+    chatIntro: "I'm your Socratic learning agent. Share a concept and we'll rebuild it from first principles, one question at a time.",
     brainFreeze: "I'm having a bit of a brain freeze! Let's try again in a moment.",
     disclaimer: "Peer Support AI is for reference only. For serious concerns, please talk to a trusted adult.",
     reAnalyze: "Re-analyze scores",

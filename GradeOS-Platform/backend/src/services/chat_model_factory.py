@@ -1,7 +1,7 @@
 ﻿from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, AsyncIterator, Iterable, Optional
+from typing import Any, AsyncIterator, Dict, Iterable, Optional
 
 from langchain_core.messages import BaseMessage
 
@@ -12,6 +12,8 @@ from src.services.llm_client import LLMMessage, get_llm_client
 @dataclass
 class _SimpleMessage:
     content: Any
+    model: Optional[str] = None
+    usage: Optional[Dict[str, Any]] = None
 
 
 def _resolve_role(message: BaseMessage) -> str:
@@ -66,7 +68,7 @@ class OpenRouterChatAdapter:
             model=self._model,
             api_key_override=self._api_key_override,
         )
-        return _SimpleMessage(response.content)
+        return _SimpleMessage(response.content, model=response.model, usage=response.usage)
 
     async def astream(self, messages: Iterable[BaseMessage]) -> AsyncIterator[_SimpleMessage]:
         async for chunk in self._client.stream(
