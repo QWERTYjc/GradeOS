@@ -26,8 +26,13 @@ def upgrade() -> None:
     用于存储老师确认的正确批改示例，支持向量检索。
     验证：需求 4.1
     """
-    # 启用 pgvector 扩展
-    op.execute('CREATE EXTENSION IF NOT EXISTS vector')
+    # Enable pgvector if the extension is available on the server.
+    conn = op.get_bind()
+    has_vector = conn.execute(
+        sa.text("SELECT 1 FROM pg_available_extensions WHERE name='vector'")
+    ).scalar()
+    if has_vector:
+        op.execute("CREATE EXTENSION IF NOT EXISTS vector")
     
     # 创建 exemplars 表
     op.create_table(
