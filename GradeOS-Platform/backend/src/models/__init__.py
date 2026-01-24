@@ -43,6 +43,16 @@ from .grading_models import (
     BatchGradingResult,
     ErrorLog,
 )
+# 批注坐标模型
+from .annotation import (
+    AnnotationType,
+    AnnotationColor,
+    BoundingBox as AnnotationBoundingBox,
+    Point,
+    VisualAnnotation,
+    PageAnnotations,
+    GradingAnnotationResult,
+)
 
 __all__ = [
     # 枚举
@@ -96,4 +106,12 @@ __all__ = [
     "CrossPageQuestion",
     "BatchGradingResult",
     "ErrorLog",
+    # 批注坐标模型
+    "AnnotationType",
+    "AnnotationColor",
+    "AnnotationBoundingBox",
+    "Point",
+    "VisualAnnotation",
+    "PageAnnotations",
+    "GradingAnnotationResult",
 ]

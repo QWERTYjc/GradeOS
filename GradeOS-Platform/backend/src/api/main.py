@@ -217,6 +217,14 @@ app.include_router(unified_api.router, prefix="/api", tags=["GradeOS统一API"])
 app.include_router(batch_langgraph.router, prefix="/api", tags=["批量批改"])
 logger.info("DEBUG: batch_langgraph router included with prefix=/api (router has internal /batch prefix)")
 
+# 批注批改 API
+try:
+    from src.api.routes import annotation_grading
+    app.include_router(annotation_grading.router, prefix="/api", tags=["批注批改"])
+    logger.info("批注批改 API 已注册")
+except ImportError as e:
+    logger.warning(f"批注批改 API 导入失败: {e}")
+
 # Phase 6: 班级系统集成 API (延迟导入避免循环依赖)
 try:
     from src.api.routes import class_integration
