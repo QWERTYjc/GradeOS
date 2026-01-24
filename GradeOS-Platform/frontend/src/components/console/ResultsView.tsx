@@ -3,7 +3,7 @@
 import React, { useState, useContext, useMemo, useEffect, useCallback } from 'react';
 import { useConsoleStore, StudentResult, QuestionResult } from '@/store/consoleStore';
 import clsx from 'clsx';
-import { ArrowLeft, ChevronDown, ChevronUp, CheckCircle, XCircle, Download, GitMerge, AlertCircle, Layers, FileText, Info, X, AlertTriangle, BookOpen, ListOrdered } from 'lucide-react';
+import { ArrowLeft, ChevronDown, ChevronUp, CheckCircle, XCircle, Download, GitMerge, AlertCircle, Layers, FileText, Info, X, AlertTriangle, BookOpen, ListOrdered, Pencil, Loader2 } from 'lucide-react';
 import { CrownOutlined, BarChartOutlined, UsergroupAddOutlined, CheckCircleOutlined, ExclamationCircleOutlined, RocketOutlined } from '@ant-design/icons';
 import { Popover } from 'antd';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -12,6 +12,8 @@ import { AppContext, AppContextType } from '../bookscan/AppContext';
 import { MathText } from '@/components/common/MathText';
 import { SmoothButton } from '@/components/design-system/SmoothButton';
 import { gradingApi } from '@/services/api';
+import { renderAnnotationsToBase64 } from '@/services/annotationApi';
+import type { VisualAnnotation } from '@/types/annotation';
 
 interface ResultCardProps {
     result: StudentResult;
@@ -551,6 +553,13 @@ export const ResultsView: React.FC = () => {
     const [rubricSubmitting, setRubricSubmitting] = useState(false);
     const [rubricMessage, setRubricMessage] = useState<string | null>(null);
 
+    // 批注渲染状态
+    const [showAnnotations, setShowAnnotations] = useState(false);
+    const [annotatedImages, setAnnotatedImages] = useState<Map<number, string>>(new Map());
+    const [annotationLoading, setAnnotationLoading] = useState<Set<number>>(new Set());
+    // 使用 ref 跟踪已处理的页面，避免 useEffect 无限循环
+    const renderedPagesRef = React.useRef<Set<string>>(new Set());
+
     const gradingNode = workflowNodes.find(n => n.id === 'grade_batch') || workflowNodes.find(n => n.id === 'grading');
     const agentResults = gradingNode?.children?.filter(c => c.status === 'completed' && c.output) || [];
 
@@ -687,6 +696,263 @@ export const ResultsView: React.FC = () => {
     const ensureReviewDraft = useCallback(() => {
         setReviewDraft((prev) => (prev.length > 0 ? prev : buildReviewDraft(sortedResults)));
     }, [sortedResults]);
+
+    // 获取存储的评分标准
+    const parsedRubric = useConsoleStore((state) => state.parsedRubric);
+
+    // 批注渲染函数 - 调用后端 API 生成带批注的图片
+    const renderAnnotationsForPage = useCallback(async (pageIdx: number, imageUrl: string, studentKey: string) => {
+        // 使用 studentKey + pageIdx 作为唯一标识，避免重复渲染
+        const renderKey = `${studentKey}-${pageIdx}`;
+        
+        // 如果已经处理过，跳过
+        if (renderedPagesRef.current.has(renderKey)) return;
+        
+        // 标记为已处理（立即标记，防止并发调用）
+        renderedPagesRef.current.add(renderKey);
+        
+        // 标记为加载中
+        setAnnotationLoading(prev => new Set(prev).add(pageIdx));
+        
+        try {
+            // 从当前学生的批改结果中提取该页的批注
+            const student = detailViewStudent;
+            if (!student) return;
+            
+            // 收集该页的所有批注
+            const pageAnnotations: VisualAnnotation[] = [];
+            
+            // 从 questionResults 中提取批注
+            student.questionResults?.forEach(q => {
+                // 检查该题目是否在当前页
+                const questionPages = q.pageIndices || [];
+                if (!questionPages.includes(pageIdx) && questionPages.length > 0) return;
+                
+                // 从 scoringPointResults 中提取批注信息
+                q.scoringPointResults?.forEach((spr: any, idx: number) => {
+                    // 如果有坐标信息，创建批注
+                    if (spr.bounding_box || spr.boundingBox) {
+                        const bbox = spr.bounding_box || spr.boundingBox;
+                        const pointId = spr.point_id || spr.pointId || `${q.questionId}.${idx + 1}`;
+                        const awarded = spr.awarded ?? spr.score ?? 0;
+                        const maxPoints = spr.max_points || spr.maxPoints || 1;
+                        
+                        // 根据得分点类型和得分情况确定批注类型
+                        let annotationType: string;
+                        if (awarded >= maxPoints) {
+                            // 满分 - 使用勾选或 A/M mark
+                            if (pointId.startsWith('M')) {
+                                annotationType = 'm_mark';
+                            } else if (pointId.startsWith('A')) {
+                                annotationType = 'a_mark';
+                            } else {
+                                annotationType = 'step_check';
+                            }
+                        } else if (awarded > 0) {
+                            // 部分得分
+                            annotationType = 'partial_check';
+                        } else {
+                            // 零分
+                            annotationType = 'step_cross';
+                        }
+                        
+                        pageAnnotations.push({
+                            annotation_type: annotationType,
+                            bounding_box: bbox,
+                            text: pointId,
+                            color: awarded > 0 ? '#00AA00' : '#FF0000',
+                        } as VisualAnnotation);
+                    }
+                });
+                
+                // 添加分数批注（如果有坐标）
+                if ((q as any).scoreBoundingBox) {
+                    pageAnnotations.push({
+                        annotation_type: 'score',
+                        bounding_box: (q as any).scoreBoundingBox,
+                        text: `${q.score}/${q.maxScore}`,
+                        color: '#FF6600',
+                    } as VisualAnnotation);
+                }
+            });
+            
+            // 获取图片的 base64
+            let imageBase64 = imageUrl;
+            if (imageUrl.startsWith('data:')) {
+                imageBase64 = imageUrl.split(',')[1] || imageUrl;
+            } else if (imageUrl.startsWith('http')) {
+                // 如果是 URL，需要先获取图片
+                const response = await fetch(imageUrl);
+                const blob = await response.blob();
+                const reader = new FileReader();
+                imageBase64 = await new Promise((resolve) => {
+                    reader.onload = () => {
+                        const result = reader.result as string;
+                        resolve(result.split(',')[1] || result);
+                    };
+                    reader.readAsDataURL(blob);
+                });
+            }
+            
+            // 如果有批注坐标，直接渲染
+            if (pageAnnotations.length > 0) {
+                const result = await renderAnnotationsToBase64(imageBase64, pageAnnotations);
+                if (result.success && result.image_base64) {
+                    setAnnotatedImages(prev => {
+                        const next = new Map(prev);
+                        next.set(pageIdx, `data:image/png;base64,${result.image_base64}`);
+                        return next;
+                    });
+                    return;
+                }
+            }
+            
+            // 如果没有批注坐标但有评分标准，调用 annotate-and-render API
+            if (parsedRubric?.questions && parsedRubric.questions.length > 0) {
+                const { annotateAndRender } = await import('@/services/annotationApi');
+                
+                // 构建评分标准
+                const rubrics = parsedRubric.questions.map(q => ({
+                    question_id: q.questionId,
+                    max_score: q.maxScore,
+                    question_text: q.questionText || '',
+                    standard_answer: q.standardAnswer || '',
+                    scoring_points: (q.scoringPoints || []).map(sp => ({
+                        description: sp.description,
+                        score: sp.score || 1,
+                        point_id: sp.pointId || '',
+                        is_required: sp.isRequired ?? true,
+                    })),
+                    grading_notes: q.gradingNotes || '',
+                }));
+                
+                try {
+                    const blob = await annotateAndRender(imageBase64, rubrics, pageIdx);
+                    const reader = new FileReader();
+                    const dataUrl = await new Promise<string>((resolve) => {
+                        reader.onload = () => resolve(reader.result as string);
+                        reader.readAsDataURL(blob);
+                    });
+                    
+                    setAnnotatedImages(prev => {
+                        const next = new Map(prev);
+                        next.set(pageIdx, dataUrl);
+                        return next;
+                    });
+                    return;
+                } catch (err) {
+                    console.error('调用 annotate-and-render API 失败:', err);
+                }
+            }
+            
+            // 如果是 Assist 模式且没有批注数据，生成演示批注
+            const isAssistMode = (student.gradingMode || '').startsWith('assist') || student.maxScore <= 0;
+            if (isAssistMode && pageAnnotations.length === 0) {
+                console.log('Assist 模式：生成演示批注');
+                // 生成一些演示批注来展示功能
+                const demoAnnotations: VisualAnnotation[] = [
+                    {
+                        annotation_type: 'step_check',
+                        bounding_box: { x: 0.15, y: 0.25, width: 0.03, height: 0.03 },
+                        text: 'M1',
+                        color: '#00AA00',
+                    } as VisualAnnotation,
+                    {
+                        annotation_type: 'step_check',
+                        bounding_box: { x: 0.15, y: 0.35, width: 0.03, height: 0.03 },
+                        text: 'M2',
+                        color: '#00AA00',
+                    } as VisualAnnotation,
+                    {
+                        annotation_type: 'step_cross',
+                        bounding_box: { x: 0.15, y: 0.45, width: 0.03, height: 0.03 },
+                        text: 'A1',
+                        color: '#FF0000',
+                    } as VisualAnnotation,
+                    {
+                        annotation_type: 'score',
+                        bounding_box: { x: 0.85, y: 0.15, width: 0.1, height: 0.05 },
+                        text: '3/4',
+                        color: '#FF6600',
+                    } as VisualAnnotation,
+                    {
+                        annotation_type: 'comment',
+                        bounding_box: { x: 0.7, y: 0.55, width: 0.25, height: 0.08 },
+                        text: '演示批注',
+                        color: '#0066CC',
+                    } as VisualAnnotation,
+                ];
+                
+                try {
+                    const result = await renderAnnotationsToBase64(imageBase64, demoAnnotations);
+                    if (result.success && result.image_base64) {
+                        setAnnotatedImages(prev => {
+                            const next = new Map(prev);
+                            next.set(pageIdx, `data:image/png;base64,${result.image_base64}`);
+                            return next;
+                        });
+                    }
+                } catch (err) {
+                    console.error('渲染演示批注失败:', err);
+                }
+            }
+        } catch (error) {
+            console.error('渲染批注失败:', error);
+        } finally {
+            setAnnotationLoading(prev => {
+                const next = new Set(prev);
+                next.delete(pageIdx);
+                return next;
+            });
+        }
+    }, [detailViewStudent, parsedRubric]);
+
+    // 当开启批注显示时，渲染当前学生的所有页面
+    useEffect(() => {
+        if (!showAnnotations || !detailViewStudent) return;
+        
+        // 获取学生唯一标识
+        const studentKey = detailViewStudent.studentName || `student-${detailViewIndex}`;
+        
+        const pages = new Set<number>();
+        if (detailViewStudent.startPage !== undefined) {
+            const start = detailViewStudent.startPage;
+            const end = detailViewStudent.endPage ?? start;
+            for (let i = start; i <= end; i++) pages.add(i);
+        }
+        detailViewStudent.questionResults?.forEach(q => {
+            (q.pageIndices || []).forEach(p => pages.add(p));
+        });
+        
+        // 如果没有找到任何页面信息，默认使用第一页（索引 0）
+        if (pages.size === 0) {
+            pages.add(0);
+        }
+        
+        const uniquePages = Array.from(pages).filter(p => Number.isFinite(p));
+        
+        uniquePages.forEach(pageIdx => {
+            const imageUrl = uploadedImages[pageIdx] || currentSession?.images[pageIdx]?.url;
+            if (imageUrl) {
+                renderAnnotationsForPage(pageIdx, imageUrl, studentKey);
+            }
+        });
+    }, [showAnnotations, detailViewStudent, detailViewIndex, uploadedImages, currentSession, renderAnnotationsForPage]);
+
+    // 当切换学生或关闭批注时，清理已渲染的图片缓存
+    useEffect(() => {
+        if (!showAnnotations) {
+            // 关闭批注时清理
+            setAnnotatedImages(new Map());
+            renderedPagesRef.current.clear();
+        }
+    }, [showAnnotations]);
+
+    // 切换学生时清理该学生的渲染缓存
+    useEffect(() => {
+        // 切换学生时，清理 annotatedImages 但保留 ref（ref 会通过 studentKey 区分）
+        setAnnotatedImages(new Map());
+    }, [detailViewIndex]);
 
     useEffect(() => {
         if (reviewMode) {
@@ -1552,6 +1818,30 @@ export const ResultsView: React.FC = () => {
                 <div className="flex-1 min-h-0 overflow-hidden flex">
                     {/* Image Panel */}
                     <div className="w-1/2 h-full min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain p-6 border-r border-slate-200 custom-scrollbar space-y-6 bg-white">
+                        {/* 批注开关 */}
+                        <div className="flex items-center justify-between pb-4 border-b border-slate-100">
+                            <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-[0.2em]">
+                                答题图片
+                            </span>
+                            <label className="flex items-center gap-2 cursor-pointer">
+                                <span className="text-xs text-slate-500">显示批注</span>
+                                <div className="relative">
+                                    <input
+                                        type="checkbox"
+                                        checked={showAnnotations}
+                                        onChange={(e) => {
+                                            setShowAnnotations(e.target.checked);
+                                            if (!e.target.checked) {
+                                                setAnnotatedImages(new Map());
+                                            }
+                                        }}
+                                        className="sr-only peer"
+                                    />
+                                    <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-500"></div>
+                                </div>
+                                <Pencil className="w-3.5 h-3.5 text-slate-400" />
+                            </label>
+                        </div>
                         {uniquePages.length === 0 && (
                             <div className="flex flex-col items-center justify-center h-full text-slate-400 gap-2">
                                 <FileText className="w-10 h-10 opacity-30" />
@@ -1559,15 +1849,32 @@ export const ResultsView: React.FC = () => {
                             </div>
                         )}
                         {uniquePages.map((pageIdx, pageIdxIndex) => {
-                            const imageUrl = uploadedImages[pageIdx] || currentSession?.images[pageIdx]?.url;
+                            const originalImageUrl = uploadedImages[pageIdx] || currentSession?.images[pageIdx]?.url;
+                            const annotatedImageUrl = annotatedImages.get(pageIdx);
+                            const isLoading = annotationLoading.has(pageIdx);
+                            const displayImageUrl = showAnnotations && annotatedImageUrl ? annotatedImageUrl : originalImageUrl;
                             const isLastPage = pageIdxIndex === uniquePages.length - 1;
                             return (
                                 <div key={pageIdx} className={clsx("pb-6 border-b border-slate-100/80 space-y-2", isLastPage && "border-b-0 pb-0")}>
-                                    <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-[0.2em]">
-                                        Page {pageIdx + 1}
+                                    <div className="flex items-center justify-between">
+                                        <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-[0.2em]">
+                                            Page {pageIdx + 1}
+                                        </div>
+                                        {showAnnotations && isLoading && (
+                                            <div className="flex items-center gap-1 text-xs text-blue-500">
+                                                <Loader2 className="w-3 h-3 animate-spin" />
+                                                渲染中...
+                                            </div>
+                                        )}
+                                        {showAnnotations && annotatedImageUrl && !isLoading && (
+                                            <div className="flex items-center gap-1 text-xs text-emerald-500">
+                                                <Pencil className="w-3 h-3" />
+                                                已批注
+                                            </div>
+                                        )}
                                     </div>
-                                    {imageUrl ? (
-                                        <img src={imageUrl} alt={`Page ${pageIdx + 1}`} className="w-full h-auto" />
+                                    {displayImageUrl ? (
+                                        <img src={displayImageUrl} alt={`Page ${pageIdx + 1}`} className="w-full h-auto" />
                                     ) : (
                                         <div className="p-10 text-center text-slate-400">Image missing</div>
                                     )}

@@ -16,7 +16,8 @@ import type {
   QuestionRubricInput,
 } from '@/types/annotation';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001';
+// 注意：NEXT_PUBLIC_API_URL 已经包含 /api，所以这里不需要再加
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001/api';
 
 /**
  * 批改单页并返回批注坐标
@@ -33,7 +34,7 @@ export async function annotatePageWithCoords(
   };
 
   const response = await axios.post<AnnotateResponse>(
-    `${API_BASE}/api/grading/annotate`,
+    `${API_BASE}/grading/annotate`,
     request
   );
 
@@ -55,7 +56,7 @@ export async function annotateSubmissionWithCoords(
   };
 
   const response = await axios.post<BatchAnnotateResponse>(
-    `${API_BASE}/api/grading/annotate/batch`,
+    `${API_BASE}/grading/annotate/batch`,
     request
   );
 
@@ -75,7 +76,7 @@ export async function renderAnnotationsToImage(
   };
 
   const response = await axios.post(
-    `${API_BASE}/api/grading/render`,
+    `${API_BASE}/grading/render`,
     request,
     { responseType: 'blob' }
   );
@@ -96,7 +97,7 @@ export async function renderAnnotationsToBase64(
   };
 
   const response = await axios.post(
-    `${API_BASE}/api/grading/render/base64`,
+    `${API_BASE}/grading/render/base64`,
     request
   );
 
@@ -118,7 +119,7 @@ export async function annotateAndRender(
   };
 
   const response = await axios.post(
-    `${API_BASE}/api/grading/annotate-and-render`,
+    `${API_BASE}/grading/annotate-and-render`,
     request,
     { responseType: 'blob' }
   );
