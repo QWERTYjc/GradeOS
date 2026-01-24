@@ -26,6 +26,11 @@ class AnnotationType(str, Enum):
     COMMENT = "comment"          # 文字批注/讲解
     HIGHLIGHT = "highlight"      # 高亮区域
     ARROW = "arrow"              # 箭头指示
+    # A/M mark 细粒度批注类型
+    A_MARK = "a_mark"            # A mark（答案分）标注，显示 "A1" 或 "A0"
+    M_MARK = "m_mark"            # M mark（方法分）标注，显示 "M1" 或 "M0"
+    STEP_CHECK = "step_check"    # 步骤正确勾选 ✓（用于标注每个步骤）
+    STEP_CROSS = "step_cross"    # 步骤错误叉 ✗（用于标注每个步骤）
 
 
 class AnnotationColor(str, Enum):

@@ -357,6 +357,153 @@ class AnnotationRenderer:
         # 合并图层
         image.paste(Image.alpha_composite(image.convert('RGBA'), overlay))
     
+    def _draw_a_mark(
+        self,
+        draw: ImageDraw.ImageDraw,
+        annotation: VisualAnnotation,
+        image_width: int,
+        image_height: int,
+    ) -> None:
+        """绘制 A mark（答案分）标注"""
+        x1, y1, x2, y2 = self._to_pixel_coords(
+            annotation.bounding_box, image_width, image_height
+        )
+        
+        color = self._parse_color(annotation.color)
+        font = self._get_font(self.config.font_size_score)
+        
+        # 绘制 A mark 文字（如 "A1" 或 "A0"）
+        text = annotation.text or "A"
+        
+        # 计算文字大小
+        try:
+            text_bbox = draw.textbbox((0, 0), text, font=font)
+            text_width = text_bbox[2] - text_bbox[0]
+            text_height = text_bbox[3] - text_bbox[1]
+        except AttributeError:
+            text_width, text_height = draw.textsize(text, font=font)
+        
+        text_x = x1 + (x2 - x1 - text_width) // 2
+        text_y = y1 + (y2 - y1 - text_height) // 2
+        
+        # 绘制圆形背景
+        padding = 4
+        cx = (x1 + x2) // 2
+        cy = (y1 + y2) // 2
+        radius = max(text_width, text_height) // 2 + padding
+        
+        draw.ellipse(
+            [cx - radius, cy - radius, cx + radius, cy + radius],
+            fill=(255, 255, 255, 230),
+            outline=color,
+            width=2,
+        )
+        
+        # 绘制文字
+        draw.text((text_x, text_y), text, fill=color, font=font)
+    
+    def _draw_m_mark(
+        self,
+        draw: ImageDraw.ImageDraw,
+        annotation: VisualAnnotation,
+        image_width: int,
+        image_height: int,
+    ) -> None:
+        """绘制 M mark（方法分）标注"""
+        x1, y1, x2, y2 = self._to_pixel_coords(
+            annotation.bounding_box, image_width, image_height
+        )
+        
+        color = self._parse_color(annotation.color)
+        font = self._get_font(self.config.font_size_score)
+        
+        # 绘制 M mark 文字（如 "M1" 或 "M0"）
+        text = annotation.text or "M"
+        
+        # 计算文字大小
+        try:
+            text_bbox = draw.textbbox((0, 0), text, font=font)
+            text_width = text_bbox[2] - text_bbox[0]
+            text_height = text_bbox[3] - text_bbox[1]
+        except AttributeError:
+            text_width, text_height = draw.textsize(text, font=font)
+        
+        text_x = x1 + (x2 - x1 - text_width) // 2
+        text_y = y1 + (y2 - y1 - text_height) // 2
+        
+        # 绘制方形背景
+        padding = 4
+        draw.rectangle(
+            [text_x - padding, text_y - padding, 
+             text_x + text_width + padding, text_y + text_height + padding],
+            fill=(255, 255, 255, 230),
+            outline=color,
+            width=2,
+        )
+        
+        # 绘制文字
+        draw.text((text_x, text_y), text, fill=color, font=font)
+    
+    def _draw_step_check(
+        self,
+        draw: ImageDraw.ImageDraw,
+        annotation: VisualAnnotation,
+        image_width: int,
+        image_height: int,
+    ) -> None:
+        """绘制步骤正确勾选 ✓（较小的勾选标记）"""
+        x1, y1, x2, y2 = self._to_pixel_coords(
+            annotation.bounding_box, image_width, image_height
+        )
+        
+        color = self._parse_color(annotation.color)
+        
+        # 计算勾选的关键点（较小的勾选）
+        cx = (x1 + x2) // 2
+        cy = (y1 + y2) // 2
+        size = min(x2 - x1, y2 - y1) // 2
+        
+        # 绘制小勾选 ✓
+        points = [
+            (cx - size * 0.6, cy),
+            (cx - size * 0.2, cy + size * 0.4),
+            (cx + size * 0.6, cy - size * 0.4),
+        ]
+        draw.line(points, fill=color, width=max(2, self.config.line_width_check - 1))
+    
+    def _draw_step_cross(
+        self,
+        draw: ImageDraw.ImageDraw,
+        annotation: VisualAnnotation,
+        image_width: int,
+        image_height: int,
+    ) -> None:
+        """绘制步骤错误叉 ✗（较小的叉号）"""
+        x1, y1, x2, y2 = self._to_pixel_coords(
+            annotation.bounding_box, image_width, image_height
+        )
+        
+        color = self._parse_color(annotation.color)
+        
+        # 绘制小 X
+        padding = 3
+        size = min(x2 - x1, y2 - y1) // 2
+        cx = (x1 + x2) // 2
+        cy = (y1 + y2) // 2
+        
+        draw.line(
+            [(cx - size + padding, cy - size + padding), 
+             (cx + size - padding, cy + size - padding)],
+            fill=color,
+            width=max(2, self.config.line_width_check - 1),
+        )
+        draw.line(
+            [(cx + size - padding, cy - size + padding), 
+             (cx - size + padding, cy + size - padding)],
+            fill=color,
+            width=max(2, self.config.line_width_check - 1),
+        )
+
     def render_annotation(
         self,
         draw: ImageDraw.ImageDraw,
@@ -382,6 +529,15 @@ class AnnotationRenderer:
             self._draw_comment(draw, annotation, width, height)
         elif annotation.annotation_type == AnnotationType.HIGHLIGHT:
             self._draw_highlight(image, annotation)
+        # 新增 A/M mark 和步骤标注类型
+        elif annotation.annotation_type == AnnotationType.A_MARK:
+            self._draw_a_mark(draw, annotation, width, height)
+        elif annotation.annotation_type == AnnotationType.M_MARK:
+            self._draw_m_mark(draw, annotation, width, height)
+        elif annotation.annotation_type == AnnotationType.STEP_CHECK:
+            self._draw_step_check(draw, annotation, width, height)
+        elif annotation.annotation_type == AnnotationType.STEP_CROSS:
+            self._draw_step_cross(draw, annotation, width, height)
     
     def render_page(
         self,

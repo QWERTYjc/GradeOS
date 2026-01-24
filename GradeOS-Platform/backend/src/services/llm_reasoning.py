@@ -3233,7 +3233,7 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
             page_context_info = "\n".join(context_lines)
 
         # 构建批改提示词
-        prompt = f"""你是一位专业的阅卷教师，请仔细分析以下学生的答题图像并进行精确评分，同时输出批注坐标信息。
+        prompt = f"""你是一位专业的阅卷教师，请仔细分析以下学生的答题图像并进行精确评分，同时输出**逐步骤**的批注坐标信息。
 
 ## 学生信息
 - 学生标识：{student_key}
@@ -3254,7 +3254,10 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
 7. **自白与置信度**：每道题必须输出 self_critique（自我反思）和 self_critique_confidence（置信度）
    - 自白需诚实指出不确定之处、证据不足的地方
    - 如果对某道题的评分不确定，必须在 self_critique 中说明
-8. **批注坐标**：为每道题输出批注坐标，用于在图片上渲染批改标记
+8. **逐步骤批注**：识别学生作答的每一个步骤，标注坐标和得分情况
+9. **区分 A mark 和 M mark**：
+   - **A mark（Answer mark）**：答案分，只看最终答案是否正确
+   - **M mark（Method mark）**：方法分，看解题步骤/方法是否正确
 
 ## 坐标系统说明
 - 坐标原点在图片**左上角**
@@ -3264,12 +3267,15 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
 - 所有坐标值为归一化坐标 (0.0-1.0)
 
 ## 批注类型说明
-- `score`: 分数标注，放在题目答案旁边
+- `score`: 总分标注，放在题目答案旁边
+- `a_mark`: A mark 标注（答案分），显示 "A1"（得分）或 "A0"（不得分）
+- `m_mark`: M mark 标注（方法分），显示 "M1"（得分）或 "M0"（不得分）
+- `step_check`: 步骤正确勾选 ✓
+- `step_cross`: 步骤错误叉 ✗
 - `error_circle`: 错误圈选，圈出错误的地方
-- `correct_check`: 正确勾选 ✓
-- `partial_check`: 部分正确 △
-- `wrong_cross`: 错误叉 ✗
 - `comment`: 文字批注/错误讲解
+- `correct_check`: 正确勾选 ✓（用于整题）
+- `wrong_cross`: 错误叉 ✗（用于整题）
 
 ## 输出格式（JSON）
 ```json
@@ -3296,13 +3302,48 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
             "self_critique": "【必须填写】自我反思：对本题评分的不确定之处、可能的遗漏、证据是否充分等",
             "self_critique_confidence": 自评置信度（0.0-1.0，越低表示越不确定）,
             "source_pages": [页码列表],
+            "answer_region": {{
+                "x_min": 0.1, "y_min": 0.2, "x_max": 0.9, "y_max": 0.4
+            }},
+            "steps": [
+                {{
+                    "step_id": "1.1",
+                    "step_content": "学生写的第一步内容",
+                    "step_region": {{"x_min": 0.1, "y_min": 0.2, "x_max": 0.8, "y_max": 0.25}},
+                    "is_correct": true,
+                    "mark_type": "M",
+                    "mark_value": 1,
+                    "feedback": "方法正确"
+                }},
+                {{
+                    "step_id": "1.2",
+                    "step_content": "学生写的第二步内容",
+                    "step_region": {{"x_min": 0.1, "y_min": 0.26, "x_max": 0.8, "y_max": 0.31}},
+                    "is_correct": false,
+                    "mark_type": "M",
+                    "mark_value": 0,
+                    "feedback": "计算错误：3+5 应该等于 8，不是 9",
+                    "error_detail": "3+5=9 写错了"
+                }},
+                {{
+                    "step_id": "1.3",
+                    "step_content": "最终答案",
+                    "step_region": {{"x_min": 0.1, "y_min": 0.32, "x_max": 0.5, "y_max": 0.36}},
+                    "is_correct": false,
+                    "mark_type": "A",
+                    "mark_value": 0,
+                    "feedback": "答案错误，因为前面计算有误"
+                }}
+            ],
             "scoring_point_results": [
                 {{
                     "point_id": "得分点ID",
                     "description": "得分点描述",
+                    "mark_type": "M 或 A",
                     "max_score": 该得分点满分,
                     "awarded": 获得的分数,
-                    "evidence": "【必须引用原文】评分依据，引用学生答案中的具体内容"
+                    "evidence": "【必须引用原文】评分依据，引用学生答案中的具体内容",
+                    "error_region": {{"x_min": 0.3, "y_min": 0.26, "x_max": 0.5, "y_max": 0.31}}
                 }}
             ],
             "annotations": [
@@ -3310,29 +3351,57 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
                     "type": "score",
                     "page_index": 0,
                     "bounding_box": {{"x_min": 0.85, "y_min": 0.2, "x_max": 0.95, "y_max": 0.25}},
-                    "text": "8/10",
+                    "text": "2/3",
                     "color": "#FF8800"
+                }},
+                {{
+                    "type": "m_mark",
+                    "page_index": 0,
+                    "bounding_box": {{"x_min": 0.82, "y_min": 0.21, "x_max": 0.88, "y_max": 0.24}},
+                    "text": "M1",
+                    "color": "#00AA00"
+                }},
+                {{
+                    "type": "m_mark",
+                    "page_index": 0,
+                    "bounding_box": {{"x_min": 0.82, "y_min": 0.27, "x_max": 0.88, "y_max": 0.30}},
+                    "text": "M0",
+                    "color": "#FF0000"
+                }},
+                {{
+                    "type": "a_mark",
+                    "page_index": 0,
+                    "bounding_box": {{"x_min": 0.82, "y_min": 0.33, "x_max": 0.88, "y_max": 0.36}},
+                    "text": "A0",
+                    "color": "#FF0000"
+                }},
+                {{
+                    "type": "step_check",
+                    "page_index": 0,
+                    "bounding_box": {{"x_min": 0.78, "y_min": 0.21, "x_max": 0.81, "y_max": 0.24}},
+                    "text": "",
+                    "color": "#00AA00"
+                }},
+                {{
+                    "type": "step_cross",
+                    "page_index": 0,
+                    "bounding_box": {{"x_min": 0.78, "y_min": 0.27, "x_max": 0.81, "y_max": 0.30}},
+                    "text": "",
+                    "color": "#FF0000"
                 }},
                 {{
                     "type": "error_circle",
                     "page_index": 0,
-                    "bounding_box": {{"x_min": 0.3, "y_min": 0.35, "x_max": 0.5, "y_max": 0.38}},
-                    "text": "计算错误",
+                    "bounding_box": {{"x_min": 0.3, "y_min": 0.26, "x_max": 0.5, "y_max": 0.31}},
+                    "text": "3+5≠9",
                     "color": "#FF0000"
                 }},
                 {{
                     "type": "comment",
                     "page_index": 0,
-                    "bounding_box": {{"x_min": 0.55, "y_min": 0.35, "x_max": 0.9, "y_max": 0.4}},
+                    "bounding_box": {{"x_min": 0.55, "y_min": 0.27, "x_max": 0.78, "y_max": 0.30}},
                     "text": "应为 3+5=8",
                     "color": "#0066FF"
-                }},
-                {{
-                    "type": "correct_check",
-                    "page_index": 0,
-                    "bounding_box": {{"x_min": 0.88, "y_min": 0.25, "x_max": 0.92, "y_max": 0.28}},
-                    "text": "",
-                    "color": "#00AA00"
                 }}
             ]
         }}
@@ -3349,15 +3418,21 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
 ```
 
 ## 批注坐标要求
-1. **分数标注位置**：通常放在答案区域的右上角或右侧
-2. **错误圈选**：只圈出具体错误的部分，不要圈太大范围
-3. **讲解位置**：放在错误旁边或下方，不要遮挡答案
-4. **颜色规范**：
-   - 红色 #FF0000：错误
-   - 绿色 #00AA00：正确
-   - 橙色 #FF8800：部分正确
+1. **每个步骤都要标注**：识别学生写的每一行/每一步，给出坐标
+2. **区分 A/M mark**：
+   - M mark 标注在方法步骤旁边，显示 "M1"（得分）或 "M0"（不得分）
+   - A mark 标注在最终答案旁边，显示 "A1"（得分）或 "A0"（不得分）
+3. **错误必须圈出**：用 error_circle 圈出具体错误位置，并用 comment 说明原因
+4. **坐标必须准确**：仔细观察图片，给出精确的坐标位置
+5. **颜色规范**：
+   - 绿色 #00AA00：正确（M1, A1, ✓）
+   - 红色 #FF0000：错误（M0, A0, ✗, 错误圈选）
+   - 橙色 #FF8800：部分正确/总分
    - 蓝色 #0066FF：讲解/批注
-5. **每道题至少输出一个 score 类型的批注**，标注该题得分
+6. **每道题至少输出**：
+   - 一个 score 类型的批注（总分）
+   - 每个步骤对应的 m_mark 或 a_mark
+   - 每个步骤对应的 step_check 或 step_cross
 
 ## 重要提醒
 - 必须批改全部 {questions_count} 道题
@@ -3367,6 +3442,7 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
 - self_critique 必须诚实反映评分的不确定性
 - 如果无法识别某道题的答案，confidence 和 self_critique_confidence 设为较低值并在 self_critique 中说明原因
 - **批注坐标必须准确**：仔细观察图片，给出精确的坐标位置
+- **每个步骤都要标注**：不要遗漏任何步骤的坐标
 """
 
         try:

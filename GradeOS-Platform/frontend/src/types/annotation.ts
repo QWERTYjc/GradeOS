@@ -14,7 +14,12 @@ export type AnnotationType =
   | 'wrong_cross'     // 错误叉 ✗
   | 'comment'         // 文字批注
   | 'highlight'       // 高亮区域
-  | 'arrow';          // 箭头指示
+  | 'arrow'           // 箭头指示
+  // A/M mark 细粒度批注类型
+  | 'a_mark'          // A mark（答案分）标注，显示 "A1" 或 "A0"
+  | 'm_mark'          // M mark（方法分）标注，显示 "M1" 或 "M0"
+  | 'step_check'      // 步骤正确勾选 ✓
+  | 'step_cross';     // 步骤错误叉 ✗
 
 /** 批注颜色 */
 export const AnnotationColors = {
@@ -144,10 +149,14 @@ export function toPixelCoords(
 export function getAnnotationColor(type: AnnotationType): string {
   switch (type) {
     case 'correct_check':
+    case 'step_check':
+    case 'a_mark':  // A1 得分时为绿色
+    case 'm_mark':  // M1 得分时为绿色（实际颜色由 text 内容决定）
       return AnnotationColors.GREEN;
     case 'error_circle':
     case 'error_underline':
     case 'wrong_cross':
+    case 'step_cross':
       return AnnotationColors.RED;
     case 'partial_check':
     case 'score':
