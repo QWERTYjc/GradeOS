@@ -99,6 +99,19 @@ export const normalizeStudentResults = (raw: RawObject[]): StudentResult[] => {
           mergeSource: q.merge_source || q.mergeSource,
           scoringPoints: q.scoringPoints || q.scoring_points,
           scoringPointResults: pointResults,
+          // 🔥 新增：批注坐标和步骤信息
+          annotations: q.annotations || [],
+          steps: (q.steps || []).map((step: RawObject) => ({
+            step_id: step.step_id || step.stepId || '',
+            step_content: step.step_content || step.stepContent || '',
+            step_region: step.step_region || step.stepRegion,
+            is_correct: step.is_correct ?? step.isCorrect ?? false,
+            mark_type: step.mark_type || step.markType || 'M',
+            mark_value: step.mark_value ?? step.markValue ?? 0,
+            feedback: step.feedback || '',
+            error_detail: step.error_detail || step.errorDetail || '',
+          })),
+          answerRegion: q.answer_region || q.answerRegion,
         };
       })
       : [];

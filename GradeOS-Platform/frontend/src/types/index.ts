@@ -196,6 +196,41 @@ export interface QuestionResult {
   isCrossPage?: boolean;
   /** 合并来源（如果是合并结果）- 新增 */
   mergeSource?: string[];
+  /** 批注坐标列表 - 用于 Canvas 渲染 */
+  annotations?: StepAnnotation[];
+  /** 步骤信息列表 - 包含每一步的坐标和得分 */
+  steps?: StepInfo[];
+  /** 答案区域坐标 */
+  answerRegion?: BoundingBoxCoords;
+}
+
+/** 步骤批注 - 后端返回的批注数据 */
+export interface StepAnnotation {
+  type: string;
+  page_index?: number;
+  bounding_box: BoundingBoxCoords;
+  text?: string;
+  color?: string;
+}
+
+/** 步骤信息 - 包含每一步的坐标和得分 */
+export interface StepInfo {
+  step_id: string;
+  step_content?: string;
+  step_region?: BoundingBoxCoords;
+  is_correct: boolean;
+  mark_type: 'M' | 'A';
+  mark_value: number;
+  feedback?: string;
+  error_detail?: string;
+}
+
+/** 边界框坐标 */
+export interface BoundingBoxCoords {
+  x_min: number;
+  y_min: number;
+  x_max: number;
+  y_max: number;
 }
 
 /** 跨页题目信息 - 对应后端 CrossPageQuestion */

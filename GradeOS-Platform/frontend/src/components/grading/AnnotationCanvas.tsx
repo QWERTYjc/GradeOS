@@ -132,6 +132,17 @@ export default function AnnotationCanvas({
         case 'highlight':
           drawHighlight(ctx, x, y, w, h, color);
           break;
+        // 🔥 新增：A/M mark 细粒度批注类型
+        case 'a_mark':
+        case 'm_mark':
+          drawMark(ctx, x, y, w, h, ann.text || '', color);
+          break;
+        case 'step_check':
+          drawCheckMark(ctx, x, y, w, h, color);
+          break;
+        case 'step_cross':
+          drawCross(ctx, x, y, w, h, color);
+          break;
       }
     });
   }, [annotations, imageLoaded, imageSize, width, height, showText]);
@@ -350,4 +361,60 @@ function drawHighlight(
   ctx.globalAlpha = RENDER_CONFIG.highlightAlpha;
   ctx.fillRect(x, y, w, h);
   ctx.globalAlpha = 1.0;
+}
+
+/**
+ * 绘制 A/M mark 标注
+ * 显示 "A1", "A0", "M1", "M0" 等标记
+ */
+function drawMark(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  text: string,
+  color: string
+) {
+  const padding = 2;
+  const fontSize = Math.min(w, h) * 0.7;
+  ctx.font = `bold ${Math.max(fontSize, 12)}px "Microsoft YaHei", "PingFang SC", sans-serif`;
+  
+  const metrics = ctx.measureText(text);
+  const textWidth = metrics.width;
+  const textHeight = fontSize;
+  
+  // 计算居中位置
+  const textX = x + (w - textWidth) / 2;
+  const textY = y + (h - textHeight) / 2;
+  
+  // 背景圆角矩形
+  ctx.fillStyle = `rgba(255, 255, 255, 0.95)`;
+  const bgX = textX - padding;
+  const bgY = textY - padding;
+  const bgW = textWidth + padding * 2;
+  const bgH = textHeight + padding * 2;
+  const radius = 3;
+  
+  ctx.beginPath();
+  ctx.moveTo(bgX + radius, bgY);
+  ctx.lineTo(bgX + bgW - radius, bgY);
+  ctx.quadraticCurveTo(bgX + bgW, bgY, bgX + bgW, bgY + radius);
+  ctx.lineTo(bgX + bgW, bgY + bgH - radius);
+  ctx.quadraticCurveTo(bgX + bgW, bgY + bgH, bgX + bgW - radius, bgY + bgH);
+  ctx.lineTo(bgX + radius, bgY + bgH);
+  ctx.quadraticCurveTo(bgX, bgY + bgH, bgX, bgY + bgH - radius);
+  ctx.lineTo(bgX, bgY + radius);
+  ctx.quadraticCurveTo(bgX, bgY, bgX + radius, bgY);
+  ctx.closePath();
+  ctx.fill();
+  
+  // 边框
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  
+  // 文字
+  ctx.fillStyle = color;
+  ctx.fillText(text, textX, textY + textHeight - 2);
 }

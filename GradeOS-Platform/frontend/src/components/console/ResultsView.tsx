@@ -758,12 +758,12 @@ export const ResultsView: React.FC = () => {
                 if (q.steps && q.steps.length > 0) {
                     q.steps.forEach(step => {
                         if (step.step_region) {
+                            // 构建 M/A mark 文本（如 "M1", "M0", "A1", "A0"）
                             const markText = step.mark_type === 'M' 
                                 ? `M${step.mark_value}` 
                                 : `A${step.mark_value}`;
-                            const annotationType = step.is_correct 
-                                ? (step.mark_type === 'M' ? 'm_mark' : 'a_mark')
-                                : 'step_cross';
+                            // 使用 m_mark 或 a_mark 类型，根据 mark_type 决定
+                            const annotationType = step.mark_type === 'M' ? 'm_mark' : 'a_mark';
                             
                             pageAnnotations.push({
                                 annotation_type: annotationType,
@@ -771,6 +771,21 @@ export const ResultsView: React.FC = () => {
                                 text: markText,
                                 color: step.is_correct ? '#00AA00' : '#FF0000',
                             } as VisualAnnotation);
+                            
+                            // 如果步骤错误，额外添加错误圈选
+                            if (!step.is_correct && step.feedback) {
+                                pageAnnotations.push({
+                                    annotation_type: 'comment',
+                                    bounding_box: {
+                                        x_min: Math.min((step.step_region.x_max || 0.8) + 0.02, 0.95),
+                                        y_min: step.step_region.y_min,
+                                        x_max: Math.min((step.step_region.x_max || 0.8) + 0.25, 1.0),
+                                        y_max: step.step_region.y_max,
+                                    },
+                                    text: step.feedback,
+                                    color: '#0066FF',
+                                } as VisualAnnotation);
+                            }
                         }
                     });
                 }
