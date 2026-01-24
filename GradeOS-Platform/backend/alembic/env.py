@@ -10,6 +10,16 @@ from alembic import context
 # Alembic Config 对象
 config = context.config
 
+# Keep psycopg3 for SQLAlchemy when DATABASE_URL lacks a driver prefix.
+def _normalize_db_url(url: str) -> str:
+    if url.startswith("postgresql+"):
+        return url
+    if url.startswith("postgresql://"):
+        return f"postgresql+psycopg://{url[len('postgresql://'):]}"
+    if url.startswith("postgres://"):
+        return f"postgresql+psycopg://{url[len('postgres://'):]}"
+    return url
+
 # 配置日志
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
@@ -17,7 +27,7 @@ if config.config_file_name is not None:
 # 从环境变量读取数据库 URL（如果存在）
 database_url = os.getenv("DATABASE_URL")
 if database_url:
-    config.set_main_option("sqlalchemy.url", database_url)
+    config.set_main_option("sqlalchemy.url", _normalize_db_url(database_url))
 
 # 目标元数据（暂时为 None，因为我们使用原生 SQL）
 target_metadata = None
