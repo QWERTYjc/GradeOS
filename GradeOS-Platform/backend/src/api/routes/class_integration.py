@@ -18,21 +18,126 @@ from typing import List, Optional, Dict, Any
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 
+# SQLite 作为降级方案
 from src.db.sqlite import (
+    GradingHistory as SqliteGradingHistory,
+    StudentGradingResult as SqliteStudentGradingResult,
+    save_grading_history as sqlite_save_grading_history,
+    get_grading_history as sqlite_get_grading_history,
+    list_grading_history as sqlite_list_grading_history,
+    save_student_result as sqlite_save_student_result,
+    get_student_results as sqlite_get_student_results,
+)
+
+# PostgreSQL 作为主存储
+from src.db.postgres_grading import (
+    save_grading_history as pg_save_grading_history,
+    save_student_result as pg_save_student_result,
+    get_grading_history as pg_get_grading_history,
+    list_grading_history as pg_list_grading_history,
+    get_student_results as pg_get_student_results,
     GradingHistory,
     StudentGradingResult,
-    save_grading_history,
-    get_grading_history,
-    list_grading_history,
-    save_student_result,
-    get_student_results,
 )
+from src.utils.database import db
+
 from src.orchestration.langgraph_orchestrator import Orchestrator
 from src.api.dependencies import get_orchestrator
 
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["班级系统集成"])
+
+
+# ==================== 智能存储适配器 ====================
+
+
+async def save_grading_history(history: GradingHistory) -> None:
+    """智能存储适配器：优先使用 PostgreSQL，降级时使用 SQLite"""
+    if db.is_available:
+        try:
+            await pg_save_grading_history(history)
+            logger.info(f"批改历史已保存到 PostgreSQL: batch_id={history.batch_id}")
+            return
+        except Exception as e:
+            logger.warning(f"PostgreSQL 保存失败，降级到 SQLite: {e}")
+    
+    # 降级到 SQLite
+    sqlite_history = SqliteGradingHistory(
+        id=history.id,
+        batch_id=history.batch_id,
+        status=history.status,
+        class_ids=history.class_ids,
+        created_at=history.created_at,
+        completed_at=history.completed_at,
+        total_students=history.total_students,
+        average_score=history.average_score,
+        result_data=history.result_data,
+    )
+    sqlite_save_grading_history(sqlite_history)
+    logger.info(f"批改历史已保存到 SQLite (降级模式): batch_id={history.batch_id}")
+
+
+async def save_student_result(result: StudentGradingResult) -> None:
+    """智能存储适配器：优先使用 PostgreSQL，降级时使用 SQLite"""
+    if db.is_available:
+        try:
+            await pg_save_student_result(result)
+            return
+        except Exception as e:
+            logger.warning(f"PostgreSQL 保存学生结果失败，降级到 SQLite: {e}")
+    
+    # 降级到 SQLite
+    sqlite_result = SqliteStudentGradingResult(
+        id=result.id,
+        grading_history_id=result.grading_history_id,
+        student_key=result.student_key,
+        score=result.score,
+        max_score=result.max_score,
+        class_id=result.class_id,
+        student_id=result.student_id,
+        summary=result.summary,
+        self_report=result.self_report,
+        result_data=result.result_data,
+        imported_at=result.imported_at,
+        revoked_at=result.revoked_at,
+    )
+    sqlite_save_student_result(sqlite_result)
+
+
+async def get_grading_history(batch_id: str):
+    """智能读取适配器：优先从 PostgreSQL 读取"""
+    if db.is_available:
+        try:
+            result = await pg_get_grading_history(batch_id)
+            if result:
+                return result
+        except Exception as e:
+            logger.warning(f"PostgreSQL 读取失败，降级到 SQLite: {e}")
+    
+    return sqlite_get_grading_history(batch_id)
+
+
+async def list_grading_history(class_id: str = None, limit: int = 50):
+    """智能列表适配器：优先从 PostgreSQL 读取"""
+    if db.is_available:
+        try:
+            return await pg_list_grading_history(class_id, limit)
+        except Exception as e:
+            logger.warning(f"PostgreSQL 列表失败，降级到 SQLite: {e}")
+    
+    return sqlite_list_grading_history(class_id, limit)
+
+
+async def get_student_results(grading_history_id: str):
+    """智能读取适配器：优先从 PostgreSQL 读取"""
+    if db.is_available:
+        try:
+            return await pg_get_student_results(grading_history_id)
+        except Exception as e:
+            logger.warning(f"PostgreSQL 读取学生结果失败，降级到 SQLite: {e}")
+    
+    return sqlite_get_student_results(grading_history_id)
 
 
 # ==================== Pydantic Models ====================
@@ -225,7 +330,7 @@ async def import_grading_to_class(
         total_students=len(student_results),
         average_score=avg_score,
     )
-    save_grading_history(history)
+    await save_grading_history(history)
     
     # 保存学生结果
     imported_count = 0
@@ -251,7 +356,7 @@ async def import_grading_to_class(
                 result_data=result,
                 imported_at=datetime.now().isoformat(),
             )
-            save_student_result(student_result)
+            await save_student_result(student_result)
             imported_count += 1
     
     logger.info(f"批改结果已导入: history_id={history_id}, count={imported_count}")
@@ -277,7 +382,7 @@ async def revoke_grading_import(
     logger.info(f"撤回批改导入: batch_id={batch_id}, class_id={request.class_id}")
     
     # 查找历史记录
-    history = get_grading_history(batch_id)
+    history = await get_grading_history(batch_id)
     if not history:
         raise HTTPException(status_code=404, detail="批改记录不存在")
     
@@ -326,7 +431,7 @@ async def get_class_grading_history(
     """
     logger.info(f"获取班级批改历史: class_id={class_id}")
     
-    histories = list_grading_history(class_id=class_id, limit=limit)
+    histories = await list_grading_history(class_id=class_id, limit=limit)
     
     records = [
         GradingHistoryItem(

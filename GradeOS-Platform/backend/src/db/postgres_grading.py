@@ -60,7 +60,7 @@ async def save_grading_history(history: GradingHistory) -> None:
                 INSERT INTO grading_history 
                 (id, batch_id, class_ids, created_at, completed_at, status, 
                  total_students, average_score, result_data)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (batch_id) DO UPDATE SET
                     class_ids = EXCLUDED.class_ids,
                     completed_at = EXCLUDED.completed_at,
@@ -92,17 +92,19 @@ async def get_grading_history(batch_id_or_id: str) -> Optional[GradingHistory]:
     try:
         async with db.connection() as conn:
             # 先尝试通过 batch_id 查询
-            row = await conn.fetchrow(
-                "SELECT * FROM grading_history WHERE batch_id = $1",
-                batch_id_or_id
+            cursor = await conn.execute(
+                "SELECT * FROM grading_history WHERE batch_id = %s",
+                (batch_id_or_id,)
             )
+            row = await cursor.fetchone()
             
             # 如果没找到，尝试通过 id 查询
             if not row:
-                row = await conn.fetchrow(
-                    "SELECT * FROM grading_history WHERE id::text = $1",
-                    batch_id_or_id
+                cursor = await conn.execute(
+                    "SELECT * FROM grading_history WHERE id::text = %s",
+                    (batch_id_or_id,)
                 )
+                row = await cursor.fetchone()
             
             if not row:
                 return None
@@ -132,21 +134,22 @@ async def list_grading_history(class_id: Optional[str] = None, limit: int = 50) 
         async with db.connection() as conn:
             if class_id:
                 # 使用 JSONB 包含查询
-                rows = await conn.fetch(
+                cursor = await conn.execute(
                     """
                     SELECT * FROM grading_history 
-                    WHERE class_ids @> $1::jsonb
+                    WHERE class_ids @> %s::jsonb
                     ORDER BY created_at DESC 
-                    LIMIT $2
+                    LIMIT %s
                     """,
-                    json.dumps([class_id]),
-                    limit
+                    (json.dumps([class_id]), limit)
                 )
             else:
-                rows = await conn.fetch(
-                    "SELECT * FROM grading_history ORDER BY created_at DESC LIMIT $1",
-                    limit
+                cursor = await conn.execute(
+                    "SELECT * FROM grading_history ORDER BY created_at DESC LIMIT %s",
+                    (limit,)
                 )
+            
+            rows = await cursor.fetchall()
             
             histories = []
             for row in rows:
@@ -181,7 +184,7 @@ async def save_student_result(result: StudentGradingResult) -> None:
                 (id, grading_history_id, student_key, class_id, student_id,
                  score, max_score, summary, self_report, result_data, 
                  imported_at, revoked_at)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (id) DO UPDATE SET
                     score = EXCLUDED.score,
                     max_score = EXCLUDED.max_score,
@@ -216,10 +219,11 @@ async def get_student_results(grading_history_id: str) -> List[StudentGradingRes
     """获取批改历史的所有学生结果"""
     try:
         async with db.connection() as conn:
-            rows = await conn.fetch(
-                "SELECT * FROM student_grading_results WHERE grading_history_id = $1",
-                grading_history_id
+            cursor = await conn.execute(
+                "SELECT * FROM student_grading_results WHERE grading_history_id = %s",
+                (grading_history_id,)
             )
+            rows = await cursor.fetchall()
             
             results = []
             for row in rows:

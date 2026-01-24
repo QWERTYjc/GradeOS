@@ -920,7 +920,7 @@ async def stream_langgraph_progress(
                             "homework_id": homework_id,
                         } if class_report or class_id or homework_id else None,
                     )
-                    save_grading_history(history)
+                    await save_grading_history(history)
 
                     student_map_by_index = {}
                     student_map_by_name = {}
@@ -981,7 +981,7 @@ async def stream_langgraph_progress(
                             self_report=self_audit.get("summary") if isinstance(self_audit, dict) else None,
                             result_data=result,
                         )
-                        save_student_result(student_result)
+                        await save_student_result(student_result)
 
                         if class_id and homework_id and student_id:
                             feedback = None
