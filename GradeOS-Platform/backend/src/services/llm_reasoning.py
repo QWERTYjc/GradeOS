@@ -1339,7 +1339,7 @@ class LLMReasoningClient:
 
         if standard_answer:
             answer_compact = re.sub(r"\s+", "", standard_answer)
-            if len(answer_compact) <= 4 and re.fullmatch(r"[0-9A-Za-z\\-+.=()（）/]+", answer_compact):
+            if len(answer_compact) <= 4 and re.fullmatch(r"[0-9A-Za-z+\\-.=()（）/\\\\]+", answer_compact):
                 return "objective"
             if len(standard_answer) > 30 or "\n" in standard_answer:
                 return "subjective"
