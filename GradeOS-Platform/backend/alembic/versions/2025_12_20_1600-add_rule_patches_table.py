@@ -52,10 +52,10 @@ def upgrade() -> None:
     )
     
     # 创建索引
-    op.create_index('idx_patches_status', 'rule_patches', ['status'], comment='按状态查询补丁')
-    op.create_index('idx_patches_version', 'rule_patches', ['version'], unique=True, comment='按版本号查询补丁')
-    op.create_index('idx_patches_created', 'rule_patches', ['created_at'], comment='按创建时间查询补丁')
-    op.create_index('idx_patches_deployed', 'rule_patches', ['deployed_at'], comment='按部署时间查询补丁')
+    op.create_index('idx_patches_status', 'rule_patches', ['status'])
+    op.create_index('idx_patches_version', 'rule_patches', ['version'], unique=True)
+    op.create_index('idx_patches_created', 'rule_patches', ['created_at'])
+    op.create_index('idx_patches_deployed', 'rule_patches', ['deployed_at'])
 
 
 def downgrade() -> None:
