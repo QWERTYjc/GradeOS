@@ -3092,6 +3092,10 @@ async def index_merge_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                             "merge_source": q.get("merge_source") or q.get("mergeSource"),
                             "question_type": q.get("question_type") or q.get("questionType"),
                             "grading_mode": grading_mode,
+                            # 🔥 批注坐标字段
+                            "annotations": q.get("annotations") or [],
+                            "steps": q.get("steps") or [],
+                            "answer_region": q.get("answer_region") or q.get("answerRegion"),
                         })
 
             student_key = boundary["student_key"]
