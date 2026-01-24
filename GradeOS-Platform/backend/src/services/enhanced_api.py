@@ -326,6 +326,8 @@ class EnhancedAPIService:
         验证：需求 7.1
         """
         while self._running:
+            pubsub = None
+            pattern = None
             try:
                 redis_client = self.pool_manager.get_redis_client()
                 pubsub = redis_client.pubsub()
@@ -362,8 +364,6 @@ class EnhancedAPIService:
                         except Exception as e:
                             logger.warning(f"处理 Pub/Sub 消息失败: {e}")
                 
-                await pubsub.punsubscribe(pattern)
-                await pubsub.close()
                 
             except PoolNotInitializedError:
                 logger.debug("Redis连接不可用，将禁用实时状态推送功能")
@@ -371,6 +371,17 @@ class EnhancedAPIService:
             except Exception as e:
                 logger.warning(f"Pub/Sub 监听器错误: {e}")
                 await asyncio.sleep(1)
+            finally:
+                if pubsub is not None:
+                    try:
+                        if pattern:
+                            await pubsub.punsubscribe(pattern)
+                    except Exception as exc:
+                        logger.debug(f"Pub/Sub unsubscribe failed: {exc}")
+                    try:
+                        await pubsub.close()
+                    except Exception as exc:
+                        logger.debug(f"Pub/Sub close failed: {exc}")
     
     async def _get_submission_state(
         self,
