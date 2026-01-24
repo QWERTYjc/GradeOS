@@ -1005,7 +1005,7 @@ export const ResultsView: React.FC = () => {
         if (!submissionId) return;
         setExportLoading('images');
         try {
-            const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || ''}/api/batch/export/annotated-images/${submissionId}`, {
+            const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || ''}/batch/export/annotated-images/${submissionId}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ include_original: false }),
@@ -1030,7 +1030,7 @@ export const ResultsView: React.FC = () => {
         if (!submissionId) return;
         setExportLoading('excel');
         try {
-            const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || ''}/api/batch/export/excel/${submissionId}`, {
+            const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || ''}/batch/export/excel/${submissionId}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({}),
@@ -1064,7 +1064,7 @@ export const ResultsView: React.FC = () => {
                 });
             }
             
-            const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || ''}/api/batch/export/smart-excel/${submissionId}`, {
+            const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || ''}/batch/export/smart-excel/${submissionId}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
