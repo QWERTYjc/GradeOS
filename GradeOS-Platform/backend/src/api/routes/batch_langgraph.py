@@ -22,12 +22,15 @@ from pydantic import BaseModel, Field
 import fitz
 from PIL import Image
 import os
+import redis.asyncio as redis
+from redis.exceptions import RedisError
 
 from src.models.enums import SubmissionStatus
 from src.orchestration.base import Orchestrator
 from src.api.dependencies import get_orchestrator
 from src.utils.image import to_jpeg_bytes, pil_to_jpeg_bytes
 from src.utils.database import db
+from src.utils.pool_manager import UnifiedPoolManager, PoolNotInitializedError
 
 # SQLite 作为降级方案
 from src.db.sqlite import (
@@ -59,6 +62,11 @@ DEBUG_LOG_PATH = os.getenv("GRADEOS_DEBUG_LOG_PATH")
 TEACHER_MAX_ACTIVE_RUNS = int(os.getenv("TEACHER_MAX_ACTIVE_RUNS", "3"))
 _TEACHER_SEMAPHORE_LOCK = asyncio.Lock()
 _TEACHER_SEMAPHORES: Dict[str, asyncio.Semaphore] = {}
+REDIS_PROGRESS_TTL_SECONDS = int(os.getenv("REDIS_PROGRESS_TTL_SECONDS", "86400"))
+REDIS_PROGRESS_KEY_PREFIX = os.getenv("REDIS_PROGRESS_KEY_PREFIX", "batch_progress")
+_REDIS_CACHE_SKIP_TYPES = {"images_ready", "rubric_images_ready", "llm_stream_chunk"}
+_REDIS_CLIENT: Optional[redis.Redis] = None
+_REDIS_CLIENT_CHECKED: bool = False
 
 
 def _is_ws_connected(websocket: WebSocket) -> bool:
@@ -66,6 +74,18 @@ def _is_ws_connected(websocket: WebSocket) -> bool:
         websocket.client_state == WebSocketState.CONNECTED
         and websocket.application_state == WebSocketState.CONNECTED
     )
+
+
+def _discard_connection(batch_id: str, websocket: WebSocket) -> None:
+    connections = active_connections.get(batch_id)
+    if not connections:
+        return
+    try:
+        connections.remove(websocket)
+    except ValueError:
+        return
+    if not connections:
+        active_connections.pop(batch_id, None)
 
 
 def _write_debug_log(payload: Dict[str, Any]) -> None:
@@ -79,6 +99,116 @@ def _write_debug_log(payload: Dict[str, Any]) -> None:
         logger.debug(f"Failed to write debug log: {exc}")
 
 
+def _progress_cache_key(batch_id: str) -> str:
+    return f"{REDIS_PROGRESS_KEY_PREFIX}:{batch_id}"
+
+
+def _decode_redis_value(value: Any) -> str:
+    if isinstance(value, (bytes, bytearray)):
+        return value.decode("utf-8", errors="ignore")
+    return str(value)
+
+
+async def _get_redis_client() -> Optional[redis.Redis]:
+    global _REDIS_CLIENT, _REDIS_CLIENT_CHECKED
+    if _REDIS_CLIENT_CHECKED:
+        return _REDIS_CLIENT
+    _REDIS_CLIENT_CHECKED = True
+    try:
+        pool_manager = await UnifiedPoolManager.get_instance()
+        if pool_manager.is_initialized:
+            _REDIS_CLIENT = pool_manager.get_redis_client()
+    except PoolNotInitializedError:
+        _REDIS_CLIENT = None
+    except Exception as exc:
+        logger.debug(f"Redis client unavailable: {exc}")
+        _REDIS_CLIENT = None
+    return _REDIS_CLIENT
+
+
+async def _clear_progress_fields(
+    redis_client: redis.Redis,
+    cache_key: str,
+    prefixes: Optional[List[str]] = None,
+    fields: Optional[List[str]] = None,
+) -> None:
+    to_delete: List[Any] = []
+    if fields:
+        to_delete.extend(fields)
+    if prefixes:
+        try:
+            existing_fields = await redis_client.hkeys(cache_key)
+        except RedisError as exc:
+            logger.debug(f"Failed to fetch Redis fields for cleanup: {exc}")
+            existing_fields = []
+        for field in existing_fields:
+            field_name = _decode_redis_value(field)
+            if any(field_name.startswith(prefix) for prefix in prefixes):
+                to_delete.append(field)
+    if not to_delete:
+        return
+    try:
+        await redis_client.hdel(cache_key, *to_delete)
+    except RedisError as exc:
+        logger.debug(f"Failed to cleanup Redis progress cache: {exc}")
+
+
+async def _cache_progress_message(batch_id: str, message: dict) -> None:
+    msg_type = message.get("type", "unknown")
+    if msg_type in _REDIS_CACHE_SKIP_TYPES:
+        return
+
+    redis_client = await _get_redis_client()
+    if not redis_client:
+        return
+
+    cache_key = _progress_cache_key(batch_id)
+    field = msg_type
+    if msg_type == "workflow_update":
+        node_id = message.get("nodeId")
+        if node_id:
+            field = f"{msg_type}:{node_id}"
+
+    try:
+        payload = json.dumps(message, ensure_ascii=False)
+        await redis_client.hset(cache_key, field, payload)
+        await redis_client.expire(cache_key, REDIS_PROGRESS_TTL_SECONDS)
+        if msg_type in ("review_completed", "workflow_completed"):
+            await _clear_progress_fields(
+                redis_client,
+                cache_key,
+                fields=["review_required"],
+            )
+    except RedisError as exc:
+        logger.debug(f"Failed to cache progress message in Redis: {exc}")
+
+
+async def _load_cached_progress_messages(batch_id: str) -> List[dict]:
+    redis_client = await _get_redis_client()
+    if not redis_client:
+        return []
+    cache_key = _progress_cache_key(batch_id)
+    try:
+        entries = await redis_client.hgetall(cache_key)
+    except RedisError as exc:
+        logger.debug(f"Failed to fetch cached progress from Redis: {exc}")
+        return []
+
+    messages: List[dict] = []
+    for field in sorted(entries.keys(), key=_decode_redis_value):
+        payload = entries.get(field)
+        if payload is None:
+            continue
+        raw = _decode_redis_value(payload)
+        try:
+            message = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(message, dict):
+            messages.append(message)
+    return messages
+
+
 async def save_grading_history(history: GradingHistory) -> None:
     """智能存储适配器：优先使用 PostgreSQL，降级时使用 SQLite"""
     # 尝试 PostgreSQL
@@ -88,7 +218,8 @@ async def save_grading_history(history: GradingHistory) -> None:
             logger.info(f"批改历史已保存到 PostgreSQL: batch_id={history.batch_id}")
             return
         except Exception as e:
-            logger.warning(f"PostgreSQL 保存失败，降级到 SQLite: {e}")
+            logger.error(f"PostgreSQL 保存失败: {e}", exc_info=True)
+            raise
     
     # 降级到 SQLite
     try:
@@ -118,7 +249,8 @@ async def save_student_result(result: StudentGradingResult) -> None:
             await pg_save_student_result(result)
             return
         except Exception as e:
-            logger.warning(f"PostgreSQL 保存学生结果失败，降级到 SQLite: {e}")
+            logger.error(f"PostgreSQL 保存学生结果失败: {e}", exc_info=True)
+            raise
     
     # 降级到 SQLite
     try:
@@ -271,6 +403,7 @@ async def broadcast_progress(batch_id: str, message: dict):
             "sessionId": "debug-session",
         })
     # #endregion
+    await _cache_progress_message(batch_id, message)
     if batch_id in active_connections:
         disconnected = []
         for ws in active_connections[batch_id]:
@@ -285,8 +418,7 @@ async def broadcast_progress(batch_id: str, message: dict):
         
         # 移除断开的连接
         for ws in disconnected:
-            if ws in active_connections[batch_id]:
-                active_connections[batch_id].remove(ws)
+            _discard_connection(batch_id, ws)
 
 
 
@@ -1434,13 +1566,31 @@ async def websocket_endpoint(websocket: WebSocket, batch_id: str):
     """
     await websocket.accept()
 
+    redis_client = await _get_redis_client()
+    use_redis_cache = redis_client is not None
+
     cached_images = batch_image_cache.get(batch_id, {})
     if cached_images:
         try:
             for key, message in cached_images.items():
                 if key == "llm_stream_cache":
                     continue
+                if use_redis_cache and key not in ("images_ready", "rubric_images_ready"):
+                    continue
                 await websocket.send_json(message)
+        except Exception as e:
+            logger.warning(f"发送缓存图片失败: {e}")
+
+    if use_redis_cache:
+        try:
+            cached_progress = await _load_cached_progress_messages(batch_id)
+            for message in cached_progress:
+                await websocket.send_json(message)
+        except Exception as e:
+            logger.warning(f"发送缓存进度失败: {e}")
+
+    if cached_images:
+        try:
             stream_cache = cached_images.get("llm_stream_cache")
             if isinstance(stream_cache, dict):
                 for stream_message in stream_cache.values():
@@ -1449,7 +1599,7 @@ async def websocket_endpoint(websocket: WebSocket, batch_id: str):
                         **stream_message,
                     })
         except Exception as e:
-            logger.warning(f"发送缓存图片失败: {e}")
+            logger.warning(f"发送流式缓存失败: {e}")
     
     # 注册连接
     if batch_id not in active_connections:
@@ -1563,18 +1713,12 @@ async def websocket_endpoint(websocket: WebSocket, batch_id: str):
             
     except (WebSocketDisconnect, RuntimeError) as exc:
         logger.info(f"WebSocket 连接断开: batch_id={batch_id}, reason={exc}")
-        if batch_id in active_connections and websocket in active_connections[batch_id]:
-            active_connections[batch_id].remove(websocket)
-            if not active_connections[batch_id]:
-                del active_connections[batch_id]
+        _discard_connection(batch_id, websocket)
         return
     except Exception as exc:
         logger.warning(f"WebSocket 接收异常: batch_id={batch_id}, error={exc}")
         logger.info(f"WebSocket 连接断开: batch_id={batch_id}")
-        if batch_id in active_connections and websocket in active_connections[batch_id]:
-            active_connections[batch_id].remove(websocket)
-            if not active_connections[batch_id]:
-                del active_connections[batch_id]
+        _discard_connection(batch_id, websocket)
 
 
 @router.get("/status/{batch_id}", response_model=BatchStatusResponse)

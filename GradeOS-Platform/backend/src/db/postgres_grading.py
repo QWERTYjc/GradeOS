@@ -81,6 +81,7 @@ async def save_grading_history(history: GradingHistory) -> None:
                     json.dumps(history.result_data) if history.result_data else None,
                 )
             )
+            await conn.commit()
         logger.info(f"批改历史已保存到 PostgreSQL: batch_id={history.batch_id}")
     except Exception as e:
         logger.error(f"保存批改历史到 PostgreSQL 失败: {e}")
@@ -209,6 +210,7 @@ async def save_student_result(result: StudentGradingResult) -> None:
                     result.revoked_at,
                 )
             )
+            await conn.commit()
         logger.debug(f"学生结果已保存: student_key={result.student_key}")
     except Exception as e:
         logger.error(f"保存学生结果失败: {e}")

@@ -38,6 +38,7 @@ class DeploymentConfig:
         self._mode: Optional[DeploymentMode] = None
         self._database_url: Optional[str] = None
         self._redis_url: Optional[str] = None
+        self._redis_configured: bool = False
         self._detect_mode()
     
     def _detect_mode(self) -> None:
@@ -49,17 +50,30 @@ class DeploymentConfig:
         2. 默认为数据库模式（使用 SQLite 或 PostgreSQL）
         """
         self._database_url = os.getenv("DATABASE_URL", "").strip()
+        db_host = os.getenv("DB_HOST", "").strip()
         self._redis_url = os.getenv("REDIS_URL", "").strip()
-        
-        self._mode = DeploymentMode.DATABASE
-        
-        if self._database_url:
-            logger.info(f"检测到数据库配置：{self._mask_connection_string(self._database_url)}")
+        redis_host = os.getenv("REDIS_HOST", "").strip()
+        offline_env = os.getenv("OFFLINE_MODE", "").strip().lower()
+        force_offline = offline_env in ("1", "true", "yes")
+        self._redis_configured = bool(self._redis_url or redis_host)
+
+        if force_offline:
+            self._mode = DeploymentMode.NO_DATABASE
+            logger.info("检测到 OFFLINE_MODE=true，强制使用无数据库模式")
+        elif self._database_url or db_host:
+            self._mode = DeploymentMode.DATABASE
+            if self._database_url:
+                logger.info(f"检测到数据库配置：{self._mask_connection_string(self._database_url)}")
+            else:
+                logger.info(f"检测到数据库配置：DB_HOST={db_host}")
         else:
-            logger.info("未检测到外部数据库配置，将使用 SQLite 本地存储")
-            
+            self._mode = DeploymentMode.NO_DATABASE
+            logger.info("DATABASE_URL 未设置，将使用无数据库模式")
+
         if self._redis_url:
             logger.info(f"检测到 Redis 配置：{self._mask_connection_string(self._redis_url)}")
+        elif redis_host:
+            logger.info(f"检测到 Redis 配置：REDIS_HOST={redis_host}")
         else:
             logger.info("未检测到 Redis 配置，将使用内存缓存")
     
@@ -127,8 +141,8 @@ class DeploymentConfig:
                 "persistence": True,
                 "history": True,
                 "analytics": True,
-                "caching": bool(self._redis_url),
-                "websocket": bool(self._redis_url),
+                "caching": self._redis_configured,
+                "websocket": self._redis_configured,
                 "mode": "database"
             }
         else:

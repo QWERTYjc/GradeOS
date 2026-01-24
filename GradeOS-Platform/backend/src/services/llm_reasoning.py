@@ -3233,7 +3233,7 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
             page_context_info = "\n".join(context_lines)
 
         # 构建批改提示词
-        prompt = f"""你是一位专业的阅卷教师，请仔细分析以下学生的答题图像并进行精确评分。
+        prompt = f"""你是一位专业的阅卷教师，请仔细分析以下学生的答题图像并进行精确评分，同时输出批注坐标信息。
 
 ## 学生信息
 - 学生标识：{student_key}
@@ -3254,6 +3254,22 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
 7. **自白与置信度**：每道题必须输出 self_critique（自我反思）和 self_critique_confidence（置信度）
    - 自白需诚实指出不确定之处、证据不足的地方
    - 如果对某道题的评分不确定，必须在 self_critique 中说明
+8. **批注坐标**：为每道题输出批注坐标，用于在图片上渲染批改标记
+
+## 坐标系统说明
+- 坐标原点在图片**左上角**
+- x 轴向右增加 (0.0 = 最左, 1.0 = 最右)
+- y 轴向下增加 (0.0 = 最上, 1.0 = 最下)
+- 使用 bounding_box 表示区域: {{"x_min", "y_min", "x_max", "y_max"}}
+- 所有坐标值为归一化坐标 (0.0-1.0)
+
+## 批注类型说明
+- `score`: 分数标注，放在题目答案旁边
+- `error_circle`: 错误圈选，圈出错误的地方
+- `correct_check`: 正确勾选 ✓
+- `partial_check`: 部分正确 △
+- `wrong_cross`: 错误叉 ✗
+- `comment`: 文字批注/错误讲解
 
 ## 输出格式（JSON）
 ```json
@@ -3288,6 +3304,36 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
                     "awarded": 获得的分数,
                     "evidence": "【必须引用原文】评分依据，引用学生答案中的具体内容"
                 }}
+            ],
+            "annotations": [
+                {{
+                    "type": "score",
+                    "page_index": 0,
+                    "bounding_box": {{"x_min": 0.85, "y_min": 0.2, "x_max": 0.95, "y_max": 0.25}},
+                    "text": "8/10",
+                    "color": "#FF8800"
+                }},
+                {{
+                    "type": "error_circle",
+                    "page_index": 0,
+                    "bounding_box": {{"x_min": 0.3, "y_min": 0.35, "x_max": 0.5, "y_max": 0.38}},
+                    "text": "计算错误",
+                    "color": "#FF0000"
+                }},
+                {{
+                    "type": "comment",
+                    "page_index": 0,
+                    "bounding_box": {{"x_min": 0.55, "y_min": 0.35, "x_max": 0.9, "y_max": 0.4}},
+                    "text": "应为 3+5=8",
+                    "color": "#0066FF"
+                }},
+                {{
+                    "type": "correct_check",
+                    "page_index": 0,
+                    "bounding_box": {{"x_min": 0.88, "y_min": 0.25, "x_max": 0.92, "y_max": 0.28}},
+                    "text": "",
+                    "color": "#00AA00"
+                }}
             ]
         }}
     ],
@@ -3302,6 +3348,17 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
 }}
 ```
 
+## 批注坐标要求
+1. **分数标注位置**：通常放在答案区域的右上角或右侧
+2. **错误圈选**：只圈出具体错误的部分，不要圈太大范围
+3. **讲解位置**：放在错误旁边或下方，不要遮挡答案
+4. **颜色规范**：
+   - 红色 #FF0000：错误
+   - 绿色 #00AA00：正确
+   - 橙色 #FF8800：部分正确
+   - 蓝色 #0066FF：讲解/批注
+5. **每道题至少输出一个 score 类型的批注**，标注该题得分
+
 ## 重要提醒
 - 必须批改全部 {questions_count} 道题
 - 每道题的 score 必须等于各得分点 awarded 之和
@@ -3309,6 +3366,7 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
 - student_answer 必须完整记录学生的原始作答，不要用"..."省略
 - self_critique 必须诚实反映评分的不确定性
 - 如果无法识别某道题的答案，confidence 和 self_critique_confidence 设为较低值并在 self_critique 中说明原因
+- **批注坐标必须准确**：仔细观察图片，给出精确的坐标位置
 """
 
         try:

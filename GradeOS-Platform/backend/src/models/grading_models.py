@@ -187,6 +187,7 @@ class QuestionResult:
     - 页面索引列表 (8.3)
     - is_cross_page 标记 (8.4)
     - merge_source 字段 (8.5)
+    - annotations 批注坐标列表 (8.6)
     """
     question_id: str  # 题号
     score: float  # 得分
@@ -199,6 +200,7 @@ class QuestionResult:
     merge_source: Optional[List[str]] = None  # 合并来源（如果是合并结果）
     student_answer: str = ""  # 学生答案
     question_type: Optional[str] = None  # objective/subjective/choice (optional)
+    annotations: List[Dict[str, Any]] = field(default_factory=list)  # 批注坐标列表
     
     def to_dict(self) -> Dict[str, Any]:
         """序列化为字典 (Requirements: 8.6)"""
@@ -214,6 +216,7 @@ class QuestionResult:
             "merge_source": self.merge_source,
             "student_answer": self.student_answer,
             "question_type": self.question_type,
+            "annotations": self.annotations,
         }
     
     @classmethod
@@ -234,6 +237,7 @@ class QuestionResult:
             merge_source=data.get("merge_source"),
             student_answer=data.get("student_answer", ""),
             question_type=data.get("question_type") or data.get("questionType"),
+            annotations=data.get("annotations", []),
         )
     
     def to_json(self) -> str:

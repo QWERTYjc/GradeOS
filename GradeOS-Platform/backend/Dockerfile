@@ -19,10 +19,11 @@ COPY alembic.ini .
 
 # 创建上传目录
 RUN mkdir -p /app/uploads
+RUN chmod +x /app/scripts/start.sh
 
 # 设置环境变量
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 
-# 启动脚本：先运行迁移，再启动服务
-CMD alembic upgrade head && uvicorn src.api.main:app --host 0.0.0.0 --port ${PORT:-8001}
+# 启动脚本：根据环境决定是否运行迁移
+CMD ["/app/scripts/start.sh"]

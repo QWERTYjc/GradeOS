@@ -60,7 +60,8 @@ async def save_grading_history(history: GradingHistory) -> None:
             logger.info(f"批改历史已保存到 PostgreSQL: batch_id={history.batch_id}")
             return
         except Exception as e:
-            logger.warning(f"PostgreSQL 保存失败，降级到 SQLite: {e}")
+            logger.error(f"PostgreSQL 保存失败: {e}", exc_info=True)
+            raise
     
     # 降级到 SQLite
     sqlite_history = SqliteGradingHistory(
@@ -85,7 +86,8 @@ async def save_student_result(result: StudentGradingResult) -> None:
             await pg_save_student_result(result)
             return
         except Exception as e:
-            logger.warning(f"PostgreSQL 保存学生结果失败，降级到 SQLite: {e}")
+            logger.error(f"PostgreSQL 保存学生结果失败: {e}", exc_info=True)
+            raise
     
     # 降级到 SQLite
     sqlite_result = SqliteStudentGradingResult(

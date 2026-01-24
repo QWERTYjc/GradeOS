@@ -298,3 +298,149 @@ export default function GradingDemo() {
   );
 }
 ```
+
+
+## 批注集成到批改流程
+
+### 概述
+
+批注功能已集成到主批改流程中。当使用 `grade_student` 方法批改时，AI 会自动输出每道题的批注坐标信息。
+
+### 数据流
+
+```
+批改请求 → grade_student() → LLM 输出带批注的 JSON → 解析到 question_details.annotations
+```
+
+### 批改结果中的批注字段
+
+批改结果的 `question_details` 中每道题都包含 `annotations` 字段：
+
+```json
+{
+  "question_details": [
+    {
+      "question_id": "1",
+      "score": 8,
+      "max_score": 10,
+      "annotations": [
+        {
+          "type": "score",
+          "page_index": 0,
+          "bounding_box": {"x_min": 0.85, "y_min": 0.2, "x_max": 0.95, "y_max": 0.25},
+          "text": "8/10",
+          "color": "#FF8800"
+        },
+        {
+          "type": "error_circle",
+          "page_index": 0,
+          "bounding_box": {"x_min": 0.3, "y_min": 0.35, "x_max": 0.5, "y_max": 0.38},
+          "text": "计算错误",
+          "color": "#FF0000"
+        }
+      ]
+    }
+  ]
+}
+```
+
+### 复核后批注修正
+
+当教师复核修改分数后，可以使用以下方法更新批注：
+
+#### 方案 A：增量修正（推荐，低成本）
+
+只更新分数文字，保留其他批注不变：
+
+```python
+from src.services.annotation_grading import update_annotations_after_review
+
+# 原始批注
+original_annotations = question_result["annotations"]
+
+# 复核后更新
+updated_annotations = update_annotations_after_review(
+    original_annotations=original_annotations,
+    original_score=8.0,
+    new_score=7.0,
+    max_score=10.0,
+    question_id="1"
+)
+```
+
+#### 方案 B：重新生成（中等成本）
+
+对分数变化较大的题目重新生成批注：
+
+```python
+from src.services.annotation_grading import (
+    AnnotationGradingService,
+    regenerate_annotations_for_question
+)
+
+service = AnnotationGradingService()
+
+# 重新生成该题的批注
+new_annotations = await regenerate_annotations_for_question(
+    service=service,
+    image_data=page_image_bytes,
+    question_id="1",
+    new_score=5.0,
+    max_score=10.0,
+    feedback="计算过程有多处错误",
+    page_index=0
+)
+```
+
+### 前端渲染批注
+
+从批改结果中提取批注并渲染：
+
+```typescript
+// 从批改结果中提取所有批注
+const allAnnotations = gradingResult.question_details.flatMap(q => 
+  (q.annotations || []).map(ann => ({
+    ...ann,
+    question_id: q.question_id
+  }))
+);
+
+// 按页面分组
+const annotationsByPage = allAnnotations.reduce((acc, ann) => {
+  const pageIndex = ann.page_index || 0;
+  if (!acc[pageIndex]) acc[pageIndex] = [];
+  acc[pageIndex].push(ann);
+  return acc;
+}, {} as Record<number, typeof allAnnotations>);
+
+// 渲染每页
+{pages.map((pageImage, pageIndex) => (
+  <AnnotationCanvas
+    key={pageIndex}
+    imageSrc={pageImage}
+    annotations={annotationsByPage[pageIndex] || []}
+    showText={true}
+  />
+))}
+```
+
+### 批注类型颜色规范
+
+| 得分率 | 颜色 | 用途 |
+|--------|------|------|
+| ≥80% | 绿色 #00AA00 | 优秀 |
+| 50%-80% | 橙色 #FF8800 | 部分正确 |
+| <50% | 红色 #FF0000 | 需改进 |
+| - | 蓝色 #0066FF | 讲解/批注 |
+
+### 环境变量配置
+
+可通过环境变量调整批注行为：
+
+```bash
+# 是否在批改时生成批注（默认 true）
+GRADING_ENABLE_ANNOTATIONS=true
+
+# 批注最大数量限制（每道题）
+GRADING_MAX_ANNOTATIONS_PER_QUESTION=10
+```
