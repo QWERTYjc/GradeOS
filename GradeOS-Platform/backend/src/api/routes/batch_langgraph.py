@@ -1301,7 +1301,11 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
                     "scoring_point_results": scoring_results,
                     "page_indices": q.get("page_indices", []),
                     "is_cross_page": q.get("is_cross_page", False),
-                    "merge_source": q.get("merge_source")
+                    "merge_source": q.get("merge_source"),
+                    # 🔥 批注坐标字段
+                    "annotations": q.get("annotations") or [],
+                    "steps": q.get("steps") or [],
+                    "answerRegion": q.get("answer_region") or q.get("answerRegion"),
                 })
         # 兼容旧格式 grading_results
         elif r.get("grading_results"):
@@ -1341,7 +1345,11 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
                     "scoring_point_results": scoring_results,
                     "page_indices": q.get("page_indices", []),
                     "is_cross_page": q.get("is_cross_page", False),
-                    "merge_source": q.get("merge_source")
+                    "merge_source": q.get("merge_source"),
+                    # 🔥 批注坐标字段
+                    "annotations": q.get("annotations") or [],
+                    "steps": q.get("steps") or [],
+                    "answerRegion": q.get("answer_region") or q.get("answerRegion"),
                 })
         # å…¼å®¹ export_data çš„ question_results
         elif r.get("question_results"):
@@ -1383,6 +1391,10 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
                     "page_indices": q.get("page_indices", []),
                     "is_cross_page": q.get("is_cross_page", False),
                     "merge_source": q.get("merge_source"),
+                    # 🔥 批注坐标字段
+                    "annotations": q.get("annotations") or [],
+                    "steps": q.get("steps") or [],
+                    "answerRegion": q.get("answer_region") or q.get("answerRegion"),
                 })
         # 从 page_results 提取
         elif r.get("page_results"):
@@ -1429,7 +1441,11 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
                             "scoring_point_results": scoring_results,
                             "page_indices": page_indices or [],
                             "is_cross_page": q.get("is_cross_page", False),
-                            "merge_source": q.get("merge_source")
+                            "merge_source": q.get("merge_source"),
+                            # 🔥 批注坐标字段
+                            "annotations": q.get("annotations") or [],
+                            "steps": q.get("steps") or [],
+                            "answerRegion": q.get("answer_region") or q.get("answerRegion"),
                         })
         
         computed_score = sum(_safe_float(q.get("score", 0)) for q in question_results)
@@ -2192,3 +2208,303 @@ async def confirm_student_boundary(
     except Exception as e:
         logger.error(f"确认学生边界失败: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"确认失败: {str(e)}")
+
+
+# ==================== 导出 API ====================
+
+class ExportAnnotatedImagesRequest(BaseModel):
+    """导出带批注图片请求"""
+    include_original: bool = Field(default=False, description="是否包含原始图片")
+
+
+class ExportExcelRequest(BaseModel):
+    """导出 Excel 请求"""
+    columns: Optional[List[Dict[str, Any]]] = Field(None, description="自定义列配置")
+
+
+class SmartExcelRequest(BaseModel):
+    """智能 Excel 生成请求"""
+    prompt: str = Field(..., description="用户描述的格式需求")
+    template_base64: Optional[str] = Field(None, description="模板 Excel Base64")
+
+
+@router.post("/export/annotated-images/{batch_id}")
+async def export_annotated_images(
+    batch_id: str,
+    request: ExportAnnotatedImagesRequest = ExportAnnotatedImagesRequest(),
+    orchestrator: Orchestrator = Depends(get_orchestrator),
+):
+    """
+    导出带批注的学生作答图片 (ZIP)
+    
+    将所有学生的作答图片渲染批注后打包为 ZIP 下载
+    """
+    from fastapi.responses import Response
+    from src.services.export_service import AnnotatedImageExporter, ExportConfig
+    
+    try:
+        if not orchestrator:
+            raise HTTPException(status_code=503, detail="编排器未初始化")
+        
+        run_id = f"batch_grading_{batch_id}"
+        run_info = await orchestrator.get_run_info(run_id)
+        
+        if not run_info:
+            raise HTTPException(status_code=404, detail="批次不存在")
+        
+        state = run_info.state or {}
+        student_results = state.get("student_results", [])
+        
+        if not student_results:
+            raise HTTPException(status_code=404, detail="无批改结果")
+        
+        # 获取图片
+        cached = batch_image_cache.get(batch_id, {})
+        images_ready = cached.get("images_ready", {})
+        images_b64 = images_ready.get("images", [])
+        
+        if not images_b64:
+            raise HTTPException(status_code=404, detail="无图片数据，请重新上传")
+        
+        # 解码图片
+        import base64
+        images = []
+        for img_b64 in images_b64:
+            if img_b64.startswith("data:"):
+                img_b64 = img_b64.split(",", 1)[1]
+            images.append(base64.b64decode(img_b64))
+        
+        # 格式化结果
+        formatted_results = _format_results_for_frontend(student_results)
+        
+        # 导出
+        config = ExportConfig(include_original=request.include_original)
+        exporter = AnnotatedImageExporter(config)
+        zip_bytes = exporter.export_to_zip(formatted_results, images, batch_id)
+        
+        filename = f"grading_annotated_{batch_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
+        
+        return Response(
+            content=zip_bytes,
+            media_type="application/zip",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+            },
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"导出带批注图片失败: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"导出失败: {str(e)}")
+
+
+@router.post("/export/excel/{batch_id}")
+async def export_excel(
+    batch_id: str,
+    request: ExportExcelRequest = ExportExcelRequest(),
+    orchestrator: Orchestrator = Depends(get_orchestrator),
+):
+    """
+    导出 Excel 统计数据
+    
+    包含学生成绩、题目统计、班级报告等多个 Sheet
+    """
+    from fastapi.responses import Response
+    from src.services.export_service import ExcelExporter
+    
+    try:
+        if not orchestrator:
+            raise HTTPException(status_code=503, detail="编排器未初始化")
+        
+        run_id = f"batch_grading_{batch_id}"
+        run_info = await orchestrator.get_run_info(run_id)
+        
+        if not run_info:
+            raise HTTPException(status_code=404, detail="批次不存在")
+        
+        state = run_info.state or {}
+        student_results = state.get("student_results", [])
+        class_report = state.get("class_report") or state.get("export_data", {}).get("class_report")
+        
+        if not student_results:
+            raise HTTPException(status_code=404, detail="无批改结果")
+        
+        # 格式化结果
+        formatted_results = _format_results_for_frontend(student_results)
+        
+        # 导出
+        exporter = ExcelExporter()
+        excel_bytes = exporter.export_basic(formatted_results, class_report, request.columns)
+        
+        filename = f"grading_report_{batch_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        
+        return Response(
+            content=excel_bytes,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+            },
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"导出 Excel 失败: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"导出失败: {str(e)}")
+
+
+@router.post("/export/smart-excel/{batch_id}")
+async def export_smart_excel(
+    batch_id: str,
+    request: SmartExcelRequest,
+    orchestrator: Orchestrator = Depends(get_orchestrator),
+):
+    """
+    LLM 智能 Excel 生成
+    
+    支持：
+    - 用户对话描述格式需求
+    - 导入已有 Excel 模板并填充数据
+    """
+    from fastapi.responses import Response
+    from src.services.export_service import SmartExcelGenerator
+    from src.services.llm_client import get_llm_client
+    
+    try:
+        if not orchestrator:
+            raise HTTPException(status_code=503, detail="编排器未初始化")
+        
+        run_id = f"batch_grading_{batch_id}"
+        run_info = await orchestrator.get_run_info(run_id)
+        
+        if not run_info:
+            raise HTTPException(status_code=404, detail="批次不存在")
+        
+        state = run_info.state or {}
+        student_results = state.get("student_results", [])
+        class_report = state.get("class_report") or state.get("export_data", {}).get("class_report")
+        
+        if not student_results:
+            raise HTTPException(status_code=404, detail="无批改结果")
+        
+        # 格式化结果
+        formatted_results = _format_results_for_frontend(student_results)
+        
+        # 解码模板
+        template_bytes = None
+        if request.template_base64:
+            import base64
+            try:
+                if request.template_base64.startswith("data:"):
+                    request.template_base64 = request.template_base64.split(",", 1)[1]
+                template_bytes = base64.b64decode(request.template_base64)
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=f"模板解码失败: {e}")
+        
+        # 获取 LLM 客户端
+        llm_client = None
+        try:
+            llm_client = get_llm_client()
+        except Exception as e:
+            logger.warning(f"获取 LLM 客户端失败: {e}")
+        
+        # 生成 Excel
+        generator = SmartExcelGenerator(llm_client)
+        excel_bytes, explanation = await generator.generate_from_prompt(
+            formatted_results,
+            class_report,
+            request.prompt,
+            template_bytes,
+        )
+        
+        filename = f"grading_smart_{batch_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        
+        return Response(
+            content=excel_bytes,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "X-LLM-Explanation": explanation.encode('utf-8').decode('latin-1'),
+            },
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"智能 Excel 生成失败: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"生成失败: {str(e)}")
+
+
+@router.post("/render/batch/{batch_id}")
+async def render_batch_annotations(
+    batch_id: str,
+    page_indices: Optional[List[int]] = None,
+    orchestrator: Orchestrator = Depends(get_orchestrator),
+):
+    """
+    批量渲染批注到图片
+    
+    返回指定页面的带批注图片 Base64 列表
+    """
+    from src.services.export_service import AnnotatedImageExporter
+    
+    try:
+        if not orchestrator:
+            raise HTTPException(status_code=503, detail="编排器未初始化")
+        
+        run_id = f"batch_grading_{batch_id}"
+        run_info = await orchestrator.get_run_info(run_id)
+        
+        if not run_info:
+            raise HTTPException(status_code=404, detail="批次不存在")
+        
+        state = run_info.state or {}
+        student_results = state.get("student_results", [])
+        
+        # 获取图片
+        cached = batch_image_cache.get(batch_id, {})
+        images_ready = cached.get("images_ready", {})
+        images_b64 = images_ready.get("images", [])
+        
+        if not images_b64:
+            raise HTTPException(status_code=404, detail="无图片数据")
+        
+        # 解码图片
+        import base64
+        images = []
+        for img_b64 in images_b64:
+            if img_b64.startswith("data:"):
+                img_b64 = img_b64.split(",", 1)[1]
+            images.append(base64.b64decode(img_b64))
+        
+        # 格式化结果
+        formatted_results = _format_results_for_frontend(student_results)
+        
+        # 渲染
+        exporter = AnnotatedImageExporter()
+        rendered_images = {}
+        
+        # 确定要渲染的页面
+        target_pages = page_indices if page_indices else list(range(len(images)))
+        
+        for student in formatted_results:
+            start_page = student.get("startPage") or 0
+            end_page = student.get("endPage") or len(images) - 1
+            
+            for page_idx, rendered_bytes in exporter.render_student_pages(
+                student, images, start_page, end_page
+            ):
+                if page_idx in target_pages:
+                    rendered_images[page_idx] = base64.b64encode(rendered_bytes).decode('utf-8')
+        
+        return {
+            "success": True,
+            "rendered_images": rendered_images,
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"批量渲染批注失败: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"渲染失败: {str(e)}")

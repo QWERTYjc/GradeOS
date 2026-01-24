@@ -107,6 +107,13 @@ export interface QuestionResult {
         };
         reviewReason?: string;
         reviewBy?: string;
+        /** 错误区域坐标 */
+        errorRegion?: {
+            x_min: number;
+            y_min: number;
+            x_max: number;
+            y_max: number;
+        };
     }>;
     /** 出现在哪些页面 - 新增 */
     pageIndices?: number[];
@@ -114,6 +121,42 @@ export interface QuestionResult {
     isCrossPage?: boolean;
     /** 合并来源（如果是合并结果）- 新增 */
     mergeSource?: string[];
+    /** 批注坐标列表 */
+    annotations?: Array<{
+        type: string;
+        page_index?: number;
+        bounding_box: {
+            x_min: number;
+            y_min: number;
+            x_max: number;
+            y_max: number;
+        };
+        text?: string;
+        color?: string;
+    }>;
+    /** 步骤信息（包含坐标） */
+    steps?: Array<{
+        step_id: string;
+        step_content: string;
+        step_region?: {
+            x_min: number;
+            y_min: number;
+            x_max: number;
+            y_max: number;
+        };
+        is_correct: boolean;
+        mark_type: string;
+        mark_value: number;
+        feedback?: string;
+        error_detail?: string;
+    }>;
+    /** 答案区域坐标 */
+    answerRegion?: {
+        x_min: number;
+        y_min: number;
+        x_max: number;
+        y_max: number;
+    };
 }
 
 // LLM 流式思考输出
@@ -1410,6 +1453,8 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
                                     reviewBefore: spr.review_before || spr.reviewBefore,
                                     reviewReason: spr.review_reason || spr.reviewReason,
                                     reviewBy: spr.review_by || spr.reviewBy,
+                                    // 🔥 错误区域坐标
+                                    errorRegion: spr.errorRegion || spr.error_region,
                                     scoringPoint: {
                                         description: spr.scoring_point?.description || spr.scoringPoint?.description || '',
                                         score: spr.scoring_point?.score || spr.scoringPoint?.score || 0,
@@ -1446,7 +1491,11 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
                                 isCrossPage: q.is_cross_page || q.isCrossPage,
                                 mergeSource: q.merge_source || q.mergeSource,
                                 scoringPoints: q.scoringPoints || q.scoring_points,
-                                scoringPointResults: pointResults
+                                scoringPointResults: pointResults,
+                                // 🔥 批注坐标字段
+                                annotations: q.annotations || [],
+                                steps: q.steps || [],
+                                answerRegion: q.answerRegion || q.answer_region,
                             };
                         })
                     };

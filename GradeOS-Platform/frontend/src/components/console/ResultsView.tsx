@@ -553,12 +553,20 @@ export const ResultsView: React.FC = () => {
     const [rubricSubmitting, setRubricSubmitting] = useState(false);
     const [rubricMessage, setRubricMessage] = useState<string | null>(null);
 
-    // 批注渲染状态
-    const [showAnnotations, setShowAnnotations] = useState(false);
+    // 批注渲染状态 - 默认开启
+    const [showAnnotations, setShowAnnotations] = useState(true);
     const [annotatedImages, setAnnotatedImages] = useState<Map<number, string>>(new Map());
     const [annotationLoading, setAnnotationLoading] = useState<Set<number>>(new Set());
     // 使用 ref 跟踪已处理的页面，避免 useEffect 无限循环
     const renderedPagesRef = React.useRef<Set<string>>(new Set());
+
+    // 导出相关状态
+    const [exportMenuOpen, setExportMenuOpen] = useState(false);
+    const [exportLoading, setExportLoading] = useState<string | null>(null);
+    const [smartExcelOpen, setSmartExcelOpen] = useState(false);
+    const [smartExcelPrompt, setSmartExcelPrompt] = useState('');
+    const [smartExcelTemplate, setSmartExcelTemplate] = useState<File | null>(null);
+    const [smartExcelLoading, setSmartExcelLoading] = useState(false);
 
     const gradingNode = workflowNodes.find(n => n.id === 'grade_batch') || workflowNodes.find(n => n.id === 'grading');
     const agentResults = gradingNode?.children?.filter(c => c.status === 'completed' && c.output) || [];
@@ -728,50 +736,68 @@ export const ResultsView: React.FC = () => {
                 const questionPages = q.pageIndices || [];
                 if (!questionPages.includes(pageIdx) && questionPages.length > 0) return;
                 
-                // 从 scoringPointResults 中提取批注信息
-                q.scoringPointResults?.forEach((spr: any, idx: number) => {
-                    // 如果有坐标信息，创建批注
-                    if (spr.bounding_box || spr.boundingBox) {
-                        const bbox = spr.bounding_box || spr.boundingBox;
-                        const pointId = spr.point_id || spr.pointId || `${q.questionId}.${idx + 1}`;
-                        const awarded = spr.awarded ?? spr.score ?? 0;
-                        const maxPoints = spr.max_points || spr.maxPoints || 1;
-                        
-                        // 根据得分点类型和得分情况确定批注类型
-                        let annotationType: string;
-                        if (awarded >= maxPoints) {
-                            // 满分 - 使用勾选或 A/M mark
-                            if (pointId.startsWith('M')) {
-                                annotationType = 'm_mark';
-                            } else if (pointId.startsWith('A')) {
-                                annotationType = 'a_mark';
-                            } else {
-                                annotationType = 'step_check';
-                            }
-                        } else if (awarded > 0) {
-                            // 部分得分
-                            annotationType = 'partial_check';
-                        } else {
-                            // 零分
-                            annotationType = 'step_cross';
+                // 优先使用后端返回的 annotations 字段
+                if (q.annotations && q.annotations.length > 0) {
+                    q.annotations.forEach(ann => {
+                        // 只添加当前页的批注
+                        if (ann.page_index === undefined || ann.page_index === pageIdx) {
+                            pageAnnotations.push({
+                                annotation_type: ann.type,
+                                bounding_box: ann.bounding_box,
+                                text: ann.text || '',
+                                color: ann.color || '#FF0000',
+                            } as VisualAnnotation);
                         }
-                        
+                    });
+                }
+                
+                // 从 steps 字段提取步骤批注
+                if (q.steps && q.steps.length > 0) {
+                    q.steps.forEach(step => {
+                        if (step.step_region) {
+                            const markText = step.mark_type === 'M' 
+                                ? `M${step.mark_value}` 
+                                : `A${step.mark_value}`;
+                            const annotationType = step.is_correct 
+                                ? (step.mark_type === 'M' ? 'm_mark' : 'a_mark')
+                                : 'step_cross';
+                            
+                            pageAnnotations.push({
+                                annotation_type: annotationType,
+                                bounding_box: step.step_region,
+                                text: markText,
+                                color: step.is_correct ? '#00AA00' : '#FF0000',
+                            } as VisualAnnotation);
+                        }
+                    });
+                }
+                
+                // 从 scoringPointResults 中提取错误区域批注
+                q.scoringPointResults?.forEach((spr: any, idx: number) => {
+                    // 如果有错误区域坐标，创建错误圈选批注
+                    if (spr.errorRegion || spr.error_region) {
+                        const errorRegion = spr.errorRegion || spr.error_region;
                         pageAnnotations.push({
-                            annotation_type: annotationType,
-                            bounding_box: bbox,
-                            text: pointId,
-                            color: awarded > 0 ? '#00AA00' : '#FF0000',
+                            annotation_type: 'error_circle',
+                            bounding_box: errorRegion,
+                            text: spr.evidence || '',
+                            color: '#FF0000',
                         } as VisualAnnotation);
                     }
                 });
                 
-                // 添加分数批注（如果有坐标）
-                if ((q as any).scoreBoundingBox) {
+                // 添加答案区域的分数批注
+                if (q.answerRegion) {
                     pageAnnotations.push({
                         annotation_type: 'score',
-                        bounding_box: (q as any).scoreBoundingBox,
+                        bounding_box: {
+                            x_min: Math.min(q.answerRegion.x_max + 0.02, 0.95),
+                            y_min: q.answerRegion.y_min,
+                            x_max: Math.min(q.answerRegion.x_max + 0.12, 1.0),
+                            y_max: q.answerRegion.y_min + 0.05,
+                        },
                         text: `${q.score}/${q.maxScore}`,
-                        color: '#FF6600',
+                        color: q.score >= q.maxScore * 0.8 ? '#00AA00' : q.score >= q.maxScore * 0.5 ? '#FF8800' : '#FF0000',
                     } as VisualAnnotation);
                 }
             });
@@ -972,6 +998,97 @@ export const ResultsView: React.FC = () => {
         setAuditOpen(false);
         setAuditQuery('');
     }, [detailViewIndex]);
+
+    // ==================== 导出处理函数 ====================
+    
+    const handleExportAnnotatedImages = async () => {
+        if (!submissionId) return;
+        setExportLoading('images');
+        try {
+            const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || ''}/api/batch/export/annotated-images/${submissionId}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ include_original: false }),
+            });
+            if (!response.ok) throw new Error('导出失败');
+            const blob = await response.blob();
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `grading_annotated_${submissionId}.zip`;
+            a.click();
+            URL.revokeObjectURL(url);
+        } catch (error) {
+            console.error('导出带批注图片失败:', error);
+        } finally {
+            setExportLoading(null);
+            setExportMenuOpen(false);
+        }
+    };
+
+    const handleExportExcel = async () => {
+        if (!submissionId) return;
+        setExportLoading('excel');
+        try {
+            const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || ''}/api/batch/export/excel/${submissionId}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({}),
+            });
+            if (!response.ok) throw new Error('导出失败');
+            const blob = await response.blob();
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `grading_report_${submissionId}.xlsx`;
+            a.click();
+            URL.revokeObjectURL(url);
+        } catch (error) {
+            console.error('导出 Excel 失败:', error);
+        } finally {
+            setExportLoading(null);
+            setExportMenuOpen(false);
+        }
+    };
+
+    const handleSmartExcelSubmit = async () => {
+        if (!submissionId || !smartExcelPrompt.trim()) return;
+        setSmartExcelLoading(true);
+        try {
+            let templateBase64: string | undefined;
+            if (smartExcelTemplate) {
+                const reader = new FileReader();
+                templateBase64 = await new Promise((resolve) => {
+                    reader.onload = () => resolve(reader.result as string);
+                    reader.readAsDataURL(smartExcelTemplate);
+                });
+            }
+            
+            const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || ''}/api/batch/export/smart-excel/${submissionId}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    prompt: smartExcelPrompt,
+                    template_base64: templateBase64,
+                }),
+            });
+            if (!response.ok) throw new Error('生成失败');
+            const blob = await response.blob();
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `grading_smart_${submissionId}.xlsx`;
+            a.click();
+            URL.revokeObjectURL(url);
+            setSmartExcelOpen(false);
+            setSmartExcelPrompt('');
+            setSmartExcelTemplate(null);
+        } catch (error) {
+            console.error('智能 Excel 生成失败:', error);
+        } finally {
+            setSmartExcelLoading(false);
+        }
+    };
 
     const handleToggleReviewMode = () => {
         setReviewMessage(null);
@@ -1904,95 +2021,194 @@ export const ResultsView: React.FC = () => {
                                         批改透明度
                                     </div>
 
-                                    {/* 第一次批改 vs 最终结果对比 */}
-                                    {detailViewStudent.draftTotalScore !== undefined && detailViewStudent.draftTotalScore !== detailViewStudent.score && (
-                                        <div className="bg-white rounded-lg p-3 border border-blue-100">
-                                            <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400 mb-2">分数变化</div>
-                                            <div className="flex items-center gap-3">
-                                                <div className="text-center">
-                                                    <div className="text-lg font-bold text-slate-400 line-through">
-                                                        {detailViewStudent.draftTotalScore}
-                                                    </div>
-                                                    <div className="text-[10px] text-slate-400">初次批改</div>
-                                                </div>
-                                                <div className="text-slate-300">→</div>
-                                                <div className="text-center">
-                                                    <div className="text-lg font-bold text-emerald-600">
-                                                        {detailViewStudent.score}
-                                                    </div>
-                                                    <div className="text-[10px] text-emerald-600">逻辑复核后</div>
-                                                </div>
-                                                <div className={clsx(
-                                                    "ml-auto px-2 py-1 rounded text-xs font-semibold",
-                                                    detailViewStudent.score > detailViewStudent.draftTotalScore
-                                                        ? "bg-emerald-100 text-emerald-700"
-                                                        : "bg-rose-100 text-rose-700"
-                                                )}>
-                                                    {detailViewStudent.score > detailViewStudent.draftTotalScore ? '+' : ''}
-                                                    {(detailViewStudent.score - detailViewStudent.draftTotalScore).toFixed(1)}
-                                                </div>
-                                            </div>
-                                        </div>
-                                    )}
-
-                                    {/* 自白报告 */}
+                                    {/* 自白报告 - 增强版 */}
                                     {detailViewStudent.selfReport && (
-                                        <div className="bg-amber-50 rounded-lg p-3 border border-amber-200">
-                                            <div className="text-[10px] uppercase tracking-[0.2em] text-amber-600 mb-2 flex items-center gap-1">
-                                                <AlertTriangle className="w-3 h-3" />
-                                                AI 自白报告
+                                        <div className="bg-amber-50 rounded-lg p-4 border border-amber-200">
+                                            <div className="flex items-center justify-between mb-3">
+                                                <div className="text-xs font-semibold text-amber-700 flex items-center gap-1.5">
+                                                    <AlertTriangle className="w-4 h-4" />
+                                                    AI 自白报告
+                                                </div>
+                                                {detailViewStudent.selfReport.generatedAt && (
+                                                    <div className="text-[10px] text-amber-500">
+                                                        {new Date(detailViewStudent.selfReport.generatedAt).toLocaleString('zh-CN')}
+                                                    </div>
+                                                )}
                                             </div>
-                                            {detailViewStudent.selfReport.overallStatus && (
-                                                <div className="text-xs text-amber-800 mb-2">
-                                                    状态: {detailViewStudent.selfReport.overallStatus}
-                                                </div>
-                                            )}
-                                            {detailViewStudent.selfReport.overallConfidence !== undefined && (
-                                                <div className="text-xs text-amber-800 mb-2">
-                                                    整体置信度: {(detailViewStudent.selfReport.overallConfidence * 100).toFixed(0)}%
-                                                </div>
-                                            )}
+                                            
+                                            {/* 状态和置信度 */}
+                                            <div className="flex items-center gap-4 mb-3">
+                                                {detailViewStudent.selfReport.overallStatus && (
+                                                    <div className={clsx(
+                                                        "px-2.5 py-1 rounded-full text-xs font-semibold",
+                                                        detailViewStudent.selfReport.overallStatus === 'ok' 
+                                                            ? "bg-emerald-100 text-emerald-700"
+                                                            : detailViewStudent.selfReport.overallStatus === 'caution'
+                                                            ? "bg-amber-100 text-amber-700"
+                                                            : "bg-rose-100 text-rose-700"
+                                                    )}>
+                                                        状态: {detailViewStudent.selfReport.overallStatus === 'ok' ? '✓ 正常' 
+                                                            : detailViewStudent.selfReport.overallStatus === 'caution' ? '⚠ 需注意'
+                                                            : '⚠ 需复核'}
+                                                    </div>
+                                                )}
+                                                {detailViewStudent.selfReport.overallConfidence !== undefined && (
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="text-xs text-amber-600">置信度:</span>
+                                                        <div className="w-20 h-2 bg-amber-200 rounded-full overflow-hidden">
+                                                            <div 
+                                                                className={clsx(
+                                                                    "h-full rounded-full transition-all",
+                                                                    detailViewStudent.selfReport.overallConfidence >= 0.8 ? "bg-emerald-500"
+                                                                        : detailViewStudent.selfReport.overallConfidence >= 0.5 ? "bg-amber-500"
+                                                                        : "bg-rose-500"
+                                                                )}
+                                                                style={{ width: `${detailViewStudent.selfReport.overallConfidence * 100}%` }}
+                                                            />
+                                                        </div>
+                                                        <span className="text-xs font-mono text-amber-700">
+                                                            {(detailViewStudent.selfReport.overallConfidence * 100).toFixed(0)}%
+                                                        </span>
+                                                    </div>
+                                                )}
+                                            </div>
+
+                                            {/* 高风险题目 */}
                                             {detailViewStudent.selfReport.highRiskQuestions && detailViewStudent.selfReport.highRiskQuestions.length > 0 && (
-                                                <div className="mt-2">
-                                                    <div className="text-[10px] text-amber-600 font-semibold mb-1">高风险题目:</div>
-                                                    <div className="space-y-1">
+                                                <div className="mb-3 p-2.5 bg-rose-50 rounded-lg border border-rose-200">
+                                                    <div className="text-[10px] uppercase tracking-wider text-rose-600 font-semibold mb-2 flex items-center gap-1">
+                                                        <XCircle className="w-3 h-3" />
+                                                        高风险题目 ({detailViewStudent.selfReport.highRiskQuestions.length})
+                                                    </div>
+                                                    <div className="space-y-1.5">
                                                         {detailViewStudent.selfReport.highRiskQuestions.map((item, idx) => (
-                                                            <div key={idx} className="text-xs text-amber-700 flex items-start gap-2">
-                                                                <span className="font-mono text-amber-500">Q{item.questionId}</span>
-                                                                <span>{item.description}</span>
+                                                            <div key={idx} className="text-xs text-rose-700 flex items-start gap-2 bg-white/50 rounded px-2 py-1">
+                                                                <span className="font-mono font-semibold text-rose-500 shrink-0">Q{item.questionId}</span>
+                                                                <span className="text-rose-600">{item.description || '需要人工复核'}</span>
                                                             </div>
                                                         ))}
                                                     </div>
                                                 </div>
                                             )}
+
+                                            {/* 潜在问题 */}
+                                            {detailViewStudent.selfReport.potentialErrors && detailViewStudent.selfReport.potentialErrors.length > 0 && (
+                                                <div className="mb-3 p-2.5 bg-orange-50 rounded-lg border border-orange-200">
+                                                    <div className="text-[10px] uppercase tracking-wider text-orange-600 font-semibold mb-2 flex items-center gap-1">
+                                                        <AlertTriangle className="w-3 h-3" />
+                                                        潜在错误 ({detailViewStudent.selfReport.potentialErrors.length})
+                                                    </div>
+                                                    <div className="space-y-1.5">
+                                                        {detailViewStudent.selfReport.potentialErrors.map((item: any, idx: number) => (
+                                                            <div key={idx} className="text-xs text-orange-700 flex items-start gap-2 bg-white/50 rounded px-2 py-1">
+                                                                {item.questionId && <span className="font-mono font-semibold text-orange-500 shrink-0">Q{item.questionId}</span>}
+                                                                <span className="text-orange-600">{item.description || item.message}</span>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            )}
+
+                                            {/* 问题/警告 */}
                                             {detailViewStudent.selfReport.issues && detailViewStudent.selfReport.issues.length > 0 && (
-                                                <div className="mt-2">
-                                                    <div className="text-[10px] text-amber-600 font-semibold mb-1">问题:</div>
-                                                    <div className="space-y-1">
+                                                <div className="p-2.5 bg-amber-100/50 rounded-lg border border-amber-300">
+                                                    <div className="text-[10px] uppercase tracking-wider text-amber-600 font-semibold mb-2 flex items-center gap-1">
+                                                        <Info className="w-3 h-3" />
+                                                        问题提示 ({detailViewStudent.selfReport.issues.length})
+                                                    </div>
+                                                    <div className="space-y-1.5">
                                                         {detailViewStudent.selfReport.issues.map((item, idx) => (
-                                                            <div key={idx} className="text-xs text-amber-700">
-                                                                {item.questionId && <span className="font-mono text-amber-500 mr-1">Q{item.questionId}:</span>}
+                                                            <div key={idx} className="text-xs text-amber-700 flex items-start gap-2 bg-white/50 rounded px-2 py-1">
+                                                                {item.questionId && <span className="font-mono font-semibold text-amber-500 shrink-0">Q{item.questionId}:</span>}
+                                                                <span>{item.message}</span>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            )}
+
+                                            {/* 警告 */}
+                                            {detailViewStudent.selfReport.warnings && detailViewStudent.selfReport.warnings.length > 0 && (
+                                                <div className="mt-2 p-2.5 bg-yellow-50 rounded-lg border border-yellow-200">
+                                                    <div className="text-[10px] uppercase tracking-wider text-yellow-600 font-semibold mb-2">
+                                                        警告 ({detailViewStudent.selfReport.warnings.length})
+                                                    </div>
+                                                    <div className="space-y-1">
+                                                        {detailViewStudent.selfReport.warnings.map((item: any, idx: number) => (
+                                                            <div key={idx} className="text-xs text-yellow-700">
+                                                                {item.questionId && <span className="font-mono text-yellow-500 mr-1">Q{item.questionId}:</span>}
                                                                 {item.message}
                                                             </div>
                                                         ))}
                                                     </div>
                                                 </div>
                                             )}
+
+                                            {/* 来源标识 */}
+                                            {detailViewStudent.selfReport.source && (
+                                                <div className="mt-2 text-[10px] text-amber-400 text-right">
+                                                    来源: {detailViewStudent.selfReport.source}
+                                                </div>
+                                            )}
                                         </div>
                                     )}
 
-                                    {/* 逻辑复核时间 */}
+                                    {/* 逻辑复核结果 - 增强版 */}
                                     {detailViewStudent.logicReviewedAt && (
-                                        <div className="text-[11px] text-slate-500 flex items-center gap-2">
-                                            <CheckCircle className="w-3 h-3 text-emerald-500" />
-                                            逻辑复核完成于: {new Date(detailViewStudent.logicReviewedAt).toLocaleString('zh-CN')}
+                                        <div className="bg-emerald-50 rounded-lg p-4 border border-emerald-200">
+                                            <div className="flex items-center justify-between mb-3">
+                                                <div className="text-xs font-semibold text-emerald-700 flex items-center gap-1.5">
+                                                    <CheckCircle className="w-4 h-4" />
+                                                    逻辑复核完成
+                                                </div>
+                                                <div className="text-[10px] text-emerald-500">
+                                                    {new Date(detailViewStudent.logicReviewedAt).toLocaleString('zh-CN')}
+                                                </div>
+                                            </div>
+
+                                            {/* 分数变化对比 */}
+                                            {detailViewStudent.draftTotalScore !== undefined && detailViewStudent.draftTotalScore !== detailViewStudent.score && (
+                                                <div className="flex items-center gap-4 p-3 bg-white rounded-lg border border-emerald-100">
+                                                    <div className="text-center">
+                                                        <div className="text-lg font-bold text-slate-400 line-through">
+                                                            {detailViewStudent.draftTotalScore}
+                                                        </div>
+                                                        <div className="text-[10px] text-slate-400">初次批改</div>
+                                                    </div>
+                                                    <div className="text-emerald-300 text-lg">→</div>
+                                                    <div className="text-center">
+                                                        <div className="text-lg font-bold text-emerald-600">
+                                                            {detailViewStudent.score}
+                                                        </div>
+                                                        <div className="text-[10px] text-emerald-600">复核后</div>
+                                                    </div>
+                                                    <div className={clsx(
+                                                        "ml-auto px-3 py-1.5 rounded-lg text-sm font-bold",
+                                                        detailViewStudent.score > detailViewStudent.draftTotalScore
+                                                            ? "bg-emerald-100 text-emerald-700"
+                                                            : "bg-rose-100 text-rose-700"
+                                                    )}>
+                                                        {detailViewStudent.score > detailViewStudent.draftTotalScore ? '+' : ''}
+                                                        {(detailViewStudent.score - detailViewStudent.draftTotalScore).toFixed(1)} 分
+                                                    </div>
+                                                </div>
+                                            )}
+
+                                            {/* 无变化提示 */}
+                                            {(detailViewStudent.draftTotalScore === undefined || detailViewStudent.draftTotalScore === detailViewStudent.score) && (
+                                                <div className="text-xs text-emerald-600 flex items-center gap-2">
+                                                    <CheckCircle className="w-3.5 h-3.5" />
+                                                    逻辑复核通过，分数无调整
+                                                </div>
+                                            )}
                                         </div>
                                     )}
 
                                     {/* 第一次批改详情（可展开） */}
                                     {detailViewStudent.draftQuestionDetails && detailViewStudent.draftQuestionDetails.length > 0 && (
                                         <details className="bg-white rounded-lg border border-slate-200">
-                                            <summary className="px-3 py-2 text-xs font-semibold text-slate-600 cursor-pointer hover:bg-slate-50">
+                                            <summary className="px-3 py-2 text-xs font-semibold text-slate-600 cursor-pointer hover:bg-slate-50 flex items-center gap-2">
+                                                <ListOrdered className="w-3.5 h-3.5" />
                                                 查看初次批改详情 ({detailViewStudent.draftQuestionDetails.length} 题)
                                             </summary>
                                             <div className="px-3 pb-3 space-y-2 max-h-60 overflow-y-auto">
@@ -2257,9 +2473,66 @@ export const ResultsView: React.FC = () => {
                         <SmoothButton onClick={() => setShowClassReport(true)} variant="secondary" size="sm">
                             <BarChartOutlined className="mr-2" /> 班级报告
                         </SmoothButton>
-                        <SmoothButton variant="secondary" size="sm">
-                            <Download className="w-4 h-4 mr-2" /> 导出 CSV
-                        </SmoothButton>
+                        
+                        {/* 导出下拉菜单 */}
+                        <div className="relative">
+                            <SmoothButton 
+                                onClick={() => setExportMenuOpen(!exportMenuOpen)} 
+                                variant="secondary" 
+                                size="sm"
+                                disabled={!submissionId}
+                            >
+                                <Download className="w-4 h-4 mr-2" /> 
+                                导出
+                                <ChevronDown className={clsx("w-4 h-4 ml-1 transition-transform", exportMenuOpen && "rotate-180")} />
+                            </SmoothButton>
+                            
+                            {exportMenuOpen && (
+                                <div className="absolute right-0 top-full mt-1 w-56 bg-white rounded-lg shadow-lg border border-slate-200 py-1 z-50">
+                                    <button
+                                        onClick={handleExportAnnotatedImages}
+                                        disabled={exportLoading === 'images'}
+                                        className="w-full px-4 py-2.5 text-left text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-3 disabled:opacity-50"
+                                    >
+                                        {exportLoading === 'images' ? (
+                                            <Loader2 className="w-4 h-4 animate-spin" />
+                                        ) : (
+                                            <Pencil className="w-4 h-4 text-slate-400" />
+                                        )}
+                                        <div>
+                                            <div className="font-medium">带批注图片</div>
+                                            <div className="text-[10px] text-slate-400">ZIP 打包下载</div>
+                                        </div>
+                                    </button>
+                                    <button
+                                        onClick={handleExportExcel}
+                                        disabled={exportLoading === 'excel'}
+                                        className="w-full px-4 py-2.5 text-left text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-3 disabled:opacity-50"
+                                    >
+                                        {exportLoading === 'excel' ? (
+                                            <Loader2 className="w-4 h-4 animate-spin" />
+                                        ) : (
+                                            <FileText className="w-4 h-4 text-slate-400" />
+                                        )}
+                                        <div>
+                                            <div className="font-medium">Excel 统计</div>
+                                            <div className="text-[10px] text-slate-400">成绩、题目、班级报告</div>
+                                        </div>
+                                    </button>
+                                    <div className="border-t border-slate-100 my-1" />
+                                    <button
+                                        onClick={() => { setSmartExcelOpen(true); setExportMenuOpen(false); }}
+                                        className="w-full px-4 py-2.5 text-left text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-3"
+                                    >
+                                        <AlertCircle className="w-4 h-4 text-blue-500" />
+                                        <div>
+                                            <div className="font-medium">智能 Excel</div>
+                                            <div className="text-[10px] text-slate-400">AI 自定义格式 / 导入模板</div>
+                                        </div>
+                                    </button>
+                                </div>
+                            )}
+                        </div>
                     </div>
                 </div>
 
@@ -2322,6 +2595,121 @@ export const ResultsView: React.FC = () => {
                     </div>
                 </div>
             )}
+
+            {/* 智能 Excel 对话框 */}
+            <AnimatePresence>
+                {smartExcelOpen && (
+                    <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        className="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+                        onClick={() => setSmartExcelOpen(false)}
+                    >
+                        <motion.div
+                            initial={{ scale: 0.95, opacity: 0 }}
+                            animate={{ scale: 1, opacity: 1 }}
+                            exit={{ scale: 0.95, opacity: 0 }}
+                            className="bg-white rounded-xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden"
+                            onClick={(e) => e.stopPropagation()}
+                        >
+                            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+                                <div>
+                                    <h3 className="text-lg font-bold text-slate-900">智能 Excel 生成</h3>
+                                    <p className="text-xs text-slate-500 mt-0.5">用自然语言描述你想要的报表格式</p>
+                                </div>
+                                <button onClick={() => setSmartExcelOpen(false)} className="p-1 hover:bg-slate-100 rounded">
+                                    <X className="w-5 h-5 text-slate-400" />
+                                </button>
+                            </div>
+                            
+                            <div className="p-6 space-y-4">
+                                {/* 模板上传 */}
+                                <div>
+                                    <label className="block text-sm font-medium text-slate-700 mb-2">
+                                        导入已有 Excel 模板（可选）
+                                    </label>
+                                    <div className="border-2 border-dashed border-slate-200 rounded-lg p-4 text-center hover:border-blue-300 transition-colors">
+                                        <input
+                                            type="file"
+                                            accept=".xlsx,.xls"
+                                            onChange={(e) => setSmartExcelTemplate(e.target.files?.[0] || null)}
+                                            className="hidden"
+                                            id="excel-template-input"
+                                        />
+                                        <label htmlFor="excel-template-input" className="cursor-pointer">
+                                            {smartExcelTemplate ? (
+                                                <div className="flex items-center justify-center gap-2 text-sm text-slate-700">
+                                                    <FileText className="w-5 h-5 text-green-500" />
+                                                    {smartExcelTemplate.name}
+                                                    <button
+                                                        onClick={(e) => { e.preventDefault(); setSmartExcelTemplate(null); }}
+                                                        className="text-slate-400 hover:text-red-500"
+                                                    >
+                                                        <X className="w-4 h-4" />
+                                                    </button>
+                                                </div>
+                                            ) : (
+                                                <div className="text-sm text-slate-500">
+                                                    <FileText className="w-8 h-8 mx-auto mb-2 text-slate-300" />
+                                                    点击上传 Excel 模板
+                                                </div>
+                                            )}
+                                        </label>
+                                    </div>
+                                </div>
+                                
+                                {/* 格式描述 */}
+                                <div>
+                                    <label className="block text-sm font-medium text-slate-700 mb-2">
+                                        描述你想要的格式
+                                    </label>
+                                    <textarea
+                                        value={smartExcelPrompt}
+                                        onChange={(e) => setSmartExcelPrompt(e.target.value)}
+                                        placeholder="例如：&#10;- 我需要一个包含学生姓名、总分、各题得分的表格&#10;- 按分数从高到低排序&#10;- 添加一列显示是否及格（60分以上）&#10;- 在模板的「成绩」列填入总分"
+                                        className="w-full h-32 px-3 py-2 border border-slate-200 rounded-lg text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                    />
+                                </div>
+                                
+                                {/* 示例提示 */}
+                                <div className="bg-blue-50 rounded-lg p-3">
+                                    <div className="text-xs font-medium text-blue-700 mb-1">💡 提示</div>
+                                    <div className="text-xs text-blue-600 space-y-1">
+                                        <p>• 如果上传了模板，AI 会尝试将数据填入对应列</p>
+                                        <p>• 可以指定列名映射，如「把总分填入『成绩』列」</p>
+                                        <p>• 支持添加计算列，如「添加排名列」「添加及格标记」</p>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex justify-end gap-3">
+                                <SmoothButton variant="secondary" size="sm" onClick={() => setSmartExcelOpen(false)}>
+                                    取消
+                                </SmoothButton>
+                                <SmoothButton 
+                                    variant="primary" 
+                                    size="sm" 
+                                    onClick={handleSmartExcelSubmit}
+                                    disabled={!smartExcelPrompt.trim() || smartExcelLoading}
+                                >
+                                    {smartExcelLoading ? (
+                                        <>
+                                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                                            生成中...
+                                        </>
+                                    ) : (
+                                        <>
+                                            <Download className="w-4 h-4 mr-2" />
+                                            生成并下载
+                                        </>
+                                    )}
+                                </SmoothButton>
+                            </div>
+                        </motion.div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
 
             <RubricOverview />
         </div>

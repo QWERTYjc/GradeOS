@@ -226,6 +226,15 @@ class LLMReasoningClient:
             or detail.get("scoringResults")
             or []
         )
+        # 提取批注坐标
+        annotations = detail.get("annotations") or []
+        
+        # 提取步骤信息（包含坐标）
+        steps = detail.get("steps") or []
+        
+        # 提取答案区域坐标
+        answer_region = detail.get("answer_region") or detail.get("answerRegion")
+        
         return {
             "question_id": question_id,
             "score": score,
@@ -240,6 +249,9 @@ class LLMReasoningClient:
             "self_critique_confidence": detail.get("self_critique_confidence") or detail.get("selfCritiqueConfidence"),
             "rubric_refs": detail.get("rubric_refs") or detail.get("rubricRefs"),
             "question_type": detail.get("question_type") or detail.get("questionType"),
+            "annotations": annotations,
+            "steps": steps,
+            "answer_region": answer_region,
         }
 
     def _merge_page_break_results(
