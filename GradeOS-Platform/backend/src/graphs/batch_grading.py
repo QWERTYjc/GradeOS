@@ -2871,7 +2871,8 @@ async def cross_page_merge_node(state: BatchGradingGraphState) -> Dict[str, Any]
                     is_cross_page=False,
                     merge_source=None,
                     student_answer=q.get("student_answer", ""),
-                    question_type=q.get("question_type") or q.get("questionType")
+                    question_type=q.get("question_type") or q.get("questionType"),
+                    annotations=q.get("annotations", []),
                 )
                 question_results.append(question_result)
             
@@ -2904,13 +2905,15 @@ async def cross_page_merge_node(state: BatchGradingGraphState) -> Dict[str, Any]
                 "is_cross_page": q.is_cross_page,
                 "page_indices": q.page_indices,
                 "merge_source": q.merge_source,
+                "annotations": q.annotations if hasattr(q, 'annotations') else [],
                 "scoring_point_results": [
                     {
                         "description": spr.scoring_point.description,
                         "score": spr.scoring_point.score,
                         "is_required": spr.scoring_point.is_required,
                         "awarded": spr.awarded,
-                        "evidence": spr.evidence
+                        "evidence": spr.evidence,
+                        "point_id": spr.scoring_point.point_id if hasattr(spr.scoring_point, 'point_id') else "",
                     }
                     for spr in q.scoring_point_results
                 ]

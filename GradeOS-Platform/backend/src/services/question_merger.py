@@ -247,6 +247,12 @@ class QuestionMerger:
         answers = [r.student_answer for r in results if r.student_answer]
         merged_answer = "\n---\n".join(answers) if answers else ""
         
+        # 合并批注（来自所有页面）
+        merged_annotations = []
+        for r in results:
+            if hasattr(r, 'annotations') and r.annotations:
+                merged_annotations.extend(r.annotations)
+        
         # 创建合并结果
         merged = QuestionResult(
             question_id=results[0].question_id,
@@ -259,7 +265,8 @@ class QuestionMerger:
             is_cross_page=True,
             merge_source=[f"page_{r.page_indices[0] if r.page_indices else 'unknown'}" 
                          for r in results],
-            student_answer=merged_answer
+            student_answer=merged_answer,
+            annotations=merged_annotations,
         )
         
         # 如果置信度低于阈值，标记需要人工确认 (Req 2.5)
