@@ -850,37 +850,38 @@ export const ResultsView: React.FC = () => {
             if (isAssistMode && pageAnnotations.length === 0) {
                 console.log('Assist 模式：生成演示批注');
                 // 生成一些演示批注来展示功能
+                // BoundingBox 使用 {x_min, y_min, x_max, y_max} 格式（归一化坐标 0.0-1.0）
                 const demoAnnotations: VisualAnnotation[] = [
                     {
                         annotation_type: 'step_check',
-                        bounding_box: { x: 0.15, y: 0.25, width: 0.03, height: 0.03 },
+                        bounding_box: { x_min: 0.15, y_min: 0.25, x_max: 0.18, y_max: 0.28 },
                         text: 'M1',
                         color: '#00AA00',
-                    } as VisualAnnotation,
+                    },
                     {
                         annotation_type: 'step_check',
-                        bounding_box: { x: 0.15, y: 0.35, width: 0.03, height: 0.03 },
+                        bounding_box: { x_min: 0.15, y_min: 0.35, x_max: 0.18, y_max: 0.38 },
                         text: 'M2',
                         color: '#00AA00',
-                    } as VisualAnnotation,
+                    },
                     {
                         annotation_type: 'step_cross',
-                        bounding_box: { x: 0.15, y: 0.45, width: 0.03, height: 0.03 },
+                        bounding_box: { x_min: 0.15, y_min: 0.45, x_max: 0.18, y_max: 0.48 },
                         text: 'A1',
                         color: '#FF0000',
-                    } as VisualAnnotation,
+                    },
                     {
                         annotation_type: 'score',
-                        bounding_box: { x: 0.85, y: 0.15, width: 0.1, height: 0.05 },
+                        bounding_box: { x_min: 0.85, y_min: 0.15, x_max: 0.95, y_max: 0.20 },
                         text: '3/4',
                         color: '#FF6600',
-                    } as VisualAnnotation,
+                    },
                     {
                         annotation_type: 'comment',
-                        bounding_box: { x: 0.7, y: 0.55, width: 0.25, height: 0.08 },
+                        bounding_box: { x_min: 0.70, y_min: 0.55, x_max: 0.95, y_max: 0.63 },
                         text: '演示批注',
                         color: '#0066CC',
-                    } as VisualAnnotation,
+                    },
                 ];
                 
                 try {
