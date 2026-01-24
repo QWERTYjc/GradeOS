@@ -1,7 +1,7 @@
 """add rule_patches table
 
 Revision ID: add_rule_patches_table
-Revises: add_grading_logs_table
+Revises: add_grading_logs_001
 Create Date: 2025-12-20 16:00:00.000000
 
 """
@@ -13,7 +13,7 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision: str = 'add_rule_patches_table'
-down_revision: Union[str, None] = 'add_grading_logs_table'
+down_revision: Union[str, None] = 'add_grading_logs_001'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
