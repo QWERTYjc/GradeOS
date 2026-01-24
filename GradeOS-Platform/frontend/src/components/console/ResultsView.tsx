@@ -14,6 +14,7 @@ import { SmoothButton } from '@/components/design-system/SmoothButton';
 import { gradingApi } from '@/services/api';
 import { renderAnnotationsToBase64 } from '@/services/annotationApi';
 import type { VisualAnnotation } from '@/types/annotation';
+import AnnotationCanvas from '@/components/grading/AnnotationCanvas';
 
 interface ResultCardProps {
     result: StudentResult;
@@ -557,6 +558,8 @@ export const ResultsView: React.FC = () => {
     const [showAnnotations, setShowAnnotations] = useState(true);
     const [annotatedImages, setAnnotatedImages] = useState<Map<number, string>>(new Map());
     const [annotationLoading, setAnnotationLoading] = useState<Set<number>>(new Set());
+    // 🔥 新增：存储每页的批注数据，用于 Canvas 直接渲染
+    const [pageAnnotationsData, setPageAnnotationsData] = useState<Map<number, VisualAnnotation[]>>(new Map());
     // 使用 ref 跟踪已处理的页面，避免 useEffect 无限循环
     const renderedPagesRef = React.useRef<Set<string>>(new Set());
 
@@ -802,7 +805,24 @@ export const ResultsView: React.FC = () => {
                 }
             });
             
-            // 获取图片的 base64
+            // 🔥 如果有批注坐标，存储批注数据用于 Canvas 直接渲染（快速路径）
+            if (pageAnnotations.length > 0) {
+                console.log(`[Canvas渲染] 页面 ${pageIdx} 有 ${pageAnnotations.length} 个批注，使用前端 Canvas 直接渲染`);
+                setPageAnnotationsData(prev => {
+                    const next = new Map(prev);
+                    next.set(pageIdx, pageAnnotations);
+                    return next;
+                });
+                // 标记为已完成（不需要 annotatedImages，因为会用 Canvas 渲染）
+                setAnnotationLoading(prev => {
+                    const next = new Set(prev);
+                    next.delete(pageIdx);
+                    return next;
+                });
+                return;
+            }
+            
+            // 获取图片的 base64（仅在需要调用 API 时才获取）
             let imageBase64 = imageUrl;
             if (imageUrl.startsWith('data:')) {
                 imageBase64 = imageUrl.split(',')[1] || imageUrl;
@@ -818,19 +838,6 @@ export const ResultsView: React.FC = () => {
                     };
                     reader.readAsDataURL(blob);
                 });
-            }
-            
-            // 如果有批注坐标，直接渲染
-            if (pageAnnotations.length > 0) {
-                const result = await renderAnnotationsToBase64(imageBase64, pageAnnotations);
-                if (result.success && result.image_base64) {
-                    setAnnotatedImages(prev => {
-                        const next = new Map(prev);
-                        next.set(pageIdx, `data:image/png;base64,${result.image_base64}`);
-                        return next;
-                    });
-                    return;
-                }
             }
             
             // 如果没有批注坐标但有评分标准，调用 annotate-and-render API
@@ -971,14 +978,17 @@ export const ResultsView: React.FC = () => {
         if (!showAnnotations) {
             // 关闭批注时清理
             setAnnotatedImages(new Map());
+            setPageAnnotationsData(new Map());
             renderedPagesRef.current.clear();
         }
     }, [showAnnotations]);
 
     // 切换学生时清理该学生的渲染缓存
     useEffect(() => {
-        // 切换学生时，清理 annotatedImages 但保留 ref（ref 会通过 studentKey 区分）
+        // 切换学生时，清理 annotatedImages 和 pageAnnotationsData
         setAnnotatedImages(new Map());
+        setPageAnnotationsData(new Map());
+        renderedPagesRef.current.clear();
     }, [detailViewIndex]);
 
     useEffect(() => {
@@ -1951,6 +1961,7 @@ export const ResultsView: React.FC = () => {
                                             setShowAnnotations(e.target.checked);
                                             if (!e.target.checked) {
                                                 setAnnotatedImages(new Map());
+                                                setPageAnnotationsData(new Map());
                                             }
                                         }}
                                         className="sr-only peer"
@@ -1969,7 +1980,9 @@ export const ResultsView: React.FC = () => {
                         {uniquePages.map((pageIdx, pageIdxIndex) => {
                             const originalImageUrl = uploadedImages[pageIdx] || currentSession?.images[pageIdx]?.url;
                             const annotatedImageUrl = annotatedImages.get(pageIdx);
+                            const pageAnnotations = pageAnnotationsData.get(pageIdx);
                             const isLoading = annotationLoading.has(pageIdx);
+                            const hasCanvasAnnotations = showAnnotations && pageAnnotations && pageAnnotations.length > 0;
                             const displayImageUrl = showAnnotations && annotatedImageUrl ? annotatedImageUrl : originalImageUrl;
                             const isLastPage = pageIdxIndex === uniquePages.length - 1;
                             return (
@@ -1984,14 +1997,22 @@ export const ResultsView: React.FC = () => {
                                                 渲染中...
                                             </div>
                                         )}
-                                        {showAnnotations && annotatedImageUrl && !isLoading && (
+                                        {showAnnotations && (annotatedImageUrl || hasCanvasAnnotations) && !isLoading && (
                                             <div className="flex items-center gap-1 text-xs text-emerald-500">
                                                 <Pencil className="w-3 h-3" />
-                                                已批注
+                                                已批注{hasCanvasAnnotations ? ' (Canvas)' : ''}
                                             </div>
                                         )}
                                     </div>
-                                    {displayImageUrl ? (
+                                    {/* 🔥 优先使用 Canvas 渲染批注（快速路径） */}
+                                    {hasCanvasAnnotations && originalImageUrl ? (
+                                        <AnnotationCanvas
+                                            imageSrc={originalImageUrl}
+                                            annotations={pageAnnotations}
+                                            className="w-full h-auto"
+                                            showText={true}
+                                        />
+                                    ) : displayImageUrl ? (
                                         <img src={displayImageUrl} alt={`Page ${pageIdx + 1}`} className="w-full h-auto" />
                                     ) : (
                                         <div className="p-10 text-center text-slate-400">Image missing</div>

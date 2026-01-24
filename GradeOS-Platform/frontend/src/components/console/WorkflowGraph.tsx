@@ -11,6 +11,17 @@ const MIN_ZOOM = 0.6;
 const MAX_ZOOM = 1.6;
 const ZOOM_STEP = 0.1;
 
+const formatStreamPreview = (value: string, maxChars = 90) => {
+    const normalized = value.replace(/\s+/g, ' ').trim();
+    if (!normalized) {
+        return '';
+    }
+    if (normalized.length <= maxChars) {
+        return normalized;
+    }
+    return `...${normalized.slice(-maxChars)}`;
+};
+
 const statusStyles = {
     pending: {
         bg: 'bg-white/40',
@@ -64,9 +75,13 @@ const AgentCard: React.FC<{ agent: GradingAgent; onClick: () => void; isSelected
     const isRunning = agent.status === 'running';
     const isCompleted = agent.status === 'completed';
     const isFailed = agent.status === 'failed';
+    const streamPreview = isRunning && agent.output?.streamingText
+        ? formatStreamPreview(agent.output.streamingText, 60)
+        : '';
 
     return (
         <motion.div
+            data-no-drag="true"
             initial={{ opacity: 0, scale: 0.9 }}
             animate={{ opacity: 1, scale: 1 }}
             whileHover={{ scale: 1.02, y: -1 }}
@@ -121,6 +136,15 @@ const AgentCard: React.FC<{ agent: GradingAgent; onClick: () => void; isSelected
                     </span>
                 )}
             </div>
+
+            {streamPreview && (
+                <div
+                    className="mt-2 text-[10px] text-slate-500 font-mono truncate"
+                    title={agent.output?.streamingText}
+                >
+                    AI: {streamPreview}
+                </div>
+            )}
         </motion.div>
     );
 };
@@ -129,7 +153,10 @@ const ParallelContainer: React.FC<{
     node: WorkflowNode;
     onAgentClick: (id: string) => void;
     selectedAgentId: string | null;
-}> = ({ node, onAgentClick, selectedAgentId }) => {
+    onClick: () => void;
+    isSelected: boolean;
+    streamPreview?: string;
+}> = ({ node, onAgentClick, selectedAgentId, onClick, isSelected, streamPreview }) => {
     const styles = statusStyles[node.status];
     const agents = node.children || [];
     const isRunning = node.status === 'running';
@@ -137,6 +164,8 @@ const ParallelContainer: React.FC<{
     const isRubricReview = node.id === 'rubric_review';
     const isRubricParse = node.id === 'rubric_parse';
     const isGradeBatch = node.id === 'grade_batch';
+    const preview = streamPreview ? formatStreamPreview(streamPreview, 100) : '';
+    const showStreamPreview = isRunning && Boolean(preview);
 
     const waitLabel = isLogicReview || isRubricReview
         ? 'Waiting for reviews...'
@@ -153,12 +182,15 @@ const ParallelContainer: React.FC<{
 
     return (
         <motion.div
+            data-no-drag="true"
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
+            onClick={onClick}
             className={clsx(
-                'relative min-w-[280px] max-w-[340px] rounded-2xl border p-1.5 transition-all duration-500 z-0',
+                'relative min-w-[280px] max-w-[340px] rounded-2xl border p-1.5 transition-all duration-500 z-0 cursor-pointer',
                 styles.bg,
                 styles.border,
+                isSelected ? 'ring-2 ring-blue-500 ring-offset-2 shadow-lg' : '',
                 styles.shadow,
                 'backdrop-blur-xl'
             )}
@@ -194,6 +226,12 @@ const ParallelContainer: React.FC<{
                     </div>
                 </div>
 
+                {showStreamPreview && (
+                    <div className="mb-3 rounded-lg border border-blue-100/80 bg-blue-50/70 px-2.5 py-2 text-[10px] text-blue-700 font-mono">
+                        <span className="font-semibold">AI:</span> {preview}
+                    </div>
+                )}
+
                 <div className={gridClassName}>
                     <AnimatePresence>
                         {agents.length === 0 ? (
@@ -226,7 +264,8 @@ const NodeCard: React.FC<{
     node: WorkflowNode;
     onClick: () => void;
     isSelected: boolean;
-}> = ({ node, onClick, isSelected }) => {
+    streamPreview?: string;
+}> = ({ node, onClick, isSelected, streamPreview }) => {
     const shouldAutoComplete = (
         node.status === 'pending'
         && !node.isParallelContainer
@@ -237,6 +276,8 @@ const NodeCard: React.FC<{
     const effectiveStatus = (node as any).isVisualCompleted ? 'completed' : inferredStatus;
     const styles = statusStyles[effectiveStatus] || statusStyles.pending;
     const isRunning = effectiveStatus === 'running';
+    const preview = streamPreview ? formatStreamPreview(streamPreview, 80) : '';
+    const showStreamPreview = isRunning && Boolean(preview);
 
     const isCrossPageMerge = node.id === 'cross_page_merge';
     const isLogicReview = node.id === 'logic_review';
@@ -251,6 +292,7 @@ const NodeCard: React.FC<{
 
     return (
         <motion.div
+            data-no-drag="true"
             initial={{ opacity: 0, y: 30 }}
             animate={{ opacity: 1, y: 0 }}
             whileHover={{ scale: 1.05, y: -4 }}
@@ -277,7 +319,7 @@ const NodeCard: React.FC<{
                     {NodeIcon}
                 </div>
 
-                <div className="flex flex-col items-center">
+                <div className="flex flex-col items-center gap-1">
                     <h3 className="font-bold text-slate-800 text-sm tracking-wide">{node.label}</h3>
                     <AnimatePresence mode="wait">
                         {node.message && (
@@ -289,6 +331,19 @@ const NodeCard: React.FC<{
                                 className="text-[10px] font-medium text-slate-500 mt-1 max-w-[140px] truncate bg-white/50 px-2 py-0.5 rounded-full"
                             >
                                 {node.message}
+                            </motion.span>
+                        )}
+                    </AnimatePresence>
+                    <AnimatePresence>
+                        {showStreamPreview && (
+                            <motion.span
+                                key={`${node.id}-stream`}
+                                initial={{ opacity: 0, height: 0 }}
+                                animate={{ opacity: 1, height: 'auto' }}
+                                exit={{ opacity: 0, height: 0 }}
+                                className="text-[10px] font-medium text-blue-600 max-w-[160px] truncate bg-blue-50/80 px-2 py-0.5 rounded-full"
+                            >
+                                AI: {preview}
                             </motion.span>
                         )}
                     </AnimatePresence>
@@ -323,6 +378,7 @@ export const WorkflowGraph: React.FC = () => {
         setSelectedAgentId,
         status,
         interactionEnabled,
+        llmThoughts,
         pendingReview,
         submissionId,
         setCurrentTab,
@@ -338,6 +394,19 @@ export const WorkflowGraph: React.FC = () => {
     });
     const [zoom, setZoom] = useState(1);
     const [pan, setPan] = useState({ x: 0, y: 0 });
+    const activeStreamsByNode = useMemo(() => {
+        const map = new Map<string, string>();
+        for (let i = llmThoughts.length - 1; i >= 0; i -= 1) {
+            const thought = llmThoughts[i];
+            if (thought.isComplete) {
+                continue;
+            }
+            if (!map.has(thought.nodeId)) {
+                map.set(thought.nodeId, thought.content);
+            }
+        }
+        return map;
+    }, [llmThoughts]);
 
     const handleNodeClick = (node: WorkflowNode) => {
         setSelectedNodeId(node.id);
@@ -390,7 +459,7 @@ export const WorkflowGraph: React.FC = () => {
     return (
         <div
             ref={viewportRef}
-            className="relative w-full h-full flex flex-col items-center justify-start overflow-hidden cursor-grab active:cursor-grabbing touch-none"
+            className="relative w-full min-h-screen flex flex-col items-center justify-start overflow-hidden cursor-grab active:cursor-grabbing touch-none"
             onPointerDown={(event) => {
                 if (shouldIgnoreDrag(event.target)) return;
                 if (event.pointerType === 'mouse' && event.button !== 0) return;
@@ -492,12 +561,16 @@ export const WorkflowGraph: React.FC = () => {
                                             node={node}
                                             onAgentClick={setSelectedAgentId}
                                             selectedAgentId={selectedAgentId}
+                                            onClick={() => handleNodeClick(node)}
+                                            isSelected={selectedNodeId === node.id}
+                                            streamPreview={activeStreamsByNode.get(node.id)}
                                         />
                                     ) : (
                                         <NodeCard
                                             node={node}
                                             onClick={() => handleNodeClick(node)}
                                             isSelected={selectedNodeId === node.id}
+                                            streamPreview={activeStreamsByNode.get(node.id)}
                                         />
                                     )}
                                 </motion.div>

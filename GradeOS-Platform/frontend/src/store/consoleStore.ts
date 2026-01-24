@@ -495,6 +495,19 @@ const normalizeImageSource = (value: string) => {
     return `data:image/jpeg;base64,${value}`;
 };
 
+const normalizeNodeId = (value: string) => {
+    if (!value) {
+        return value;
+    }
+    if (value === 'index_node') {
+        return 'index';
+    }
+    if (value === 'grading') {
+        return 'grade_batch';
+    }
+    return value;
+};
+
 /**
  * 工作流节点配置
  * 
@@ -949,12 +962,12 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
             return state; // 不更新状态
         }
 
-        const normalizedNodeId = nodeId === 'index_node' ? 'index' : nodeId;
+        const normalizedNodeId = normalizeNodeId(nodeId);
         if (normalizedNodeId === 'index') {
             return state;
         }
         const normalizedAgentId = agentId || undefined;
-        const baseNodeName = nodeName || nodeId;
+        const baseNodeName = nodeName || normalizedNodeId;
         const normalizedNodeName = agentLabel ? `${baseNodeName} - ${agentLabel}` : baseNodeName;
         const normalizedPageIndex = pageIndex;
 
@@ -994,7 +1007,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
     }),
 
     completeLLMThought: (nodeId, pageIndex, streamType, agentId) => set((state) => {
-        const normalizedNodeId = nodeId === 'index_node' ? 'index' : nodeId;
+        const normalizedNodeId = normalizeNodeId(nodeId);
         if (normalizedNodeId === 'index') {
             return state;
         }
@@ -1198,7 +1211,8 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
 
         // 处理 LLM 流式输出消息 (P4) - 统一流式输出展示
         wsClient.on('llm_stream_chunk', (data) => {
-            const nodeId = data.nodeId || data.node || 'unknown';
+            const rawNodeId = data.nodeId || data.node || 'unknown';
+            const normalizedNodeId = normalizeNodeId(rawNodeId);
             const nodeName = data.nodeName;
             const { pageIndex, chunk } = data;
             const agentId = data.agentId || data.agent_id;
@@ -1218,37 +1232,39 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
 
             // 使用统一的 LLM 思考追加方法
             const displayNodeName = nodeName || (
-                nodeId === 'rubric_parse' ? 'Rubric Parse' :
-                    nodeId === 'rubric_review' ? 'Rubric Review' :
-                        nodeId === 'logic_review' ? 'Logic Review' :
-                            nodeId === 'grade_batch' ? `Student Page ${pageIndex !== undefined ? pageIndex + 1 : ''}` :
-                                nodeId || 'Node'
+                normalizedNodeId === 'rubric_parse' ? 'Rubric Parse' :
+                    normalizedNodeId === 'rubric_review' ? 'Rubric Review' :
+                        normalizedNodeId === 'logic_review' ? 'Logic Review' :
+                            normalizedNodeId === 'grade_batch' ? `Student Page ${pageIndex !== undefined ? pageIndex + 1 : ''}` :
+                                normalizedNodeId || 'Node'
             );
-            get().appendLLMThought(nodeId, displayNodeName, contentStr, pageIndex, streamType, agentId, agentLabel);
-
-            const normalizedNodeId = nodeId === 'index_node' ? 'index' : nodeId;
+            get().appendLLMThought(normalizedNodeId, displayNodeName, contentStr, pageIndex, streamType, agentId, agentLabel);
             const nodeForStream = get().workflowNodes.find((n) => n.id === normalizedNodeId);
             if (nodeForStream && nodeForStream.status === 'pending') {
                 get().updateNodeStatus(normalizedNodeId, 'running');
             }
 
             // 同时更新 Agent 状态（兼容旧逻辑）
-            if (pageIndex !== undefined && streamType !== 'thinking') {
+            if (streamType !== 'thinking' && normalizedNodeId === 'grade_batch') {
                 const nodes = get().workflowNodes;
                 const gradingNode = nodes.find(n => n.id === 'grade_batch');
                 if (gradingNode && gradingNode.children) {
-                    const agent = gradingNode.children.find(a => a.status === 'running');
-                    if (agent) {
-                        const currentText = agent.output?.streamingText || '';
-                        const combined = currentText + contentStr;
-                        const maxChars = 8000;
-                        get().updateAgentStatus(agent.id, {
-                            output: {
-                                ...agent.output,
-                                streamingText: combined.length > maxChars ? combined.slice(-maxChars) : combined
-                            }
-                        });
+                    const agentById = agentId
+                        ? gradingNode.children.find(a => a.id === agentId)
+                        : undefined;
+                    const agent = agentById || gradingNode.children.find(a => a.status === 'running');
+                    if (!agent) {
+                        return;
                     }
+                    const currentText = agent.output?.streamingText || '';
+                    const combined = currentText + contentStr;
+                    const maxChars = 8000;
+                    get().updateAgentStatus(agent.id, {
+                        output: {
+                            ...agent.output,
+                            streamingText: combined.length > maxChars ? combined.slice(-maxChars) : combined
+                        }
+                    });
                 }
             }
         });
