@@ -110,8 +110,18 @@ async def get_grading_history(batch_id_or_id: str) -> Optional[GradingHistory]:
             if not row:
                 return None
             
-            class_ids = json.loads(row["class_ids"]) if row["class_ids"] else None
-            result_data = json.loads(row["result_data"]) if row["result_data"] else None
+            # JSONB 字段可能已经是 dict，也可能是 str（取决于驱动）
+            raw_class_ids = row["class_ids"]
+            if isinstance(raw_class_ids, str):
+                class_ids = json.loads(raw_class_ids) if raw_class_ids else None
+            else:
+                class_ids = raw_class_ids
+            
+            raw_result_data = row["result_data"]
+            if isinstance(raw_result_data, str):
+                result_data = json.loads(raw_result_data) if raw_result_data else None
+            else:
+                result_data = raw_result_data
             
             return GradingHistory(
                 id=str(row["id"]),
@@ -154,8 +164,18 @@ async def list_grading_history(class_id: Optional[str] = None, limit: int = 50) 
             
             histories = []
             for row in rows:
-                class_ids = json.loads(row["class_ids"]) if row["class_ids"] else None
-                result_data = json.loads(row["result_data"]) if row["result_data"] else None
+                # JSONB 字段可能已经是 dict，也可能是 str（取决于驱动）
+                raw_class_ids = row["class_ids"]
+                if isinstance(raw_class_ids, str):
+                    class_ids = json.loads(raw_class_ids) if raw_class_ids else None
+                else:
+                    class_ids = raw_class_ids  # 已经是 list/dict
+                
+                raw_result_data = row["result_data"]
+                if isinstance(raw_result_data, str):
+                    result_data = json.loads(raw_result_data) if raw_result_data else None
+                else:
+                    result_data = raw_result_data  # 已经是 dict
                 
                 histories.append(GradingHistory(
                     id=str(row["id"]),
@@ -229,7 +249,12 @@ async def get_student_results(grading_history_id: str) -> List[StudentGradingRes
             
             results = []
             for row in rows:
-                result_data = json.loads(row["result_data"]) if row["result_data"] else None
+                # JSONB 字段可能已经是 dict，也可能是 str（取决于驱动）
+                raw_result_data = row["result_data"]
+                if isinstance(raw_result_data, str):
+                    result_data = json.loads(raw_result_data) if raw_result_data else None
+                else:
+                    result_data = raw_result_data
                 
                 results.append(StudentGradingResult(
                     id=str(row["id"]),
