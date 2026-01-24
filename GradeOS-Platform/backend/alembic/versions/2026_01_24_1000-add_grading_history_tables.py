@@ -17,7 +17,7 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision: str = 'add_grading_history_tables'
-down_revision: Union[str, None] = '2025_12_24_1200-add_runs_table_for_langgraph'
+down_revision: Union[str, None] = 'add_runs_table_for_langgraph'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
