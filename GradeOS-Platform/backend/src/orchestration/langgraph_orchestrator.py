@@ -16,14 +16,7 @@ import json
 
 from langgraph.graph import StateGraph
 from langgraph.types import Command, interrupt
-
-# 可选导入 - 支持离线模式
-try:
-    from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-    import asyncpg
-except ImportError:
-    AsyncPostgresSaver = None
-    asyncpg = None
+from langgraph.checkpoint.memory import InMemorySaver
 
 from src.orchestration.base import Orchestrator, RunStatus, RunInfo
 
@@ -103,25 +96,9 @@ class LangGraphOrchestrator(Orchestrator):
         else:
             logger.info("LangGraphOrchestrator 已初始化")
     
-    def _create_default_checkpointer(self) -> Optional[AsyncPostgresSaver]:
-        """创建默认 Checkpointer
-        
-        注意：如果数据库连接池不可用，返回 None（离线模式）
-        """
-        paused = False
-        try:
-            # 尝试从连接池获取连接字符串
-            # 注意：asyncpg.Pool 没有 get_dsn 方法，需要从配置获取
-            import os
-            dsn = os.getenv("DATABASE_URL", "")
-            if dsn:
-                return AsyncPostgresSaver.from_conn_string(dsn)
-            else:
-                logger.warning("DATABASE_URL 未设置，Checkpointer 不可用")
-                return None
-        except Exception as e:
-            logger.warning(f"创建 Checkpointer 失败: {e}")
-            return None
+    def _create_default_checkpointer(self) -> InMemorySaver:
+        """创建默认 Checkpointer"""
+        return InMemorySaver()
 
     def _build_graph_config(self, run_id: str) -> Dict[str, Any]:
         config: Dict[str, Any] = {"configurable": {"thread_id": run_id}}
