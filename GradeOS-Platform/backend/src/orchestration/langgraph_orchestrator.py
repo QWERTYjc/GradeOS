@@ -87,7 +87,8 @@ class LangGraphOrchestrator(Orchestrator):
         # 事件队列（用于实时流式推送）
         self._event_queues: Dict[str, asyncio.Queue] = {}
         self._event_stream_complete: Dict[str, bool] = {}
-        self._run_semaphore = None
+        max_active_runs = int(os.getenv("RUN_MAX_CONCURRENCY", "300"))
+        self._run_semaphore = asyncio.Semaphore(max(1, max_active_runs))
         self._graph_max_concurrency = int(os.getenv("LANGGRAPH_MAX_CONCURRENCY", "8"))
         self._graph_recursion_limit = int(os.getenv("LANGGRAPH_RECURSION_LIMIT", "50"))
         self._auto_resume_enabled = os.getenv("LANGGRAPH_AUTO_RESUME", "true").strip().lower() in (
