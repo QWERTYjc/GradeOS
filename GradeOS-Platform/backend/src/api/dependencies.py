@@ -31,11 +31,18 @@ async def _open_postgres_checkpointer(dsn: str) -> Optional[Any]:
     global _checkpointer_cm
     if AsyncPostgresSaver is None:
         return None
+    checkpointer_cm = None
     try:
         checkpointer_cm = AsyncPostgresSaver.from_conn_string(dsn)
         checkpointer = await checkpointer_cm.__aenter__()
+        await checkpointer.setup()
     except Exception as exc:
         logger.warning("Postgres checkpointer unavailable: %s", exc)
+        if checkpointer_cm is not None:
+            try:
+                await checkpointer_cm.__aexit__(None, None, None)
+            except Exception:
+                pass
         return None
     _checkpointer_cm = checkpointer_cm
     return checkpointer
