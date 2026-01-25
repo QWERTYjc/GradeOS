@@ -87,8 +87,7 @@ class LangGraphOrchestrator(Orchestrator):
         # 事件队列（用于实时流式推送）
         self._event_queues: Dict[str, asyncio.Queue] = {}
         self._event_stream_complete: Dict[str, bool] = {}
-        max_active_runs = int(os.getenv("RUN_MAX_CONCURRENCY", "3"))
-        self._run_semaphore = asyncio.Semaphore(max(1, max_active_runs))
+        self._run_semaphore = None
         self._graph_max_concurrency = int(os.getenv("LANGGRAPH_MAX_CONCURRENCY", "8"))
         self._graph_recursion_limit = int(os.getenv("LANGGRAPH_RECURSION_LIMIT", "50"))
         self._auto_resume_enabled = os.getenv("LANGGRAPH_AUTO_RESUME", "true").strip().lower() in (
@@ -242,8 +241,9 @@ class LangGraphOrchestrator(Orchestrator):
         paused = False  # 初始化，避免 finally 中 UnboundLocalError
         acquired = False
         try:
-            await self._run_semaphore.acquire()
-            acquired = True
+            if self._run_semaphore:
+                await self._run_semaphore.acquire()
+                acquired = True
             # 更新状态为 running
             await self._update_run_status(run_id, "running")
             
@@ -411,7 +411,7 @@ class LangGraphOrchestrator(Orchestrator):
             await self._push_event(run_id, {"kind": "error", "name": None, "data": {"error": str(e)}})
             
         finally:
-            if acquired:
+            if acquired and self._run_semaphore:
                 self._run_semaphore.release()
             # 清理后台任务
             self._background_tasks.pop(run_id, None)
@@ -431,8 +431,9 @@ class LangGraphOrchestrator(Orchestrator):
         paused = False
         acquired = False
         try:
-            await self._run_semaphore.acquire()
-            acquired = True
+            if self._run_semaphore:
+                await self._run_semaphore.acquire()
+                acquired = True
             await self._update_run_status(run_id, "running")
 
             logger.info(f"恢复执行 Graph: run_id={run_id}")
@@ -528,7 +529,7 @@ class LangGraphOrchestrator(Orchestrator):
             await self._update_run_status(run_id, "failed", error=str(exc))
             await self._push_event(run_id, {"kind": "error", "name": None, "data": {"error": str(exc)}})
         finally:
-            if acquired:
+            if acquired and self._run_semaphore:
                 self._run_semaphore.release()
             self._background_tasks.pop(run_id, None)
             if not paused:
@@ -1038,8 +1039,9 @@ class LangGraphOrchestrator(Orchestrator):
         acquired = False
         accumulated_state: Dict[str, Any] = {}
         try:
-            await self._run_semaphore.acquire()
-            acquired = True
+            if self._run_semaphore:
+                await self._run_semaphore.acquire()
+                acquired = True
             # 更新状态为 running
             await self._update_run_status(run_id, "running")
             
@@ -1130,7 +1132,7 @@ class LangGraphOrchestrator(Orchestrator):
                 error=str(e)
             )
         finally:
-            if acquired:
+            if acquired and self._run_semaphore:
                 self._run_semaphore.release()
             self._background_tasks.pop(run_id, None)
             if not paused:
