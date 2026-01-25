@@ -26,10 +26,11 @@ import redis.asyncio as redis
 from redis.exceptions import RedisError
 
 from src.models.enums import SubmissionStatus
-from src.orchestration.base import Orchestrator
+from src.orchestration.base import Orchestrator, RunStatus
 from src.api.dependencies import get_orchestrator
 from src.utils.image import to_jpeg_bytes, pil_to_jpeg_bytes
 from src.utils.pool_manager import UnifiedPoolManager, PoolNotInitializedError
+from src.services.grading_run_control import GradingRunSnapshot, get_run_controller
 
 # PostgreSQL 作为主存储
 from src.db import (
@@ -49,10 +50,11 @@ router = APIRouter(prefix="/batch", tags=["批量提交"])
 active_connections: Dict[str, List[WebSocket]] = {}
 # 缓存图片，避免 images_ready 早于 WebSocket 连接导致前端丢失
 batch_image_cache: Dict[str, Dict[str, dict]] = {}
+_active_stream_tasks: Dict[str, asyncio.Task] = {}
 DEBUG_LOG_PATH = os.getenv("GRADEOS_DEBUG_LOG_PATH")
 TEACHER_MAX_ACTIVE_RUNS = int(os.getenv("TEACHER_MAX_ACTIVE_RUNS", "3"))
-_TEACHER_SEMAPHORE_LOCK = asyncio.Lock()
-_TEACHER_SEMAPHORES: Dict[str, asyncio.Semaphore] = {}
+RUN_QUEUE_POLL_SECONDS = float(os.getenv("GRADING_RUN_POLL_SECONDS", "2.0"))
+RUN_QUEUE_TIMEOUT_SECONDS = float(os.getenv("GRADING_RUN_WAIT_TIMEOUT_SECONDS", "0"))
 REDIS_PROGRESS_TTL_SECONDS = int(os.getenv("REDIS_PROGRESS_TTL_SECONDS", "86400"))
 REDIS_PROGRESS_KEY_PREFIX = os.getenv("REDIS_PROGRESS_KEY_PREFIX", "batch_progress")
 _REDIS_CACHE_SKIP_TYPES = {"images_ready", "rubric_images_ready", "llm_stream_chunk"}
@@ -215,15 +217,6 @@ def _normalize_teacher_key(teacher_id: Optional[str]) -> str:
     return "anonymous"
 
 
-async def _get_teacher_semaphore(teacher_key: str) -> asyncio.Semaphore:
-    async with _TEACHER_SEMAPHORE_LOCK:
-        semaphore = _TEACHER_SEMAPHORES.get(teacher_key)
-        if not semaphore:
-            semaphore = asyncio.Semaphore(max(1, TEACHER_MAX_ACTIVE_RUNS))
-            _TEACHER_SEMAPHORES[teacher_key] = semaphore
-    return semaphore
-
-
 class BatchSubmissionResponse(BaseModel):
     """批量提交响应"""
     batch_id: str = Field(..., description="批次 ID")
@@ -241,6 +234,25 @@ class BatchStatusResponse(BaseModel):
     completed_students: int = Field(0, description="已完成批改的学生数")
     unidentified_pages: int = Field(0, description="未识别学生的页数")
     results: Optional[List[dict]] = Field(None, description="批改结果")
+
+
+class ActiveRunItem(BaseModel):
+    batch_id: str
+    status: str
+    class_id: Optional[str] = None
+    homework_id: Optional[str] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
+    total_pages: Optional[int] = None
+    progress: Optional[float] = None
+    current_stage: Optional[str] = None
+
+
+class ActiveRunsResponse(BaseModel):
+    teacher_id: str
+    runs: List[ActiveRunItem]
 
 
 class RubricReviewContextResponse(BaseModel):
@@ -329,6 +341,56 @@ async def broadcast_progress(batch_id: str, message: dict):
             "sessionId": "debug-session",
         })
     # #endregion
+    if msg_type in (
+        "workflow_update",
+        "grading_progress",
+        "workflow_completed",
+        "workflow_error",
+        "batch_error",
+    ):
+        run_updates: Dict[str, Any] = {"updated_at": datetime.now().isoformat()}
+        if msg_type == "workflow_update":
+            status = message.get("status")
+            if status == "pending":
+                run_updates["status"] = "queued"
+            elif status in ("running", "paused"):
+                run_updates["status"] = "running"
+            elif status == "completed":
+                run_updates["status"] = "completed"
+                run_updates["completed_at"] = run_updates["updated_at"]
+            elif status == "failed":
+                run_updates["status"] = "failed"
+                run_updates["completed_at"] = run_updates["updated_at"]
+            node_id = message.get("nodeId")
+            if node_id:
+                run_updates["current_stage"] = node_id
+        elif msg_type == "grading_progress":
+            percentage = message.get("percentage")
+            if percentage is not None:
+                try:
+                    progress_value = float(percentage)
+                    if progress_value > 1.0:
+                        progress_value = progress_value / 100.0
+                    run_updates["progress"] = max(0.0, min(progress_value, 1.0))
+                except (TypeError, ValueError):
+                    pass
+            stage = message.get("currentStage")
+            if stage:
+                run_updates["current_stage"] = stage
+        elif msg_type == "workflow_completed":
+            run_updates.update({
+                "status": "completed",
+                "completed_at": run_updates["updated_at"],
+                "progress": 1.0,
+            })
+        else:
+            run_updates.update({
+                "status": "failed",
+                "completed_at": run_updates["updated_at"],
+            })
+        run_controller = await get_run_controller()
+        if run_controller:
+            await run_controller.update_run(batch_id, run_updates)
     await _cache_progress_message(batch_id, message)
     if batch_id in active_connections:
         disconnected = []
@@ -358,8 +420,45 @@ async def _start_run_with_teacher_limit(
     homework_id: Optional[str],
     student_mapping: List[dict],
 ) -> Optional[str]:
-    semaphore = await _get_teacher_semaphore(teacher_key)
-    await semaphore.acquire()
+    run_controller = await get_run_controller()
+    if run_controller:
+        acquired = await run_controller.try_acquire_slot(
+            teacher_key,
+            batch_id,
+            TEACHER_MAX_ACTIVE_RUNS,
+        )
+        if not acquired:
+            await broadcast_progress(batch_id, {
+                "type": "workflow_update",
+                "nodeId": "rubric_parse",
+                "status": "pending",
+                "message": "Queued: waiting for grading slot"
+            })
+            max_wait = RUN_QUEUE_TIMEOUT_SECONDS if RUN_QUEUE_TIMEOUT_SECONDS > 0 else None
+            acquired = await run_controller.wait_for_slot(
+                teacher_key,
+                batch_id,
+                TEACHER_MAX_ACTIVE_RUNS,
+                RUN_QUEUE_POLL_SECONDS,
+                max_wait,
+            )
+            if not acquired:
+                await run_controller.update_run(
+                    batch_id,
+                    {"status": "failed", "updated_at": datetime.now().isoformat()},
+                )
+                await run_controller.remove_from_queue(teacher_key, batch_id)
+                await broadcast_progress(batch_id, {
+                    "type": "workflow_update",
+                    "nodeId": "rubric_parse",
+                    "status": "failed",
+                    "message": "Queued run timed out"
+                })
+                return None
+        await run_controller.update_run(
+            batch_id,
+            {"status": "running", "started_at": datetime.now().isoformat(), "updated_at": datetime.now().isoformat()},
+        )
     run_id: Optional[str] = None
     try:
         run_id = await orchestrator.start_run(
@@ -372,7 +471,7 @@ async def _start_run_with_teacher_limit(
             f"batch_id={batch_id}, "
             f"run_id={run_id}"
         )
-        asyncio.create_task(
+        stream_task = asyncio.create_task(
             stream_langgraph_progress(
                 batch_id=batch_id,
                 run_id=run_id,
@@ -381,13 +480,18 @@ async def _start_run_with_teacher_limit(
                 homework_id=homework_id,
                 student_mapping=student_mapping,
                 teacher_key=teacher_key,
-                teacher_semaphore=semaphore,
             )
         )
+        _active_stream_tasks[batch_id] = stream_task
         return run_id
     except Exception as exc:
         logger.error(f"????????: {exc}", exc_info=True)
-        semaphore.release()
+        if run_controller:
+            await run_controller.release_slot(teacher_key, batch_id)
+            await run_controller.update_run(
+                batch_id,
+                {"status": "failed", "updated_at": datetime.now().isoformat()},
+            )
         await broadcast_progress(batch_id, {
             "type": "workflow_update",
             "nodeId": "rubric_parse",
@@ -522,6 +626,22 @@ async def submit_batch(
                 logger.warning(f"未知文件类型 {file_name}，尝试作为图片处理")
         
         total_pages = len(answer_images)
+
+        teacher_key = _normalize_teacher_key(teacher_id)
+        run_controller = await get_run_controller()
+        if run_controller:
+            await run_controller.register_run(
+                GradingRunSnapshot(
+                    batch_id=batch_id,
+                    teacher_id=teacher_key,
+                    status="queued",
+                    class_id=class_id,
+                    homework_id=homework_id,
+                    created_at=datetime.now().isoformat(),
+                    updated_at=datetime.now().isoformat(),
+                    total_pages=total_pages,
+                )
+            )
         logger.info(f"答题文件处理完成: batch_id={batch_id}, 总页数={total_pages}")
         
         # === 处理评分标准（可选）===
@@ -624,15 +744,6 @@ async def submit_batch(
         }
         
         # 启动 LangGraph batch_grading Graph
-        teacher_key = _normalize_teacher_key(teacher_id)
-        teacher_semaphore = await _get_teacher_semaphore(teacher_key)
-        if teacher_semaphore.locked():
-            await broadcast_progress(batch_id, {
-                "type": "workflow_update",
-                "nodeId": "rubric_parse",
-                "status": "pending",
-                "message": "Queued: waiting for teacher slot"
-            })
         asyncio.create_task(
             _start_run_with_teacher_limit(
                 teacher_key=teacher_key,
@@ -665,7 +776,6 @@ async def stream_langgraph_progress(
     homework_id: Optional[str] = None,
     student_mapping: Optional[List[dict]] = None,
     teacher_key: Optional[str] = None,
-    teacher_semaphore: Optional[asyncio.Semaphore] = None
 ):
     """
     流式监听 LangGraph 执行进度并推送到 WebSocket
@@ -1093,14 +1203,89 @@ async def stream_langgraph_progress(
         })
 
     finally:
-        if teacher_semaphore:
+        run_controller = await get_run_controller()
+        if run_controller and teacher_key:
             try:
                 run_info = await orchestrator.get_status(run_id)
                 status_value = run_info.status.value if hasattr(run_info.status, "value") else str(run_info.status)
                 if status_value in ("completed", "failed", "cancelled"):
-                    teacher_semaphore.release()
+                    await run_controller.update_run(
+                        batch_id,
+                        {
+                            "status": "completed" if status_value == "completed" else "failed",
+                            "completed_at": datetime.now().isoformat(),
+                            "updated_at": datetime.now().isoformat(),
+                        },
+                    )
+                    await run_controller.release_slot(teacher_key, batch_id)
             except Exception:
-                teacher_semaphore.release()
+                await run_controller.release_slot(teacher_key, batch_id)
+        current_task = asyncio.current_task()
+        if current_task and _active_stream_tasks.get(batch_id) is current_task:
+            _active_stream_tasks.pop(batch_id, None)
+
+
+async def _ensure_stream_task(
+    *,
+    batch_id: str,
+    run_id: str,
+    orchestrator: Orchestrator,
+    class_id: Optional[str] = None,
+    homework_id: Optional[str] = None,
+    student_mapping: Optional[List[dict]] = None,
+    teacher_key: Optional[str] = None,
+) -> None:
+    existing = _active_stream_tasks.get(batch_id)
+    if existing and not existing.done():
+        return
+    stream_task = asyncio.create_task(
+        stream_langgraph_progress(
+            batch_id=batch_id,
+            run_id=run_id,
+            orchestrator=orchestrator,
+            class_id=class_id,
+            homework_id=homework_id,
+            student_mapping=student_mapping,
+            teacher_key=teacher_key,
+        )
+    )
+    _active_stream_tasks[batch_id] = stream_task
+
+
+async def resume_orphaned_streams(orchestrator: Optional[Orchestrator]) -> None:
+    if not orchestrator:
+        return
+    try:
+        running_runs = await orchestrator.list_runs(graph_name="batch_grading", status=RunStatus.RUNNING, limit=50)
+        pending_runs = await orchestrator.list_runs(graph_name="batch_grading", status=RunStatus.PENDING, limit=50)
+    except Exception as exc:
+        logger.warning("Failed to list runs for stream recovery: %s", exc)
+        return
+
+    run_controller = await get_run_controller()
+    for run_info in [*running_runs, *pending_runs]:
+        run_id = run_info.run_id
+        if not run_id.startswith("batch_grading_"):
+            continue
+        batch_id = run_id.replace("batch_grading_", "", 1)
+        teacher_key = None
+        class_id = None
+        homework_id = None
+        if run_controller:
+            snapshot = await run_controller.get_run(batch_id)
+            if snapshot:
+                teacher_key = snapshot.teacher_id
+                class_id = snapshot.class_id
+                homework_id = snapshot.homework_id
+        await _ensure_stream_task(
+            batch_id=batch_id,
+            run_id=run_id,
+            orchestrator=orchestrator,
+            class_id=class_id,
+            homework_id=homework_id,
+            student_mapping=None,
+            teacher_key=teacher_key,
+        )
 
 
 def _map_node_to_frontend(node_name: str) -> str:
@@ -1642,6 +1827,26 @@ async def websocket_endpoint(websocket: WebSocket, batch_id: str):
                         "cross_page_questions": state.get("cross_page_questions", []),
                         "classReport": class_report
                     })
+            if run_info and run_info.status and run_info.status.value in ("running", "pending"):
+                run_controller = await get_run_controller()
+                teacher_key = None
+                class_id = None
+                homework_id = None
+                if run_controller:
+                    snapshot = await run_controller.get_run(batch_id)
+                    if snapshot:
+                        teacher_key = snapshot.teacher_id
+                        class_id = snapshot.class_id
+                        homework_id = snapshot.homework_id
+                await _ensure_stream_task(
+                    batch_id=batch_id,
+                    run_id=run_id,
+                    orchestrator=orchestrator,
+                    class_id=class_id,
+                    homework_id=homework_id,
+                    student_mapping=None,
+                    teacher_key=teacher_key,
+                )
     except Exception as e:
         logger.warning(f"发送状态快照失败: {e}")
     
@@ -1661,6 +1866,32 @@ async def websocket_endpoint(websocket: WebSocket, batch_id: str):
         logger.warning(f"WebSocket 接收异常: batch_id={batch_id}, error={exc}")
         logger.info(f"WebSocket 连接断开: batch_id={batch_id}")
         _discard_connection(batch_id, websocket)
+
+
+@router.get("/active", response_model=ActiveRunsResponse)
+async def list_active_runs(teacher_id: Optional[str] = None) -> ActiveRunsResponse:
+    teacher_key = _normalize_teacher_key(teacher_id)
+    run_controller = await get_run_controller()
+    if not run_controller:
+        return ActiveRunsResponse(teacher_id=teacher_key, runs=[])
+    snapshots = await run_controller.list_runs(teacher_key)
+    runs = [
+        ActiveRunItem(
+            batch_id=item.batch_id,
+            status=item.status,
+            class_id=item.class_id,
+            homework_id=item.homework_id,
+            created_at=item.created_at,
+            updated_at=item.updated_at,
+            started_at=item.started_at,
+            completed_at=item.completed_at,
+            total_pages=item.total_pages,
+            progress=item.progress,
+            current_stage=item.current_stage,
+        )
+        for item in snapshots
+    ]
+    return ActiveRunsResponse(teacher_id=teacher_key, runs=runs)
 
 
 @router.get("/status/{batch_id}", response_model=BatchStatusResponse)

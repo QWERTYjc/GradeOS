@@ -128,6 +128,7 @@ async def lifespan(app: FastAPI):
     try:
         await init_orchestrator()
         logger.info("LangGraph 编排器已初始化")
+        await batch_langgraph.resume_orphaned_streams(await get_orchestrator())
     except Exception as e:
         logger.warning(f"编排器初始化失败: {e}")
     

@@ -10,21 +10,13 @@ from dataclasses import dataclass, field
 from langgraph.graph import StateGraph, END
 from langgraph.types import Send, interrupt
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+from langchain_core.runnables import RunnableConfig, RunnableLambda
 
 from src.graphs.state import BatchGradingGraphState
 from src.utils.llm_thinking import split_thinking_content
 
 
 logger = logging.getLogger(__name__)
-_grade_batch_semaphore: Optional[asyncio.Semaphore] = None
-
-
-def _get_grade_batch_semaphore() -> asyncio.Semaphore:
-    global _grade_batch_semaphore
-    config = get_batch_config()
-    if _grade_batch_semaphore is None:
-        _grade_batch_semaphore = asyncio.Semaphore(max(1, config.max_concurrent_workers))
-    return _grade_batch_semaphore
 
 
 # ==================== 批次配置 ====================
@@ -645,21 +637,21 @@ async def index_node(state: BatchGradingGraphState) -> Dict[str, Any]:
 
         max_concurrency = int(os.getenv("INDEX_MAX_CONCURRENCY", "5"))
         boundary_only = os.getenv("INDEX_BOUNDARY_ONLY", "true").strip().lower() in ("1", "true", "yes")
-        semaphore = asyncio.Semaphore(max_concurrency)
 
-        async def analyze_page(image_data: bytes, page_index: int):
-            async with semaphore:
-                return await id_service.analyze_page(
-                    image_data,
-                    page_index,
-                    boundary_only=boundary_only,
-                )
+        async def analyze_page(payload: Dict[str, Any]):
+            return await id_service.analyze_page(
+                payload["image_data"],
+                payload["page_index"],
+                boundary_only=boundary_only,
+            )
 
-        tasks = [
-            analyze_page(image_data, page_index)
+        analyze_runner = RunnableLambda(analyze_page)
+        inputs = [
+            {"image_data": image_data, "page_index": page_index}
             for page_index, image_data in enumerate(processed_images)
         ]
-        page_analyses = await asyncio.gather(*tasks)
+        config = RunnableConfig(max_concurrency=max(1, max_concurrency))
+        page_analyses = await analyze_runner.abatch(inputs, config=config)
         page_analyses.sort(key=lambda x: x.page_index)
 
         segmentation_result = id_service.segment_from_analyses(page_analyses)
@@ -2350,9 +2342,7 @@ def _finalize_assist_result(
 
 
 async def grade_batch_node(state: Dict[str, Any]) -> Dict[str, Any]:
-    semaphore = _get_grade_batch_semaphore()
-    async with semaphore:
-        return await _grade_batch_node_impl(state)
+    return await _grade_batch_node_impl(state)
 
 
 async def _grade_batch_node_impl(state: Dict[str, Any]) -> Dict[str, Any]:
@@ -4849,15 +4839,16 @@ async def self_report_node(state: BatchGradingGraphState) -> Dict[str, Any]:
 
     reasoning_client = LLMReasoningClient(api_key=api_key, rubric_registry=None)
     max_workers = int(os.getenv("SELF_REPORT_MAX_WORKERS", "3"))
-    semaphore = asyncio.Semaphore(max_workers)
 
     updated_results: List[Optional[Dict[str, Any]]] = [None] * len(student_results)
 
-    async def report_student(index: int, student: Dict[str, Any]) -> None:
-        async with semaphore:
-            student_key = student.get("student_key") or student.get("student_name") or f"Student {index + 1}"
-            agent_id = f"report-worker-{index}"
+    async def report_student(payload: Dict[str, Any]) -> Dict[str, Any]:
+        index = payload["index"]
+        student = payload["student"]
+        student_key = student.get("student_key") or student.get("student_name") or f"Student {index + 1}"
+        agent_id = f"report-worker-{index}"
 
+        try:
             await broadcast_progress(batch_id, {
                 "type": "agent_update",
                 "agentId": agent_id,
@@ -4878,7 +4869,6 @@ async def self_report_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                     "summary": "无题目需要审查",
                     "generated_at": datetime.now().isoformat(),
                 }
-                updated_results[index] = updated_student
                 await broadcast_progress(batch_id, {
                     "type": "agent_update",
                     "agentId": agent_id,
@@ -4887,7 +4877,7 @@ async def self_report_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                     "progress": 100,
                     "message": "Self-report skipped (no questions)",
                 })
-                return
+                return {"index": index, "result": updated_student}
 
             prompt = _build_self_report_prompt(student, question_details, rubric_map)
 
@@ -4915,8 +4905,8 @@ async def self_report_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                     payload = json.loads(json_text)
                     # LLM 可能返回 confession 或 self_report 字段
                     self_report = (
-                        payload.get("confession") 
-                        or payload.get("self_report") 
+                        payload.get("confession")
+                        or payload.get("self_report")
                         or payload
                     )
                     # 标准化字段名（snake_case -> camelCase 兼容）
@@ -4962,7 +4952,6 @@ async def self_report_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                 fallback_report["source"] = "rule_fallback"
                 updated_student["self_report"] = fallback_report
 
-            updated_results[index] = updated_student
             await broadcast_progress(batch_id, {
                 "type": "agent_update",
                 "agentId": agent_id,
@@ -4974,9 +4963,22 @@ async def self_report_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                     "selfReport": updated_student.get("self_report"),
                 },
             })
+            return {"index": index, "result": updated_student}
+        except Exception as exc:
+            logger.warning(f"[self_report] worker failed student={student_key}: {exc}")
+            return {"index": index, "result": dict(student)}
 
-    tasks = [report_student(i, s) for i, s in enumerate(student_results)]
-    await asyncio.gather(*tasks, return_exceptions=True)
+    report_runner = RunnableLambda(report_student)
+    inputs = [
+        {"index": idx, "student": student}
+        for idx, student in enumerate(student_results)
+    ]
+    config = RunnableConfig(max_concurrency=max(1, max_workers))
+    results = await report_runner.abatch(inputs, config=config)
+    for result in results:
+        if not result:
+            continue
+        updated_results[result["index"]] = result["result"]
 
     final_results = [r if r else student_results[i] for i, r in enumerate(updated_results)]
 
@@ -5228,16 +5230,17 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
 
     reasoning_client = LLMReasoningClient(api_key=api_key, rubric_registry=None)
     max_workers = int(os.getenv("LOGIC_REVIEW_MAX_WORKERS", "3"))
-    semaphore = asyncio.Semaphore(max_workers)
 
     logic_review_results: List[Dict[str, Any]] = []
     updated_results: List[Optional[Dict[str, Any]]] = [None] * len(student_results)
 
-    async def review_student(index: int, student: Dict[str, Any]) -> None:
-        async with semaphore:
-            student_key = student.get("student_key") or student.get("student_name") or f"Student {index + 1}"
-            agent_id = f"review-worker-{index}"
+    async def review_student(payload: Dict[str, Any]) -> Dict[str, Any]:
+        index = payload["index"]
+        student = payload["student"]
+        student_key = student.get("student_key") or student.get("student_name") or f"Student {index + 1}"
+        agent_id = f"review-worker-{index}"
 
+        try:
             await broadcast_progress(batch_id, {
                 "type": "agent_update",
                 "agentId": agent_id,
@@ -5254,7 +5257,6 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                 _recompute_student_totals(updated_student)
                 updated_student["self_audit"] = _build_self_audit(updated_student)
                 updated_student["logic_reviewed_at"] = datetime.now().isoformat()
-                updated_results[index] = updated_student
                 review_summary = _build_logic_review_summary(question_details)
                 await broadcast_progress(batch_id, {
                     "type": "agent_update",
@@ -5268,11 +5270,11 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                         "selfAudit": updated_student.get("self_audit"),
                     },
                 })
-                return
+                return {"index": index, "result": updated_student, "review": None}
             prompt = _build_logic_review_prompt(
-                student, 
-                question_details, 
-                rubric_map, 
+                student,
+                question_details,
+                rubric_map,
                 limits,
                 confession=student.get("self_report") or student.get("confession"),
             )
@@ -5307,19 +5309,19 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
             except Exception as exc:
                 logger.warning(f"[logic_review] LLM failed student={student_key}: {exc}")
 
-            payload: Dict[str, Any] = {}
+            payload_data: Dict[str, Any] = {}
             if response_text:
                 try:
                     json_text = reasoning_client._extract_json_from_text(response_text)
-                    payload = json.loads(json_text)
+                    payload_data = json.loads(json_text)
                 except Exception as exc:
                     logger.warning(f"[logic_review] parse failed student={student_key}: {exc}")
 
             question_reviews = (
-                payload.get("question_reviews")
-                or payload.get("questionReviews")
-                or payload.get("questions")
-                or payload.get("reviews")
+                payload_data.get("question_reviews")
+                or payload_data.get("questionReviews")
+                or payload_data.get("questions")
+                or payload_data.get("reviews")
                 or []
             )
             review_map: Dict[str, Dict[str, Any]] = {}
@@ -5349,22 +5351,22 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
             _recompute_student_totals(updated_student)
 
             self_audit = _normalize_logic_review_self_audit(
-                payload.get("self_audit") or payload.get("selfAudit")
+                payload_data.get("self_audit") or payload_data.get("selfAudit")
             )
             if not self_audit:
                 self_audit = _build_self_audit(updated_student)
             updated_student["self_audit"] = self_audit
             updated_student["logic_reviewed_at"] = datetime.now().isoformat()
 
-            updated_results[index] = updated_student
-            if payload:
-                logic_review_results.append({
+            review_payload = None
+            if payload_data:
+                review_payload = {
                     "student_key": student_key,
                     "student_id": updated_student.get("student_id"),
                     "reviewed_at": updated_student["logic_reviewed_at"],
                     "question_reviews": list(review_map.values()),
                     "self_audit": self_audit,
-                })
+                }
 
             review_summary = _build_logic_review_summary(updated_details)
             await broadcast_progress(batch_id, {
@@ -5379,11 +5381,25 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                     "selfAudit": self_audit,
                 },
             })
+            return {"index": index, "result": updated_student, "review": review_payload}
+        except Exception as exc:
+            logger.warning(f"[logic_review] worker failed student={student_key}: {exc}")
+            return {"index": index, "result": dict(student), "review": None}
 
-    await asyncio.gather(*[
-        review_student(idx, student)
+    review_runner = RunnableLambda(review_student)
+    inputs = [
+        {"index": idx, "student": student}
         for idx, student in enumerate(student_results)
-    ])
+    ]
+    config = RunnableConfig(max_concurrency=max(1, max_workers))
+    results = await review_runner.abatch(inputs, config=config)
+    for result in results:
+        if not result:
+            continue
+        updated_results[result["index"]] = result["result"]
+        review_payload = result.get("review")
+        if review_payload:
+            logic_review_results.append(review_payload)
 
     final_results = [r for r in updated_results if r is not None]
     return {

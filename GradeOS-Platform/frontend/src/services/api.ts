@@ -523,6 +523,25 @@ export interface ResultsReviewContext {
   answer_images: string[];
 }
 
+export interface ActiveRunItem {
+  batch_id: string;
+  status: string;
+  class_id?: string;
+  homework_id?: string;
+  created_at?: string;
+  updated_at?: string;
+  started_at?: string;
+  completed_at?: string;
+  total_pages?: number;
+  progress?: number;
+  current_stage?: string;
+}
+
+export interface ActiveRunsResponse {
+  teacher_id: string;
+  runs: ActiveRunItem[];
+}
+
 export const gradingApi = {
   createSubmission: async (
     examFiles: File[],
@@ -601,6 +620,11 @@ export const gradingApi = {
 
   getResults: (submissionId: string) =>
     request<GradingResult[]>(`/batch/results/${submissionId}`),
+
+  getActiveRuns: (teacherId?: string) => {
+    const query = teacherId ? `?teacher_id=${encodeURIComponent(teacherId)}` : '';
+    return request<ActiveRunsResponse>(`/batch/active${query}`);
+  },
 
   /** 获取批量批改完整结果（包含跨页题目信息） */
   getBatchResults: (batchId: string) =>
@@ -704,6 +728,7 @@ export const api = {
   getResultsReviewContext: gradingApi.getResultsReviewContext,
   submitRubricReview: gradingApi.submitRubricReview,
   submitResultsReview: gradingApi.submitResultsReview,
+  getActiveRuns: gradingApi.getActiveRuns,
 
   // Class grading console integration
   getSubmissionsForGrading: async (classId: string, homeworkId: string) => {

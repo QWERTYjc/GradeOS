@@ -91,6 +91,12 @@ class LangGraphOrchestrator(Orchestrator):
         self._run_semaphore = asyncio.Semaphore(max(1, max_active_runs))
         self._graph_max_concurrency = int(os.getenv("LANGGRAPH_MAX_CONCURRENCY", "8"))
         self._graph_recursion_limit = int(os.getenv("LANGGRAPH_RECURSION_LIMIT", "50"))
+        self._auto_resume_enabled = os.getenv("LANGGRAPH_AUTO_RESUME", "true").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+        self._auto_resume_limit = int(os.getenv("LANGGRAPH_AUTO_RESUME_LIMIT", "25"))
         
         if offline_mode:
             logger.info("LangGraphOrchestrator 已初始化（离线模式）")
@@ -413,6 +419,120 @@ class LangGraphOrchestrator(Orchestrator):
             # 标记事件流结束（如果还没标记）
             if not paused:
                 await self._mark_event_stream_complete(run_id)
+
+    async def _resume_from_checkpoint_background(
+        self,
+        run_id: str,
+        graph_name: str,
+        compiled_graph: Any,
+        config: Dict[str, Any],
+    ) -> None:
+        """从 Checkpointer 恢复 Graph 执行（自动断点续跑）"""
+        paused = False
+        acquired = False
+        try:
+            await self._run_semaphore.acquire()
+            acquired = True
+            await self._update_run_status(run_id, "running")
+
+            logger.info(f"恢复执行 Graph: run_id={run_id}")
+
+            accumulated_state = await self.get_state(run_id) or {}
+            if not accumulated_state:
+                run = await self._get_run_from_db(run_id)
+                if run and run.get("input_data"):
+                    accumulated_state = run.get("input_data", {})
+                    if isinstance(accumulated_state, str):
+                        try:
+                            accumulated_state = json.loads(accumulated_state)
+                        except json.JSONDecodeError:
+                            accumulated_state = {}
+
+            result = None
+            async for event in compiled_graph.astream_events(None, config=config, version="v2"):
+                event_kind = event.get("event")
+                event_name = event.get("name", "")
+                event_data = event.get("data", {})
+
+                await self._push_event(run_id, {
+                    "kind": event_kind,
+                    "name": event_name,
+                    "data": event_data,
+                })
+
+                if event_kind == "on_chain_end" and "__interrupt__" in event_data.get("output", {}):
+                    logger.info(f"Graph 中断: run_id={run_id}")
+                    paused = True
+                    await self._update_run_status(run_id, "paused")
+                    return
+
+                if event_kind == "on_chat_model_stream":
+                    chunk = event_data.get("chunk")
+                    if chunk:
+                        content = ""
+                        if hasattr(chunk, "content"):
+                            content = chunk.content
+                        elif isinstance(chunk, dict) and "content" in chunk:
+                            content = chunk["content"]
+                        elif isinstance(chunk, str):
+                            content = chunk
+                        if content:
+                            await self._push_event(run_id, {
+                                "kind": "llm_stream",
+                                "name": event_name,
+                                "data": {
+                                    "chunk": content,
+                                    "node": event.get("metadata", {}).get("langgraph_node", ""),
+                                },
+                            })
+
+                if event_kind == "on_chain_end":
+                    output = event_data.get("output", {})
+                    if isinstance(output, dict):
+                        for key, value in output.items():
+                            if key == "grading_results" and key in accumulated_state and isinstance(accumulated_state[key], list) and isinstance(value, list):
+                                accumulated_state[key].extend(value)
+                            else:
+                                accumulated_state[key] = value
+
+                if event_kind == "on_chain_end" and event_name == graph_name:
+                    result = event_data.get("output", {})
+
+            snapshot = compiled_graph.get_state(config)
+            if snapshot.next:
+                logger.info(f"Graph 中断 (detected via state): run_id={run_id}, next={snapshot.next}")
+                paused = True
+                await self._update_run_status(run_id, "paused")
+                interrupt_value = None
+                if snapshot.tasks and hasattr(snapshot.tasks[0], "interrupts") and snapshot.tasks[0].interrupts:
+                    interrupt_value = snapshot.tasks[0].interrupts[0] if snapshot.tasks[0].interrupts else None
+                await self._push_event(run_id, {
+                    "kind": "paused",
+                    "name": None,
+                    "data": {
+                        "state": snapshot.values,
+                        "interrupt_value": interrupt_value,
+                    },
+                })
+                return
+
+            logger.info(f"Graph 执行完成: run_id={run_id}")
+            await self._update_run_status(run_id, "completed", output_data=accumulated_state)
+            await self._push_event(run_id, {"kind": "completed", "name": None, "data": {"state": accumulated_state}})
+
+        except Exception as exc:
+            logger.error(
+                f"Graph 恢复失败: run_id={run_id}, error={str(exc)}",
+                exc_info=True,
+            )
+            await self._update_run_status(run_id, "failed", error=str(exc))
+            await self._push_event(run_id, {"kind": "error", "name": None, "data": {"error": str(exc)}})
+        finally:
+            if acquired:
+                self._run_semaphore.release()
+            self._background_tasks.pop(run_id, None)
+            if not paused:
+                await self._mark_event_stream_complete(run_id)
     
     async def get_status(self, run_id: str) -> RunInfo:
         """查询 Graph 执行状态
@@ -709,6 +829,113 @@ class LangGraphOrchestrator(Orchestrator):
                 exc_info=True
             )
             raise
+
+    async def recover_incomplete_runs(
+        self,
+        graph_name: Optional[str] = None,
+    ) -> int:
+        """自动恢复中断的运行（依赖 Checkpointer）"""
+        if not self._auto_resume_enabled:
+            logger.info("Auto resume disabled; skipping recovery.")
+            return 0
+        if self._offline_mode or not self.db_pool or not self.checkpointer:
+            logger.info("Auto resume unavailable (no DB/checkpointer).")
+            return 0
+
+        runs = await self._fetch_incomplete_runs(
+            graph_name=graph_name,
+            limit=self._auto_resume_limit,
+        )
+        resumed = 0
+        for run in runs:
+            run_id = run.get("run_id")
+            graph = run.get("graph_name")
+            status_value = run.get("status")
+            if not run_id or not graph:
+                continue
+            if run_id in self._background_tasks:
+                continue
+
+            compiled_graph = self._graph_registry.get(graph)
+            if not compiled_graph:
+                continue
+
+            config = self._build_graph_config(run_id)
+            checkpoint = None
+            try:
+                checkpoint = await self.checkpointer.aget(config)
+            except Exception as exc:
+                logger.warning("Failed to fetch checkpoint for %s: %s", run_id, exc)
+
+            if checkpoint:
+                task = asyncio.create_task(
+                    self._resume_from_checkpoint_background(
+                        run_id=run_id,
+                        graph_name=graph,
+                        compiled_graph=compiled_graph,
+                        config=config,
+                    )
+                )
+                self._background_tasks[run_id] = task
+                resumed += 1
+                continue
+
+            if status_value == "pending":
+                payload = run.get("input_data") or {}
+                if isinstance(payload, str):
+                    try:
+                        payload = json.loads(payload)
+                    except json.JSONDecodeError:
+                        payload = {}
+                task = asyncio.create_task(
+                    self._run_graph_background(
+                        run_id=run_id,
+                        graph_name=graph,
+                        compiled_graph=compiled_graph,
+                        payload=payload,
+                    )
+                )
+                self._background_tasks[run_id] = task
+                resumed += 1
+
+        if resumed:
+            logger.info("Auto resumed %s runs.", resumed)
+        return resumed
+
+    async def _fetch_incomplete_runs(
+        self,
+        graph_name: Optional[str],
+        limit: int,
+    ) -> List[Dict[str, Any]]:
+        if not self.db_pool:
+            return []
+
+        conditions = ["status IN ('running', 'pending')"]
+        params: List[Any] = []
+        if graph_name:
+            conditions.append("graph_name = %s")
+            params.append(graph_name)
+        where_clause = " AND ".join(conditions)
+        query = f"""
+            SELECT run_id, graph_name, status, input_data
+            FROM runs
+            WHERE {where_clause}
+            ORDER BY updated_at DESC
+            LIMIT %s
+        """
+        params.append(limit)
+
+        try:
+            async with self.db_pool.connection() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(query, params)
+                    rows = await cur.fetchall()
+        except Exception as exc:
+            logger.warning("Failed to fetch incomplete runs: %s", exc)
+            return []
+
+        columns = ["run_id", "graph_name", "status", "input_data"]
+        return [dict(zip(columns, row)) for row in rows]
     
     async def send_event(
         self,

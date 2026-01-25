@@ -5,6 +5,7 @@
 
 import logging
 import os
+import asyncio
 from typing import Optional
 
 from langgraph.checkpoint.memory import InMemorySaver
@@ -62,6 +63,8 @@ async def init_orchestrator():
         # 注册批量批改 Graph
         batch_grading_graph = create_batch_grading_graph(checkpointer=checkpointer)
         _orchestrator.register_graph("batch_grading", batch_grading_graph)
+
+        asyncio.create_task(_orchestrator.recover_incomplete_runs(graph_name="batch_grading"))
         
         mode_label = "offline" if offline_mode else "database"
         logger.info("LangGraph 编排器初始化成功（%s）", mode_label)
