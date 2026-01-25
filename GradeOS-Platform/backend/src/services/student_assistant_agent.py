@@ -18,6 +18,9 @@ class AssistantHistoryMessage(TypedDict):
     content: str
 
 
+AssistantHistoryItem = AssistantHistoryMessage | BaseMessage
+
+
 class AssistantConceptNode(BaseModel):
     id: Optional[str] = None
     name: Optional[str] = ""
@@ -111,12 +114,15 @@ class StudentAssistantAgent:
 
     def _convert_history(
         self,
-        history: Optional[Sequence[AssistantHistoryMessage]],
+        history: Optional[Sequence[AssistantHistoryItem]],
     ) -> List[BaseMessage]:
         if not history:
             return []
         messages: List[BaseMessage] = []
         for item in list(history)[-8:]:
+            if isinstance(item, BaseMessage):
+                messages.append(item)
+                continue
             role = item.get("role", "user")
             content = item.get("content", "")
             if not content:
@@ -148,7 +154,7 @@ class StudentAssistantAgent:
         student_context: Dict[str, Any],
         session_mode: str,
         concept_topic: str,
-        history: Optional[Sequence[AssistantHistoryMessage]] = None,
+        history: Optional[Sequence[AssistantHistoryItem]] = None,
     ) -> AssistantAgentResult:
         prompt_value = self._prompt.format_prompt(
             format_instructions=self._parser.get_format_instructions(),

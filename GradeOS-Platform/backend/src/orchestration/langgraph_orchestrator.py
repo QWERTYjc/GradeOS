@@ -89,6 +89,8 @@ class LangGraphOrchestrator(Orchestrator):
         self._event_stream_complete: Dict[str, bool] = {}
         max_active_runs = int(os.getenv("RUN_MAX_CONCURRENCY", "3"))
         self._run_semaphore = asyncio.Semaphore(max(1, max_active_runs))
+        self._graph_max_concurrency = int(os.getenv("LANGGRAPH_MAX_CONCURRENCY", "8"))
+        self._graph_recursion_limit = int(os.getenv("LANGGRAPH_RECURSION_LIMIT", "50"))
         
         if offline_mode:
             logger.info("LangGraphOrchestrator 已初始化（离线模式）")
@@ -114,6 +116,14 @@ class LangGraphOrchestrator(Orchestrator):
         except Exception as e:
             logger.warning(f"创建 Checkpointer 失败: {e}")
             return None
+
+    def _build_graph_config(self, run_id: str) -> Dict[str, Any]:
+        config: Dict[str, Any] = {"configurable": {"thread_id": run_id}}
+        if self._graph_max_concurrency > 0:
+            config["max_concurrency"] = self._graph_max_concurrency
+        if self._graph_recursion_limit > 0:
+            config["recursion_limit"] = self._graph_recursion_limit
+        return config
     
     def register_graph(self, graph_name: str, compiled_graph: Any):
         """注册编译后的 Graph
@@ -231,12 +241,8 @@ class LangGraphOrchestrator(Orchestrator):
             # 更新状态为 running
             await self._update_run_status(run_id, "running")
             
-            # 配置 thread_id
-            config = {
-                "configurable": {
-                    "thread_id": run_id
-                }
-            }
+            # 配置 thread_id + LangGraph 内建并发控制
+            config = self._build_graph_config(run_id)
             
             # 执行 Graph（使用 astream_events 获取详细事件）
             logger.info(f"开始执行 Graph: run_id={run_id}")
@@ -748,12 +754,8 @@ class LangGraphOrchestrator(Orchestrator):
             if not compiled_graph:
                 raise ValueError(f"Graph 未注册: {graph_name}")
             
-            # 配置 thread_id
-            config = {
-                "configurable": {
-                    "thread_id": run_id
-                }
-            }
+            # 配置 thread_id + LangGraph 内建并发控制
+            config = self._build_graph_config(run_id)
             
             # 使用 Command.resume 恢复执行
             resume_command = Command(resume=event_data)
@@ -1073,11 +1075,7 @@ class LangGraphOrchestrator(Orchestrator):
             if not compiled_graph:
                 raise ValueError(f"Graph 未注册: {graph_name}")
             
-            config = {
-                "configurable": {
-                    "thread_id": run_id
-                }
-            }
+            config = self._build_graph_config(run_id)
             
             # 使用简单的 astream
             async for chunk in compiled_graph.astream(None, config=config):

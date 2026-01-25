@@ -19,6 +19,7 @@ from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Depends
 from pydantic import BaseModel
 from redis.exceptions import RedisError
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 
 from src.api.dependencies import get_orchestrator
 from src.orchestration.base import Orchestrator
@@ -59,6 +60,7 @@ from src.db import (
     list_assistant_mastery_snapshots,
 )
 from src.services.llm_client import LLMMessage, get_llm_client
+from src.services.assistant_memory import AssistantMemory, build_assistant_session_id
 from src.services.student_assistant_agent import (
     AssistantConceptNode,
     AssistantMastery,
@@ -482,6 +484,34 @@ def _is_confused_message(message: str) -> bool:
     if re.search(_CONFUSION_PATTERNS[0], lowered):
         return True
     return re.search(_CONFUSION_PATTERNS[1], message) is not None
+
+
+def _history_from_request(
+    history: Optional[List[AssistantMessage]],
+    current_message: str,
+) -> List[BaseMessage]:
+    if not history:
+        return []
+    items = list(history)
+    if (
+        items
+        and items[-1].role == "user"
+        and items[-1].content.strip() == current_message.strip()
+    ):
+        items = items[:-1]
+    messages: List[BaseMessage] = []
+    for item in items[-10:]:
+        content = (item.content or "").strip()
+        if not content:
+            continue
+        role = item.role
+        if role == "assistant":
+            messages.append(AIMessage(content=content))
+        elif role == "system":
+            messages.append(SystemMessage(content=content))
+        else:
+            messages.append(HumanMessage(content=content))
+    return messages
 
 
 def _build_student_context(student_id: str, class_id: Optional[str] = None) -> Dict[str, Any]:
@@ -1574,28 +1604,55 @@ async def assistant_chat(request: AssistantChatRequest):
     context = _build_student_context(request.student_id, request.class_id)
     agent = get_student_assistant_agent()
 
-    history_payload = None
-    if request.history:
-        history_payload = [{"role": msg.role, "content": msg.content} for msg in request.history]
+    session_id = build_assistant_session_id(request.student_id, request.class_id)
+    memory = AssistantMemory(session_id)
+    history_messages: List[BaseMessage] = []
+    try:
+        history_messages = await memory.load()
+    except Exception as exc:
+        logger.debug("Assistant memory load failed: %s", exc)
 
+    if not history_messages:
+        seed_messages = _history_from_request(request.history, request.message)
+        if seed_messages:
+            try:
+                await memory.append(seed_messages)
+                history_messages = await memory.load()
+            except Exception as exc:
+                logger.debug("Assistant memory seed failed: %s", exc)
+                history_messages = seed_messages
+
+    prompt_history = list(history_messages)
     if _is_confused_message(request.message):
-        if history_payload is None:
-            history_payload = []
-        history_payload.append({
-            "role": "system",
-            "content": (
-                "Student indicates they are stuck. Provide a brief explanation of the missing concept, "
-                "then ask a simpler Socratic question."
-            ),
-        })
+        prompt_history.append(
+            SystemMessage(
+                content=(
+                    "Student indicates they are stuck. Provide a brief explanation of the missing concept, "
+                    "then ask a simpler Socratic question."
+                ),
+            )
+        )
 
     result = await agent.ainvoke(
         message=request.message,
         student_context=context,
         session_mode=request.session_mode or "learning",
         concept_topic=request.concept_topic or "general",
-        history=history_payload,
+        history=prompt_history,
     )
+
+    assistant_content = result.raw_content
+    if result.parsed and result.parsed.content:
+        assistant_content = result.parsed.content
+    try:
+        await memory.append(
+            [
+                HumanMessage(content=request.message),
+                AIMessage(content=assistant_content),
+            ]
+        )
+    except Exception as exc:
+        logger.debug("Assistant memory append failed: %s", exc)
 
     if not result.parsed:
         return AssistantChatResponse(
