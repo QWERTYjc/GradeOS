@@ -248,11 +248,13 @@ class LangGraphOrchestrator(Orchestrator):
                 })
                 
                 # 检查是否有 interrupt
-                if event_kind == "on_chain_end" and "__interrupt__" in event_data.get("output", {}):
-                    logger.info(f"Graph 中断: run_id={run_id}")
-                    paused = True
-                    await self._update_run_status(run_id, "paused")
-                    return  # 等待外部 resume
+                if event_kind == "on_chain_end":
+                    output = event_data.get("output", {})
+                    if isinstance(output, dict) and "__interrupt__" in output:
+                        logger.info(f"Graph 中断: run_id={run_id}")
+                        paused = True
+                        await self._update_run_status(run_id, "paused")
+                        return  # 等待外部 resume
                 
                 # 处理 LLM 流式输出 (Requirement: 全流程流式)
                 if event_kind == "on_chat_model_stream":
@@ -439,11 +441,13 @@ class LangGraphOrchestrator(Orchestrator):
                     "data": event_data,
                 })
 
-                if event_kind == "on_chain_end" and "__interrupt__" in event_data.get("output", {}):
-                    logger.info(f"Graph 中断: run_id={run_id}")
-                    paused = True
-                    await self._update_run_status(run_id, "paused")
-                    return
+                if event_kind == "on_chain_end":
+                    output = event_data.get("output", {})
+                    if isinstance(output, dict) and "__interrupt__" in output:
+                        logger.info(f"Graph 中断: run_id={run_id}")
+                        paused = True
+                        await self._update_run_status(run_id, "paused")
+                        return
 
                 if event_kind == "on_chat_model_stream":
                     chunk = event_data.get("chunk")
@@ -1045,11 +1049,13 @@ class LangGraphOrchestrator(Orchestrator):
                     "data": event_data
                 })
 
-                if event_kind == "on_chain_end" and "__interrupt__" in event_data.get("output", {}):
-                    logger.info(f"Graph 再次中断: run_id={run_id}")
-                    paused = True
-                    await self._update_run_status(run_id, "paused")
-                    return
+                if event_kind == "on_chain_end":
+                    output = event_data.get("output", {})
+                    if isinstance(output, dict) and "__interrupt__" in output:
+                        logger.info(f"Graph 再次中断: run_id={run_id}")
+                        paused = True
+                        await self._update_run_status(run_id, "paused")
+                        return
 
                 if event_kind == "on_chat_model_stream":
                     chunk = event_data.get("chunk")
