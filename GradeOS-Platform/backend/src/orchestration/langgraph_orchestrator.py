@@ -317,7 +317,7 @@ class LangGraphOrchestrator(Orchestrator):
             
             # 循环结束后再次检查 Graph 状态
             # astream_events 可能在 interrupt 时正常结束循环，我们需要通过 get_state 确认是否真的完成了
-            snapshot = compiled_graph.get_state(config)
+            snapshot = await compiled_graph.aget_state(config)
             if snapshot.next:
                 logger.info(f"Graph 中断 (detected via state): run_id={run_id}, next={snapshot.next}")
                 paused = True
@@ -481,7 +481,7 @@ class LangGraphOrchestrator(Orchestrator):
                 if event_kind == "on_chain_end" and event_name == graph_name:
                     result = event_data.get("output", {})
 
-            snapshot = compiled_graph.get_state(config)
+            snapshot = await compiled_graph.aget_state(config)
             if snapshot.next:
                 logger.info(f"Graph 中断 (detected via state): run_id={run_id}, next={snapshot.next}")
                 paused = True
