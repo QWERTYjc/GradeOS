@@ -163,7 +163,7 @@ async def _cache_progress_message(batch_id: str, message: dict) -> None:
             field = f"{msg_type}:{node_id}"
 
     try:
-        payload = json.dumps(message, ensure_ascii=False)
+        payload = json.dumps(message, ensure_ascii=False, default=str)
         await redis_client.hset(cache_key, field, payload)
         await redis_client.expire(cache_key, REDIS_PROGRESS_TTL_SECONDS)
         if msg_type in ("review_completed", "workflow_completed"):
@@ -172,6 +172,8 @@ async def _cache_progress_message(batch_id: str, message: dict) -> None:
                 cache_key,
                 fields=["review_required"],
             )
+    except (TypeError, ValueError) as exc:
+        logger.debug(f"Failed to serialize progress message: {exc}")
     except RedisError as exc:
         logger.debug(f"Failed to cache progress message in Redis: {exc}")
 
@@ -230,6 +232,8 @@ class BatchStatusResponse(BaseModel):
     batch_id: str
     exam_id: str
     status: str
+    current_stage: Optional[str] = None
+    error: Optional[str] = None
     total_students: int = Field(0, description="识别到的学生数")
     completed_students: int = Field(0, description="已完成批改的学生数")
     unidentified_pages: int = Field(0, description="未识别学生的页数")
@@ -391,7 +395,10 @@ async def broadcast_progress(batch_id: str, message: dict):
         run_controller = await get_run_controller()
         if run_controller:
             await run_controller.update_run(batch_id, run_updates)
-    await _cache_progress_message(batch_id, message)
+    try:
+        await _cache_progress_message(batch_id, message)
+    except Exception as exc:
+        logger.debug(f"Failed to cache progress message: {exc}")
     if batch_id in active_connections:
         disconnected = []
         for ws in active_connections[batch_id]:
@@ -1928,6 +1935,8 @@ async def get_batch_status(
             batch_id=batch_id,
             exam_id=state.get("exam_id", ""),
             status=run_info.status.value,
+            current_stage=state.get("current_stage"),
+            error=run_info.error,
             total_students=len(state.get("student_boundaries", [])),
             completed_students=len(state.get("student_results", [])),
             unidentified_pages=0,
