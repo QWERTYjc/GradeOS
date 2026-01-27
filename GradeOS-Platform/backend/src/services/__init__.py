@@ -33,6 +33,17 @@ from src.services.grading_memory import (
     MemoryImportance,
     MemoryEntry,
     get_memory_service,
+    init_memory_service_with_db,
+    reset_memory_service,
+)
+# 记忆存储后端
+from src.services.memory_storage import (
+    MemoryStorageBackend,
+    InMemoryStorageBackend,
+    RedisStorageBackend,
+    PostgresStorageBackend,
+    MultiLayerStorageBackend,
+    create_storage_backend,
 )
 
 __all__ = [
@@ -72,5 +83,14 @@ __all__ = [
     "MemoryImportance",
     "MemoryEntry",
     "get_memory_service",
+    "init_memory_service_with_db",
+    "reset_memory_service",
+    # 记忆存储后端
+    "MemoryStorageBackend",
+    "InMemoryStorageBackend",
+    "RedisStorageBackend",
+    "PostgresStorageBackend",
+    "MultiLayerStorageBackend",
+    "create_storage_backend",
 ]
 

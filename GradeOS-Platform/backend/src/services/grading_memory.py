@@ -11,18 +11,28 @@
 - 模式识别：从具体案例中抽象出通用模式
 - 置信度校准：基于历史数据校准自我评估
 - 遗忘机制：淘汰过时、低频、低价值的记忆
+
+存储后端支持：
+- 内存存储（本地开发）
+- Redis 存储（分布式缓存）
+- PostgreSQL 存储（持久化）
+- 多层存储（Redis + PostgreSQL）
 """
 
 import json
 import logging
 import hashlib
 import os
+import asyncio
 from datetime import datetime, timedelta
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional, Tuple, TYPE_CHECKING
 from dataclasses import dataclass, field, asdict
 from enum import Enum
 from collections import defaultdict
 import threading
+
+if TYPE_CHECKING:
+    from src.services.memory_storage import MemoryStorageBackend
 
 
 logger = logging.getLogger(__name__)
@@ -175,7 +185,11 @@ class GradingMemoryService:
     批改记忆服务
     
     管理批改经验的积累、存储、检索和共享。
-    支持多种存储后端（内存、文件、数据库）。
+    支持多种存储后端：
+    - 内存存储（本地开发）
+    - Redis 存储（分布式缓存）
+    - PostgreSQL 存储（持久化）
+    - 多层存储（Redis + PostgreSQL）
     """
     
     def __init__(
@@ -183,20 +197,27 @@ class GradingMemoryService:
         storage_path: Optional[str] = None,
         max_memory_entries: int = 10000,
         memory_ttl_days: int = 90,
+        storage_backend: Optional["MemoryStorageBackend"] = None,
     ):
         """
         初始化记忆服务
         
         Args:
-            storage_path: 持久化存储路径（None 则仅内存存储）
+            storage_path: 持久化存储路径（仅用于文件存储模式，已废弃）
             max_memory_entries: 最大记忆条目数
             memory_ttl_days: 记忆过期时间（天）
+            storage_backend: 存储后端实例（优先使用）
         """
         self.storage_path = storage_path
         self.max_memory_entries = max_memory_entries
         self.memory_ttl_days = memory_ttl_days
+        self.memory_ttl_seconds = memory_ttl_days * 86400
         
-        # 长期记忆存储
+        # 存储后端（优先使用数据库后端）
+        self._storage_backend = storage_backend
+        self._use_db_backend = storage_backend is not None
+        
+        # 内存缓存（即使使用数据库后端，也保留内存缓存以提高性能）
         self._long_term_memory: Dict[str, MemoryEntry] = {}
         
         # 短期记忆存储（按批次）
@@ -212,9 +233,179 @@ class GradingMemoryService:
         # 线程锁
         self._lock = threading.RLock()
         
-        # 加载持久化的记忆
-        if storage_path:
+        # 异步锁（用于数据库操作）
+        self._async_lock: Optional[asyncio.Lock] = None
+        
+        # 加载持久化的记忆（仅文件存储模式）
+        if storage_path and not self._use_db_backend:
             self._load_from_storage()
+    
+    def _get_async_lock(self) -> asyncio.Lock:
+        """获取异步锁（延迟初始化以避免事件循环问题）"""
+        if self._async_lock is None:
+            self._async_lock = asyncio.Lock()
+        return self._async_lock
+    
+    def set_storage_backend(self, backend: "MemoryStorageBackend") -> None:
+        """设置存储后端（用于延迟初始化）"""
+        self._storage_backend = backend
+        self._use_db_backend = backend is not None
+        logger.info(f"[Memory] 存储后端已设置: {type(backend).__name__ if backend else 'None'}")
+    
+    async def load_from_db(self) -> int:
+        """
+        从数据库加载记忆到内存缓存
+        
+        Returns:
+            int: 加载的记忆数量
+        """
+        if not self._use_db_backend or not self._storage_backend:
+            return 0
+        
+        try:
+            async with self._get_async_lock():
+                memories = await self._storage_backend.list_memories(limit=self.max_memory_entries)
+                
+                for mem_data in memories:
+                    try:
+                        entry = MemoryEntry.from_dict(mem_data)
+                        self._long_term_memory[entry.memory_id] = entry
+                        self._type_index[entry.memory_type].append(entry.memory_id)
+                        for qt in entry.related_question_types:
+                            self._question_type_index[qt].append(entry.memory_id)
+                    except Exception as e:
+                        logger.warning(f"[Memory] 加载记忆条目失败: {e}")
+                
+                # 加载校准统计
+                calibration_data = await self._storage_backend.get_all_calibration_stats()
+                for qt, stats_data in calibration_data.items():
+                    self._calibration_stats[qt] = CalibrationStats(
+                        question_type=qt,
+                        predicted_confidences=stats_data.get("predicted_confidences", []),
+                        actual_accuracies=stats_data.get("actual_accuracies", []),
+                    )
+                
+                logger.info(f"[Memory] 从数据库加载 {len(memories)} 条记忆, {len(calibration_data)} 条校准统计")
+                return len(memories)
+                
+        except Exception as e:
+            logger.error(f"[Memory] 从数据库加载记忆失败: {e}")
+            return 0
+    
+    async def save_to_db(self) -> int:
+        """
+        将内存中的记忆保存到数据库
+        
+        Returns:
+            int: 保存的记忆数量
+        """
+        if not self._use_db_backend or not self._storage_backend:
+            return 0
+        
+        try:
+            async with self._get_async_lock():
+                saved_count = 0
+                
+                # 保存长期记忆
+                for memory_id, entry in self._long_term_memory.items():
+                    try:
+                        success = await self._storage_backend.save_memory(
+                            memory_id,
+                            entry.to_dict(),
+                            self.memory_ttl_seconds
+                        )
+                        if success:
+                            saved_count += 1
+                    except Exception as e:
+                        logger.warning(f"[Memory] 保存记忆 {memory_id} 失败: {e}")
+                
+                # 保存校准统计
+                for qt, stats in self._calibration_stats.items():
+                    try:
+                        await self._storage_backend.save_calibration_stats(qt, {
+                            "predicted_confidences": stats.predicted_confidences[-1000:],
+                            "actual_accuracies": stats.actual_accuracies[-1000:],
+                        })
+                    except Exception as e:
+                        logger.warning(f"[Memory] 保存校准统计 {qt} 失败: {e}")
+                
+                logger.info(f"[Memory] 保存 {saved_count} 条记忆到数据库")
+                return saved_count
+                
+        except Exception as e:
+            logger.error(f"[Memory] 保存记忆到数据库失败: {e}")
+            return 0
+    
+    async def save_memory_async(
+        self,
+        memory_type: MemoryType,
+        pattern: str,
+        lesson: str,
+        context: Optional[Dict[str, Any]] = None,
+        importance: MemoryImportance = MemoryImportance.MEDIUM,
+        question_types: Optional[List[str]] = None,
+        rubric_ids: Optional[List[str]] = None,
+        batch_id: Optional[str] = None,
+    ) -> str:
+        """
+        异步存储记忆（同时写入内存和数据库）
+        
+        与 store_memory 相同的参数，但异步写入数据库。
+        """
+        # 先同步写入内存
+        memory_id = self.store_memory(
+            memory_type=memory_type,
+            pattern=pattern,
+            lesson=lesson,
+            context=context,
+            importance=importance,
+            question_types=question_types,
+            rubric_ids=rubric_ids,
+            batch_id=batch_id,
+        )
+        
+        # 异步写入数据库
+        if self._use_db_backend and self._storage_backend:
+            try:
+                entry = self._long_term_memory.get(memory_id)
+                if entry:
+                    await self._storage_backend.save_memory(
+                        memory_id,
+                        entry.to_dict(),
+                        self.memory_ttl_seconds
+                    )
+            except Exception as e:
+                logger.warning(f"[Memory] 异步保存记忆到数据库失败: {e}")
+        
+        return memory_id
+    
+    async def save_batch_memory_async(self, batch_id: str) -> bool:
+        """
+        异步保存批次记忆到数据库
+        """
+        if not self._use_db_backend or not self._storage_backend:
+            return False
+        
+        batch_mem = self._batch_memories.get(batch_id)
+        if not batch_mem:
+            return False
+        
+        try:
+            data = {
+                "batch_id": batch_mem.batch_id,
+                "created_at": batch_mem.created_at,
+                "total_questions": batch_mem.total_questions,
+                "total_students": batch_mem.total_students,
+                "error_patterns": batch_mem.error_patterns,
+                "risk_signals": batch_mem.risk_signals,
+                "confidence_distribution": batch_mem.confidence_distribution,
+                "high_risk_questions": batch_mem.high_risk_questions,
+                "corrections": batch_mem.corrections,
+            }
+            return await self._storage_backend.save_batch_memory(batch_id, data, 86400)
+        except Exception as e:
+            logger.warning(f"[Memory] 保存批次记忆到数据库失败: {e}")
+            return False
     
     def _generate_memory_id(self, pattern: str, context: Dict[str, Any]) -> str:
         """生成记忆唯一标识"""
@@ -806,7 +997,33 @@ class GradingMemoryService:
             logger.error(f"加载记忆存储失败: {e}")
     
     def save_to_storage(self) -> None:
-        """保存记忆到存储"""
+        """
+        保存记忆到存储
+        
+        如果使用数据库后端，会尝试异步保存到数据库。
+        否则保存到本地文件。
+        """
+        # 如果使用数据库后端，尝试异步保存
+        if self._use_db_backend and self._storage_backend:
+            try:
+                # 尝试在当前事件循环中运行
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    # 如果事件循环正在运行，创建一个任务
+                    asyncio.create_task(self.save_to_db())
+                else:
+                    # 如果事件循环不在运行，直接运行
+                    loop.run_until_complete(self.save_to_db())
+                return
+            except RuntimeError:
+                # 没有事件循环，创建一个新的
+                try:
+                    asyncio.run(self.save_to_db())
+                    return
+                except Exception as e:
+                    logger.warning(f"[Memory] 异步保存到数据库失败，回退到文件存储: {e}")
+        
+        # 文件存储（后备方案）
         if not self.storage_path:
             return
         
@@ -832,7 +1049,7 @@ class GradingMemoryService:
             with open(self.storage_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
             
-            logger.info(f"[Memory] 保存 {len(self._long_term_memory)} 条记忆到存储")
+            logger.info(f"[Memory] 保存 {len(self._long_term_memory)} 条记忆到文件存储")
         except Exception as e:
             logger.error(f"保存记忆存储失败: {e}")
     
@@ -853,6 +1070,7 @@ class GradingMemoryService:
 # 全局单例
 _memory_service: Optional[GradingMemoryService] = None
 _memory_lock = threading.Lock()
+_db_backend_initialized = False
 
 
 def get_memory_service() -> GradingMemoryService:
@@ -881,6 +1099,56 @@ def get_memory_service() -> GradingMemoryService:
         return _memory_service
 
 
+async def init_memory_service_with_db(pool_manager=None, redis_client=None) -> GradingMemoryService:
+    """
+    使用数据库后端初始化记忆服务
+    
+    Args:
+        pool_manager: UnifiedPoolManager 实例（用于 PostgreSQL）
+        redis_client: Redis 客户端
+        
+    Returns:
+        GradingMemoryService: 初始化后的记忆服务
+    """
+    global _memory_service, _db_backend_initialized
+    
+    service = get_memory_service()
+    
+    if _db_backend_initialized:
+        return service
+    
+    try:
+        # 延迟导入以避免循环依赖
+        from src.services.memory_storage import create_storage_backend
+        
+        backend = await create_storage_backend(
+            pool_manager=pool_manager,
+            redis_client=redis_client,
+            prefer_multi_layer=True,
+        )
+        
+        service.set_storage_backend(backend)
+        
+        # 从数据库加载已有记忆
+        loaded_count = await service.load_from_db()
+        logger.info(f"[Memory] 数据库后端初始化完成，加载 {loaded_count} 条记忆")
+        
+        _db_backend_initialized = True
+        
+    except Exception as e:
+        logger.warning(f"[Memory] 数据库后端初始化失败，将使用文件存储: {e}")
+    
+    return service
+
+
+def reset_memory_service() -> None:
+    """重置记忆服务（仅用于测试）"""
+    global _memory_service, _db_backend_initialized
+    with _memory_lock:
+        _memory_service = None
+        _db_backend_initialized = False
+
+
 # 导出
 __all__ = [
     "MemoryType",
@@ -890,4 +1158,6 @@ __all__ = [
     "BatchMemory",
     "GradingMemoryService",
     "get_memory_service",
+    "init_memory_service_with_db",
+    "reset_memory_service",
 ]

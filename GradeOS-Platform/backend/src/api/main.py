@@ -162,6 +162,17 @@ async def lifespan(app: FastAPI):
         await enhanced_api_service.start()
         logger.info("增强 API 服务已启动")
     
+    # 初始化批改记忆系统（支持 Redis + PostgreSQL 后端）
+    try:
+        from src.services.grading_memory import init_memory_service_with_db
+        await init_memory_service_with_db(
+            pool_manager=pool_manager,
+            redis_client=redis_client
+        )
+        logger.info("批改记忆服务已初始化")
+    except Exception as e:
+        logger.warning(f"批改记忆服务初始化失败（将使用文件存储）: {e}")
+    
     # 初始化编排器（两种模式都需要）
     try:
         await init_orchestrator()
