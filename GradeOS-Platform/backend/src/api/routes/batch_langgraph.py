@@ -208,7 +208,7 @@ def _safe_to_jpeg_bytes(image_bytes: bytes, label: str) -> bytes:
     try:
         return to_jpeg_bytes(image_bytes)
     except Exception as exc:
-        logger.warning(f"Failed to convert image to JPEG ({label}): {exc}")
+        logger.debug(f"Failed to convert image to JPEG ({label}): {exc}")
         return image_bytes
 
 
@@ -407,6 +407,11 @@ async def broadcast_progress(batch_id: str, message: dict):
                 continue
             try:
                 await ws.send_json(message)
+            except WebSocketDisconnect:
+                disconnected.append(ws)
+            except RuntimeError as exc:
+                logger.debug(f"WebSocket 发送被跳过: {exc}")
+                disconnected.append(ws)
             except Exception as e:
                 logger.error(f"WebSocket 发送失败: {e}")
                 disconnected.append(ws)
@@ -582,7 +587,7 @@ async def submit_batch(
             parsed_boundaries = json.loads(student_boundaries)
             logger.info(f"解析后的 manual_boundaries: {parsed_boundaries}")
         except Exception as e:
-            logger.warning(f"解析手动学生边界失败: {e}")
+            logger.debug(f"解析手动学生边界失败: {e}")
 
     if not exam_id:
         exam_id = str(uuid.uuid4())
@@ -630,7 +635,7 @@ async def submit_batch(
             else:
                 # 尝试作为图片处理（可能没有扩展名）
                 answer_images.append(_safe_to_jpeg_bytes(content, file_name))
-                logger.warning(f"未知文件类型 {file_name}，尝试作为图片处理")
+                logger.debug(f"未知文件类型 {file_name}，尝试作为图片处理")
         
         total_pages = len(answer_images)
 
@@ -727,7 +732,7 @@ async def submit_batch(
                 student_mapping = json.loads(student_mapping_json)
                 logger.info(f"班级批改模式: class_id={class_id}, homework_id={homework_id}, 学生数={len(student_mapping)}")
             except Exception as e:
-                logger.warning(f"解析学生映射失败: {e}")
+                logger.debug(f"解析学生映射失败: {e}")
         
         payload = {
             "batch_id": batch_id,
@@ -1055,7 +1060,7 @@ async def stream_langgraph_progress(
                             student_results = final_output.get("student_results", [])
                             logger.info(f"从 orchestrator 获取到 {len(student_results)} 个学生结果")
                     except Exception as e:
-                        logger.warning(f"获取最终输出失败: {e}")
+                        logger.debug(f"获取最终输出失败: {e}")
                 
                 formatted_results = _format_results_for_frontend(student_results)
                 class_report = final_state.get("class_report")
@@ -1266,7 +1271,7 @@ async def resume_orphaned_streams(orchestrator: Optional[Orchestrator]) -> None:
         running_runs = await orchestrator.list_runs(graph_name="batch_grading", status=RunStatus.RUNNING, limit=50)
         pending_runs = await orchestrator.list_runs(graph_name="batch_grading", status=RunStatus.PENDING, limit=50)
     except Exception as exc:
-        logger.warning("Failed to list runs for stream recovery: %s", exc)
+        logger.debug("Failed to list runs for stream recovery: %s", exc)
         return
 
     run_controller = await get_run_controller()
@@ -1713,7 +1718,7 @@ async def websocket_endpoint(websocket: WebSocket, batch_id: str):
                     continue
                 await websocket.send_json(message)
         except Exception as e:
-            logger.warning(f"发送缓存图片失败: {e}")
+            logger.debug(f"发送缓存图片失败: {e}")
 
     if use_redis_cache:
         try:
@@ -1721,7 +1726,7 @@ async def websocket_endpoint(websocket: WebSocket, batch_id: str):
             for message in cached_progress:
                 await websocket.send_json(message)
         except Exception as e:
-            logger.warning(f"发送缓存进度失败: {e}")
+            logger.debug(f"发送缓存进度失败: {e}")
 
     if cached_images:
         try:
@@ -1733,7 +1738,7 @@ async def websocket_endpoint(websocket: WebSocket, batch_id: str):
                         **stream_message,
                     })
         except Exception as e:
-            logger.warning(f"发送流式缓存失败: {e}")
+            logger.debug(f"发送流式缓存失败: {e}")
     
     # 注册连接
     if batch_id not in active_connections:
@@ -1855,7 +1860,7 @@ async def websocket_endpoint(websocket: WebSocket, batch_id: str):
                     teacher_key=teacher_key,
                 )
     except Exception as e:
-        logger.warning(f"发送状态快照失败: {e}")
+            logger.debug(f"发送状态快照失败: {e}")
     
     try:
         # 保持连接，等待客户端消息或断开
@@ -1870,7 +1875,7 @@ async def websocket_endpoint(websocket: WebSocket, batch_id: str):
         _discard_connection(batch_id, websocket)
         return
     except Exception as exc:
-        logger.warning(f"WebSocket 接收异常: batch_id={batch_id}, error={exc}")
+        logger.debug(f"WebSocket 接收异常: batch_id={batch_id}, error={exc}")
         logger.info(f"WebSocket 连接断开: batch_id={batch_id}")
         _discard_connection(batch_id, websocket)
 
@@ -1981,7 +1986,7 @@ async def get_rubric_review_context(
                     elif isinstance(img, str) and img:
                         rubric_images.append(img)
             except Exception as exc:
-                logger.warning(f"Failed to convert rubric images: {exc}")
+                logger.debug(f"Failed to convert rubric images: {exc}")
         return RubricReviewContextResponse(
             batch_id=batch_id,
             status=run_info.status.value if run_info.status else None,
@@ -2019,7 +2024,7 @@ async def get_results_review_context(
                 if final_output:
                     student_results = final_output.get("student_results", [])
             except Exception as exc:
-                logger.warning(f"获取最终输出失败: {exc}")
+                logger.debug(f"获取最终输出失败: {exc}")
 
         if not student_results:
             export_students = (state.get("export_data") or {}).get("students", [])
@@ -2040,7 +2045,7 @@ async def get_results_review_context(
                     elif isinstance(img, str) and img:
                         answer_images.append(img)
             except Exception as exc:
-                logger.warning(f"Failed to convert answer images: {exc}")
+                logger.debug(f"Failed to convert answer images: {exc}")
         return ResultsReviewContextResponse(
             batch_id=batch_id,
             status=run_info.status.value if run_info.status else None,
@@ -2094,7 +2099,7 @@ async def get_batch_results(
                 if final_output:
                     student_results = final_output.get("student_results", [])
             except Exception as e:
-                logger.warning(f"获取最终输出失败: {e}")
+                logger.debug(f"获取最终输出失败: {e}")
         
         return {
             "batch_id": batch_id,
@@ -2573,7 +2578,7 @@ async def export_smart_excel(
         try:
             llm_client = get_llm_client()
         except Exception as e:
-            logger.warning(f"获取 LLM 客户端失败: {e}")
+            logger.debug(f"获取 LLM 客户端失败: {e}")
         
         # 生成 Excel
         generator = SmartExcelGenerator(llm_client)

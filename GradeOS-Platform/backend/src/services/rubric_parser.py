@@ -60,6 +60,46 @@ def _escape_invalid_backslashes(text: str) -> str:
     return "".join(result)
 
 
+def _strip_control_chars(text: str) -> str:
+    """Remove control characters that commonly break JSON parsing."""
+    cleaned = []
+    for ch in text:
+        if ord(ch) < 0x20 and ch not in ("\t", "\n", "\r"):
+            cleaned.append(" ")
+        else:
+            cleaned.append(ch)
+    return "".join(cleaned)
+
+
+def _extract_json_block(text: str) -> Optional[str]:
+    """Extract the outermost JSON object from a text blob."""
+    start = text.find("{")
+    end = text.rfind("}")
+    if start == -1 or end <= start:
+        return None
+    return text[start:end + 1]
+
+
+def _load_json_with_repair(text: str) -> Optional[Dict[str, Any]]:
+    """Best-effort JSON loading with multiple repair passes."""
+    if not text:
+        return None
+    candidates = [text]
+    repaired = _strip_control_chars(_escape_invalid_backslashes(text))
+    if repaired != text:
+        candidates.append(repaired)
+    block = _extract_json_block(repaired)
+    if block and block not in candidates:
+        candidates.append(block)
+
+    for candidate in candidates:
+        try:
+            return json.loads(candidate, strict=False)
+        except json.JSONDecodeError:
+            continue
+    return None
+
+
 @dataclass
 class ScoringPoint:
     """得分点"""
@@ -183,7 +223,7 @@ class RubricParserService:
                     else:
                         progress_callback(batch_num - 1, total_batches, "parsing", f"Parsing batch {batch_num}/{total_batches}")
                 except Exception as e:
-                    logger.warning(f"[rubric_parse] progress_callback error: {e}")
+                    logger.debug(f"[rubric_parse] progress_callback error: {e}")
             
             batch_result = await self._parse_rubric_batch(
                 batch_images,
@@ -218,7 +258,7 @@ class RubricParserService:
                 else:
                     progress_callback(total_batches - 1, total_batches, "completed", "Parsing completed")
             except Exception as e:
-                logger.warning(f"[rubric_parse] progress_callback error: {e}")
+                logger.debug(f"[rubric_parse] progress_callback error: {e}")
         
         logger.info(
             f"批改标准解析完成: "
@@ -368,33 +408,18 @@ class RubricParserService:
                     rubric_format="standard"
                 )
             
-            try:
-                data = json.loads(json_text)
-            except json.JSONDecodeError as e:
-                logger.warning(f"[rubric_parse] JSON decode failed: {e}. Attempting repair.")
-                repaired = _escape_invalid_backslashes(json_text)
-                if repaired != json_text:
-                    try:
-                        data = json.loads(repaired)
-                        logger.info("[rubric_parse] JSON repaired by escaping invalid backslashes.")
-                    except json.JSONDecodeError as repair_err:
-                        logger.warning(f"[rubric_parse] JSON repair failed: {repair_err}. Raw: {json_text[:200]}...")
-                        return ParsedRubric(
-                            total_questions=0,
-                            total_score=0,
-                            questions=[],
-                            general_notes="",
-                            rubric_format="standard"
-                        )
-                else:
-                    logger.warning(f"[rubric_parse] JSON decode failed with no repair: {json_text[:200]}...")
-                    return ParsedRubric(
-                        total_questions=0,
-                        total_score=0,
-                        questions=[],
-                        general_notes="",
-                        rubric_format="standard"
-                    )
+            data = _load_json_with_repair(json_text)
+            if data is None:
+                logger.warning(
+                    f"[rubric_parse] JSON decode failed after repair attempts. Raw: {json_text[:200]}..."
+                )
+                return ParsedRubric(
+                    total_questions=0,
+                    total_score=0,
+                    questions=[],
+                    general_notes="",
+                    rubric_format="standard"
+                )
             def ensure_string(value, default=""):
                 """确保值是字符串类型"""
                 if value is None:

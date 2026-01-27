@@ -18,6 +18,7 @@ from enum import Enum
 from fastapi import WebSocket, WebSocketDisconnect, HTTPException, status
 from pydantic import BaseModel, Field
 import redis.asyncio as redis
+from redis.exceptions import RedisError, TimeoutError as RedisTimeoutError, ConnectionError as RedisConnectionError
 
 from src.utils.pool_manager import UnifiedPoolManager, PoolNotInitializedError
 from src.services.tracing import TracingService, SpanKind, SpanStatus
@@ -319,58 +320,77 @@ class EnhancedAPIService:
     
     async def _pubsub_listener(self) -> None:
         """
-        Redis Pub/Sub 监听器
-        
-        订阅状态变更通道并转发到 WebSocket 客户端。
-        
-        验证：需求 7.1
+        Redis Pub/Sub ???
+
+        ???????????? WebSocket ????
+
+        ?????? 7.1
         """
+        backoff_seconds = 1.0
         while self._running:
             pubsub = None
             pattern = None
             try:
                 redis_client = self.pool_manager.get_redis_client()
                 pubsub = redis_client.pubsub()
-                
-                # 订阅状态变更通道
+
+                # ????????
                 pattern = f"{self.config.pubsub_channel_prefix}:*"
                 await pubsub.psubscribe(pattern)
-                
-                logger.info(f"已订阅 Redis Pub/Sub 通道: {pattern}")
-                
-                async for message in pubsub.listen():
-                    if not self._running:
-                        break
-                    
-                    if message["type"] == "pmessage":
-                        try:
-                            # 解析通道名获取 submission_id
-                            channel = message["channel"]
-                            if isinstance(channel, bytes):
-                                channel = channel.decode("utf-8")
-                            
-                            parts = channel.split(":")
-                            if len(parts) >= 2:
-                                submission_id = parts[1]
-                                
-                                # 解析消息数据
-                                data = message["data"]
-                                if isinstance(data, bytes):
-                                    data = data.decode("utf-8")
-                                state = json.loads(data)
-                                
-                                # 广播到 WebSocket
-                                await self.broadcast_state_change(submission_id, state)
-                        except Exception as e:
-                            logger.warning(f"处理 Pub/Sub 消息失败: {e}")
-                
-                
+
+                logger.info(f"??? Redis Pub/Sub ??: {pattern}")
+
+                # ?? get_message + timeout ????? socket_timeout ????
+                while self._running:
+                    try:
+                        message = await pubsub.get_message(
+                            ignore_subscribe_messages=True,
+                            timeout=1.0,
+                        )
+                    except asyncio.CancelledError:
+                        raise
+                    except (RedisTimeoutError, asyncio.TimeoutError):
+                        # ???????????????
+                        continue
+                    except (RedisConnectionError, RedisError) as exc:
+                        raise exc
+
+                    if not message:
+                        continue
+
+                    if message.get("type") != "pmessage":
+                        continue
+
+                    try:
+                        # ??????? submission_id
+                        channel = message.get("channel")
+                        if isinstance(channel, (bytes, bytearray)):
+                            channel = channel.decode("utf-8")
+
+                        parts = (channel or "").split(":")
+                        if len(parts) >= 2:
+                            submission_id = parts[1]
+
+                            # ??????
+                            data = message.get("data")
+                            if isinstance(data, (bytes, bytearray)):
+                                data = data.decode("utf-8")
+                            state = json.loads(data) if data else {}
+
+                            # ??? WebSocket
+                            await self.broadcast_state_change(submission_id, state)
+                    except Exception as e:
+                        logger.warning(f"?? Pub/Sub ????: {e}")
+
+                backoff_seconds = 1.0
+
             except PoolNotInitializedError:
-                logger.debug("Redis连接不可用，将禁用实时状态推送功能")
+                logger.debug("Redis ????????????????")
                 break
             except Exception as e:
-                logger.warning(f"Pub/Sub 监听器错误: {e}")
-                await asyncio.sleep(1)
+                logger.warning(f"Pub/Sub ?????: {e}")
+                await asyncio.sleep(backoff_seconds)
+                backoff_seconds = min(backoff_seconds * 2, 30.0)
             finally:
                 if pubsub is not None:
                     try:
@@ -382,7 +402,7 @@ class EnhancedAPIService:
                         await pubsub.close()
                     except Exception as exc:
                         logger.debug(f"Pub/Sub close failed: {exc}")
-    
+
     async def _get_submission_state(
         self,
         submission_id: str

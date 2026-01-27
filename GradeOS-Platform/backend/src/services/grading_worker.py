@@ -60,7 +60,7 @@ class GradingWorker:
         Returns:
             批改结果，包含 score, max_score, question_details, self_report 等
         """
-        logger.info(f"[GradingWorker] 开始批改页面 {page_index}")
+        logger.debug(f"[GradingWorker] 开始批改页面 {page_index}")
         
         # Stage 1: 视觉模型 - 内容提取
         evidence = await self.reasoning_client.extract_answer_evidence(
@@ -96,7 +96,7 @@ class GradingWorker:
         did_second_pass = False
         
         if confidence < 0.65:
-            logger.info(f"[GradingWorker] 页面 {page_index} 置信度低 ({confidence:.2f})，启用严格模式")
+            logger.debug(f"[GradingWorker] 页面 {page_index} 置信度低 ({confidence:.2f})，启用严格模式")
             score_result = await self.reasoning_client.score_from_evidence(
                 evidence=evidence,
                 parsed_rubric=self.parsed_rubric,
@@ -128,7 +128,7 @@ class GradingWorker:
             "self_report": self_report,
         }
         
-        logger.info(
+        logger.debug(
             f"[GradingWorker] 页面 {page_index} 完成: "
             f"score={result['score']}/{result['max_score']}, "
             f"confidence={result['confidence']:.2f}"
