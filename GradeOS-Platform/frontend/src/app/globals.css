@@ -1094,6 +1094,14 @@ body {
   animation-delay: -10s;
 }
 
+.assistant-highlight {
+  background: linear-gradient(120deg, rgba(251, 191, 36, 0.45), rgba(253, 230, 138, 0.35));
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  padding: 0 0.12em;
+  color: #0f172a;
+}
+
 @keyframes assistant-grid-shift {
   0% {
     transform: translate(0, 0);

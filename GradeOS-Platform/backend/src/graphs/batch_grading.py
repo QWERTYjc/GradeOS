@@ -650,7 +650,7 @@ async def index_node(state: BatchGradingGraphState) -> Dict[str, Any]:
             {"image_data": image_data, "page_index": page_index}
             for page_index, image_data in enumerate(processed_images)
         ]
-        config = RunnableConfig(max_concurrency=max(1, max_concurrency))
+        config = RunnableConfig(max_concurrency=max_concurrency) if max_concurrency > 0 else RunnableConfig()
         page_analyses = await analyze_runner.abatch(inputs, config=config)
         page_analyses.sort(key=lambda x: x.page_index)
 
@@ -1358,6 +1358,8 @@ def grading_fanout_router(state: BatchGradingGraphState) -> List[Send]:
     
     # 回退：按固定批次大小分配
     batch_size = config.batch_size
+    if batch_size <= 0:
+        batch_size = max(1, total_pages)
     num_batches = (total_pages + batch_size - 1) // batch_size
     
     logger.info(
@@ -4973,7 +4975,7 @@ async def self_report_node(state: BatchGradingGraphState) -> Dict[str, Any]:
         {"index": idx, "student": student}
         for idx, student in enumerate(student_results)
     ]
-    config = RunnableConfig(max_concurrency=max(1, max_workers))
+    config = RunnableConfig(max_concurrency=max_workers) if max_workers > 0 else RunnableConfig()
     results = await report_runner.abatch(inputs, config=config)
     for result in results:
         if not result:
@@ -5391,7 +5393,7 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
         {"index": idx, "student": student}
         for idx, student in enumerate(student_results)
     ]
-    config = RunnableConfig(max_concurrency=max(1, max_workers))
+    config = RunnableConfig(max_concurrency=max_workers) if max_workers > 0 else RunnableConfig()
     results = await review_runner.abatch(inputs, config=config)
     for result in results:
         if not result:

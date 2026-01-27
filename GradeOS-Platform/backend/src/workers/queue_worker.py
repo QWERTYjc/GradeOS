@@ -334,7 +334,10 @@ class QueueWorker:
         """启动 Worker"""
         logger.info("=" * 60)
         logger.info(f"Queue Worker 启动 (PID: {os.getpid()})")
-        logger.info(f"并发数: {self.concurrency}")
+        if self.concurrency > 0:
+            logger.info(f"并发数: {self.concurrency}")
+        else:
+            logger.info("并发数: unlimited")
         logger.info(f"轮询间隔: {self.poll_interval}s")
         logger.info("=" * 60)
         
@@ -389,20 +392,31 @@ class QueueWorker:
         
         while self._running:
             try:
+                if self.concurrency <= 0:
+                    task = await self.queue.pop(timeout=self.poll_interval)
+                    if task:
+                        asyncio_task = asyncio.create_task(
+                            self._execute_task(task)
+                        )
+                        self._active_tasks[task.task_id] = asyncio_task
+                        asyncio_task.add_done_callback(
+                            lambda t, tid=task.task_id: self._active_tasks.pop(tid, None)
+                        )
+                    else:
+                        await asyncio.sleep(self.poll_interval)
+                    continue
+
                 # 检查并发槽位
                 available_slots = self.concurrency - len(self._active_tasks)
-                
                 if available_slots > 0:
                     # 获取任务
                     task = await self.queue.pop(timeout=self.poll_interval)
-                    
                     if task:
                         # 启动任务执行
                         asyncio_task = asyncio.create_task(
                             self._execute_task(task)
                         )
                         self._active_tasks[task.task_id] = asyncio_task
-                        
                         # 任务完成后清理
                         asyncio_task.add_done_callback(
                             lambda t, tid=task.task_id: self._active_tasks.pop(tid, None)

@@ -1,23 +1,20 @@
 'use client';
 
 import React, { useState } from 'react';
-
-interface ConceptNode {
-  id: string;
-  name: string;
-  description: string;
-  understood: boolean;
-  children?: ConceptNode[];
-}
+import { ConceptNode } from '../types';
 
 interface ConceptBreakdownProps {
   concepts: ConceptNode[];
   title?: string;
+  onSelect?: (node: ConceptNode) => void;
+  selectedId?: string;
 }
 
 const ConceptBreakdown: React.FC<ConceptBreakdownProps> = ({
   concepts,
   title = 'First Principles Map',
+  onSelect,
+  selectedId,
 }) => {
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
 
@@ -32,11 +29,13 @@ const ConceptBreakdown: React.FC<ConceptBreakdownProps> = ({
   };
 
   const renderNode = (node: ConceptNode, depth: number = 0) => {
+    const nodeKey = node.id || node.name;
     const hasChildren = node.children && node.children.length > 0;
-    const isExpanded = expandedNodes.has(node.id);
+    const isExpanded = expandedNodes.has(nodeKey);
+    const isSelected = selectedId === nodeKey;
 
     return (
-      <div key={node.id} className="relative">
+      <div key={nodeKey} className="relative">
         {depth > 0 && (
           <div
             className="absolute left-0 top-0 h-full w-4 border-l border-black/10"
@@ -44,12 +43,18 @@ const ConceptBreakdown: React.FC<ConceptBreakdownProps> = ({
           />
         )}
 
-        <div className="group relative flex items-start gap-3 py-2" style={{ paddingLeft: depth * 24 }}>
+        <div
+          className={`group relative flex items-start gap-3 py-2 ${
+            isSelected ? 'bg-black/5' : ''
+          }`}
+          style={{ paddingLeft: depth * 24 }}
+        >
           <div className="relative z-10 flex-shrink-0">
             {hasChildren ? (
               <button
-                onClick={() => toggleNode(node.id)}
-                className={`flex h-6 w-6 items-center justify-center rounded-full border text-xs font-bold transition-all duration-200 hover:scale-110 ${
+                onClick={() => toggleNode(nodeKey)}
+                aria-expanded={isExpanded}
+                className={`flex h-6 w-6 items-center justify-center border text-xs font-bold transition-all duration-200 hover:scale-110 ${
                   node.understood
                     ? 'border-black bg-black text-white'
                     : 'border-black/30 bg-white text-black/60'
@@ -59,7 +64,7 @@ const ConceptBreakdown: React.FC<ConceptBreakdownProps> = ({
               </button>
             ) : (
               <div
-                className={`mt-1 h-4 w-4 rounded-full border ${
+                className={`mt-1 h-4 w-4 border ${
                   node.understood
                     ? 'border-black bg-black'
                     : 'border-black/20 bg-white'
@@ -68,19 +73,27 @@ const ConceptBreakdown: React.FC<ConceptBreakdownProps> = ({
             )}
           </div>
 
-          <div className="min-w-0 flex-1">
+          <button
+            type="button"
+            onClick={() => onSelect?.(node)}
+            className="min-w-0 flex-1 text-left"
+          >
             <div className="flex items-center gap-2">
               <h4 className={`text-sm font-medium ${node.understood ? 'text-black' : 'text-black/70'}`}>
                 {node.name}
               </h4>
-              {node.understood && (
-                <span className="text-[10px] uppercase tracking-[0.2em] text-black/50">Mastered</span>
-              )}
+              <span
+                className={`text-[10px] uppercase tracking-[0.2em] ${
+                  node.understood ? 'text-black/60' : 'text-black/40'
+                }`}
+              >
+                {node.understood ? 'Mastered' : 'Review'}
+              </span>
             </div>
             <p className="mt-0.5 text-xs text-black/50 line-clamp-2 transition-all group-hover:line-clamp-none">
               {node.description}
             </p>
-          </div>
+          </button>
         </div>
 
         {hasChildren && isExpanded && (
@@ -116,10 +129,10 @@ const ConceptBreakdown: React.FC<ConceptBreakdownProps> = ({
   }
 
   return (
-    <div className="rounded-2xl border border-black/10 bg-white/80 p-4 shadow-sm">
-      <div className="mb-4 flex items-center justify-between">
+    <div className="space-y-4">
+      <div className="flex items-center justify-between border-b border-black/10 pb-3">
         <div className="flex items-center gap-2">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg border border-black/10 bg-white">
+          <div className="flex h-7 w-7 items-center justify-center border border-black/10 bg-white">
             <svg className="h-4 w-4 text-black/70" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path
                 strokeLinecap="round"
@@ -136,7 +149,7 @@ const ConceptBreakdown: React.FC<ConceptBreakdownProps> = ({
           <span className="text-xs text-black/50">
             {stats.understood}/{stats.total} nodes
           </span>
-          <div className="h-2 w-20 overflow-hidden rounded-full bg-black/10">
+          <div className="h-1 w-24 bg-black/10">
             <div className="h-full bg-black transition-all duration-500" style={{ width: `${progress}%` }} />
           </div>
         </div>
@@ -146,14 +159,14 @@ const ConceptBreakdown: React.FC<ConceptBreakdownProps> = ({
         {concepts.map((concept) => renderNode(concept, 0))}
       </div>
 
-      <div className="mt-4 flex items-center gap-4 border-t border-black/5 pt-3 text-xs text-black/50">
-        <div className="flex items-center gap-1">
-          <div className="h-3 w-3 rounded-full bg-black" />
+      <div className="flex items-center gap-4 border-t border-black/10 pt-3 text-xs text-black/50">
+        <div className="flex items-center gap-2">
+          <div className="h-3 w-3 bg-black" />
           <span>Mastered</span>
         </div>
-        <div className="flex items-center gap-1">
-          <div className="h-3 w-3 rounded-full border border-black/20 bg-white" />
-          <span>Unreviewed</span>
+        <div className="flex items-center gap-2">
+          <div className="h-3 w-3 border border-black/20 bg-white" />
+          <span>Review</span>
         </div>
       </div>
     </div>

@@ -125,7 +125,7 @@ const MasteryIndicator: React.FC<MasteryIndicatorProps> = ({
       </div>
 
       {expanded && (analysis || evidence.length > 0 || suggestions.length > 0) && (
-        <div className="w-full max-w-sm space-y-4 rounded-xl bg-black/5 p-4 text-sm text-black/70 animate-fadeIn">
+        <div className="w-full max-w-sm space-y-4 border-l-2 border-black/10 pl-4 text-sm text-black/70 animate-fadeIn">
           {analysis && (
             <div>
               <h4 className="text-xs font-semibold uppercase tracking-[0.2em] text-black/40">Insight</h4>

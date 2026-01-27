@@ -26,6 +26,12 @@ from src.services.tracing import TracingService, SpanKind, SpanStatus
 
 logger = logging.getLogger(__name__)
 
+def _is_timeout_error(exc: Exception) -> bool:
+    if isinstance(exc, (RedisTimeoutError, asyncio.TimeoutError, TimeoutError)):
+        return True
+    message = str(exc).lower()
+    return "timeout" in message and "redis" in message
+
 
 class SortOrder(str, Enum):
     """排序顺序枚举"""
@@ -349,7 +355,7 @@ class EnhancedAPIService:
                         )
                     except asyncio.CancelledError:
                         raise
-                    except (RedisTimeoutError, asyncio.TimeoutError):
+                    except (RedisTimeoutError, asyncio.TimeoutError, TimeoutError):
                         # ???????????????
                         continue
                     except (RedisConnectionError, RedisError) as exc:
@@ -388,6 +394,10 @@ class EnhancedAPIService:
                 logger.debug("Redis ????????????????")
                 break
             except Exception as e:
+                if _is_timeout_error(e):
+                    logger.debug(f"Pub/Sub timeout: {e}")
+                    await asyncio.sleep(1.0)
+                    continue
                 logger.warning(f"Pub/Sub ?????: {e}")
                 await asyncio.sleep(backoff_seconds)
                 backoff_seconds = min(backoff_seconds * 2, 30.0)

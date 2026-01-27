@@ -12,6 +12,7 @@ import asyncio
 import base64
 import json
 import logging
+import os
 from typing import List, Optional, Tuple
 from dataclasses import dataclass, field
 
@@ -321,18 +322,30 @@ Normalize question numbers (e.g., "Question 1" -> "1"). Ignore A/B/C/D options.
         """
         logger.info(f"开始批量文档分割，共 {len(images_data)} 页")
         
-        # 第一阶段：分析所有页面 (并行处理)
-        semaphore = asyncio.Semaphore(5)  # 限制并发数为 5，避免 API 过载
-        print(f"DEBUG: Starting parallel analysis of {len(images_data)} pages")
-        
+        # ??????????? (????)
+        max_concurrency = int(os.getenv("STUDENT_ID_MAX_CONCURRENCY", "5"))
+        semaphore = asyncio.Semaphore(max_concurrency) if max_concurrency > 0 else None
+        debug_enabled = os.getenv("STUDENT_ID_DEBUG", "false").strip().lower() in ("1", "true", "yes")
+        if debug_enabled:
+            logger.debug("Starting parallel analysis of %s pages", len(images_data))
+
         async def analyzed_page_with_semaphore(image_data, i):
-            async with semaphore:
-                print(f"DEBUG: Analyzing page {i}...")
+            if semaphore:
+                async with semaphore:
+                    if debug_enabled:
+                        logger.debug("Analyzing page %s...", i)
+                    analysis = await self.analyze_page(image_data, i)
+                    if debug_enabled:
+                        logger.debug("Page %s analysis complete", i)
+            else:
+                if debug_enabled:
+                    logger.debug("Analyzing page %s...", i)
                 analysis = await self.analyze_page(image_data, i)
-                print(f"DEBUG: Page {i} analysis complete")
-                if progress_callback:
-                    await progress_callback(i + 1, len(images_data))
-                return analysis
+                if debug_enabled:
+                    logger.debug("Page %s analysis complete", i)
+            if progress_callback:
+                await progress_callback(i + 1, len(images_data))
+            return analysis
 
         tasks = [analyzed_page_with_semaphore(img, i) for i, img in enumerate(images_data)]
         page_analyses = await asyncio.gather(*tasks)

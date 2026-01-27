@@ -35,14 +35,34 @@ from src.config.deployment_mode import get_deployment_mode, DeploymentMode
 
 
 # 配置日志
+# ????
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+LOG_LEVEL_VALUE = getattr(logging, LOG_LEVEL, logging.INFO)
+LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
 logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler('batch_grading.log', mode='a', encoding='utf-8')
-    ]
+    level=LOG_LEVEL_VALUE,
+    format=LOG_FORMAT,
+    handlers=[logging.StreamHandler()],
 )
+
+def _configure_grading_loggers() -> None:
+    log_path = os.getenv("GRADEOS_GRADING_LOG_PATH", "batch_grading.log")
+    handler = logging.FileHandler(log_path, mode="a", encoding="utf-8")
+    handler.setFormatter(logging.Formatter(LOG_FORMAT))
+    for name in (
+        "src.graphs.batch_grading",
+        "src.api.routes.batch_langgraph",
+        "src.services.enhanced_api",
+        "src.orchestration.langgraph_orchestrator",
+    ):
+        target = logging.getLogger(name)
+        target.setLevel(LOG_LEVEL_VALUE)
+        target.handlers = [handler]
+        target.propagate = False
+
+_configure_grading_loggers()
+
 logger = logging.getLogger(__name__)
 
 

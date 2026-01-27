@@ -81,7 +81,10 @@ class LangGraphOrchestrator(Orchestrator):
         self._event_queues: Dict[str, asyncio.Queue] = {}
         self._event_stream_complete: Dict[str, bool] = {}
         max_active_runs = int(os.getenv("RUN_MAX_CONCURRENCY", "100"))
-        self._run_semaphore = asyncio.Semaphore(max(1, max_active_runs))
+        if max_active_runs > 0:
+            self._run_semaphore = asyncio.Semaphore(max_active_runs)
+        else:
+            self._run_semaphore = None
         self._graph_max_concurrency = int(os.getenv("LANGGRAPH_MAX_CONCURRENCY", "8"))
         self._graph_recursion_limit = int(os.getenv("LANGGRAPH_RECURSION_LIMIT", "50"))
         self._auto_resume_enabled = os.getenv("LANGGRAPH_AUTO_RESUME", "true").strip().lower() in (
@@ -100,10 +103,18 @@ class LangGraphOrchestrator(Orchestrator):
         """创建默认 Checkpointer"""
         return InMemorySaver()
 
-    def _build_graph_config(self, run_id: str) -> Dict[str, Any]:
+    def _build_graph_config(self, run_id: str, graph_name: str) -> Dict[str, Any]:
         config: Dict[str, Any] = {"configurable": {"thread_id": run_id}}
-        if self._graph_max_concurrency > 0:
-            config["max_concurrency"] = self._graph_max_concurrency
+        max_concurrency = self._graph_max_concurrency
+        if graph_name == "batch_grading":
+            override = os.getenv("GRADING_MAX_WORKERS")
+            if override is not None:
+                try:
+                    max_concurrency = int(override)
+                except ValueError:
+                    pass
+        if max_concurrency > 0:
+            config["max_concurrency"] = max_concurrency
         if self._graph_recursion_limit > 0:
             config["recursion_limit"] = self._graph_recursion_limit
         return config
@@ -226,7 +237,7 @@ class LangGraphOrchestrator(Orchestrator):
             await self._update_run_status(run_id, "running")
             
             # 配置 thread_id + LangGraph 内建并发控制
-            config = self._build_graph_config(run_id)
+            config = self._build_graph_config(run_id, graph_name)
             
             # 执行 Graph（使用 astream_events 获取详细事件）
             logger.info(f"开始执行 Graph: run_id={run_id}")
@@ -843,7 +854,7 @@ class LangGraphOrchestrator(Orchestrator):
             if not compiled_graph:
                 continue
 
-            config = self._build_graph_config(run_id)
+            config = self._build_graph_config(run_id, graph)
             checkpoint = None
             try:
                 checkpoint = await self.checkpointer.aget(config)
@@ -965,7 +976,7 @@ class LangGraphOrchestrator(Orchestrator):
                 raise ValueError(f"Graph 未注册: {graph_name}")
             
             # 配置 thread_id + LangGraph 内建并发控制
-            config = self._build_graph_config(run_id)
+            config = self._build_graph_config(run_id, graph_name)
             
             # 使用 Command.resume 恢复执行
             resume_command = Command(resume=event_data)
@@ -1288,7 +1299,7 @@ class LangGraphOrchestrator(Orchestrator):
             if not compiled_graph:
                 raise ValueError(f"Graph 未注册: {graph_name}")
             
-            config = self._build_graph_config(run_id)
+            config = self._build_graph_config(run_id, graph_name)
             
             # 使用简单的 astream
             async for chunk in compiled_graph.astream(None, config=config):

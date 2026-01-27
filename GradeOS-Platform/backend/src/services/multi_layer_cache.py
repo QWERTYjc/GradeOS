@@ -23,6 +23,12 @@ from src.utils.pool_manager import UnifiedPoolManager, PoolNotInitializedError
 logger = logging.getLogger(__name__)
 
 
+def _is_timeout_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return "timeout" in message
+
+
+
 class CacheStrategy(str, Enum):
     """缓存策略枚举"""
     WRITE_THROUGH = "write_through"
@@ -179,7 +185,11 @@ class MultiLayerCacheService:
                     
             except asyncio.CancelledError:
                 break
+            except (asyncio.TimeoutError, TimeoutError):
+                continue
             except Exception as e:
+                if _is_timeout_error(e):
+                    continue
                 logger.warning(f"处理 Pub/Sub 消息时出错: {e}")
                 await asyncio.sleep(1.0)
     
