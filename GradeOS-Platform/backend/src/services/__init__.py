@@ -19,6 +19,21 @@ from src.services.student_summary import generate_student_summary, generate_clas
 # 批注批改服务
 from src.services.annotation_grading import AnnotationGradingService, AnnotationGradingConfig
 from src.services.annotation_renderer import AnnotationRenderer, RenderConfig, render_annotations_on_image
+# 后处理批注生成器
+from src.services.post_grading_annotator import (
+    PostGradingAnnotator,
+    AnnotatorConfig,
+    AnnotationMode,
+    create_annotator_for_mode,
+)
+# 批改记忆系统
+from src.services.grading_memory import (
+    GradingMemoryService,
+    MemoryType,
+    MemoryImportance,
+    MemoryEntry,
+    get_memory_service,
+)
 
 __all__ = [
     "CacheService",
@@ -46,5 +61,16 @@ __all__ = [
     "AnnotationRenderer",
     "RenderConfig",
     "render_annotations_on_image",
+    # 后处理批注生成器
+    "PostGradingAnnotator",
+    "AnnotatorConfig",
+    "AnnotationMode",
+    "create_annotator_for_mode",
+    # 批改记忆系统
+    "GradingMemoryService",
+    "MemoryType",
+    "MemoryImportance",
+    "MemoryEntry",
+    "get_memory_service",
 ]
 

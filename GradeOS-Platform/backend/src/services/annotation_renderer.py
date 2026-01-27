@@ -504,6 +504,212 @@ class AnnotationRenderer:
             width=max(2, self.config.line_width_check - 1),
         )
 
+    def _draw_simple_check(
+        self,
+        draw: ImageDraw.ImageDraw,
+        annotation: VisualAnnotation,
+        image_width: int,
+        image_height: int,
+    ) -> None:
+        """绘制简单勾选 ✓（无分数，只打勾）"""
+        x1, y1, x2, y2 = self._to_pixel_coords(
+            annotation.bounding_box, image_width, image_height
+        )
+        
+        # 默认绿色
+        color = self._parse_color(annotation.color or "#00AA00")
+        
+        # 计算勾选的关键点
+        cx = (x1 + x2) // 2
+        cy = (y1 + y2) // 2
+        size = min(x2 - x1, y2 - y1) // 2
+        
+        # 绘制粗勾选 ✓
+        points = [
+            (cx - size, cy),
+            (cx - size // 4, cy + size * 0.6),
+            (cx + size, cy - size * 0.5),
+        ]
+        draw.line(points, fill=color, width=self.config.line_width_check + 1)
+
+    def _draw_simple_cross(
+        self,
+        draw: ImageDraw.ImageDraw,
+        annotation: VisualAnnotation,
+        image_width: int,
+        image_height: int,
+    ) -> None:
+        """绘制简单叉号 ✗（无分数，只打叉）"""
+        x1, y1, x2, y2 = self._to_pixel_coords(
+            annotation.bounding_box, image_width, image_height
+        )
+        
+        # 默认红色
+        color = self._parse_color(annotation.color or "#FF0000")
+        
+        # 绘制粗 X
+        padding = 2
+        draw.line(
+            [(x1 + padding, y1 + padding), (x2 - padding, y2 - padding)],
+            fill=color,
+            width=self.config.line_width_check + 1,
+        )
+        draw.line(
+            [(x2 - padding, y1 + padding), (x1 + padding, y2 - padding)],
+            fill=color,
+            width=self.config.line_width_check + 1,
+        )
+
+    def _draw_simple_score(
+        self,
+        draw: ImageDraw.ImageDraw,
+        annotation: VisualAnnotation,
+        image_width: int,
+        image_height: int,
+    ) -> None:
+        """绘制简单分数（如 "1"，绿色，无单位）"""
+        x1, y1, x2, y2 = self._to_pixel_coords(
+            annotation.bounding_box, image_width, image_height
+        )
+        
+        # 默认绿色
+        color = self._parse_color(annotation.color or "#00AA00")
+        font = self._get_font(self.config.font_size_score)
+        
+        # 只显示分数数字（如 "1"、"2"），不带单位
+        text = annotation.text or "1"
+        
+        # 计算文字大小
+        try:
+            text_bbox = draw.textbbox((0, 0), text, font=font)
+            text_width = text_bbox[2] - text_bbox[0]
+            text_height = text_bbox[3] - text_bbox[1]
+        except AttributeError:
+            text_width, text_height = draw.textsize(text, font=font)
+        
+        text_x = x1 + (x2 - x1 - text_width) // 2
+        text_y = y1 + (y2 - y1 - text_height) // 2
+        
+        # 绘制文字（无背景，直接绘制分数）
+        draw.text((text_x, text_y), text, fill=color, font=font)
+
+    def _draw_half_check(
+        self,
+        draw: ImageDraw.ImageDraw,
+        annotation: VisualAnnotation,
+        image_width: int,
+        image_height: int,
+    ) -> None:
+        """绘制半对标记 ~ 或 ½"""
+        x1, y1, x2, y2 = self._to_pixel_coords(
+            annotation.bounding_box, image_width, image_height
+        )
+        
+        # 橙色表示部分正确
+        color = self._parse_color(annotation.color or "#FF8800")
+        font = self._get_font(self.config.font_size_score)
+        
+        # 使用 ~ 符号
+        text = annotation.text or "~"
+        
+        # 计算文字大小
+        try:
+            text_bbox = draw.textbbox((0, 0), text, font=font)
+            text_width = text_bbox[2] - text_bbox[0]
+            text_height = text_bbox[3] - text_bbox[1]
+        except AttributeError:
+            text_width, text_height = draw.textsize(text, font=font)
+        
+        text_x = x1 + (x2 - x1 - text_width) // 2
+        text_y = y1 + (y2 - y1 - text_height) // 2
+        
+        draw.text((text_x, text_y), text, fill=color, font=font)
+
+    def _draw_total_score(
+        self,
+        draw: ImageDraw.ImageDraw,
+        annotation: VisualAnnotation,
+        image_width: int,
+        image_height: int,
+    ) -> None:
+        """绘制题目总分标注（带圆圈背景）"""
+        x1, y1, x2, y2 = self._to_pixel_coords(
+            annotation.bounding_box, image_width, image_height
+        )
+        
+        color = self._parse_color(annotation.color)
+        font = self._get_font(self.config.font_size_score + 2)  # 稍大字体
+        
+        text = annotation.text or "0"
+        
+        # 计算文字大小
+        try:
+            text_bbox = draw.textbbox((0, 0), text, font=font)
+            text_width = text_bbox[2] - text_bbox[0]
+            text_height = text_bbox[3] - text_bbox[1]
+        except AttributeError:
+            text_width, text_height = draw.textsize(text, font=font)
+        
+        # 绘制圆圈背景
+        cx = (x1 + x2) // 2
+        cy = (y1 + y2) // 2
+        radius = max(text_width, text_height) // 2 + 6
+        
+        draw.ellipse(
+            [cx - radius, cy - radius, cx + radius, cy + radius],
+            fill=(255, 255, 255, 240),
+            outline=color,
+            width=2,
+        )
+        
+        # 绘制分数文字
+        text_x = cx - text_width // 2
+        text_y = cy - text_height // 2
+        draw.text((text_x, text_y), text, fill=color, font=font)
+
+    def _draw_point_score(
+        self,
+        draw: ImageDraw.ImageDraw,
+        annotation: VisualAnnotation,
+        image_width: int,
+        image_height: int,
+    ) -> None:
+        """绘制得分点分数标注（如 "+1" 或 "-1"）"""
+        x1, y1, x2, y2 = self._to_pixel_coords(
+            annotation.bounding_box, image_width, image_height
+        )
+        
+        # 根据正负确定颜色
+        text = annotation.text or "+1"
+        if text.startswith("-") or text.startswith("0"):
+            color = self._parse_color(annotation.color or "#FF0000")  # 红色
+        else:
+            color = self._parse_color(annotation.color or "#00AA00")  # 绿色
+        
+        font = self._get_font(self.config.font_size_score - 2)  # 稍小字体
+        
+        # 计算文字大小
+        try:
+            text_bbox = draw.textbbox((0, 0), text, font=font)
+            text_width = text_bbox[2] - text_bbox[0]
+            text_height = text_bbox[3] - text_bbox[1]
+        except AttributeError:
+            text_width, text_height = draw.textsize(text, font=font)
+        
+        text_x = x1 + (x2 - x1 - text_width) // 2
+        text_y = y1 + (y2 - y1 - text_height) // 2
+        
+        # 绘制小背景
+        padding = 2
+        draw.rectangle(
+            [text_x - padding, text_y - padding,
+             text_x + text_width + padding, text_y + text_height + padding],
+            fill=(255, 255, 255, 200),
+        )
+        
+        # 绘制文字
+        draw.text((text_x, text_y), text, fill=color, font=font)
+
     def render_annotation(
         self,
         draw: ImageDraw.ImageDraw,
@@ -529,7 +735,7 @@ class AnnotationRenderer:
             self._draw_comment(draw, annotation, width, height)
         elif annotation.annotation_type == AnnotationType.HIGHLIGHT:
             self._draw_highlight(image, annotation)
-        # 新增 A/M mark 和步骤标注类型
+        # A/M mark 和步骤标注类型
         elif annotation.annotation_type == AnnotationType.A_MARK:
             self._draw_a_mark(draw, annotation, width, height)
         elif annotation.annotation_type == AnnotationType.M_MARK:
@@ -538,6 +744,19 @@ class AnnotationRenderer:
             self._draw_step_check(draw, annotation, width, height)
         elif annotation.annotation_type == AnnotationType.STEP_CROSS:
             self._draw_step_cross(draw, annotation, width, height)
+        # 新增简化标注类型
+        elif annotation.annotation_type == AnnotationType.SIMPLE_CHECK:
+            self._draw_simple_check(draw, annotation, width, height)
+        elif annotation.annotation_type == AnnotationType.SIMPLE_CROSS:
+            self._draw_simple_cross(draw, annotation, width, height)
+        elif annotation.annotation_type == AnnotationType.SIMPLE_SCORE:
+            self._draw_simple_score(draw, annotation, width, height)
+        elif annotation.annotation_type == AnnotationType.HALF_CHECK:
+            self._draw_half_check(draw, annotation, width, height)
+        elif annotation.annotation_type == AnnotationType.TOTAL_SCORE:
+            self._draw_total_score(draw, annotation, width, height)
+        elif annotation.annotation_type == AnnotationType.POINT_SCORE:
+            self._draw_point_score(draw, annotation, width, height)
     
     def render_page(
         self,

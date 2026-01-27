@@ -139,6 +139,10 @@ class QuestionRubric:
     alternative_solutions: List[AlternativeSolution] = field(default_factory=list)  # 另类解法
     deduction_rules: List[DeductionRule] = field(default_factory=list)  # 扣分规则
     grading_notes: str = ""                       # 批改注意事项
+    # 解析自白字段
+    parse_confidence: float = 1.0                 # 解析置信度 (0.0-1.0)
+    parse_uncertainties: List[str] = field(default_factory=list)  # 不确定性列表
+    parse_quality_issues: List[str] = field(default_factory=list)  # 质量问题
 
 
 @dataclass
@@ -149,6 +153,9 @@ class ParsedRubric:
     questions: List[QuestionRubric]               # 各题评分标准
     general_notes: str = ""                       # 通用批改说明
     rubric_format: str = "standard"               # 格式类型: standard/embedded
+    # 解析自白字段
+    overall_parse_confidence: float = 1.0         # 整体解析置信度 (0.0-1.0)
+    parse_self_report: Dict[str, Any] = field(default_factory=dict)  # 完整自白报告
 
 
 class RubricParserService:
@@ -299,12 +306,17 @@ class RubricParserService:
   "rubric_format": "standard",
   "general_notes": "通用批改说明（如有）",
   "total_questions_found": 实际识别到的题目数量,
+  "overall_parse_confidence": 0.0-1.0之间的数值，表示整体解析的置信度,
+  "parse_uncertainties": ["整体解析的不确定点1", "不确定点2"],
   "questions": [
     {{
       "question_id": "1",
       "max_score": 5,
       "question_text": "题目内容（如有）",
       "standard_answer": "标准答案（完整提取）",
+      "parse_confidence": 0.0-1.0之间的数值，表示该题解析的置信度,
+      "parse_uncertainties": ["该题的不确定点1", "不确定点2"],
+      "parse_quality_issues": ["该题的质量问题（如缺少得分点、分值异常等）"],
       "scoring_points": [
         {{"point_id": "1.1", "description": "得分点描述", "score": 2, "is_required": true}}
       ],
@@ -318,6 +330,21 @@ class RubricParserService:
     }}
   ]
 }}
+
+## 置信度和不确定性指南
+- **parse_confidence**: 根据以下因素综合评估
+  - 题目边界是否清晰 (0.9-1.0)
+  - 分值是否明确标注 (0.8-0.9)
+  - 得分点是否完整 (0.7-0.8)
+  - 存在歧义或缺失信息 (0.5-0.7)
+  - 严重不确定或难以解析 (0.0-0.5)
+- **parse_uncertainties**: 列出具体的不确定点
+  - 例如："题号模糊，可能是3或4"
+  - 例如："分值未明确标注，根据得分点推断"
+  - 例如："标准答案不完整"
+- **parse_quality_issues**: 列出质量问题
+  - 例如："缺少得分点详细说明"
+  - 例如："总分与得分点之和不一致"
 
 ## 严格规则
 - **必须返回有效的 JSON**（不要 markdown 代码块，不要 ```json）
@@ -680,3 +707,258 @@ class RubricParserService:
             lines.append("")
         
         return "\n".join(lines)
+    
+    def _generate_parse_self_report(
+        self, 
+        rubric: ParsedRubric,
+        expected_question_count: Optional[int] = None,
+        expected_total_score: Optional[float] = None
+    ) -> Dict[str, Any]:
+        """
+        生成评分标准解析的自白报告
+        
+        执行多维度质量检查：
+        - 题目数量合理性检查
+        - 分值一致性检查
+        - 得分点完整性检查
+        - 关键信息缺失检查
+        
+        Args:
+            rubric: 解析后的评分标准
+            expected_question_count: 期望的题目数量（如果已知）
+            expected_total_score: 期望的总分（如果已知）
+        
+        Returns:
+            自白报告字典
+        """
+        from datetime import datetime
+        
+        issues = []
+        uncertainties = []
+        quality_checks = []
+        overall_status = "ok"
+        
+        # 1. 题目数量合理性检查
+        if rubric.total_questions == 0:
+            issues.append({
+                "type": "no_questions",
+                "message": "未识别到任何题目",
+                "severity": "high"
+            })
+            overall_status = "error"
+            quality_checks.append({
+                "check": "题目数量检查",
+                "passed": False,
+                "detail": "未识别到任何题目"
+            })
+        elif rubric.total_questions < 3:
+            issues.append({
+                "type": "few_questions",
+                "message": f"题目数量较少（{rubric.total_questions}题），可能存在遗漏",
+                "severity": "medium"
+            })
+            if overall_status == "ok":
+                overall_status = "caution"
+            quality_checks.append({
+                "check": "题目数量检查",
+                "passed": False,
+                "detail": f"仅识别到 {rubric.total_questions} 题"
+            })
+        else:
+            quality_checks.append({
+                "check": "题目数量检查",
+                "passed": True,
+                "detail": f"识别到 {rubric.total_questions} 题"
+            })
+        
+        # 如果有期望题目数量，进行比对
+        if expected_question_count and rubric.total_questions != expected_question_count:
+            issues.append({
+                "type": "question_count_mismatch",
+                "message": f"识别到 {rubric.total_questions} 题，但期望 {expected_question_count} 题",
+                "severity": "high"
+            })
+            overall_status = "error"
+        
+        # 2. 分值一致性检查
+        calculated_total = sum(q.max_score for q in rubric.questions)
+        if abs(calculated_total - rubric.total_score) > 0.1:
+            issues.append({
+                "type": "score_mismatch",
+                "message": f"题目分值之和（{calculated_total}）与总分（{rubric.total_score}）不一致",
+                "severity": "medium"
+            })
+            if overall_status == "ok":
+                overall_status = "caution"
+            quality_checks.append({
+                "check": "分值一致性检查",
+                "passed": False,
+                "detail": f"分值差异 {abs(calculated_total - rubric.total_score):.1f} 分"
+            })
+        else:
+            quality_checks.append({
+                "check": "分值一致性检查",
+                "passed": True,
+                "detail": "分值一致"
+            })
+        
+        # 如果有期望总分，进行比对
+        if expected_total_score and abs(rubric.total_score - expected_total_score) > 0.1:
+            issues.append({
+                "type": "total_score_mismatch",
+                "message": f"总分为 {rubric.total_score}，但期望 {expected_total_score}",
+                "severity": "high"
+            })
+            overall_status = "error"
+        
+        # 3. 题目级别检查
+        questions_with_issues = []
+        for q in rubric.questions:
+            q_issues = []
+            
+            # 检查得分点
+            if not q.scoring_points:
+                q_issues.append("缺少得分点")
+                issues.append({
+                    "type": "missing_scoring_points",
+                    "message": f"题目 {q.question_id} 缺少得分点",
+                    "questionId": q.question_id,
+                    "severity": "high"
+                })
+            
+            # 检查分值合理性
+            if q.max_score <= 0:
+                q_issues.append("分值异常")
+                issues.append({
+                    "type": "invalid_score",
+                    "message": f"题目 {q.question_id} 分值异常（{q.max_score}）",
+                    "questionId": q.question_id,
+                    "severity": "high"
+                })
+            elif q.max_score > 30:
+                uncertainties.append(f"题目 {q.question_id} 分值较高（{q.max_score}分），请确认")
+            
+            # 检查得分点分值之和
+            if q.scoring_points:
+                sp_total = sum(sp.score for sp in q.scoring_points)
+                if abs(sp_total - q.max_score) > 0.1:
+                    q_issues.append("得分点分值之和与题目满分不一致")
+                    issues.append({
+                        "type": "scoring_points_mismatch",
+                        "message": f"题目 {q.question_id} 得分点分值之和（{sp_total}）与满分（{q.max_score}）不一致",
+                        "questionId": q.question_id,
+                        "severity": "medium"
+                    })
+            
+            # 检查标准答案
+            if not q.standard_answer:
+                uncertainties.append(f"题目 {q.question_id} 缺少标准答案")
+            
+            # 检查题目置信度（如果有）
+            if q.parse_confidence < 0.7:
+                q_issues.append(f"解析置信度较低（{q.parse_confidence:.2f}）")
+                issues.append({
+                    "type": "low_confidence",
+                    "message": f"题目 {q.question_id} 解析置信度较低（{q.parse_confidence:.2f}）",
+                    "questionId": q.question_id,
+                    "severity": "medium"
+                })
+            
+            # 收集题目不确定性
+            if q.parse_uncertainties:
+                for unc in q.parse_uncertainties:
+                    uncertainties.append(f"题目 {q.question_id}: {unc}")
+            
+            if q_issues:
+                questions_with_issues.append(q.question_id)
+        
+        # 4. 得分点完整性检查
+        questions_without_points = [q.question_id for q in rubric.questions if not q.scoring_points]
+        if questions_without_points:
+            quality_checks.append({
+                "check": "得分点完整性检查",
+                "passed": False,
+                "detail": f"{len(questions_without_points)} 题缺少得分点: {', '.join(questions_without_points)}"
+            })
+            if overall_status == "ok":
+                overall_status = "caution"
+        else:
+            quality_checks.append({
+                "check": "得分点完整性检查",
+                "passed": True,
+                "detail": "所有题目都有得分点"
+            })
+        
+        # 5. 标准答案检查
+        questions_without_answer = [q.question_id for q in rubric.questions if not q.standard_answer]
+        if questions_without_answer:
+            quality_checks.append({
+                "check": "标准答案完整性检查",
+                "passed": False,
+                "detail": f"{len(questions_without_answer)} 题缺少标准答案"
+            })
+        else:
+            quality_checks.append({
+                "check": "标准答案完整性检查",
+                "passed": True,
+                "detail": "所有题目都有标准答案"
+            })
+        
+        # 6. 计算整体置信度
+        if rubric.overall_parse_confidence < 1.0:
+            # 使用 LLM 提供的置信度
+            overall_confidence = rubric.overall_parse_confidence
+        else:
+            # 基于质量检查计算置信度
+            confidence_factors = []
+            
+            # 题目数量因素
+            if rubric.total_questions == 0:
+                confidence_factors.append(0.0)
+            elif rubric.total_questions < 3:
+                confidence_factors.append(0.6)
+            else:
+                confidence_factors.append(0.9)
+            
+            # 分值一致性因素
+            if abs(calculated_total - rubric.total_score) > 0.1:
+                confidence_factors.append(0.7)
+            else:
+                confidence_factors.append(1.0)
+            
+            # 得分点完整性因素
+            if questions_without_points:
+                confidence_factors.append(0.5)
+            else:
+                confidence_factors.append(0.95)
+            
+            # 题目置信度平均值
+            if rubric.questions:
+                avg_q_confidence = sum(q.parse_confidence for q in rubric.questions) / len(rubric.questions)
+                confidence_factors.append(avg_q_confidence)
+            
+            overall_confidence = sum(confidence_factors) / len(confidence_factors) if confidence_factors else 0.5
+        
+        # 7. 生成摘要
+        if overall_status == "ok":
+            summary = f"成功解析 {rubric.total_questions} 题，总分 {rubric.total_score}，整体质量良好"
+        elif overall_status == "caution":
+            summary = f"解析 {rubric.total_questions} 题，总分 {rubric.total_score}，存在 {len(issues)} 个问题需要注意"
+        else:
+            summary = f"解析存在严重问题，识别到 {rubric.total_questions} 题，有 {len([i for i in issues if i['severity'] == 'high'])} 个高严重性问题"
+        
+        # 8. 添加整体不确定性
+        if rubric.parse_self_report.get("parse_uncertainties"):
+            uncertainties.extend(rubric.parse_self_report["parse_uncertainties"])
+        
+        return {
+            "overallStatus": overall_status,
+            "overallConfidence": round(overall_confidence, 3),
+            "summary": summary,
+            "issues": issues,
+            "uncertainties": uncertainties,
+            "qualityChecks": quality_checks,
+            "questionsWithIssues": questions_with_issues,
+            "generatedAt": datetime.now().isoformat(),
+            "parseMethod": "llm_vision"
+        }

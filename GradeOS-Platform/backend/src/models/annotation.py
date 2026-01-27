@@ -17,7 +17,7 @@ import json
 
 class AnnotationType(str, Enum):
     """批注类型"""
-    SCORE = "score"              # 分数标注
+    SCORE = "score"              # 分数标注（如 "8/10"）
     ERROR_CIRCLE = "error_circle"  # 错误圈选
     ERROR_UNDERLINE = "error_underline"  # 错误下划线
     CORRECT_CHECK = "correct_check"  # 正确勾选 ✓
@@ -31,6 +31,13 @@ class AnnotationType(str, Enum):
     M_MARK = "m_mark"            # M mark（方法分）标注，显示 "M1" 或 "M0"
     STEP_CHECK = "step_check"    # 步骤正确勾选 ✓（用于标注每个步骤）
     STEP_CROSS = "step_cross"    # 步骤错误叉 ✗（用于标注每个步骤）
+    # 简化标注类型 - 适应各种批改场景
+    SIMPLE_CHECK = "simple_check"  # 只打勾 ✓（无得分数据时使用）
+    SIMPLE_CROSS = "simple_cross"  # 只打叉 ✗（无得分数据时使用）
+    SIMPLE_SCORE = "simple_score"  # 只写分数（如 "1"，绿色，无单位）
+    HALF_CHECK = "half_check"    # 半对 ½ 或 ~（部分正确但无具体分数时）
+    TOTAL_SCORE = "total_score"  # 题目总分标注（放在题目结尾）
+    POINT_SCORE = "point_score"  # 得分点分数标注（如 "+1" 或 "-1"）
 
 
 class AnnotationColor(str, Enum):

@@ -337,6 +337,10 @@ export interface RubricQuestion {
     gradingNotes?: string;
     criteria?: string[];
     sourcePages?: number[];
+    // 解析自白字段
+    parseConfidence?: number;
+    parseUncertainties?: string[];
+    parseQualityIssues?: string[];
 }
 
 // 解析的评分标准信息（完整版）
@@ -346,6 +350,28 @@ export interface ParsedRubric {
     questions?: RubricQuestion[];
     generalNotes?: string;
     rubricFormat?: string;
+    // 解析自白相关字段
+    overallParseConfidence?: number;
+    parseSelfReport?: {
+        overallStatus: 'ok' | 'caution' | 'error';
+        overallConfidence: number;
+        summary: string;
+        issues: Array<{
+            type: string;
+            message: string;
+            questionId?: string;
+            severity: 'low' | 'medium' | 'high';
+        }>;
+        uncertainties: string[];
+        qualityChecks: Array<{
+            check: string;
+            passed: boolean;
+            detail?: string;
+        }>;
+        questionsWithIssues?: string[];
+        generatedAt: string;
+        parseMethod?: string;
+    };
 }
 
 // === 自我成长系统类型定义 ===
@@ -573,6 +599,9 @@ const normalizeParsedRubricPayload = (data: any): ParsedRubric | null => {
             gradingNotes: q.gradingNotes || q.grading_notes || '',
             criteria: q.criteria || [],
             sourcePages: q.sourcePages || q.source_pages || [],
+            parseConfidence: q.parseConfidence ?? q.parse_confidence ?? 1.0,
+            parseUncertainties: q.parseUncertainties || q.parse_uncertainties || [],
+            parseQualityIssues: q.parseQualityIssues || q.parse_quality_issues || [],
             scoringPoints: (q.scoringPoints || q.scoring_points || []).map((sp: any) => ({
                 pointId: sp.pointId || sp.point_id || '',
                 description: sp.description || '',
@@ -589,12 +618,37 @@ const normalizeParsedRubricPayload = (data: any): ParsedRubric | null => {
         }))
         : undefined;
 
+    // 规范化自白报告
+    const rawSelfReport = data.parseSelfReport || data.parse_self_report;
+    const parseSelfReport = rawSelfReport ? {
+        overallStatus: rawSelfReport.overallStatus || rawSelfReport.overall_status || 'ok',
+        overallConfidence: rawSelfReport.overallConfidence ?? rawSelfReport.overall_confidence ?? 1.0,
+        summary: rawSelfReport.summary || '',
+        issues: (rawSelfReport.issues || []).map((issue: any) => ({
+            type: issue.type || '',
+            message: issue.message || '',
+            questionId: issue.questionId || issue.question_id,
+            severity: issue.severity || 'low',
+        })),
+        uncertainties: rawSelfReport.uncertainties || [],
+        qualityChecks: (rawSelfReport.qualityChecks || rawSelfReport.quality_checks || []).map((check: any) => ({
+            check: check.check || '',
+            passed: check.passed ?? false,
+            detail: check.detail || '',
+        })),
+        questionsWithIssues: rawSelfReport.questionsWithIssues || rawSelfReport.questions_with_issues || [],
+        generatedAt: rawSelfReport.generatedAt || rawSelfReport.generated_at || '',
+        parseMethod: rawSelfReport.parseMethod || rawSelfReport.parse_method || '',
+    } : undefined;
+
     return {
         totalQuestions,
         totalScore,
         questions,
         generalNotes: data.generalNotes || data.general_notes || '',
         rubricFormat: data.rubricFormat || data.rubric_format || '',
+        overallParseConfidence: data.overallParseConfidence ?? data.overall_parse_confidence ?? 1.0,
+        parseSelfReport,
     };
 };
 

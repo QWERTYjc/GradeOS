@@ -1049,9 +1049,30 @@ async def rubric_parse_node(state: BatchGradingGraphState) -> Dict[str, Any]:
             rubric_context = parser.format_rubric_context(result)
             parsed_rubric["rubric_context"] = rubric_context
             
+            # 生成自白报告
+            inputs_dict = state.get("inputs", {}) or {}
+            expected_question_count = inputs_dict.get("expected_question_count")
+            expected_total_score = inputs_dict.get("expected_total_score")
+            
+            parse_self_report = parser._generate_parse_self_report(
+                rubric=result,
+                expected_question_count=expected_question_count,
+                expected_total_score=expected_total_score
+            )
+            
+            # 将自白报告添加到 parsed_rubric
+            parsed_rubric["overall_parse_confidence"] = parse_self_report["overallConfidence"]
+            parsed_rubric["parse_self_report"] = parse_self_report
+            
+            # 同时更新 ParsedRubric 对象（如果需要重新注册）
+            result.overall_parse_confidence = parse_self_report["overallConfidence"]
+            result.parse_self_report = parse_self_report
+            
             logger.info(
                 f"[rubric_parse] 评分标准解析成功: "
-                f"题目数={result.total_questions}, 总分={result.total_score}"
+                f"题目数={result.total_questions}, 总分={result.total_score}, "
+                f"置信度={parse_self_report['overallConfidence']:.2f}, "
+                f"状态={parse_self_report['overallStatus']}"
             )
         
         elif rubric_text:
@@ -1082,6 +1103,8 @@ async def rubric_parse_node(state: BatchGradingGraphState) -> Dict[str, Any]:
             "totalScore": parsed_rubric.get("total_score", 0),
             "generalNotes": parsed_rubric.get("general_notes", ""),
             "rubricFormat": parsed_rubric.get("rubric_format", ""),
+            "overallParseConfidence": parsed_rubric.get("overall_parse_confidence", 1.0),
+            "parseSelfReport": parsed_rubric.get("parse_self_report"),
             "questions": [
                 {
                     "questionId": q.get("question_id", ""),
@@ -1090,6 +1113,9 @@ async def rubric_parse_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                     "standardAnswer": q.get("standard_answer", ""),
                     "gradingNotes": q.get("grading_notes", ""),
                     "sourcePages": q.get("source_pages") or q.get("sourcePages") or [],
+                    "parseConfidence": q.get("parse_confidence", 1.0),
+                    "parseUncertainties": q.get("parse_uncertainties") or q.get("parseUncertainties") or [],
+                    "parseQualityIssues": q.get("parse_quality_issues") or q.get("parseQualityIssues") or [],
                     "scoringPoints": [
                         {
                             "pointId": sp.get("point_id") or sp.get("pointId") or f"{q.get('question_id')}.{idx + 1}",
@@ -4663,6 +4689,7 @@ def _build_self_report_prompt(
     student: Dict[str, Any],
     question_details: List[Dict[str, Any]],
     rubric_map: Dict[str, Dict[str, Any]],
+    memory_context: Optional[Dict[str, Any]] = None,
 ) -> str:
     """
     构建自白 (Confession) LLM 提示词
@@ -4671,15 +4698,17 @@ def _build_self_report_prompt(
     - 不具备批改结果的更正能力
     - 只允许说假设、信息缺口、不确定点、可能出错点
     - 禁止编造"我查过/我看到了"之类证据
+    - **集成记忆系统**：基于历史经验进行风险分析
     """
     student_key = student.get("student_key") or student.get("student_name") or "Unknown"
     
     lines = [
-        "# 角色：批改自白助手 (Confession / Risk Disclosure)",
+        "# 角色：资深批改质量审计师 (Confession / Risk Disclosure)",
         "",
         "## 核心任务",
-        "你的任务是**披露风险**，而不是审核正确性。",
-        "交代：'我凭什么这么说 / 我哪里不确定 / 我可能在瞎猜'",
+        "你是一位经验丰富的质量审计师，拥有**共享记忆**能力，能够基于历史批改经验进行风险分析。",
+        "你的任务是**披露批改风险**，并结合历史教训提出警示。",
+        "交代：'我凭什么这么说 / 我哪里不确定 / 我可能在瞎猜 / 历史上类似情况如何'",
         "",
         "## 严格约束",
         "1. **禁止更正**：你不能修改任何评分结果，只能披露风险",
@@ -4695,10 +4724,42 @@ def _build_self_report_prompt(
         "- **可能出错点 (potential_errors)**：哪些地方最可能是幻觉或误判？",
         "- **整体置信度 (overall_confidence)**：0.0-1.0，校准后的置信度",
         "",
+        "## 高风险信号识别（重点关注）",
+        "",
+        "### 1. 评分异常信号",
+        "- **满分/零分风险**：满分或零分的评分需要额外审视",
+        "- **得分与证据不匹配**：给高分但证据模糊，或扣分但理由不充分",
+        "- **边界分数**：刚好踩线的分数（如 59/60 分）需要特别说明",
+        "- **置信度与得分矛盾**：低置信度但给了明确分数",
+        "",
+        "### 2. 证据质量信号",
+        "- **空证据/模糊证据**：evidence 字段为空或过于笼统",
+        "- **位置信息缺失**：没有明确指出证据在图片中的位置",
+        "- **自相矛盾**：feedback 和 evidence 内容冲突",
+        "- **公式识别风险**：数学公式可能被误读",
+        "",
+        "### 3. 题型特定风险",
+        "- **开放题风险**：主观评分依赖判断，容易有偏差",
+        "- **多步骤题风险**：错误传递可能导致重复扣分",
+        "- **另类解法风险**：学生可能使用非标准但正确的解法",
+        "- **跨页题风险**：信息分散在多页，可能遗漏内容",
+        "",
+        "### 4. 系统性风险",
+        "- **字迹识别**：字迹潦草可能导致误读",
+        "- **图片质量**：模糊、倾斜、光线问题",
+        "- **评分标准理解**：可能误解了某个得分点的含义",
+        "",
         f"## 学生标识: {student_key}",
         "",
         "## 批改摘要（供你做风险分析）",
     ]
+    
+    # 统计风险指标
+    total_questions = len(question_details)
+    high_score_count = 0  # 满分题数
+    zero_score_count = 0  # 零分题数
+    low_confidence_count = 0  # 低置信度题数
+    empty_evidence_count = 0  # 空证据题数
     
     for idx, question in enumerate(question_details[:20]):
         qid = _normalize_question_id(question.get("question_id") or question.get("questionId")) or str(idx + 1)
@@ -4709,7 +4770,25 @@ def _build_self_report_prompt(
         student_answer = _trim_text(question.get("student_answer", ""), 300)
         feedback = _trim_text(question.get("feedback", ""), 200)
         
-        lines.append(f"- Q{qid}: {score}/{max_score} (置信度: {confidence:.2f})")
+        # 统计风险指标
+        if max_score > 0 and score >= max_score:
+            high_score_count += 1
+        if score == 0 and max_score > 0:
+            zero_score_count += 1
+        if confidence < 0.7:
+            low_confidence_count += 1
+        
+        # 标记可能的风险
+        risk_flags = []
+        if max_score > 0 and score >= max_score:
+            risk_flags.append("⚠️满分")
+        if score == 0 and max_score > 0:
+            risk_flags.append("⚠️零分")
+        if confidence < 0.7:
+            risk_flags.append(f"⚠️低置信度({confidence:.2f})")
+        
+        risk_str = " ".join(risk_flags) if risk_flags else ""
+        lines.append(f"- Q{qid}: {score}/{max_score} (置信度: {confidence:.2f}) {risk_str}")
         if student_answer:
             lines.append(f"  学生答案: {student_answer}")
         if feedback:
@@ -4723,8 +4802,85 @@ def _build_self_report_prompt(
                 point_id = sp.get("point_id") or sp.get("pointId") or ""
                 awarded = sp.get("awarded", sp.get("score", 0))
                 evidence = _trim_text(sp.get("evidence", ""), 100)
-                lines.append(f"    - {point_id}: {awarded}分, 证据: {evidence or '无'}")
+                
+                # 检查证据质量
+                evidence_flag = ""
+                if not evidence or evidence.strip() in ["", "无", "N/A", "null", "None"]:
+                    evidence_flag = " ⚠️空证据"
+                    empty_evidence_count += 1
+                
+                lines.append(f"    - {point_id}: {awarded}分, 证据: {evidence or '无'}{evidence_flag}")
         lines.append("")
+    
+    # 添加风险摘要
+    lines.append("## 批改风险摘要")
+    lines.append(f"- 总题数: {total_questions}")
+    lines.append(f"- 满分题数: {high_score_count} {'(需要审视)' if high_score_count > total_questions * 0.5 else ''}")
+    lines.append(f"- 零分题数: {zero_score_count} {'(需要审视)' if zero_score_count > total_questions * 0.3 else ''}")
+    lines.append(f"- 低置信度题数: {low_confidence_count} {'(重点关注)' if low_confidence_count > 0 else ''}")
+    lines.append(f"- 空证据题数: {empty_evidence_count} {'(必须披露)' if empty_evidence_count > 0 else ''}")
+    lines.append("")
+    
+    # 添加记忆上下文（如果有）
+    if memory_context:
+        lines.append("## 共享记忆：历史批改经验")
+        lines.append("以下信息来自历史批改数据的积累，请据此进行更准确的风险分析：")
+        lines.append("")
+        
+        # 历史错误模式
+        error_patterns = memory_context.get("historical_error_patterns", [])
+        if error_patterns:
+            lines.append("### 历史常见错误模式")
+            for i, pattern in enumerate(error_patterns[:5], 1):
+                lines.append(
+                    f"{i}. **{pattern['pattern']}** (出现 {pattern['occurrence_count']} 次, "
+                    f"可信度 {pattern['confidence']:.0%})"
+                )
+                lines.append(f"   教训: {pattern['lesson']}")
+            lines.append("")
+        
+        # 修正历史
+        corrections = memory_context.get("correction_history", [])
+        if corrections:
+            lines.append("### 历史重大修正案例")
+            lines.append("以下是历史上被大幅修正的评分案例，**务必引以为戒**：")
+            for i, corr in enumerate(corrections[:3], 1):
+                lines.append(f"{i}. {corr['pattern']}")
+                if corr.get("context") and corr["context"].get("difference"):
+                    lines.append(f"   分数差距: {abs(corr['context']['difference'])} 分")
+            lines.append("")
+        
+        # 置信度校准
+        calibrations = memory_context.get("calibration_suggestions", {})
+        if calibrations:
+            lines.append("### 置信度校准建议")
+            lines.append("基于历史数据，你的置信度预测可能需要调整：")
+            for qt, suggestion in calibrations.items():
+                if suggestion.get("has_data"):
+                    adj = suggestion["adjustment"]
+                    lines.append(
+                        f"- **{qt}**: 历史数据显示置信度{'偏高' if adj < 0 else '偏低'} "
+                        f"{abs(adj):.2f}，建议{'下调' if adj < 0 else '上调'}"
+                    )
+            lines.append("")
+        
+        # 当前批次模式
+        batch_patterns = memory_context.get("batch_patterns", {})
+        if batch_patterns.get("error_patterns"):
+            lines.append("### 当前批次已发现的模式")
+            lines.append("在当前批次中已经发现以下模式，请注意是否存在相同问题：")
+            for pattern, count in list(batch_patterns["error_patterns"].items())[:5]:
+                lines.append(f"- {pattern}: 已出现 {count} 次")
+            lines.append("")
+        
+        # 记忆系统统计
+        stats = memory_context.get("memory_stats", {})
+        if stats:
+            lines.append(f"### 记忆系统状态")
+            lines.append(f"- 总记忆条目: {stats.get('total_memories', 0)}")
+            lines.append(f"- 错误模式记录: {stats.get('error_pattern_count', 0)}")
+            lines.append(f"- 修正历史记录: {stats.get('correction_count', 0)}")
+            lines.append("")
     
     schema_hint = {
         "student_key": student_key,
@@ -4736,17 +4892,21 @@ def _build_self_report_prompt(
                 {"question_id": "1", "gap": "缺少的信息", "needed_for": "这个信息用于什么判断"}
             ],
             "evidence_gaps": [
-                {"question_id": "1", "point_id": "1.1", "gap": "证据不足描述"}
+                {"question_id": "1", "point_id": "1.1", "gap": "证据不足描述", "severity": "high | medium | low"}
             ],
             "uncertainties": [
                 {"question_id": "1", "uncertainty": "不确定点描述", "confidence": 0.0, "reason": "为什么不确定"}
             ],
             "potential_errors": [
-                {"question_id": "1", "error_type": "hallucination | misread | logic_leap | evidence_mismatch", 
+                {"question_id": "1", "error_type": "hallucination | misread | logic_leap | evidence_mismatch | formula_error | alternative_solution", 
                  "description": "可能错误描述", "likelihood": "low | medium | high"}
             ],
+            "score_anomalies": [
+                {"question_id": "1", "anomaly_type": "full_marks | zero_marks | boundary_score | confidence_mismatch",
+                 "explanation": "为什么这个分数可能有问题"}
+            ],
             "overall_confidence": 0.0,
-            "calibration_note": "置信度校准说明",
+            "calibration_note": "置信度校准说明：考虑了哪些因素",
             "high_risk_questions": ["1", "2"],
             "summary": "自白总结：我可能在哪里出错了..."
         }
@@ -4756,6 +4916,7 @@ def _build_self_report_prompt(
     lines.append("## 输出要求")
     lines.append("请仅输出 JSON，不要添加额外说明或 markdown。")
     lines.append("记住：你是在做'风险说明书'，不是审计报告。")
+    lines.append("**重点**：务必披露所有满分、零分、低置信度、空证据的题目！")
     lines.append("")
     lines.append("输出 JSON 模板：")
     lines.append(json.dumps(schema_hint, ensure_ascii=False, indent=2))
@@ -4764,13 +4925,15 @@ def _build_self_report_prompt(
 
 async def self_report_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     """
-    自白节点 (Text LLM)
+    自白节点 (Text LLM) - 集成共享记忆系统
     
     每个学生进行一次 LLM 自白，审查批改结果：
     - 低置信度评分点
     - 证据不足的评分
     - 可能的识别错误
     - 需要人工复核的题目
+    - **新增**：基于历史记忆进行风险分析
+    - **新增**：将发现的模式记录到记忆系统
     
     工作流位置：index_merge → self_report → logic_review
     """
@@ -4779,6 +4942,13 @@ async def self_report_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     parsed_rubric = state.get("parsed_rubric", {}) or {}
     api_key = state.get("api_key") or os.getenv("LLM_API_KEY") or os.getenv("OPENROUTER_API_KEY")
     grading_mode = _resolve_grading_mode(state.get("inputs", {}), parsed_rubric)
+    
+    # 初始化记忆服务
+    from src.services.grading_memory import get_memory_service, MemoryType, MemoryImportance
+    memory_service = get_memory_service()
+    
+    # 创建批次记忆
+    memory_service.create_batch_memory(batch_id)
 
     # 辅助模式跳过自白
     if grading_mode.startswith("assist"):
@@ -4881,7 +5051,35 @@ async def self_report_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                 })
                 return {"index": index, "result": updated_student}
 
-            prompt = _build_self_report_prompt(student, question_details, rubric_map)
+            # 获取记忆上下文
+            memory_context = memory_service.generate_confession_context(
+                question_details=question_details,
+                batch_id=batch_id,
+            )
+            
+            # 记录批次内的置信度分布
+            for q in question_details:
+                qt = q.get("question_type") or "unknown"
+                conf = q.get("confidence", 0.7)
+                memory_service.record_batch_confidence(batch_id, qt, conf)
+                
+                # 检测并记录风险信号
+                score = q.get("score", 0)
+                max_score = q.get("max_score", 0)
+                if max_score > 0 and score >= max_score:
+                    memory_service.record_batch_risk_signal(
+                        batch_id, "满分风险", q.get("question_id", "?"), "medium"
+                    )
+                if score == 0 and max_score > 0:
+                    memory_service.record_batch_risk_signal(
+                        batch_id, "零分风险", q.get("question_id", "?"), "medium"
+                    )
+                if conf < 0.5:
+                    memory_service.record_batch_risk_signal(
+                        batch_id, "极低置信度", q.get("question_id", "?"), "high"
+                    )
+
+            prompt = _build_self_report_prompt(student, question_details, rubric_map, memory_context)
 
             response_text = ""
             try:
@@ -4942,7 +5140,48 @@ async def self_report_node(state: BatchGradingGraphState) -> Dict[str, Any]:
             if self_report:
                 self_report["generated_at"] = datetime.now().isoformat()
                 self_report["source"] = "llm"
+                self_report["memory_context_used"] = bool(memory_context)
                 updated_student["self_report"] = self_report
+                
+                # 将自白发现的模式记录到记忆系统
+                try:
+                    # 记录潜在错误模式
+                    potential_errors = self_report.get("potential_errors", [])
+                    for err in potential_errors:
+                        if isinstance(err, dict):
+                            error_type = err.get("error_type", "unknown")
+                            likelihood = err.get("likelihood", "medium")
+                            if likelihood in ["high", "medium"]:
+                                memory_service.record_batch_error_pattern(
+                                    batch_id=batch_id,
+                                    pattern=f"{error_type}: {err.get('description', '')}",
+                                    question_id=err.get("question_id", "?"),
+                                )
+                    
+                    # 记录证据缺口
+                    evidence_gaps = self_report.get("evidence_gaps", [])
+                    for gap in evidence_gaps:
+                        if isinstance(gap, dict):
+                            severity = gap.get("severity", "medium")
+                            if severity in ["high", "critical"]:
+                                memory_service.record_batch_error_pattern(
+                                    batch_id=batch_id,
+                                    pattern=f"证据缺口: {gap.get('gap', '')}",
+                                    question_id=gap.get("question_id", "?"),
+                                )
+                    
+                    # 记录高风险题目
+                    high_risk = self_report.get("high_risk_questions", [])
+                    for hrq in high_risk:
+                        qid = hrq if isinstance(hrq, str) else hrq.get("questionId", "?")
+                        memory_service.record_batch_risk_signal(
+                            batch_id=batch_id,
+                            signal="自白标记高风险",
+                            question_id=qid,
+                            severity="high",
+                        )
+                except Exception as mem_exc:
+                    logger.warning(f"[self_report] 记忆记录失败: {mem_exc}")
             else:
                 # 回退到规则自白
                 from src.services.grading_self_report import generate_self_report
@@ -4985,6 +5224,13 @@ async def self_report_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     final_results = [r if r else student_results[i] for i, r in enumerate(updated_results)]
 
     logger.info(f"[self_report] completed for {len(final_results)} students: batch_id={batch_id}")
+    
+    # 保存记忆到持久化存储
+    try:
+        memory_service.save_to_storage()
+        logger.info(f"[self_report] 记忆系统已保存: batch_id={batch_id}")
+    except Exception as e:
+        logger.warning(f"[self_report] 记忆保存失败: {e}")
 
     return {
         "student_results": final_results,
@@ -5024,7 +5270,9 @@ def _build_logic_review_prompt(
     max_evidence_chars = limits.get("max_evidence_chars", 120)
 
     lines = [
-        "# 角色：逻辑复核助手 (Logic Review / Audit & Correction)",
+        "# 角色：资深逻辑复核专家 (Logic Review / Audit & Correction Expert)",
+        "",
+        "你是一位拥有丰富阅卷经验的逻辑复核专家，专门负责审计批改结果的一致性和准确性。",
         "",
         "## 核心任务",
         "判定：'批改对不对 / 有没有漏洞'，并**修正发现的错误**",
@@ -5035,12 +5283,50 @@ def _build_logic_review_prompt(
         "2. **完备性**：是否遗漏关键评分点？是否有未覆盖的题目？",
         "3. **可推导性**：结论是否由证据推出？是否存在跳步 (non sequitur)？",
         "4. **可验证性**：给出的证据是否可以验证评分决定？",
+        "5. **数学正确性**：得分累加是否正确？是否超出满分？",
+        "",
+        "## 批改经验：常见逻辑错误模式",
+        "",
+        "### 1. 评分逻辑错误",
+        "- **重复扣分**：前步错误已扣分，后步因此产生的错误不应重复扣分",
+        "- **错误传递忽视**：前步计算错误但方法正确，后步应按前步结果继续给分",
+        "- **得分点遗漏**：评分标准中的某些得分点未被评判",
+        "- **分数溢出**：某题得分超过满分或为负数",
+        "- **累加错误**：得分点分数之和与题目总分不一致",
+        "",
+        "### 2. 证据与评分矛盾",
+        "- **证据说对但扣分**：evidence 说学生正确，但 awarded = 0",
+        "- **证据说错但给分**：evidence 说学生错误，但 awarded > 0",
+        "- **证据空但有分**：没有证据支持的给分决定",
+        "- **证据与反馈冲突**：evidence 和 feedback 内容矛盾",
+        "",
+        "### 3. 标准应用错误",
+        "- **标准理解偏差**：评分标准被错误理解或应用",
+        "- **另类解法误判**：正确的非标准解法被错误扣分",
+        "- **部分分给予不当**：应给部分分的情况给了零分或满分",
         "",
         "## 约束与修正权限",
         '1. **禁止引入新事实**：不能说"我看到了..."，只能基于已有信息判断',
         "2. **必须修正错误**：发现逻辑错误、证据冲突、评分不一致时，必须在 review_corrections 中提出修正",
         "3. **修正需有依据**：每个修正必须引用已有证据或评分标准作为依据",
         "4. **批判性思维**：对自白中披露的风险点进行交叉验证",
+        "5. **保守修正原则**：只修正有明确依据的错误，不确定时保留原判",
+        "",
+        "## 修正决策树",
+        "```",
+        "if 证据明确说正确 and awarded == 0:",
+        "    → 修正为得分（给出 review_reason）",
+        "elif 证据明确说错误 and awarded > 0:",
+        "    → 修正为扣分（给出 review_reason）",
+        "elif 证据与反馈矛盾:",
+        "    → 以证据为准进行修正",
+        "elif 得分超出满分 or 得分为负:",
+        "    → 修正为合理分数",
+        "elif 前步错误导致后步错误 and 后步已扣分:",
+        "    → 恢复后步得分（错误不重复扣）",
+        "else:",
+        "    → 保留原判，在 honesty_note 中说明不确定",
+        "```",
         "",
         "## 可用信息源（仅限这些）",
         "- 批改结果（评分、证据、反馈）",
@@ -5167,15 +5453,20 @@ def _build_logic_review_prompt(
 
 async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     """
-    逻辑复核节点（文本输入）
+    逻辑复核节点（文本输入）- 集成记忆系统
 
     每个学生进行一次纯文本 LLM 复核，输出题目置信度与自白说明。
+    **新增**：记录修正历史到记忆系统，用于未来的批改改进。
     """
     batch_id = state["batch_id"]
     student_results = state.get("student_results", []) or []
     parsed_rubric = state.get("parsed_rubric", {}) or {}
     api_key = state.get("api_key") or os.getenv("LLM_API_KEY") or os.getenv("OPENROUTER_API_KEY")
     grading_mode = _resolve_grading_mode(state.get("inputs", {}), parsed_rubric)
+    
+    # 获取记忆服务
+    from src.services.grading_memory import get_memory_service, MemoryType, MemoryImportance
+    memory_service = get_memory_service()
 
     if grading_mode.startswith("assist"):
         logger.info(f"[logic_review] skip (assist mode): batch_id={batch_id}")
@@ -5346,7 +5637,29 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
             for q in question_details:
                 qid = _normalize_question_id(q.get("question_id") or q.get("questionId"))
                 if qid and qid in review_map:
-                    updated_details.append(_merge_logic_review_fields(q, review_map[qid]))
+                    merged = _merge_logic_review_fields(q, review_map[qid])
+                    updated_details.append(merged)
+                    
+                    # 记录修正到记忆系统
+                    try:
+                        original_score = _safe_float(q.get("score", 0))
+                        new_score = _safe_float(merged.get("score", 0))
+                        if abs(new_score - original_score) >= 0.5:
+                            review_reason = review_map[qid].get("review_reason", "")
+                            for corr in review_map[qid].get("review_corrections", []):
+                                if isinstance(corr, dict):
+                                    review_reason = corr.get("review_reason", review_reason)
+                                    break
+                            memory_service.record_correction(
+                                batch_id=batch_id,
+                                question_id=qid,
+                                original_score=original_score,
+                                corrected_score=new_score,
+                                reason=review_reason or "逻辑复核修正",
+                                source="logic_review",
+                            )
+                    except Exception as mem_exc:
+                        logger.debug(f"[logic_review] 记录修正失败: {mem_exc}")
                 else:
                     updated_details.append(dict(q))
             updated_student["question_details"] = updated_details
@@ -5404,6 +5717,15 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
             logic_review_results.append(review_payload)
 
     final_results = [r for r in updated_results if r is not None]
+    
+    # 整合批次记忆到长期记忆
+    try:
+        new_memories = memory_service.consolidate_batch_memory(batch_id)
+        memory_service.save_to_storage()
+        logger.info(f"[logic_review] 记忆整合完成: batch_id={batch_id}, 新增 {new_memories} 条长期记忆")
+    except Exception as e:
+        logger.warning(f"[logic_review] 记忆整合失败: {e}")
+    
     return {
         "student_results": final_results,
         "logic_review_results": logic_review_results,
@@ -5412,6 +5734,86 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
         "timestamps": {
             **state.get("timestamps", {}),
             "logic_review_at": datetime.now().isoformat(),
+        },
+    }
+
+
+async def annotation_generation_node(state: BatchGradingGraphState) -> Dict[str, Any]:
+    """
+    批注生成节点
+    
+    在逻辑复核完成后，基于最终的批改结果生成视觉批注。
+    批注用于在学生答卷图片上标注得分/错误位置。
+    
+    工作流位置：logic_review → annotation_generation → review
+    """
+    from src.services.post_grading_annotator import (
+        PostGradingAnnotator,
+        AnnotatorConfig,
+        AnnotationMode,
+    )
+    
+    batch_id = state["batch_id"]
+    student_results = state.get("student_results", []) or []
+    grading_mode = _resolve_grading_mode(state.get("inputs", {}), state.get("parsed_rubric", {}))
+    
+    logger.info(f"[annotation_generation] 开始生成批注: batch_id={batch_id}")
+    
+    # 获取批注模式配置
+    annotation_mode_str = state.get("inputs", {}).get("annotation_mode", "standard")
+    try:
+        annotation_mode = AnnotationMode(annotation_mode_str)
+    except ValueError:
+        annotation_mode = AnnotationMode.STANDARD
+    
+    # 辅助模式使用简洁批注
+    if grading_mode.startswith("assist"):
+        annotation_mode = AnnotationMode.SIMPLE
+    
+    # 创建批注生成器
+    config = AnnotatorConfig(mode=annotation_mode)
+    annotator = PostGradingAnnotator(config)
+    
+    updated_results = []
+    total_annotations = 0
+    
+    for student in student_results:
+        student_key = student.get("student_key") or "unknown"
+        
+        try:
+            # 生成该学生的批注
+            annotation_result = annotator.generate_annotations_for_student(student)
+            
+            # 将批注结果附加到学生数据
+            updated_student = dict(student)
+            updated_student["annotations"] = annotation_result.to_dict()
+            
+            # 统计批注数量
+            for page in annotation_result.pages:
+                total_annotations += len(page.annotations)
+            
+            updated_results.append(updated_student)
+            
+            logger.debug(
+                f"[annotation_generation] 学生 {student_key}: "
+                f"生成 {sum(len(p.annotations) for p in annotation_result.pages)} 个批注"
+            )
+        except Exception as e:
+            logger.warning(f"[annotation_generation] 学生 {student_key} 批注生成失败: {e}")
+            updated_results.append(dict(student))
+    
+    logger.info(
+        f"[annotation_generation] 完成: batch_id={batch_id}, "
+        f"学生数={len(updated_results)}, 总批注数={total_annotations}"
+    )
+    
+    return {
+        "student_results": updated_results,
+        "current_stage": "annotation_generation_completed",
+        "percentage": 88.0,
+        "timestamps": {
+            **state.get("timestamps", {}),
+            "annotation_generation_at": datetime.now().isoformat(),
         },
     }
 
@@ -5893,6 +6295,7 @@ def create_batch_grading_graph(
     graph.add_node("index_merge", index_merge_node)
     graph.add_node("self_report", self_report_node)
     graph.add_node("logic_review", logic_review_node)
+    graph.add_node("annotation_generation", annotation_generation_node)  # 新增批注生成节点
     graph.add_node("review", review_node)
     graph.add_node("export", export_node)
     
@@ -5916,10 +6319,12 @@ def create_batch_grading_graph(
     graph.add_edge("grade_batch", "cross_page_merge")
     
     # cross_page_merge → index_merge → self_report → logic_review → review → export → END
+    # cross_page_merge → index_merge → self_report → logic_review → annotation_generation → review → export → END
     graph.add_edge("cross_page_merge", "index_merge")
     graph.add_edge("index_merge", "self_report")
     graph.add_edge("self_report", "logic_review")
-    graph.add_edge("logic_review", "review")
+    graph.add_edge("logic_review", "annotation_generation")  # 逻辑复核后生成批注
+    graph.add_edge("annotation_generation", "review")
     graph.add_edge("review", "export")
     graph.add_edge("export", END)
     
@@ -5955,6 +6360,7 @@ __all__ = [
     "index_merge_node",
     "self_report_node",
     "logic_review_node",
+    "annotation_generation_node",  # 新增批注生成节点
     "review_node",
     "export_node",
     # 路由函数
