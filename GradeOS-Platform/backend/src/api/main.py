@@ -47,6 +47,23 @@ logging.basicConfig(
     force=True,
 )
 
+def _configure_stdout_loggers() -> None:
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(logging.Formatter(LOG_FORMAT))
+    for name in (
+        "uvicorn",
+        "uvicorn.error",
+        "uvicorn.access",
+        "alembic",
+        "alembic.runtime.migration",
+    ):
+        target = logging.getLogger(name)
+        target.setLevel(LOG_LEVEL_VALUE)
+        target.handlers = [handler]
+        target.propagate = False
+
+_configure_stdout_loggers()
+
 def _configure_grading_loggers() -> None:
     log_path = os.getenv("GRADEOS_GRADING_LOG_PATH", "batch_grading.log")
     handler = logging.FileHandler(log_path, mode="a", encoding="utf-8")
