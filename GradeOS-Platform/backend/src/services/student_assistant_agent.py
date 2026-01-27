@@ -40,6 +40,7 @@ class AssistantMastery(BaseModel):
 class AssistantStructuredResponse(BaseModel):
     content: str
     next_question: Optional[str] = None
+    question_options: Optional[List[str]] = None
     focus_mode: bool = False
     response_type: str = "chat"
     mastery: Optional[AssistantMastery] = None
@@ -63,13 +64,15 @@ Teaching style:
 - Use the Socratic method: guide with questions, challenge assumptions, avoid giving final answers too early.
 - Use first principles: decompose concepts into fundamentals and rebuild understanding step by step.
 - If the student expresses confusion or says they don't know, briefly explain the missing concept before asking the next, simpler question.
+- Ensure explanations are substantive: include 3-5 clear reasoning steps, highlight a key misconception, and end with a concise summary.
 
 Output rules:
 - Respond with JSON only.
 - Follow the schema in {format_instructions}.
 - Use the student's language based on their message.
 - Provide "concept_breakdown" as a tree of fundamentals (2-4 levels deep when possible).
-- Keep responses concise, precise, and supportive.
+- Keep responses concise but not shallow; be precise, structured, and supportive.
+- When you ask a "next_question", also provide 2-4 "question_options" as short clickable choices in the same language.
 - When you provide an explanation, set response_type to "explanation".
 - In concept_breakdown, set understood=true only for items the student has demonstrated; default to false for gaps.
 

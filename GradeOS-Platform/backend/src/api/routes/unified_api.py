@@ -216,6 +216,7 @@ class AssistantChatResponse(BaseModel):
     # 新增：结构化输出
     mastery: Optional[MasteryData] = None  # 掌握度评估
     next_question: Optional[str] = None  # 苏格拉底式追问
+    question_options: Optional[List[str]] = None  # 追问的可选按钮
     focus_mode: bool = False  # 是否进入专注模式
     concept_breakdown: Optional[List[ConceptNode]] = None  # 第一性原理概念分解
     response_type: str = "chat"  # chat / question / assessment / explanation
@@ -1711,6 +1712,7 @@ async def assistant_chat(request: AssistantChatRequest):
         usage=result.usage or {},
         mastery=mastery_data,
         next_question=result.parsed.next_question,
+        question_options=result.parsed.question_options,
         focus_mode=result.parsed.focus_mode,
         concept_breakdown=concept_nodes,
         response_type=result.parsed.response_type or "chat",

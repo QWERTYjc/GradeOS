@@ -1,6 +1,7 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { I18N } from '../constants';
 import { ConceptNode, EnhancedChatMessage, Language } from '../types';
 import { assistantApi, AssistantProgressResponse } from '@/services/api';
@@ -37,10 +38,13 @@ const AIChat: React.FC<Props> = ({ lang }) => {
   const [isStreaming, setIsStreaming] = useState(false);
   const [focusModeActive, setFocusModeActive] = useState(false);
   const [currentFocusQuestion, setCurrentFocusQuestion] = useState('');
+  const [sidebarsCollapsed, setSidebarsCollapsed] = useState(false);
   const [progressData, setProgressData] = useState<AssistantProgressResponse | null>(null);
   const [progressLoading, setProgressLoading] = useState(false);
   const { user } = useAuthStore();
   const activeClassId = user?.classIds?.[0];
+  const router = useRouter();
+  const timelineRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     setMessages([
@@ -86,6 +90,13 @@ const AIChat: React.FC<Props> = ({ lang }) => {
     };
   }, [user?.id, activeClassId]);
 
+  useEffect(() => {
+    const timeline = timelineRef.current;
+    if (timeline) {
+      timeline.scrollTop = timeline.scrollHeight;
+    }
+  }, [messages]);
+
   const handleSend = async (userMsgContent: string) => {
     if (!userMsgContent.trim() || isStreaming) return;
     if (!user?.id) {
@@ -96,6 +107,7 @@ const AIChat: React.FC<Props> = ({ lang }) => {
       return;
     }
 
+    setSidebarsCollapsed(true);
     setInput('');
     setIsStreaming(true);
 
@@ -134,20 +146,17 @@ const AIChat: React.FC<Props> = ({ lang }) => {
           lastMessage.mastery = response.mastery;
           lastMessage.conceptBreakdown = response.concept_breakdown;
           lastMessage.nextQuestion = response.next_question;
+          lastMessage.questionOptions = response.question_options;
           lastMessage.focusMode = response.focus_mode;
           lastMessage.responseType = response.response_type as any;
         }
         return next;
       });
 
-      if (response.focus_mode && response.next_question) {
-        setTimeout(() => {
-          setCurrentFocusQuestion(response.next_question!);
-          setFocusModeActive(true);
-        }, 1500);
-      } else {
-        setFocusModeActive(false);
+      if (response.next_question) {
+        setCurrentFocusQuestion(response.next_question);
       }
+      setFocusModeActive(false);
     } catch (error) {
       console.error('Chat Error:', error);
       setMessages((prev) => [
@@ -167,13 +176,6 @@ const AIChat: React.FC<Props> = ({ lang }) => {
   const latestAssistant = useMemo(() => {
     for (let i = messages.length - 1; i >= 0; i -= 1) {
       if (messages[i].role === 'assistant') return messages[i];
-    }
-    return undefined;
-  }, [messages]);
-
-  const latestUser = useMemo(() => {
-    for (let i = messages.length - 1; i >= 0; i -= 1) {
-      if (messages[i].role === 'user') return messages[i];
     }
     return undefined;
   }, [messages]);
@@ -271,11 +273,15 @@ const AIChat: React.FC<Props> = ({ lang }) => {
   const displayContent =
     latestAssistant?.content?.trim() || (isStreaming ? 'Thinking...' : t.chatIntro.replace(/[*#]/g, ''));
 
+  const shouldShowSidebars = !sidebarsCollapsed;
+
   return (
     <div className="relative min-h-screen bg-white text-black overflow-hidden">
       <div className="assistant-grid absolute inset-0" aria-hidden="true" />
       <div className="assistant-halo absolute -top-24 left-1/2 h-[420px] w-[420px] -translate-x-1/2" aria-hidden="true" />
       <div className="assistant-scanline absolute inset-x-0 top-0" aria-hidden="true" />
+      <div className="assistant-orb assistant-orb--left absolute -bottom-20 -left-10 h-56 w-56" aria-hidden="true" />
+      <div className="assistant-orb assistant-orb--right absolute -top-10 right-10 h-40 w-40" aria-hidden="true" />
 
       {focusModeActive && (
         <FocusMode
@@ -291,191 +297,300 @@ const AIChat: React.FC<Props> = ({ lang }) => {
 
       <div className="relative z-10 flex min-h-screen flex-col px-6 py-10 md:px-12">
         <div className="flex flex-wrap items-center justify-between gap-4 text-[10px] font-semibold uppercase tracking-[0.45em] text-black/60">
-          <span>GradeOS Socratic Agent</span>
-          <span className="flex items-center gap-2">
-            <span className={`h-2 w-2 rounded-full ${isStreaming ? 'bg-black animate-pulse' : 'bg-black/40'}`} />
-            {isStreaming ? 'Thinking' : 'Ready'}
-          </span>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => router.push('/student/dashboard')}
+              className="rounded-full border border-black/20 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.3em] text-black/60 transition hover:border-black/40"
+            >
+              返回课程
+            </button>
+            <span>GradeOS Socratic Agent</span>
+          </div>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setSidebarsCollapsed((prev) => !prev)}
+              className="rounded-full border border-black/20 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.3em] text-black/60 transition hover:border-black/40"
+            >
+              {sidebarsCollapsed ? '展开侧栏' : '收起侧栏'}
+            </button>
+            <span className="flex items-center gap-2">
+              <span className={`h-2 w-2 rounded-full ${isStreaming ? 'bg-black animate-pulse' : 'bg-black/40'}`} />
+              {isStreaming ? 'Thinking' : 'Ready'}
+            </span>
+          </div>
         </div>
 
-        <div className="mt-10 grid flex-1 items-start gap-10 lg:grid-cols-[260px_minmax(0,1fr)_280px]">
-          <aside className="space-y-6">
-            <div className="rounded-2xl border border-black/10 bg-white/80 p-4 shadow-sm">
-              <div className="text-[10px] font-semibold uppercase tracking-[0.4em] text-black/50">
-                Learning progress
-              </div>
-              <div className="mt-4 space-y-3">
-                <div className="text-xs font-semibold uppercase tracking-[0.3em] text-black/40">
-                  Recent mastery
+        <div
+          className={`mt-10 grid flex-1 items-start gap-10 ${
+            sidebarsCollapsed ? 'lg:grid-cols-[minmax(0,1fr)]' : 'lg:grid-cols-[260px_minmax(0,1fr)_280px]'
+          }`}
+        >
+          {shouldShowSidebars && (
+            <aside className="space-y-6">
+              <div className="rounded-2xl border border-black/10 bg-white/80 p-4 shadow-sm">
+                <div className="text-[10px] font-semibold uppercase tracking-[0.4em] text-black/50">
+                  Learning progress
                 </div>
-                {progressSnapshots.length > 0 ? (
-                  <div className="space-y-2">
-                    {progressSnapshots.map((snapshot, idx) => (
-                      <div
-                        key={`${snapshot.timestamp.getTime()}-progress-${idx}`}
-                        className="flex items-center justify-between rounded-xl border border-black/5 bg-white px-3 py-2 text-xs text-black/60"
-                      >
-                        <span>{snapshot.level || 'Developing'}</span>
-                        <span className="text-black/80">{snapshot.score ?? 0}</span>
-                      </div>
-                    ))}
+                <div className="mt-4 space-y-3">
+                  <div className="text-xs font-semibold uppercase tracking-[0.3em] text-black/40">
+                    Recent mastery
                   </div>
-                ) : (
-                  <div className="text-sm text-black/40">
-                    {progressLoading ? 'Loading progress...' : 'No mastery snapshots yet.'}
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div className="rounded-2xl border border-black/10 bg-white/80 p-4 shadow-sm">
-              <div className="text-[10px] font-semibold uppercase tracking-[0.4em] text-black/50">
-                Knowledge gaps
-              </div>
-              <div className="mt-4 space-y-2">
-                {knowledgeGaps.length > 0 ? (
-                  knowledgeGaps.slice(0, 8).map((node, idx) => (
-                    <button
-                      key={node.id || node.name || `gap-${idx}`}
-                      type="button"
-                      onClick={() => setInput(`Explain ${node.name} from first principles and check my understanding.`)}
-                      className="w-full rounded-xl border border-black/10 px-3 py-2 text-left text-xs text-black/70 transition hover:border-black/30"
-                    >
-                      <div className="font-semibold text-black">{node.name}</div>
-                      {node.description && (
-                        <div className="mt-1 text-[11px] text-black/50">{node.description}</div>
-                      )}
-                    </button>
-                  ))
-                ) : (
-                  <div className="text-sm text-black/40">No knowledge gaps detected yet.</div>
-                )}
-              </div>
-            </div>
-
-            <div className="rounded-2xl border border-black/10 bg-white/80 p-4 shadow-sm">
-              <div className="text-[10px] font-semibold uppercase tracking-[0.4em] text-black/50">
-                Focus next
-              </div>
-              <div className="mt-4 space-y-2">
-                {focusAreas.length > 0 ? (
-                  focusAreas.slice(0, 6).map((item, idx) => (
-                    <div
-                      key={`focus-${idx}`}
-                      className="rounded-xl border border-black/10 px-3 py-2 text-xs text-black/70"
-                    >
-                      {item}
+                  {progressSnapshots.length > 0 ? (
+                    <div className="space-y-2">
+                      {progressSnapshots.map((snapshot, idx) => (
+                        <div
+                          key={`${snapshot.timestamp.getTime()}-progress-${idx}`}
+                          className="flex items-center justify-between rounded-xl border border-black/5 bg-white px-3 py-2 text-xs text-black/60"
+                        >
+                          <span>{snapshot.level || 'Developing'}</span>
+                          <span className="text-black/80">{snapshot.score ?? 0}</span>
+                        </div>
+                      ))}
                     </div>
-                  ))
-                ) : (
-                  <div className="text-sm text-black/40">Waiting for the next mastery update.</div>
-                )}
+                  ) : (
+                    <div className="text-sm text-black/40">
+                      {progressLoading ? 'Loading progress...' : 'No mastery snapshots yet.'}
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
 
-            <div className="rounded-2xl border border-black/10 bg-white/80 p-4 shadow-sm">
-              <div className="text-[10px] font-semibold uppercase tracking-[0.4em] text-black/50">
-                Quick actions
+              <div className="rounded-2xl border border-black/10 bg-white/80 p-4 shadow-sm">
+                <div className="text-[10px] font-semibold uppercase tracking-[0.4em] text-black/50">
+                  Knowledge gaps
+                </div>
+                <div className="mt-4 space-y-2">
+                  {knowledgeGaps.length > 0 ? (
+                    knowledgeGaps.slice(0, 8).map((node, idx) => (
+                      <button
+                        key={node.id || node.name || `gap-${idx}`}
+                        type="button"
+                        onClick={() => setInput(`Explain ${node.name} from first principles and check my understanding.`)}
+                        className="w-full rounded-xl border border-black/10 px-3 py-2 text-left text-xs text-black/70 transition hover:border-black/30"
+                      >
+                        <div className="font-semibold text-black">{node.name}</div>
+                        {node.description && (
+                          <div className="mt-1 text-[11px] text-black/50">{node.description}</div>
+                        )}
+                      </button>
+                    ))
+                  ) : (
+                    <div className="text-sm text-black/40">No knowledge gaps detected yet.</div>
+                  )}
+                </div>
               </div>
-              <div className="mt-4 space-y-2 text-sm text-black/60">
-                <button
-                  type="button"
-                  onClick={() => setInput("I don't know yet. Please explain step-by-step, then ask a simpler question.")}
-                  className="w-full rounded-xl border border-black/10 px-3 py-2 text-left text-xs text-black/70 transition hover:border-black/30"
-                >
-                  I'm stuck — explain it
-                </button>
+
+              <div className="rounded-2xl border border-black/10 bg-white/80 p-4 shadow-sm">
+                <div className="text-[10px] font-semibold uppercase tracking-[0.4em] text-black/50">
+                  Focus next
+                </div>
+                <div className="mt-4 space-y-2">
+                  {focusAreas.length > 0 ? (
+                    focusAreas.slice(0, 6).map((item, idx) => (
+                      <div
+                        key={`focus-${idx}`}
+                        className="rounded-xl border border-black/10 px-3 py-2 text-xs text-black/70"
+                      >
+                        {item}
+                      </div>
+                    ))
+                  ) : (
+                    <div className="text-sm text-black/40">Waiting for the next mastery update.</div>
+                  )}
+                </div>
               </div>
-            </div>
-          </aside>
+
+              <div className="rounded-2xl border border-black/10 bg-white/80 p-4 shadow-sm">
+                <div className="text-[10px] font-semibold uppercase tracking-[0.4em] text-black/50">
+                  Quick actions
+                </div>
+                <div className="mt-4 space-y-2 text-sm text-black/60">
+                  <button
+                    type="button"
+                    onClick={() => setInput("I don't know yet. Please explain step-by-step, then ask a simpler question.")}
+                    className="w-full rounded-xl border border-black/10 px-3 py-2 text-left text-xs text-black/70 transition hover:border-black/30"
+                  >
+                    I'm stuck — explain it
+                  </button>
+                </div>
+              </div>
+            </aside>
+          )}
 
           <section className="flex h-full flex-col items-center justify-center text-center">
-            {latestUser && (
-              <div className="max-w-2xl text-black/50">
-                <div className="text-[10px] font-semibold uppercase tracking-[0.4em]">You asked</div>
-                <div className="mt-3 text-sm leading-relaxed text-black/70">{latestUser.content}</div>
-              </div>
-            )}
-
-            <div className="mt-6 max-w-3xl text-3xl font-light leading-relaxed md:text-4xl">
-              {displayContent}
-            </div>
-
-            {latestAssistant?.nextQuestion && !latestAssistant.focusMode && (
-              <div className="mt-8 w-full max-w-2xl rounded-2xl border border-black/10 bg-white/80 px-6 py-4 text-left shadow-sm">
-                <div className="text-[10px] font-semibold uppercase tracking-[0.4em] text-black/50">
-                  Socratic prompt
+            <div className="w-full max-w-3xl space-y-6">
+              <div className="rounded-3xl border border-black/10 bg-white/80 p-6 text-left shadow-sm">
+                <div className="flex items-center justify-between">
+                  <div className="text-[10px] font-semibold uppercase tracking-[0.4em] text-black/50">
+                    Conversation
+                  </div>
+                  {sidebarsCollapsed && (
+                    <div className="text-[10px] font-semibold uppercase tracking-[0.3em] text-black/30">
+                      Sidebars hidden
+                    </div>
+                  )}
                 </div>
-                <div className="mt-3 text-lg font-medium text-black">
-                  {latestAssistant.nextQuestion}
-                </div>
-              </div>
-            )}
-
-            {isStreaming && (
-              <div className="mt-6 text-[10px] font-semibold uppercase tracking-[0.4em] text-black/40">
-                Processing
-              </div>
-            )}
-          </section>
-
-          <aside className="space-y-6">
-            <div className="rounded-2xl border border-black/10 bg-white/80 p-4 shadow-sm">
-              <div className="text-[10px] font-semibold uppercase tracking-[0.4em] text-black/50">
-                Mastery snapshot
-              </div>
-              <div className="mt-4 flex min-h-[160px] items-center justify-center">
-                {masteryDisplay ? (
-                  <MasteryIndicator
-                    {...masteryDisplay}
-                    size="sm"
-                    showDetails={true}
-                  />
-                ) : (
-                  <p className="text-sm text-black/40 text-center">
-                    Share a concept to begin tracking mastery.
-                  </p>
-                )}
-              </div>
-            </div>
-
-            {conceptBreakdown.length > 0 ? (
-              <ConceptBreakdown concepts={conceptBreakdown} title="First Principles Map" />
-            ) : (
-              <div className="rounded-2xl border border-black/10 bg-white/80 p-4 text-sm text-black/40 shadow-sm">
-                {progressLoading
-                  ? 'Loading progress map...'
-                  : 'First principles map will appear after the next explanation.'}
-              </div>
-            )}
-
-            <div className="rounded-2xl border border-black/10 bg-white/80 p-4 shadow-sm">
-              <div className="text-[10px] font-semibold uppercase tracking-[0.4em] text-black/50">
-                Progress trace
-              </div>
-              <div className="mt-4 flex h-20 items-end gap-3">
-                {progressSnapshots.length > 0 ? (
-                  progressSnapshots.map((snapshot, idx) => {
-                    const score = snapshot.score ?? 0;
-                    const height = Math.max(12, Math.min(72, Math.round(score * 0.7)));
+                <div
+                  ref={timelineRef}
+                  className="mt-4 max-h-[420px] space-y-4 overflow-y-auto pr-2 text-sm leading-relaxed text-black/80"
+                >
+                  {messages.map((msg, idx) => {
+                    const isAssistant = msg.role === 'assistant';
+                    const content = msg.content?.trim()
+                      ? msg.content
+                      : isAssistant && isStreaming && idx === messages.length - 1
+                        ? 'Thinking...'
+                        : '';
+                    if (!content) return null;
                     return (
-                      <div key={`${snapshot.timestamp.getTime()}-${idx}`} className="flex flex-col items-center gap-2">
+                      <div
+                        key={`${msg.role}-${msg.timestamp.getTime()}-${idx}`}
+                        className={`flex ${isAssistant ? 'justify-start' : 'justify-end'}`}
+                      >
                         <div
-                          className="w-2 rounded-full bg-black/80 transition-all"
-                          style={{ height }}
-                        />
-                        <div className="text-[10px] text-black/40">{score}</div>
+                          className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm shadow-sm ${
+                            isAssistant
+                              ? 'bg-white border border-black/5 text-black/80'
+                              : 'bg-black text-white'
+                          }`}
+                        >
+                          <div className="text-[10px] uppercase tracking-[0.3em] text-black/30">
+                            {isAssistant ? 'Assistant' : 'You'}
+                          </div>
+                          <div className="mt-2 whitespace-pre-line">{content}</div>
+                        </div>
                       </div>
                     );
-                  })
-                ) : (
-                  <div className="text-sm text-black/40">
-                    {progressLoading ? 'Loading progress...' : 'No mastery snapshots yet.'}
-                  </div>
-                )}
+                  })}
+                  {!messages.length && (
+                    <div className="text-sm text-black/40">Start a conversation to see history here.</div>
+                  )}
+                </div>
               </div>
+
+              <div className="rounded-3xl border border-black/10 bg-white/80 px-6 py-5 text-left shadow-sm">
+                <div className="text-[10px] font-semibold uppercase tracking-[0.4em] text-black/50">
+                  Latest insight
+                </div>
+                <div className="mt-3 text-2xl font-light leading-relaxed text-black">
+                  {displayContent}
+                </div>
+              </div>
+
+              {latestAssistant?.nextQuestion && (
+                <div className="rounded-2xl border border-black/10 bg-white/80 px-6 py-4 text-left shadow-sm">
+                  <div className="text-[10px] font-semibold uppercase tracking-[0.4em] text-black/50">
+                    Socratic prompt
+                  </div>
+                  <div className="mt-3 text-lg font-medium text-black">
+                    {latestAssistant.nextQuestion}
+                  </div>
+                  {latestAssistant.questionOptions && latestAssistant.questionOptions.length > 0 && (
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      {latestAssistant.questionOptions.map((option) => (
+                        <button
+                          key={option}
+                          type="button"
+                          onClick={() => handleSend(option)}
+                          className="rounded-full border border-black/10 bg-white px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-black/70 transition hover:border-black/30 hover:text-black"
+                        >
+                          {option}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {latestAssistant.focusMode && (
+                    <div className="mt-4">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (currentFocusQuestion) {
+                            setFocusModeActive(true);
+                          }
+                        }}
+                        disabled={!currentFocusQuestion}
+                        className={`rounded-full px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] transition ${
+                          currentFocusQuestion
+                            ? 'bg-black text-white hover:bg-black/90'
+                            : 'bg-black/10 text-black/30 cursor-not-allowed'
+                        }`}
+                      >
+                        进入专注练习
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {isStreaming && (
+                <div className="text-[10px] font-semibold uppercase tracking-[0.4em] text-black/40">
+                  Processing
+                </div>
+              )}
             </div>
-          </aside>
+          </section>
+
+          {shouldShowSidebars && (
+            <aside className="space-y-6">
+              <div className="rounded-2xl border border-black/10 bg-white/80 p-4 shadow-sm">
+                <div className="text-[10px] font-semibold uppercase tracking-[0.4em] text-black/50">
+                  Mastery snapshot
+                </div>
+                <div className="mt-4 flex min-h-[160px] items-center justify-center">
+                  {masteryDisplay ? (
+                    <MasteryIndicator
+                      {...masteryDisplay}
+                      size="sm"
+                      showDetails={true}
+                    />
+                  ) : (
+                    <p className="text-sm text-black/40 text-center">
+                      Share a concept to begin tracking mastery.
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {conceptBreakdown.length > 0 ? (
+                <ConceptBreakdown concepts={conceptBreakdown} title="First Principles Map" />
+              ) : (
+                <div className="rounded-2xl border border-black/10 bg-white/80 p-4 text-sm text-black/40 shadow-sm">
+                  {progressLoading
+                    ? 'Loading progress map...'
+                    : 'First principles map will appear after the next explanation.'}
+                </div>
+              )}
+
+              <div className="rounded-2xl border border-black/10 bg-white/80 p-4 shadow-sm">
+                <div className="text-[10px] font-semibold uppercase tracking-[0.4em] text-black/50">
+                  Progress trace
+                </div>
+                <div className="mt-4 flex h-20 items-end gap-3">
+                  {progressSnapshots.length > 0 ? (
+                    progressSnapshots.map((snapshot, idx) => {
+                      const score = snapshot.score ?? 0;
+                      const height = Math.max(12, Math.min(72, Math.round(score * 0.7)));
+                      return (
+                        <div key={`${snapshot.timestamp.getTime()}-${idx}`} className="flex flex-col items-center gap-2">
+                          <div
+                            className="w-2 rounded-full bg-black/80 transition-all"
+                            style={{ height }}
+                          />
+                          <div className="text-[10px] text-black/40">{score}</div>
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <div className="text-sm text-black/40">
+                      {progressLoading ? 'Loading progress...' : 'No mastery snapshots yet.'}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </aside>
+          )}
         </div>
 
         <form onSubmit={handleInputSubmit} className="mt-10">
