@@ -77,5 +77,6 @@ export interface EnhancedChatMessage extends ChatMessage {
   focusMode?: boolean;
   conceptBreakdown?: ConceptNode[];
   nextQuestion?: string;
+  questionOptions?: string[];
   responseType?: 'chat' | 'question' | 'assessment' | 'explanation';
 }

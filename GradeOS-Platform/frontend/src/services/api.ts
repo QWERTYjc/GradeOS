@@ -303,6 +303,7 @@ export interface AssistantChatResponse {
   usage?: Record<string, number>;
   mastery?: MasteryData;
   next_question?: string;
+  question_options?: string[];
   focus_mode?: boolean;
   concept_breakdown?: ConceptNode[];
   response_type?: string;
