@@ -43,7 +43,8 @@ LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 logging.basicConfig(
     level=LOG_LEVEL_VALUE,
     format=LOG_FORMAT,
-    handlers=[logging.StreamHandler()],
+    stream=sys.stdout,
+    force=True,
 )
 
 def _configure_grading_loggers() -> None:
