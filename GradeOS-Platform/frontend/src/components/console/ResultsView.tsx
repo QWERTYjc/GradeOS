@@ -562,7 +562,9 @@ export const ResultsView: React.FC = () => {
         submissionId,
         pendingReview,
         reviewFocus,
-        setReviewFocus
+        setReviewFocus,
+        setFinalResults,
+        status
     } = useConsoleStore();
     const bookScanContext = useContext(AppContext) as AppContextType | null;
     const sessions = bookScanContext?.sessions || [];
@@ -570,6 +572,10 @@ export const ResultsView: React.FC = () => {
     const currentSession = sessions.find((s: any) => s.id === currentSessionId);
 
     const [detailViewIndex, setDetailViewIndex] = useState<number | null>(null);
+    // API 备用方案状态
+    const [apiFallbackLoading, setApiFallbackLoading] = useState(false);
+    const [apiFallbackError, setApiFallbackError] = useState<string | null>(null);
+    const apiFallbackAttemptedRef = React.useRef<Set<string>>(new Set());
     const [auditOpen, setAuditOpen] = useState(false);
     const [auditQuery, setAuditQuery] = useState('');
     const [showClassReport, setShowClassReport] = useState(false);
@@ -686,6 +692,90 @@ export const ResultsView: React.FC = () => {
         }
         setReviewFocus(null);
     }, [reviewFocus, setReviewFocus]);
+
+    // 🔥 API 备用方案：当 WebSocket 失败时，主动调用 API 获取结果
+    useEffect(() => {
+        // 条件：有 submissionId，没有结果，状态为 COMPLETED，且未尝试过
+        if (!submissionId || finalResults.length > 0 || status !== 'COMPLETED') {
+            return;
+        }
+        if (apiFallbackAttemptedRef.current.has(submissionId)) {
+            return;
+        }
+        
+        const fetchResultsFromApi = async () => {
+            apiFallbackAttemptedRef.current.add(submissionId);
+            setApiFallbackLoading(true);
+            setApiFallbackError(null);
+            
+            try {
+                console.log('[API Fallback] Fetching results for batch:', submissionId);
+                const response = await gradingApi.getBatchResults(submissionId);
+                
+                if (response.student_results && response.student_results.length > 0) {
+                    // 转换 API 响应格式到前端格式
+                    const formattedResults: StudentResult[] = response.student_results.map((r) => ({
+                        studentName: r.student_name || 'Unknown',
+                        score: r.total_score || 0,
+                        maxScore: r.max_score || 100,
+                        startPage: r.start_page,
+                        endPage: r.end_page,
+                        confidence: r.confidence,
+                        needsConfirmation: r.needs_confirmation,
+                        questionResults: (r.questions || []).map((q) => ({
+                            questionId: q.question_id || '',
+                            score: q.score || 0,
+                            maxScore: q.max_score || 0,
+                            feedback: q.feedback || '',
+                            confidence: q.confidence,
+                            confidenceReason: q.confidence_reason,
+                            selfCritique: q.self_critique,
+                            selfCritiqueConfidence: q.self_critique_confidence,
+                            rubricRefs: q.rubric_refs,
+                            typoNotes: q.typo_notes,
+                            pageIndices: q.page_indices,
+                            isCrossPage: q.is_cross_page,
+                            mergeSource: q.merge_source,
+                            scoringPointResults: (q.scoring_point_results || []).map((spr: any) => ({
+                                pointId: spr.point_id || spr.scoring_point?.point_id,
+                                description: spr.description || spr.scoring_point?.description || '',
+                                awarded: spr.awarded ?? 0,
+                                maxPoints: spr.max_points ?? spr.scoring_point?.score ?? 0,
+                                evidence: spr.evidence || '',
+                                rubricReference: spr.rubric_reference,
+                                rubricReferenceSource: spr.rubric_reference_source,
+                                decision: spr.decision,
+                                reason: spr.reason,
+                                scoringPoint: spr.scoring_point ? {
+                                    description: spr.scoring_point.description || '',
+                                    score: spr.scoring_point.score || 0,
+                                    maxScore: spr.scoring_point.score || 0,
+                                    isCorrect: (spr.awarded ?? 0) > 0,
+                                    isRequired: spr.scoring_point.is_required,
+                                    explanation: spr.reason || spr.evidence || '',
+                                } : undefined,
+                            })),
+                        })),
+                    }));
+                    
+                    console.log('[API Fallback] Successfully fetched', formattedResults.length, 'results');
+                    setFinalResults(formattedResults);
+                } else {
+                    console.log('[API Fallback] No results found in API response');
+                    setApiFallbackError('API 返回空结果');
+                }
+            } catch (error) {
+                console.error('[API Fallback] Failed to fetch results:', error);
+                setApiFallbackError(error instanceof Error ? error.message : '获取结果失败');
+            } finally {
+                setApiFallbackLoading(false);
+            }
+        };
+        
+        // 延迟执行，给 WebSocket 一些时间
+        const timer = setTimeout(fetchResultsFromApi, 2000);
+        return () => clearTimeout(timer);
+    }, [submissionId, finalResults.length, status, setFinalResults]);
 
     const totalStudents = sortedResults.length;
     const scoredResults = sortedResults.filter(r => !(r.gradingMode || '').startsWith('assist') && r.maxScore > 0);
@@ -2472,17 +2562,105 @@ export const ResultsView: React.FC = () => {
         const index = sortedResults.findIndex(r => r.studentName === student.studentName);
         setDetailViewIndex(index >= 0 ? index : 0);
     };
+    
+    // 手动重试获取结果
+    const handleRetryFetch = useCallback(async () => {
+        if (!submissionId) return;
+        
+        // 清除已尝试标记，允许重试
+        apiFallbackAttemptedRef.current.delete(submissionId);
+        setApiFallbackLoading(true);
+        setApiFallbackError(null);
+        
+        try {
+            console.log('[Manual Retry] Fetching results for batch:', submissionId);
+            const response = await gradingApi.getBatchResults(submissionId);
+            
+            if (response.student_results && response.student_results.length > 0) {
+                const formattedResults: StudentResult[] = response.student_results.map((r) => ({
+                    studentName: r.student_name || 'Unknown',
+                    score: r.total_score || 0,
+                    maxScore: r.max_score || 100,
+                    startPage: r.start_page,
+                    endPage: r.end_page,
+                    confidence: r.confidence,
+                    needsConfirmation: r.needs_confirmation,
+                    questionResults: (r.questions || []).map((q) => ({
+                        questionId: q.question_id || '',
+                        score: q.score || 0,
+                        maxScore: q.max_score || 0,
+                        feedback: q.feedback || '',
+                        confidence: q.confidence,
+                        confidenceReason: q.confidence_reason,
+                        selfCritique: q.self_critique,
+                        selfCritiqueConfidence: q.self_critique_confidence,
+                        rubricRefs: q.rubric_refs,
+                        typoNotes: q.typo_notes,
+                        pageIndices: q.page_indices,
+                        isCrossPage: q.is_cross_page,
+                        mergeSource: q.merge_source,
+                        scoringPointResults: (q.scoring_point_results || []).map((spr: any) => ({
+                            pointId: spr.point_id || spr.scoring_point?.point_id,
+                            description: spr.description || spr.scoring_point?.description || '',
+                            awarded: spr.awarded ?? 0,
+                            maxPoints: spr.max_points ?? spr.scoring_point?.score ?? 0,
+                            evidence: spr.evidence || '',
+                            rubricReference: spr.rubric_reference,
+                            rubricReferenceSource: spr.rubric_reference_source,
+                            decision: spr.decision,
+                            reason: spr.reason,
+                            scoringPoint: spr.scoring_point ? {
+                                description: spr.scoring_point.description || '',
+                                score: spr.scoring_point.score || 0,
+                                maxScore: spr.scoring_point.score || 0,
+                                isCorrect: (spr.awarded ?? 0) > 0,
+                                isRequired: spr.scoring_point.is_required,
+                                explanation: spr.reason || spr.evidence || '',
+                            } : undefined,
+                        })),
+                    })),
+                }));
+                
+                console.log('[Manual Retry] Successfully fetched', formattedResults.length, 'results');
+                setFinalResults(formattedResults);
+            } else {
+                setApiFallbackError('API 返回空结果');
+            }
+        } catch (error) {
+            console.error('[Manual Retry] Failed:', error);
+            setApiFallbackError(error instanceof Error ? error.message : '获取结果失败');
+        } finally {
+            setApiFallbackLoading(false);
+        }
+    }, [submissionId, setFinalResults]);
 
     // === Dashboard View ===
     if (results.length === 0) {
         return (
             <div className="flex flex-col items-center justify-center h-full text-slate-400 gap-4">
                 <div className="p-8 flex flex-col items-center gap-4">
-                    <RocketOutlined className="text-4xl opacity-50" />
-                    <p className="font-medium">暂无批改结果</p>
-                    <SmoothButton onClick={() => setCurrentTab('process')} variant="ghost">
-                        <ArrowLeft className="w-4 h-4 mr-2" /> 返回批改过程
-                    </SmoothButton>
+                    {apiFallbackLoading ? (
+                        <>
+                            <Loader2 className="w-10 h-10 animate-spin text-blue-500" />
+                            <p className="font-medium text-slate-600">正在获取批改结果...</p>
+                        </>
+                    ) : (
+                        <>
+                            <RocketOutlined className="text-4xl opacity-50" />
+                            <p className="font-medium">暂无批改结果</p>
+                            {apiFallbackError && (
+                                <p className="text-sm text-red-500">{apiFallbackError}</p>
+                            )}
+                            {submissionId && (
+                                <SmoothButton onClick={handleRetryFetch} variant="primary" size="sm">
+                                    <Loader2 className="w-4 h-4 mr-2" /> 重新获取结果
+                                </SmoothButton>
+                            )}
+                            <SmoothButton onClick={() => setCurrentTab('process')} variant="ghost">
+                                <ArrowLeft className="w-4 h-4 mr-2" /> 返回批改过程
+                            </SmoothButton>
+                        </>
+                    )}
                 </div>
             </div>
         );
