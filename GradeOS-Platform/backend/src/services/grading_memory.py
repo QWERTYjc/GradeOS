@@ -68,6 +68,10 @@ class MemoryEntry:
     context: Dict[str, Any]                 # 上下文信息
     lesson: str                             # 经验教训
     
+    # 科目隔离（重要！不同科目的批改经验不应混用）
+    # 例如：economics, physics, mathematics, advanced_mathematics, chemistry, biology
+    subject: str = "general"                # 科目标识，"general" 表示通用
+    
     # 统计信息
     occurrence_count: int = 1               # 出现次数
     confirmation_count: int = 0             # 被验证正确的次数
@@ -160,6 +164,9 @@ class BatchMemory:
     batch_id: str
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
     
+    # 科目标识（用于科目隔离）
+    subject: str = "general"
+    
     # 当前批次的统计
     total_questions: int = 0
     total_students: int = 0
@@ -229,6 +236,7 @@ class GradingMemoryService:
         # 索引（用于快速检索）
         self._type_index: Dict[MemoryType, List[str]] = defaultdict(list)
         self._question_type_index: Dict[str, List[str]] = defaultdict(list)
+        self._subject_index: Dict[str, List[str]] = defaultdict(list)  # 科目索引
         
         # 线程锁
         self._lock = threading.RLock()
@@ -271,6 +279,7 @@ class GradingMemoryService:
                         entry = MemoryEntry.from_dict(mem_data)
                         self._long_term_memory[entry.memory_id] = entry
                         self._type_index[entry.memory_type].append(entry.memory_id)
+                        self._subject_index[entry.subject].append(entry.memory_id)  # 科目索引
                         for qt in entry.related_question_types:
                             self._question_type_index[qt].append(entry.memory_id)
                     except Exception as e:
@@ -424,6 +433,7 @@ class GradingMemoryService:
         question_types: Optional[List[str]] = None,
         rubric_ids: Optional[List[str]] = None,
         batch_id: Optional[str] = None,
+        subject: str = "general",
     ) -> str:
         """
         存储一条新记忆
@@ -437,12 +447,16 @@ class GradingMemoryService:
             question_types: 相关题型
             rubric_ids: 相关评分标准ID
             batch_id: 来源批次ID
+            subject: 科目标识（重要！不同科目的批改经验应该隔离）
+                     例如: economics, physics, mathematics, advanced_mathematics
+                     使用 "general" 表示通用记忆
             
         Returns:
             str: 记忆ID
         """
         context = context or {}
-        memory_id = self._generate_memory_id(pattern, context)
+        # 在 memory_id 生成中包含科目，确保不同科目的相同模式不会被合并
+        memory_id = self._generate_memory_id(f"{subject}:{pattern}", context)
         
         with self._lock:
             # 检查是否已存在相同模式
@@ -467,6 +481,7 @@ class GradingMemoryService:
                 pattern=pattern,
                 context=context,
                 lesson=lesson,
+                subject=subject,  # 科目隔离
                 related_question_types=question_types or [],
                 related_rubric_ids=rubric_ids or [],
                 source_batch_ids=[batch_id] if batch_id else [],
@@ -476,6 +491,7 @@ class GradingMemoryService:
             
             # 更新索引
             self._type_index[memory_type].append(memory_id)
+            self._subject_index[subject].append(memory_id)  # 科目索引
             for qt in entry.related_question_types:
                 self._question_type_index[qt].append(memory_id)
             
@@ -511,6 +527,8 @@ class GradingMemoryService:
         memory_types: Optional[List[MemoryType]] = None,
         min_confidence: float = 0.3,
         max_results: int = 10,
+        subject: Optional[str] = None,
+        include_general: bool = True,
     ) -> List[MemoryEntry]:
         """
         检索相关记忆
@@ -520,6 +538,10 @@ class GradingMemoryService:
             memory_types: 记忆类型过滤
             min_confidence: 最小可信度
             max_results: 最大返回数量
+            subject: 科目过滤（重要！不同科目的批改经验应该隔离）
+                     例如: economics, physics, mathematics
+                     如果为 None，则不按科目过滤
+            include_general: 是否包含通用记忆（subject="general"）
             
         Returns:
             List[MemoryEntry]: 相关记忆列表（按相关性排序）
@@ -534,6 +556,14 @@ class GradingMemoryService:
                     memory_ids.update(self._type_index.get(mt, []))
             else:
                 memory_ids = set(self._long_term_memory.keys())
+            
+            # 按科目过滤（重要！确保不同科目的经验隔离）
+            if subject:
+                subject_memory_ids = set(self._subject_index.get(subject, []))
+                if include_general:
+                    # 也包含通用记忆
+                    subject_memory_ids.update(self._subject_index.get("general", []))
+                memory_ids = memory_ids & subject_memory_ids if subject_memory_ids else memory_ids
             
             # 如果指定了题型，进一步过滤
             if question_types:
@@ -623,11 +653,17 @@ class GradingMemoryService:
     
     # ==================== 批次记忆 ====================
     
-    def create_batch_memory(self, batch_id: str) -> BatchMemory:
-        """创建批次级短期记忆"""
+    def create_batch_memory(self, batch_id: str, subject: str = "general") -> BatchMemory:
+        """
+        创建批次级短期记忆
+        
+        Args:
+            batch_id: 批次ID
+            subject: 科目标识（用于科目隔离）
+        """
         with self._lock:
             if batch_id not in self._batch_memories:
-                self._batch_memories[batch_id] = BatchMemory(batch_id=batch_id)
+                self._batch_memories[batch_id] = BatchMemory(batch_id=batch_id, subject=subject)
             return self._batch_memories[batch_id]
     
     def get_batch_memory(self, batch_id: str) -> Optional[BatchMemory]:
@@ -706,6 +742,7 @@ class GradingMemoryService:
         将批次短期记忆整合到长期记忆
         
         在批次完成后调用，提取有价值的模式存入长期记忆。
+        记忆会按照批次的科目进行隔离存储。
         
         Returns:
             int: 新增的长期记忆数量
@@ -716,6 +753,8 @@ class GradingMemoryService:
                 return 0
             
             new_memories = 0
+            # 获取批次的科目（用于记忆隔离）
+            subject = batch_mem.subject
             
             # 整合频繁出现的错误模式
             for pattern, count in batch_mem.error_patterns.items():
@@ -724,9 +763,10 @@ class GradingMemoryService:
                         memory_type=MemoryType.ERROR_PATTERN,
                         pattern=pattern,
                         lesson=f"该错误模式在批次 {batch_id} 中出现 {count} 次，需要特别关注",
-                        context={"occurrence_count": count, "batch_id": batch_id},
+                        context={"occurrence_count": count, "batch_id": batch_id, "subject": subject},
                         importance=MemoryImportance.HIGH if count >= 5 else MemoryImportance.MEDIUM,
                         batch_id=batch_id,
+                        subject=subject,  # 科目隔离
                     )
                     new_memories += 1
             
@@ -737,9 +777,10 @@ class GradingMemoryService:
                         memory_type=MemoryType.RISK_SIGNAL,
                         pattern=signal,
                         lesson=f"该风险信号在批次 {batch_id} 中出现 {count} 次",
-                        context={"occurrence_count": count, "batch_id": batch_id},
+                        context={"occurrence_count": count, "batch_id": batch_id, "subject": subject},
                         importance=MemoryImportance.MEDIUM,
                         batch_id=batch_id,
+                        subject=subject,  # 科目隔离
                     )
                     new_memories += 1
             
@@ -769,9 +810,10 @@ class GradingMemoryService:
                         memory_type=MemoryType.CORRECTION_HISTORY,
                         pattern=f"评分修正: {correction['reason']}",
                         lesson=f"原分数与修正后分数相差 {diff} 分，原因: {correction['reason']}",
-                        context=correction,
+                        context={**correction, "subject": subject},
                         importance=importance,
                         batch_id=batch_id,
+                        subject=subject,  # 科目隔离
                     )
                     new_memories += 1
             
@@ -799,19 +841,30 @@ class GradingMemoryService:
         self,
         question_details: List[Dict[str, Any]],
         batch_id: Optional[str] = None,
+        subject: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         为自白节点生成记忆上下文
         
         基于历史记忆，为当前批改提供参考信息。
+        重要：记忆按科目隔离，确保不同科目的批改经验不会混用。
         
         Args:
             question_details: 当前批改的题目详情
             batch_id: 批次ID
+            subject: 科目标识（用于记忆隔离）
+                     例如: economics, physics, mathematics
+                     如果为 None，则从 batch_memory 获取，或不进行科目过滤
             
         Returns:
             记忆上下文，包含相关经验、风险提示、校准建议
         """
+        # 如果没有指定科目，尝试从批次记忆获取
+        if subject is None and batch_id:
+            batch_mem = self.get_batch_memory(batch_id)
+            if batch_mem:
+                subject = batch_mem.subject
+        
         # 提取题型
         question_types = set()
         for q in question_details:
@@ -819,25 +872,31 @@ class GradingMemoryService:
             if qt:
                 question_types.add(qt)
         
-        # 检索相关错误模式
+        # 检索相关错误模式（按科目隔离）
         error_patterns = self.retrieve_relevant_memories(
             question_types=list(question_types) if question_types else None,
             memory_types=[MemoryType.ERROR_PATTERN],
             max_results=5,
+            subject=subject,  # 科目隔离
+            include_general=True,  # 包含通用记忆
         )
         
-        # 检索相关风险信号
+        # 检索相关风险信号（按科目隔离）
         risk_signals = self.retrieve_relevant_memories(
             question_types=list(question_types) if question_types else None,
             memory_types=[MemoryType.RISK_SIGNAL],
             max_results=5,
+            subject=subject,
+            include_general=True,
         )
         
-        # 检索修正历史
+        # 检索修正历史（按科目隔离）
         correction_history = self.retrieve_relevant_memories(
             question_types=list(question_types) if question_types else None,
             memory_types=[MemoryType.CORRECTION_HISTORY],
             max_results=5,
+            subject=subject,
+            include_general=True,
         )
         
         # 获取置信度校准建议
@@ -893,10 +952,13 @@ class GradingMemoryService:
             ],
             "calibration_suggestions": calibration_suggestions,
             "batch_patterns": batch_patterns,
+            "subject": subject,  # 当前检索使用的科目
             "memory_stats": {
                 "total_memories": len(self._long_term_memory),
                 "error_pattern_count": len(self._type_index.get(MemoryType.ERROR_PATTERN, [])),
                 "correction_count": len(self._type_index.get(MemoryType.CORRECTION_HISTORY, [])),
+                "subject_memory_count": len(self._subject_index.get(subject, [])) if subject else 0,
+                "available_subjects": list(self._subject_index.keys()),
             },
         }
     
@@ -985,6 +1047,9 @@ class GradingMemoryService:
             # 更新索引
             if entry.memory_id in self._type_index.get(entry.memory_type, []):
                 self._type_index[entry.memory_type].remove(entry.memory_id)
+            # 更新科目索引
+            if entry.memory_id in self._subject_index.get(entry.subject, []):
+                self._subject_index[entry.subject].remove(entry.memory_id)
             for qt in entry.related_question_types:
                 if entry.memory_id in self._question_type_index.get(qt, []):
                     self._question_type_index[qt].remove(entry.memory_id)
@@ -1006,6 +1071,7 @@ class GradingMemoryService:
                     entry = MemoryEntry.from_dict(entry_data)
                     self._long_term_memory[entry.memory_id] = entry
                     self._type_index[entry.memory_type].append(entry.memory_id)
+                    self._subject_index[entry.subject].append(entry.memory_id)  # 科目索引
                     for qt in entry.related_question_types:
                         self._question_type_index[qt].append(entry.memory_id)
                 except Exception as e:
@@ -1088,6 +1154,10 @@ class GradingMemoryService:
                 "memory_by_type": {
                     mt.value: len(ids) for mt, ids in self._type_index.items()
                 },
+                "memory_by_subject": {
+                    subject: len(ids) for subject, ids in self._subject_index.items()
+                },
+                "available_subjects": list(self._subject_index.keys()),
                 "total_batch_memories": len(self._batch_memories),
                 "calibration_question_types": list(self._calibration_stats.keys()),
                 "storage_path": self.storage_path,

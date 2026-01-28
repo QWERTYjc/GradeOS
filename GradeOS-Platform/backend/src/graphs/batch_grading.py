@@ -4943,12 +4943,18 @@ async def self_report_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     api_key = state.get("api_key") or os.getenv("LLM_API_KEY") or os.getenv("OPENROUTER_API_KEY")
     grading_mode = _resolve_grading_mode(state.get("inputs", {}), parsed_rubric)
     
+    # 获取科目（用于记忆隔离）
+    # 科目来源优先级：state["subject"] > inputs["subject"] > "general"
+    subject = state.get("subject") or state.get("inputs", {}).get("subject", "general")
+    
     # 初始化记忆服务
     from src.services.grading_memory import get_memory_service, MemoryType, MemoryImportance
     memory_service = get_memory_service()
     
-    # 创建批次记忆
-    memory_service.create_batch_memory(batch_id)
+    # 创建批次记忆（按科目隔离）
+    memory_service.create_batch_memory(batch_id, subject=subject)
+    
+    logger.info(f"[self_report] 批次记忆已创建: batch_id={batch_id}, subject={subject}")
 
     # 辅助模式跳过自白
     if grading_mode.startswith("assist"):
@@ -5051,10 +5057,11 @@ async def self_report_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                 })
                 return {"index": index, "result": updated_student}
 
-            # 获取记忆上下文
+            # 获取记忆上下文（按科目隔离）
             memory_context = memory_service.generate_confession_context(
                 question_details=question_details,
                 batch_id=batch_id,
+                subject=subject,  # 科目隔离：确保不同科目的批改经验不会混用
             )
             
             # 记录批次内的置信度分布

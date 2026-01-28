@@ -48,8 +48,17 @@ class MemoryStorageBackend(ABC):
         memory_type: Optional[str] = None,
         limit: int = 100,
         offset: int = 0,
+        subject: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        """列出记忆"""
+        """
+        列出记忆
+        
+        Args:
+            memory_type: 记忆类型过滤
+            limit: 返回数量限制
+            offset: 分页偏移
+            subject: 科目过滤（重要！用于科目隔离）
+        """
         pass
     
     @abstractmethod
@@ -130,10 +139,13 @@ class InMemoryStorageBackend(MemoryStorageBackend):
         memory_type: Optional[str] = None,
         limit: int = 100,
         offset: int = 0,
+        subject: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         memories = list(self._memories.values())
         if memory_type:
             memories = [m for m in memories if m.get("memory_type") == memory_type]
+        if subject:
+            memories = [m for m in memories if m.get("subject") == subject]
         return memories[offset:offset + limit]
     
     async def save_batch_memory(self, batch_id: str, data: Dict[str, Any], ttl_seconds: Optional[int] = None) -> bool:
@@ -258,6 +270,7 @@ class RedisStorageBackend(MemoryStorageBackend):
         memory_type: Optional[str] = None,
         limit: int = 100,
         offset: int = 0,
+        subject: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         try:
             if memory_type:
@@ -282,17 +295,18 @@ class RedisStorageBackend(MemoryStorageBackend):
                     if cursor == 0:
                         break
             
-            # 分页
-            paged_ids = list(memory_ids)[offset:offset + limit]
-            
-            # 批量获取
+            # 批量获取（在分页前先过滤科目，以确保正确的分页）
             memories = []
-            for memory_id in paged_ids:
+            for memory_id in memory_ids:
                 data = await self.get_memory(memory_id)
                 if data:
+                    # 按科目过滤
+                    if subject and data.get("subject") != subject:
+                        continue
                     memories.append(data)
             
-            return memories
+            # 分页
+            return memories[offset:offset + limit]
             
         except Exception as e:
             logger.error(f"[Redis] 列出记忆失败: {e}")
@@ -448,6 +462,7 @@ class PostgresStorageBackend(MemoryStorageBackend):
                         pattern TEXT NOT NULL,
                         context JSONB DEFAULT '{}',
                         lesson TEXT,
+                        subject VARCHAR(100) DEFAULT 'general',
                         occurrence_count INTEGER DEFAULT 1,
                         confirmation_count INTEGER DEFAULT 0,
                         contradiction_count INTEGER DEFAULT 0,
@@ -462,6 +477,19 @@ class PostgresStorageBackend(MemoryStorageBackend):
                     )
                 """)
                 
+                # 为已存在的表添加 subject 列（如果不存在）
+                await conn.execute("""
+                    DO $$ 
+                    BEGIN 
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns 
+                            WHERE table_name='grading_memories' AND column_name='subject'
+                        ) THEN 
+                            ALTER TABLE grading_memories ADD COLUMN subject VARCHAR(100) DEFAULT 'general';
+                        END IF;
+                    END $$;
+                """)
+                
                 # 创建索引
                 await conn.execute("""
                     CREATE INDEX IF NOT EXISTS idx_grading_memories_type 
@@ -470,6 +498,11 @@ class PostgresStorageBackend(MemoryStorageBackend):
                 await conn.execute("""
                     CREATE INDEX IF NOT EXISTS idx_grading_memories_importance 
                     ON grading_memories(importance)
+                """)
+                # 科目索引（重要！用于按科目查询记忆）
+                await conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_grading_memories_subject 
+                    ON grading_memories(subject)
                 """)
                 await conn.execute("""
                     CREATE INDEX IF NOT EXISTS idx_grading_memories_expires 
@@ -515,12 +548,14 @@ class PostgresStorageBackend(MemoryStorageBackend):
                 await conn.execute("""
                     INSERT INTO grading_memories (
                         memory_id, memory_type, importance, pattern, context, lesson,
+                        subject,
                         occurrence_count, confirmation_count, contradiction_count,
                         created_at, last_accessed_at, last_updated_at,
                         related_question_types, related_rubric_ids, source_batch_ids,
                         metadata, expires_at
                     ) VALUES (
                         %s, %s, %s, %s, %s, %s,
+                        %s,
                         %s, %s, %s,
                         %s, %s, %s,
                         %s, %s, %s,
@@ -530,6 +565,7 @@ class PostgresStorageBackend(MemoryStorageBackend):
                         pattern = EXCLUDED.pattern,
                         context = EXCLUDED.context,
                         lesson = EXCLUDED.lesson,
+                        subject = EXCLUDED.subject,
                         occurrence_count = EXCLUDED.occurrence_count,
                         confirmation_count = EXCLUDED.confirmation_count,
                         contradiction_count = EXCLUDED.contradiction_count,
@@ -546,6 +582,7 @@ class PostgresStorageBackend(MemoryStorageBackend):
                     data.get("pattern"),
                     json.dumps(data.get("context", {})),
                     data.get("lesson"),
+                    data.get("subject", "general"),  # 科目字段
                     data.get("occurrence_count", 1),
                     data.get("confirmation_count", 0),
                     data.get("contradiction_count", 0),
@@ -613,26 +650,33 @@ class PostgresStorageBackend(MemoryStorageBackend):
         memory_type: Optional[str] = None,
         limit: int = 100,
         offset: int = 0,
+        subject: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         await self._ensure_tables()
         
         try:
             async with self._pool_manager.pg_connection() as conn:
+                # 构建动态查询以支持科目过滤
+                conditions = ["(expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)"]
+                params = []
+                
                 if memory_type:
-                    result = await conn.execute("""
-                        SELECT * FROM grading_memories 
-                        WHERE memory_type = %s 
-                        AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)
-                        ORDER BY last_updated_at DESC
-                        LIMIT %s OFFSET %s
-                    """, (memory_type, limit, offset))
-                else:
-                    result = await conn.execute("""
-                        SELECT * FROM grading_memories 
-                        WHERE expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP
-                        ORDER BY last_updated_at DESC
-                        LIMIT %s OFFSET %s
-                    """, (limit, offset))
+                    conditions.append("memory_type = %s")
+                    params.append(memory_type)
+                
+                if subject:
+                    conditions.append("subject = %s")
+                    params.append(subject)
+                
+                where_clause = " AND ".join(conditions)
+                params.extend([limit, offset])
+                
+                result = await conn.execute(f"""
+                    SELECT * FROM grading_memories 
+                    WHERE {where_clause}
+                    ORDER BY last_updated_at DESC
+                    LIMIT %s OFFSET %s
+                """, tuple(params))
                 
                 rows = await result.fetchall()
                 return [self._row_to_dict(row) for row in rows]
@@ -789,6 +833,7 @@ class PostgresStorageBackend(MemoryStorageBackend):
             "pattern": row["pattern"],
             "context": row["context"] if isinstance(row["context"], dict) else json.loads(row["context"] or "{}"),
             "lesson": row["lesson"],
+            "subject": row.get("subject", "general"),  # 科目字段
             "occurrence_count": row["occurrence_count"],
             "confirmation_count": row["confirmation_count"],
             "contradiction_count": row["contradiction_count"],
@@ -934,15 +979,16 @@ class MultiLayerStorageBackend(MemoryStorageBackend):
         memory_type: Optional[str] = None,
         limit: int = 100,
         offset: int = 0,
+        subject: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         # 从 PostgreSQL 读取（权威数据源）
         if self._postgres:
-            return await self._postgres.list_memories(memory_type, limit, offset)
+            return await self._postgres.list_memories(memory_type, limit, offset, subject)
         
         # 降级到 Redis
         if self._redis and self._redis_available:
             try:
-                return await self._redis.list_memories(memory_type, limit, offset)
+                return await self._redis.list_memories(memory_type, limit, offset, subject)
             except Exception:
                 pass
         

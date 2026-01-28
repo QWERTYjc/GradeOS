@@ -81,6 +81,8 @@ class BatchGradingGraphState(TypedDict, total=False):
     batch_id: str                        # 批次唯一标识符
     exam_id: str                         # 考试 ID
     api_key: str                         # API Key
+    subject: str                         # 科目标识（用于记忆隔离）
+                                         # 例如: economics, physics, mathematics, advanced_mathematics
     
     # ===== 输入数据 =====
     inputs: Dict[str, Any]               # 批量输入数据
