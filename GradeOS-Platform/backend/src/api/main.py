@@ -181,12 +181,28 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"编排器初始化失败: {e}")
     
+    # 初始化 Redis 任务队列（用于高并发批改）
+    try:
+        from src.services.redis_task_queue import init_task_queue
+        await init_task_queue()
+        logger.info("Redis 任务队列已初始化")
+    except Exception as e:
+        logger.warning(f"Redis 任务队列初始化失败（将使用本地模式）: {e}")
+    
     logger.info("应用启动完成")
     
     yield
     
     # 关闭时清理
     logger.info("关闭应用...")
+    
+    # 关闭 Redis 任务队列
+    try:
+        from src.services.redis_task_queue import shutdown_task_queue
+        await shutdown_task_queue()
+        logger.info("Redis 任务队列已关闭")
+    except Exception as e:
+        logger.warning(f"Redis 任务队列关闭失败: {e}")
     
     # 关闭编排器
     await close_orchestrator()

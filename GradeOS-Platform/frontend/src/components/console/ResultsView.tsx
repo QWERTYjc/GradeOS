@@ -290,10 +290,27 @@ const QuestionDetail: React.FC<{ question: QuestionResult; gradingMode?: string 
                         Pages: <span className="font-mono text-slate-500">{question.pageIndices.map(p => p + 1).join(', ')}</span>
                     </div>
                 )}
-                {isLowConfidence && question.confidence !== undefined && (
-                    <div className={clsx("flex items-center gap-1.5", question.confidence < 0.8 ? "text-amber-600" : "text-emerald-600")}>
-                        {question.confidence < 0.8 ? <AlertCircle className="w-3 h-3" /> : <CheckCircle className="w-3 h-3" />}
-                        Confidence: <span className="font-mono font-semibold">{(question.confidence * 100).toFixed(0)}%</span>
+                {/* 始终显示置信度（如果有） */}
+                {question.confidence !== undefined && (
+                    <div className={clsx(
+                        "flex items-center gap-1.5",
+                        question.confidence >= 0.8 ? "text-emerald-600" : question.confidence >= 0.6 ? "text-amber-600" : "text-red-500"
+                    )}>
+                        {question.confidence >= 0.8 ? (
+                            <CheckCircle className="w-3 h-3" />
+                        ) : question.confidence >= 0.6 ? (
+                            <AlertCircle className="w-3 h-3" />
+                        ) : (
+                            <AlertTriangle className="w-3 h-3" />
+                        )}
+                        置信度: <span className="font-mono font-semibold">{(question.confidence * 100).toFixed(0)}%</span>
+                    </div>
+                )}
+                {/* 显示评分标准引用数量 */}
+                {question.rubricRefs && question.rubricRefs.length > 0 && (
+                    <div className="flex items-center gap-1.5 text-blue-600">
+                        <BookOpen className="w-3 h-3" />
+                        引用: <span className="font-mono font-semibold">{question.rubricRefs.length} 条</span>
                     </div>
                 )}
             </div>
@@ -316,7 +333,7 @@ const QuestionDetail: React.FC<{ question: QuestionResult; gradingMode?: string 
                                 {question.scoringPointResults.map((spr, idx) => (
                                     <div key={idx} className="rounded-md border border-slate-200 p-3">
                                         <div className="flex items-start justify-between gap-4">
-                                            <div className="space-y-1">
+                                            <div className="space-y-1 flex-1">
                                                 <div className="text-xs text-slate-700 font-medium leading-relaxed">
                                                     {spr.pointId && <span className="font-mono text-slate-400 mr-2 text-[10px]">[{spr.pointId}]</span>}
                                                     <MathText className="inline" text={spr.scoringPoint?.description || spr.description || "N/A"} />
@@ -329,6 +346,17 @@ const QuestionDetail: React.FC<{ question: QuestionResult; gradingMode?: string 
                                                                     <span>Max: {spr.maxPoints ?? spr.scoringPoint?.score ?? 0}</span>
                                                                     <span>{spr.scoringPoint?.isRequired ? 'Required' : 'Optional'}</span>
                                                                 </div>
+                                                                {spr.rubricReference && (
+                                                                    <div className="mt-2 pt-2 border-t border-slate-100">
+                                                                        <div className="text-[10px] text-blue-600 font-semibold mb-1">评分标准引用</div>
+                                                                        <div className="text-slate-600 bg-blue-50 p-1.5 rounded text-[10px]">
+                                                                            <span className="font-mono text-blue-700">[{spr.rubricReference}]</span>
+                                                                            {spr.rubricReferenceSource && (
+                                                                                <span className="ml-1 text-slate-500">{spr.rubricReferenceSource}</span>
+                                                                            )}
+                                                                        </div>
+                                                                    </div>
+                                                                )}
                                                             </div>
                                                         }
                                                     >
@@ -339,6 +367,15 @@ const QuestionDetail: React.FC<{ question: QuestionResult; gradingMode?: string 
                                                     判定: {spr.decision || (spr.awarded > 0 ? '得分' : '不得分')}
                                                     {spr.reason && <span className="ml-1 opacity-75">- {spr.reason}</span>}
                                                 </div>
+                                                {/* 评分标准引用标签 */}
+                                                {spr.rubricReference && (
+                                                    <div className="flex items-center gap-1.5 mt-1">
+                                                        <BookOpen className="w-3 h-3 text-blue-500" />
+                                                        <span className="text-[10px] font-mono text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded">
+                                                            引用: {spr.rubricReference}
+                                                        </span>
+                                                    </div>
+                                                )}
                                             </div>
                                             <div className={clsx("font-mono font-semibold text-sm whitespace-nowrap", spr.awarded > 0 ? "text-emerald-600" : "text-slate-400")}>
                                                 {spr.awarded}/{spr.maxPoints ?? spr.scoringPoint?.score ?? 0}
