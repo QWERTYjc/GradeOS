@@ -3,6 +3,7 @@ import os
 import asyncio
 import json
 import re
+from functools import lru_cache
 from typing import Optional, List, Dict, Any, Literal, Tuple
 from datetime import datetime
 from dataclasses import dataclass, field
@@ -17,6 +18,27 @@ from src.utils.llm_thinking import split_thinking_content
 
 
 logger = logging.getLogger(__name__)
+
+
+@lru_cache(maxsize=1)
+def _get_broadcast_progress():
+    """延迟加载进度广播函数，避免测试场景触发重依赖导入。"""
+    if os.getenv("DISABLE_PROGRESS_BROADCAST", "false").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    ):
+        async def _noop(*_args, **_kwargs) -> None:
+            return None
+        return _noop
+
+    from src.api.routes.batch_langgraph import broadcast_progress
+    return broadcast_progress
+
+
+async def _broadcast_progress(batch_id: str, message: Dict[str, Any]) -> None:
+    """包装进度广播，便于测试中禁用。"""
+    await _get_broadcast_progress()(batch_id, message)
 
 
 # ==================== 批次配置 ====================
@@ -387,442 +409,6 @@ def _normalize_manual_boundaries(raw: Any, total_pages: int) -> List[Dict[str, A
     return groups
 
 
-async def index_node(state: BatchGradingGraphState) -> Dict[str, Any]:
-    """
-    索引层节点（批改前）
-
-    使用 LLM 生成每页题目信息并识别学生，用于后续批改上下文对齐。
-    """
-    batch_id = state["batch_id"]
-    processed_images = state.get("processed_images", [])
-    api_key = state.get("api_key") or os.getenv("LLM_API_KEY") or os.getenv("OPENROUTER_API_KEY")
-
-    logger.info(
-        f"[index] 开始索引: batch_id={batch_id}, 页数={len(processed_images)}"
-    )
-
-    if not processed_images:
-        logger.warning(f"[index] 无待索引页面: batch_id={batch_id}")
-        return {
-            "index_results": {
-                "model": None,
-                "total_pages": 0,
-                "pages": [],
-                "students": [],
-                "unidentified_pages": [],
-            },
-            "page_index_contexts": {},
-            "student_page_map": {},
-            "indexed_students": [],
-            "index_unidentified_pages": [],
-            "student_boundaries": [],
-            "current_stage": "index_completed",
-            "percentage": 12.0,
-            "timestamps": {
-                **state.get("timestamps", {}),
-                "index_at": datetime.now().isoformat(),
-            },
-        }
-
-    inputs = state.get("inputs") or {}
-    manual_raw = inputs.get("manual_boundaries") or inputs.get("student_boundaries")
-    mapping_raw = state.get("student_mapping") or inputs.get("student_mapping")
-    if not manual_raw and mapping_raw:
-        mapped_groups = []
-        if isinstance(mapping_raw, list):
-            for entry in mapping_raw:
-                if not isinstance(entry, dict):
-                    continue
-                pages = entry.get("pages") or entry.get("page_indices") or entry.get("pageIndices")
-                if pages is None:
-                    start = entry.get("startIndex") or entry.get("start_index") or entry.get("startPage") or entry.get("start_page")
-                    end = entry.get("endIndex") or entry.get("end_index") or entry.get("endPage") or entry.get("end_page")
-                    start_idx = _coerce_int(start) if start is not None else None
-                    end_idx = _coerce_int(end) if end is not None else None
-                    if start_idx is not None and end_idx is not None:
-                        pages = list(range(start_idx, end_idx + 1))
-                if pages is None:
-                    continue
-                mapped_groups.append({
-                    "pages": pages,
-                    "student_id": entry.get("studentId") or entry.get("student_id"),
-                    "student_name": entry.get("studentName") or entry.get("student_name"),
-                    "student_key": entry.get("studentKey") or entry.get("student_key"),
-                    "class_name": entry.get("className") or entry.get("class_name"),
-                })
-        if mapped_groups:
-            manual_raw = mapped_groups
-    manual_groups = _normalize_manual_boundaries(manual_raw, len(processed_images))
-    if manual_groups:
-        total_pages = len(processed_images)
-        assigned_pages = set()
-        page_index_contexts: Dict[int, Dict[str, Any]] = {}
-        student_page_map: Dict[int, str] = {}
-        indexed_students: List[Dict[str, Any]] = []
-        student_boundaries: List[Dict[str, Any]] = []
-
-        def build_student_key(idx: int, group: Dict[str, Any]) -> str:
-            return (
-                group.get("student_key")
-                or group.get("student_id")
-                or group.get("student_name")
-                or f"Student {idx + 1}"
-            )
-
-        for idx, group in enumerate(manual_groups):
-            pages = [p for p in group.get("pages", []) if p not in assigned_pages]
-            if not pages:
-                continue
-            for page_idx in pages:
-                assigned_pages.add(page_idx)
-
-            start_page = min(pages)
-            end_page = max(pages)
-            student_key = build_student_key(idx, group)
-            student_info = None
-            if group.get("student_id") or group.get("student_name"):
-                student_info = {
-                    "name": group.get("student_name"),
-                    "student_id": group.get("student_id"),
-                    "class_name": group.get("class_name"),
-                    "confidence": 1.0,
-                    "is_placeholder": False,
-                }
-
-            student_boundaries.append({
-                "student_key": student_key,
-                "start_page": start_page,
-                "end_page": end_page,
-                "confidence": 1.0,
-                "needs_confirmation": False,
-                "detection_method": "manual",
-            })
-
-            indexed_students.append({
-                "student_key": student_key,
-                "student_id": group.get("student_id"),
-                "student_name": group.get("student_name"),
-                "start_page": start_page,
-                "end_page": end_page,
-                "pages": sorted(pages),
-                "confidence": 1.0,
-                "needs_confirmation": False,
-                "detection_method": "manual",
-            })
-
-            for page_idx in pages:
-                student_page_map[page_idx] = student_key
-                page_index_contexts[page_idx] = {
-                    "page_index": page_idx,
-                    "question_numbers": [],
-                    "first_question": None,
-                    "continuation_of": None,
-                    "student_key": student_key,
-                    "student_info": student_info,
-                    "is_cover_page": False,
-                    "index_notes": ["manual_boundary"],
-                    "is_first_page": page_idx == start_page,
-                }
-
-        missing_pages = [i for i in range(total_pages) if i not in assigned_pages]
-        if missing_pages:
-            missing_pages.sort()
-            ranges: List[Tuple[int, int]] = []
-            start = missing_pages[0]
-            prev = missing_pages[0]
-            for page_idx in missing_pages[1:]:
-                if page_idx == prev + 1:
-                    prev = page_idx
-                    continue
-                ranges.append((start, prev))
-                start = page_idx
-                prev = page_idx
-            ranges.append((start, prev))
-
-            for idx, (start_page, end_page) in enumerate(ranges):
-                student_key = f"Unassigned {idx + 1}"
-                student_boundaries.append({
-                    "student_key": student_key,
-                    "start_page": start_page,
-                    "end_page": end_page,
-                    "confidence": 0.0,
-                    "needs_confirmation": True,
-                    "detection_method": "manual_fallback",
-                })
-                indexed_students.append({
-                    "student_key": student_key,
-                    "student_id": None,
-                    "student_name": None,
-                    "start_page": start_page,
-                    "end_page": end_page,
-                    "pages": list(range(start_page, end_page + 1)),
-                    "confidence": 0.0,
-                    "needs_confirmation": True,
-                    "detection_method": "manual_fallback",
-                })
-                for page_idx in range(start_page, end_page + 1):
-                    student_page_map[page_idx] = student_key
-                    page_index_contexts[page_idx] = {
-                        "page_index": page_idx,
-                        "question_numbers": [],
-                        "first_question": None,
-                        "continuation_of": None,
-                        "student_key": student_key,
-                        "student_info": None,
-                        "is_cover_page": False,
-                        "index_notes": ["manual_boundary_missing"],
-                        "is_first_page": page_idx == start_page,
-                    }
-
-        index_pages = [
-            page_index_contexts[idx] for idx in sorted(page_index_contexts.keys())
-        ]
-        index_results = {
-            "model": "manual",
-            "total_pages": total_pages,
-            "pages": index_pages,
-            "students": indexed_students,
-            "unidentified_pages": missing_pages,
-        }
-
-        logger.info(
-            f"[index] using manual boundaries: batch_id={batch_id}, "
-            f"groups={len(student_boundaries)}, missing_pages={len(missing_pages)}"
-        )
-
-        return {
-            "index_results": index_results,
-            "page_index_contexts": page_index_contexts,
-            "student_page_map": student_page_map,
-            "indexed_students": indexed_students,
-            "index_unidentified_pages": missing_pages,
-            "student_boundaries": student_boundaries,
-            "current_stage": "index_completed",
-            "percentage": 12.0,
-            "timestamps": {
-                **state.get("timestamps", {}),
-                "index_at": datetime.now().isoformat(),
-            },
-        }
-
-    if not api_key:
-        logger.warning(f"[index] 缺少 API key，跳过索引: batch_id={batch_id}")
-        return {
-            "index_results": {
-                "model": None,
-                "total_pages": len(processed_images),
-                "pages": [],
-                "students": [],
-                "unidentified_pages": list(range(len(processed_images))),
-            },
-            "page_index_contexts": {},
-            "student_page_map": {},
-            "indexed_students": [],
-            "index_unidentified_pages": list(range(len(processed_images))),
-            "student_boundaries": [],
-            "current_stage": "index_completed",
-            "percentage": 12.0,
-            "timestamps": {
-                **state.get("timestamps", {}),
-                "index_at": datetime.now().isoformat(),
-            },
-        }
-
-    try:
-        from src.config.models import get_index_model
-        from src.services.student_identification import StudentIdentificationService
-
-        model_name = get_index_model()
-        id_service = StudentIdentificationService(api_key=api_key, model_name=model_name)
-
-        max_concurrency = int(os.getenv("INDEX_MAX_CONCURRENCY", "5"))
-        boundary_only = os.getenv("INDEX_BOUNDARY_ONLY", "true").strip().lower() in ("1", "true", "yes")
-
-        async def analyze_page(payload: Dict[str, Any]):
-            return await id_service.analyze_page(
-                payload["image_data"],
-                payload["page_index"],
-                boundary_only=boundary_only,
-            )
-
-        analyze_runner = RunnableLambda(analyze_page)
-        inputs = [
-            {"image_data": image_data, "page_index": page_index}
-            for page_index, image_data in enumerate(processed_images)
-        ]
-        config = RunnableConfig(max_concurrency=max_concurrency) if max_concurrency > 0 else RunnableConfig()
-        page_analyses = await analyze_runner.abatch(inputs, config=config)
-        page_analyses.sort(key=lambda x: x.page_index)
-
-        segmentation_result = id_service.segment_from_analyses(page_analyses)
-
-        def student_info_to_dict(info):
-            if not info:
-                return None
-            return {
-                "name": info.name,
-                "student_id": info.student_id,
-                "class_name": info.class_name,
-                "confidence": info.confidence,
-                "is_placeholder": getattr(info, "is_placeholder", False),
-            }
-
-        # page_index -> student mapping
-        page_student_map = {}
-        for mapping in segmentation_result.page_mappings:
-            student_info = mapping.student_info
-            student_key = student_info.student_id or student_info.name or f"unknown_{mapping.page_index}"
-            page_student_map[mapping.page_index] = {
-                "student_key": student_key,
-                "student_info": student_info,
-                "is_first_page": mapping.is_first_page,
-            }
-
-        page_index_contexts = {}
-        index_pages = []
-        student_groups = {}
-        last_question = None
-
-        for analysis in page_analyses:
-            index_notes = []
-            continuation_of = None
-
-            if analysis.is_cover_page:
-                index_notes.append("cover_page")
-            else:
-                if analysis.question_numbers:
-                    last_question = analysis.question_numbers[-1]
-                elif last_question:
-                    continuation_of = last_question
-                    index_notes.append("continuation_assumed")
-                else:
-                    index_notes.append("no_question_numbers_detected")
-
-            mapping = page_student_map.get(analysis.page_index)
-            student_info = mapping["student_info"] if mapping else analysis.student_info
-            student_key = None
-            if mapping:
-                student_key = mapping["student_key"]
-            elif student_info and (student_info.student_id or student_info.name):
-                student_key = student_info.student_id or student_info.name
-            else:
-                student_key = "UNKNOWN"
-
-            context = {
-                "page_index": analysis.page_index,
-                "question_numbers": analysis.question_numbers,
-                "first_question": analysis.first_question,
-                "continuation_of": continuation_of,
-                "student_key": student_key,
-                "student_info": student_info_to_dict(student_info),
-                "is_cover_page": analysis.is_cover_page,
-                "index_notes": index_notes,
-                "is_first_page": mapping["is_first_page"] if mapping else False,
-            }
-
-            page_index_contexts[analysis.page_index] = context
-            index_pages.append(context)
-
-            if not analysis.is_cover_page:
-                group = student_groups.setdefault(
-                    student_key,
-                    {"student_key": student_key, "student_info": student_info, "pages": []}
-                )
-                group["pages"].append(analysis.page_index)
-
-        indexed_students = []
-        student_boundaries = []
-        for student_key, group in student_groups.items():
-            pages = sorted(group["pages"])
-            if not pages:
-                continue
-            info = group.get("student_info")
-            info_dict = student_info_to_dict(info)
-            confidence = info.confidence if info else 0.0
-            needs_confirmation = (
-                info is None or
-                getattr(info, "is_placeholder", False) or
-                confidence < 0.7
-            )
-            start_page = pages[0]
-            end_page = pages[-1]
-
-            student_boundaries.append({
-                "student_key": student_key,
-                "start_page": start_page,
-                "end_page": end_page,
-                "confidence": confidence,
-                "needs_confirmation": needs_confirmation,
-                "detection_method": "index",
-            })
-
-            indexed_students.append({
-                "student_key": student_key,
-                "student_id": info.student_id if info else None,
-                "student_name": info.name if info else None,
-                "start_page": start_page,
-                "end_page": end_page,
-                "pages": pages,
-                "confidence": confidence,
-                "needs_confirmation": needs_confirmation,
-            })
-
-        index_results = {
-            "model": model_name,
-            "total_pages": len(processed_images),
-            "pages": index_pages,
-            "students": indexed_students,
-            "unidentified_pages": segmentation_result.unidentified_pages,
-        }
-
-        logger.info(
-            f"[index] 索引完成: batch_id={batch_id}, "
-            f"识别学生数={len(indexed_students)}, 未识别页数={len(segmentation_result.unidentified_pages)}"
-        )
-
-        return {
-            "index_results": index_results,
-            "page_index_contexts": page_index_contexts,
-            "student_page_map": {
-                page_index: context["student_key"]
-                for page_index, context in page_index_contexts.items()
-            },
-            "indexed_students": indexed_students,
-            "index_unidentified_pages": segmentation_result.unidentified_pages,
-            "student_boundaries": student_boundaries,
-            "current_stage": "index_completed",
-            "percentage": 12.0,
-            "timestamps": {
-                **state.get("timestamps", {}),
-                "index_at": datetime.now().isoformat(),
-            },
-        }
-    except Exception as e:
-        logger.error(f"[index] 索引失败: {e}", exc_info=True)
-        return {
-            "index_results": {
-                "model": None,
-                "total_pages": len(processed_images),
-                "pages": [],
-                "students": [],
-                "unidentified_pages": list(range(len(processed_images))),
-                "error": str(e),
-            },
-            "page_index_contexts": {},
-            "student_page_map": {},
-            "indexed_students": [],
-            "index_unidentified_pages": list(range(len(processed_images))),
-            "student_boundaries": [],
-            "current_stage": "index_completed",
-            "percentage": 12.0,
-            "errors": state.get("errors", []) + [{
-                "node": "index",
-                "error": str(e),
-                "timestamp": datetime.now().isoformat(),
-            }],
-        }
-
-
 async def rubric_parse_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     """
     解析评分标准节点
@@ -875,9 +461,8 @@ async def rubric_parse_node(state: BatchGradingGraphState) -> Dict[str, Any]:
             review_agent_id = "rubric-review"
             parse_agent_name = "Rubric Parse"
             review_agent_name = "Rubric Review"
-            from src.api.routes.batch_langgraph import broadcast_progress
 
-            await broadcast_progress(batch_id, {
+            await _broadcast_progress(batch_id, {
                 "type": "agent_update",
                 "agentId": parse_agent_id,
                 "agentName": parse_agent_name,
@@ -908,7 +493,7 @@ async def rubric_parse_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                     target_agent = review_agent_id
                     node_name = review_agent_name
 
-                await broadcast_progress(batch_id, {
+                await _broadcast_progress(batch_id, {
                     "type": "llm_stream_chunk",
                     "nodeId": target_node,
                     "agentId": target_agent,
@@ -923,14 +508,13 @@ async def rubric_parse_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                 status: str,
                 message: Optional[str],
             ) -> None:
-                from src.api.routes.batch_langgraph import broadcast_progress
 
                 normalized_total = max(1, total_batches)
                 batch_progress = int(((batch_index + 1) / normalized_total) * 100)
                 is_last_batch = (batch_index + 1) >= normalized_total
 
                 if status == "reviewing":
-                    await broadcast_progress(batch_id, {
+                    await _broadcast_progress(batch_id, {
                         "type": "agent_update",
                         "agentId": parse_agent_id,
                         "agentName": parse_agent_name,
@@ -940,7 +524,7 @@ async def rubric_parse_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                         "progress": 100 if is_last_batch else batch_progress,
                         "message": "Parsing completed" if is_last_batch else (message or f"Batch {batch_index + 1}/{total_batches}"),
                     })
-                    await broadcast_progress(batch_id, {
+                    await _broadcast_progress(batch_id, {
                         "type": "agent_update",
                         "agentId": review_agent_id,
                         "agentName": review_agent_name,
@@ -953,7 +537,7 @@ async def rubric_parse_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                     return
 
                 if status == "completed":
-                    await broadcast_progress(batch_id, {
+                    await _broadcast_progress(batch_id, {
                         "type": "agent_update",
                         "agentId": parse_agent_id,
                         "agentName": parse_agent_name,
@@ -972,7 +556,7 @@ async def rubric_parse_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                 }
                 progress = 100 if status == "failed" else batch_progress
 
-                await broadcast_progress(batch_id, {
+                await _broadcast_progress(batch_id, {
                     "type": "agent_update",
                     "agentId": parse_agent_id,
                     "agentName": parse_agent_name,
@@ -1096,8 +680,7 @@ async def rubric_parse_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     )
 
     try:
-        from src.api.routes.batch_langgraph import broadcast_progress
-        await broadcast_progress(batch_id, {
+        await _broadcast_progress(batch_id, {
             "type": "rubric_parsed",
             "totalQuestions": parsed_rubric.get("total_questions", 0),
             "totalScore": parsed_rubric.get("total_score", 0),
@@ -1290,11 +873,15 @@ def grading_fanout_router(state: BatchGradingGraphState) -> List[Send]:
     import copy
     
     batch_id = state["batch_id"]
-    processed_images = state.get("processed_images", [])
+    processed_images = state.get("processed_images") or state.get("answer_images") or []
     rubric = state.get("rubric", "")
     parsed_rubric = state.get("parsed_rubric", {})
     api_key = state.get("api_key", "")
     inputs = state.get("inputs", {})
+    manual_boundaries = _normalize_manual_boundaries(
+        inputs.get("manual_boundaries"),
+        len(processed_images),
+    )
     
     # 从前端获取 student_mapping
     student_mapping = state.get("student_mapping") or inputs.get("student_mapping")
@@ -1304,6 +891,23 @@ def grading_fanout_router(state: BatchGradingGraphState) -> List[Send]:
     if student_mapping and isinstance(student_mapping, list):
         for idx, mapping in enumerate(student_mapping):
             pages = mapping.get("pages") or mapping.get("page_indices") or mapping.get("pageIndices")
+            if pages is None:
+                start_idx = (
+                    mapping.get("start_index")
+                    or mapping.get("startIndex")
+                    or mapping.get("start_page")
+                    or mapping.get("startPage")
+                )
+                end_idx = (
+                    mapping.get("end_index")
+                    or mapping.get("endIndex")
+                    or mapping.get("end_page")
+                    or mapping.get("endPage")
+                )
+                start_page = _coerce_int(start_idx) if start_idx is not None else None
+                end_page = _coerce_int(end_idx) if end_idx is not None else None
+                if start_page is not None and end_page is not None:
+                    pages = list(range(start_page, end_page + 1))
             if pages:
                 pages_list = list(pages) if not isinstance(pages, list) else pages
                 if pages_list:
@@ -1316,6 +920,14 @@ def grading_fanout_router(state: BatchGradingGraphState) -> List[Send]:
                         "pages": sorted(pages_list)
                     })
         logger.info(f"[grading_fanout] 从前端获取 {len(student_boundaries)} 个学生映射")
+    elif manual_boundaries:
+        for idx, boundary in enumerate(manual_boundaries):
+            if "student_key" not in boundary:
+                boundary["student_key"] = f"学生{idx+1}"
+            student_boundaries.append(boundary)
+        logger.info(
+            f"[grading_fanout] 从前端手动边界创建 {len(student_boundaries)} 个学生"
+        )
     
     if not processed_images:
         logger.warning(f"[grading_fanout] 没有待批改的图像: batch_id={batch_id}")
@@ -1340,10 +952,20 @@ def grading_fanout_router(state: BatchGradingGraphState) -> List[Send]:
         sends = []
         for batch_idx, boundary in enumerate(student_boundaries):
             student_key = boundary.get("student_key", f"student_{batch_idx}")
-            start_page = boundary.get("start_page", 0)
-            end_page = boundary.get("end_page", total_pages - 1)
-            
-            page_indices = list(range(start_page, end_page + 1))
+            pages = boundary.get("pages")
+            if pages:
+                page_indices = sorted(list(pages))
+            else:
+                start_page = boundary.get("start_page", 0)
+                end_page = boundary.get("end_page", total_pages - 1)
+                page_indices = list(range(start_page, end_page + 1))
+            if page_indices:
+                start_page = page_indices[0]
+                end_page = page_indices[-1]
+            else:
+                start_page = 0
+                end_page = 0
+
             batch_images = [processed_images[i] for i in page_indices if i < len(processed_images)]
             
             if not batch_images:
@@ -1366,7 +988,9 @@ def grading_fanout_router(state: BatchGradingGraphState) -> List[Send]:
             }
             
             sends.append(Send("grade_batch", task_state))
-            logger.info(f"[grading_fanout] 创建学生批次: student={student_key}, pages={start_page}-{end_page}")
+            logger.info(
+                f"[grading_fanout] 创建学生批次: student={student_key}, pages={start_page}-{end_page}"
+            )
         
         if sends:
             return sends
@@ -1390,10 +1014,20 @@ def grading_fanout_router(state: BatchGradingGraphState) -> List[Send]:
         end_idx = min(start_idx + batch_size, total_pages)
         batch_images = processed_images[start_idx:end_idx]
 
+        # 🔧 修复：为回退逻辑添加默认 student_key（修复 total_students=0 问题）
+        # 当没有 student_mapping 时，创建一个默认学生覆盖所有页面
+        if num_batches == 1:
+            # 只有一个批次，视为单个学生
+            default_student_key = "学生1"
+        else:
+            # 多个批次，为每个批次分配一个学生编号
+            default_student_key = f"学生{batch_idx + 1}"
+
         task_state = {
             "batch_id": batch_id,
             "batch_index": batch_idx,
             "total_batches": num_batches,
+            "student_key": default_student_key,  # ✅ 添加 student_key
             "page_indices": list(range(start_idx, end_idx)),
             "images": batch_images,
             "rubric": rubric,
@@ -1403,6 +1037,11 @@ def grading_fanout_router(state: BatchGradingGraphState) -> List[Send]:
             "max_retries": max_retries,
             "inputs": copy.deepcopy(inputs),
         }
+        
+        logger.info(
+            f"[grading_fanout] 回退批次: batch={batch_idx+1}/{num_batches}, "
+            f"student_key={default_student_key}, pages={start_idx}-{end_idx-1}"
+        )
         
         sends.append(Send("grade_batch", task_state))
     
@@ -2388,6 +2027,7 @@ async def _grade_batch_node_impl(state: Dict[str, Any]) -> Dict[str, Any]:
     api_key = state.get("api_key") or os.getenv("LLM_API_KEY") or os.getenv("OPENROUTER_API_KEY")
     retry_count = state.get("retry_count", 0)
     max_retries = state.get("max_retries", 2)
+    batch_student_key = state.get("student_key") or f"Student {batch_index + 1}"
     
     logger.info(
         f"[grade_batch] 开始批改批次 {batch_index + 1}/{total_batches}: "
@@ -2517,7 +2157,6 @@ async def _grade_batch_node_impl(state: Dict[str, Any]) -> Dict[str, Any]:
         )
         # 错误隔离：单页失败不影响其他页面 (Requirement 9.2)
         error_manager = get_error_manager()
-        from src.api.routes.batch_langgraph import broadcast_progress
 
         batch_agent_id = f"batch_{batch_index}"
         batch_student_key = state.get("student_key")
@@ -2542,7 +2181,7 @@ async def _grade_batch_node_impl(state: Dict[str, Any]) -> Dict[str, Any]:
             }
             if progress is not None:
                 payload["progress"] = progress
-            await broadcast_progress(batch_id, payload)
+            await _broadcast_progress(batch_id, payload)
 
         async def emit_stage(message: str) -> None:
             await emit_agent_update("running", message)
@@ -2568,14 +2207,13 @@ async def _grade_batch_node_impl(state: Dict[str, Any]) -> Dict[str, Any]:
                 second_pass_used += 1
                 return True
 
-        batch_student_key = state.get("student_key") or f"Student {batch_index + 1}"
         max_pages_per_student = int(os.getenv("GRADING_MAX_PAGES_PER_STUDENT", "12"))
         use_student_grading = len(images) <= max_pages_per_student
         student_error = None
 
         # 🚀 使用 grade_student 一次 LLM call 批改整个学生
         async def stream_callback(stream_type: str, chunk: str) -> None:
-            await broadcast_progress(batch_id, {
+            await _broadcast_progress(batch_id, {
                 "type": "llm_stream_chunk",
                 "nodeId": "grade_batch",
                 "nodeName": "Batch Grading",
@@ -2585,7 +2223,7 @@ async def _grade_batch_node_impl(state: Dict[str, Any]) -> Dict[str, Any]:
                 "chunk": chunk
             })
         
-        await broadcast_progress(batch_id, {
+        await _broadcast_progress(batch_id, {
             "type": "agent_update",
             "parentNodeId": "grade_batch",
             "agentId": f"batch_{batch_index}",
@@ -2784,7 +2422,7 @@ async def _grade_batch_node_impl(state: Dict[str, Any]) -> Dict[str, Any]:
     )
 
     final_status = "completed" if success_count > 0 else "failed"
-    await broadcast_progress(batch_id, {
+    await _broadcast_progress(batch_id, {
         "type": "agent_update",
         "parentNodeId": "grade_batch",
         "agentId": f"batch_{batch_index}",
@@ -2866,454 +2504,6 @@ async def simple_aggregate_node(state: BatchGradingGraphState) -> Dict[str, Any]
             "aggregate_at": datetime.now().isoformat()
         }
     }
-
-
-# 删除 index_merge_node，不再需要
-# async def index_merge_node(state: BatchGradingGraphState) -> Dict[str, Any]:
-    """
-    索引对齐聚合节点
-
-    使用索引阶段生成的学生边界聚合批改结果，替代批改后学生分割。
-    """
-    batch_id = state["batch_id"]
-    grading_results = state.get("grading_results", [])
-    merged_questions = state.get("merged_questions", [])
-    grading_mode = _resolve_grading_mode(state.get("inputs", {}), state.get("parsed_rubric", {}))
-    student_boundaries = state.get("student_boundaries", []) or []
-    indexed_students = state.get("indexed_students", []) or []
-    student_page_map = state.get("student_page_map", {}) or {}
-    grading_mode = _resolve_grading_mode(state.get("inputs", {}), state.get("parsed_rubric", {}))
-
-    # 去重：由于并行聚合可能导致重复，按 page_index 去重
-    seen_pages = set()
-    unique_results = []
-    for result in grading_results:
-        page_idx = result.get("page_index")
-        if page_idx is not None and page_idx not in seen_pages:
-            seen_pages.add(page_idx)
-            unique_results.append(result)
-
-    # 按页码排序
-    unique_results.sort(key=lambda x: x.get("page_index", 0))
-    grading_results = unique_results
-
-    # 过滤空白页
-    non_blank_results = [r for r in grading_results if not r.get("is_blank_page", False)]
-
-    if not student_boundaries and indexed_students:
-        student_boundaries = [
-            {
-                "student_key": s.get("student_key"),
-                "start_page": s.get("start_page", 0),
-                "end_page": s.get("end_page", 0),
-                "confidence": s.get("confidence", 0.0),
-                "needs_confirmation": s.get("needs_confirmation", False),
-                "detection_method": "index",
-            }
-            for s in indexed_students
-        ]
-
-    if not student_boundaries and student_page_map:
-        grouped = {}
-        for page_index, student_key in student_page_map.items():
-            grouped.setdefault(student_key, []).append(page_index)
-        for student_key, pages in grouped.items():
-            pages_sorted = sorted(pages)
-            student_boundaries.append({
-                "student_key": student_key,
-                "start_page": pages_sorted[0],
-                "end_page": pages_sorted[-1],
-                "confidence": 0.0,
-                "needs_confirmation": True,
-                "detection_method": "index",
-            })
-
-    if not student_boundaries:
-        # 无索引边界时降级为单学生
-        fallback_key = "学生A"
-        fallback_end = max(0, len(grading_results) - 1)
-        student_boundaries = [{
-            "student_key": fallback_key,
-            "start_page": 0,
-            "end_page": fallback_end,
-            "confidence": 0.0,
-            "needs_confirmation": True,
-            "detection_method": "fallback",
-        }]
-
-    logger.info(
-        f"[index_merge] 开始聚合: batch_id={batch_id}, "
-        f"批改结果数={len(grading_results)}（去重后），非空白页={len(non_blank_results)}, "
-        f"边界数={len(student_boundaries)}, 合并后题目数={len(merged_questions)}"
-    )
-
-    try:
-        student_info_by_key = {
-            s.get("student_key"): s for s in indexed_students
-        }
-
-        student_results = []
-        for boundary in student_boundaries:
-            student_pages = [
-                r for r in grading_results
-                if boundary["start_page"] <= r.get("page_index", -1) <= boundary["end_page"]
-            ]
-
-            if merged_questions:
-                student_questions = []
-                for q in merged_questions:
-                    q_pages = q.get("page_indices", [])
-                    if any(boundary["start_page"] <= p <= boundary["end_page"] for p in q_pages):
-                        student_questions.append(q)
-
-                total_score = sum(q.get("score", 0) for q in student_questions)
-                max_total_score = sum(q.get("max_score", 0) for q in student_questions)
-                all_question_details = student_questions
-            else:
-                valid_pages = [
-                    r for r in student_pages
-                    if r.get("status") == "completed" and not r.get("is_blank_page", False)
-                ]
-                total_score = sum(r.get("score", 0) for r in valid_pages)
-                max_total_score = sum(r.get("max_score", 0) for r in valid_pages)
-
-                all_question_details = []
-                for page in valid_pages:
-                    for q in page.get("question_details", []):
-                        all_question_details.append({
-                            "question_id": q.get("question_id", ""),
-                            "score": q.get("score", 0),
-                            "max_score": q.get("max_score", 0),
-                            "confidence": q.get("confidence", 0),
-                            "confidence_reason": q.get("confidence_reason") or q.get("confidenceReason"),
-                            "feedback": q.get("feedback", ""),
-                            "student_answer": q.get("student_answer", ""),
-                            "is_correct": q.get("is_correct", False),
-                            "self_critique": q.get("self_critique") or q.get("selfCritique"),
-                            "self_critique_confidence": q.get("self_critique_confidence") or q.get("selfCritiqueConfidence"),
-                            "rubric_refs": q.get("rubric_refs") or q.get("rubricRefs"),
-                            "scoring_point_results": q.get("scoring_point_results") or q.get("scoring_results") or [],
-                            "review_summary": q.get("review_summary") or q.get("reviewSummary"),
-                            "review_corrections": q.get("review_corrections") or q.get("reviewCorrections") or [],
-                            "typo_notes": q.get("typo_notes") or q.get("typoNotes") or [],
-                            "page_indices": q.get("page_indices") or q.get("pageIndices") or [page.get("page_index")],
-                            "is_cross_page": q.get("is_cross_page", False) or q.get("isCrossPage", False),
-                            "merge_source": q.get("merge_source") or q.get("mergeSource"),
-                            "question_type": q.get("question_type") or q.get("questionType"),
-                            "grading_mode": grading_mode,
-                            # 🔥 批注坐标字段
-                            "annotations": q.get("annotations") or [],
-                            "steps": q.get("steps") or [],
-                            "answer_region": q.get("answer_region") or q.get("answerRegion"),
-                        })
-
-            student_key = boundary["student_key"]
-            info = student_info_by_key.get(student_key, {})
-
-            student_record = {
-                "student_key": student_key,
-                "student_id": info.get("student_id"),
-                "student_name": info.get("student_name"),
-                "start_page": boundary["start_page"],
-                "end_page": boundary["end_page"],
-                "total_score": total_score,
-                "max_total_score": max_total_score,
-                "page_results": student_pages,
-                "question_details": all_question_details,
-                "confidence": boundary.get("confidence", 0.0),
-                "needs_confirmation": boundary.get("needs_confirmation", False),
-                "grading_mode": grading_mode,
-            }
-            _recompute_student_totals(student_record)
-            student_results.append(student_record)
-
-        logger.info(
-            f"[index_merge] 聚合完成: batch_id={batch_id}, 学生数={len(student_boundaries)}"
-        )
-
-        return {
-            "student_boundaries": student_boundaries,
-            "student_results": student_results,
-            "current_stage": "index_merge_completed",
-            "percentage": 80.0,
-            "timestamps": {
-                **state.get("timestamps", {}),
-                "index_merge_at": datetime.now().isoformat()
-            }
-        }
-
-    except Exception as e:
-        logger.error(f"[index_merge] 聚合失败: {e}", exc_info=True)
-
-        # 降级处理：将所有页面视为一个学生
-        if merged_questions:
-            total_score = sum(q.get("score", 0) for q in merged_questions)
-            max_total_score = sum(q.get("max_score", 0) for q in merged_questions)
-            all_question_details = merged_questions
-        else:
-            valid_results = [
-                r for r in grading_results
-                if r.get("status") == "completed" and not r.get("is_blank_page", False)
-            ]
-            total_score = sum(r.get("score", 0) for r in valid_results)
-            max_total_score = sum(r.get("max_score", 0) for r in valid_results)
-
-            all_question_details = []
-            for page in valid_results:
-                for q in page.get("question_details", []):
-                    all_question_details.append({
-                        "question_id": q.get("question_id", ""),
-                        "score": q.get("score", 0),
-                        "max_score": q.get("max_score", 0),
-                        "confidence": q.get("confidence", 0),
-                        "confidence_reason": q.get("confidence_reason") or q.get("confidenceReason"),
-                        "feedback": q.get("feedback", ""),
-                        "student_answer": q.get("student_answer", ""),
-                        "is_correct": q.get("is_correct", False),
-                        "self_critique": q.get("self_critique") or q.get("selfCritique"),
-                        "self_critique_confidence": q.get("self_critique_confidence") or q.get("selfCritiqueConfidence"),
-                        "rubric_refs": q.get("rubric_refs") or q.get("rubricRefs"),
-                        "scoring_point_results": q.get("scoring_point_results") or q.get("scoring_results") or [],
-                        "review_summary": q.get("review_summary") or q.get("reviewSummary"),
-                        "review_corrections": q.get("review_corrections") or q.get("reviewCorrections") or [],
-                        "typo_notes": q.get("typo_notes") or q.get("typoNotes") or [],
-                        "page_indices": q.get("page_indices") or q.get("pageIndices") or [page.get("page_index")],
-                        "is_cross_page": q.get("is_cross_page", False) or q.get("isCrossPage", False),
-                        "merge_source": q.get("merge_source") or q.get("mergeSource"),
-                        "question_type": q.get("question_type") or q.get("questionType"),
-                        "grading_mode": grading_mode,
-                    })
-
-        fallback_student_key = "学生A"
-        fallback_student_id = "FALLBACK_001"
-
-        fallback_end = max(0, len(grading_results) - 1)
-        return {
-            "student_boundaries": [{
-                "student_key": fallback_student_key,
-                "start_page": 0,
-                "end_page": fallback_end,
-                "confidence": 0.0,
-                "needs_confirmation": True
-            }],
-            "student_results": [{
-                "student_key": fallback_student_key,
-                "student_id": fallback_student_id,
-                "total_score": total_score,
-                "max_total_score": max_total_score,
-                "page_results": grading_results,
-                "question_details": all_question_details,
-                "confidence": 0.0,
-                "needs_confirmation": True,
-                "grading_mode": grading_mode,
-            }],
-            "current_stage": "index_merge_completed",
-            "percentage": 80.0,
-            "errors": state.get("errors", []) + [{
-                "node": "index_merge",
-                "error": str(e),
-                "timestamp": datetime.now().isoformat()
-            }]
-        }
-
-
-async def segment_node(state: BatchGradingGraphState) -> Dict[str, Any]:
-    """
-    学生分割节点
-    
-    基于批改结果智能判断学生边界。
-    这是在批改完成后进行的，利用批改结果中的题目信息和学生标识。
-    使用合并后的题目结果（如果有）。
-    
-    Requirements: 4.1, 4.3
-    """
-    batch_id = state["batch_id"]
-    grading_results = state.get("grading_results", [])
-    merged_questions = state.get("merged_questions", [])
-    
-    # 去重：由于并行聚合可能导致重复，按 page_index 去重
-    seen_pages = set()
-    unique_results = []
-    for result in grading_results:
-        page_idx = result.get("page_index")
-        if page_idx is not None and page_idx not in seen_pages:
-            seen_pages.add(page_idx)
-            unique_results.append(result)
-    
-    # 按页码排序
-    unique_results.sort(key=lambda x: x.get("page_index", 0))
-    grading_results = unique_results
-    
-    # 过滤掉空白页
-    non_blank_results = [r for r in grading_results if not r.get("is_blank_page", False)]
-    
-    logger.info(
-        f"[segment] 开始学生分割: batch_id={batch_id}, "
-        f"批改结果数={len(grading_results)}（去重后），非空白页={len(non_blank_results)}, "
-        f"合并后题目数={len(merged_questions)}"
-    )
-    
-    try:
-        from src.services.student_boundary_detector import StudentBoundaryDetector
-        
-        detector = StudentBoundaryDetector()
-        
-        # 基于批改结果检测学生边界
-        result = await detector.detect_boundaries(grading_results)
-        
-        # 转换为字典格式
-        boundaries = []
-        for b in result.boundaries:
-            boundaries.append({
-                "student_key": b.student_key,
-                "start_page": b.start_page,
-                "end_page": b.end_page,
-                "confidence": b.confidence,
-                "needs_confirmation": b.needs_confirmation,
-                "detection_method": b.detection_method
-            })
-        
-        # 按学生聚合批改结果
-        student_results = []
-        for boundary in boundaries:
-            student_pages = [
-                r for r in grading_results
-                if boundary["start_page"] <= r.get("page_index", -1) <= boundary["end_page"]
-            ]
-            
-            # 如果有合并后的题目结果，使用它们
-            if merged_questions:
-                # 筛选属于该学生的题目（基于页面范围）
-                student_questions = []
-                for q in merged_questions:
-                    # 检查题目的页面索引是否在学生范围内
-                    q_pages = q.get("page_indices", [])
-                    if any(boundary["start_page"] <= p <= boundary["end_page"] for p in q_pages):
-                        student_questions.append(q)
-                
-                # 计算总分（使用合并后的题目，避免重复计算）
-                total_score = sum(q.get("score", 0) for q in student_questions)
-                max_total_score = sum(q.get("max_score", 0) for q in student_questions)
-                
-                all_question_details = student_questions
-            else:
-                # 降级：使用原始页面结果
-                valid_pages = [r for r in student_pages if r.get("status") == "completed" and not r.get("is_blank_page", False)]
-                
-                total_score = sum(r.get("score", 0) for r in valid_pages)
-                max_total_score = sum(r.get("max_score", 0) for r in valid_pages)
-                
-                # 收集所有题目详情
-                all_question_details = []
-                for page in valid_pages:
-                    for q in page.get("question_details", []):
-                        all_question_details.append({
-                            "question_id": q.get("question_id", ""),
-                            "score": q.get("score", 0),
-                            "max_score": q.get("max_score", 0),
-                            "feedback": q.get("feedback", ""),
-                            "student_answer": q.get("student_answer", ""),
-                            "is_correct": q.get("is_correct", False),
-                            "confidence": q.get("confidence", 0),
-                            "scoring_point_results": q.get("scoring_point_results") or [],
-                            "page_indices": q.get("page_indices") or [page.get("page_index")],
-                            "question_type": q.get("question_type") or q.get("questionType"),
-                            "grading_mode": grading_mode,
-                        })
-            
-            student_results.append({
-                "student_key": boundary["student_key"],
-                "start_page": boundary["start_page"],
-                "end_page": boundary["end_page"],
-                "total_score": total_score,
-                "max_total_score": max_total_score,
-                "page_results": student_pages,
-                "question_details": all_question_details,
-                "confidence": boundary["confidence"],
-                "needs_confirmation": boundary["needs_confirmation"],
-                "grading_mode": grading_mode,
-            })
-        
-        logger.info(
-            f"[segment] 学生分割完成: batch_id={batch_id}, "
-            f"检测到 {len(boundaries)} 名学生"
-        )
-        
-        return {
-            "student_boundaries": boundaries,
-            "student_results": student_results,
-            "current_stage": "segment_completed",
-            "percentage": 80.0,
-            "timestamps": {
-                **state.get("timestamps", {}),
-                "segment_at": datetime.now().isoformat()
-            }
-        }
-        
-    except Exception as e:
-        logger.error(f"[segment] 学生分割失败: {e}", exc_info=True)
-        
-        # 降级处理：将所有页面视为一个学生
-        if merged_questions:
-            # 使用合并后的题目
-            total_score = sum(q.get("score", 0) for q in merged_questions)
-            max_total_score = sum(q.get("max_score", 0) for q in merged_questions)
-            all_question_details = merged_questions
-        else:
-            # 使用原始页面结果
-            valid_results = [r for r in grading_results if r.get("status") == "completed" and not r.get("is_blank_page", False)]
-            total_score = sum(r.get("score", 0) for r in valid_results)
-            max_total_score = sum(r.get("max_score", 0) for r in valid_results)
-            
-            # 收集所有题目详情
-            all_question_details = []
-            for page in valid_results:
-                for q in page.get("question_details", []):
-                    all_question_details.append({
-                        "question_id": q.get("question_id", ""),
-                        "score": q.get("score", 0),
-                        "max_score": q.get("max_score", 0),
-                        "feedback": q.get("feedback", ""),
-                        "student_answer": q.get("student_answer", ""),
-                        "is_correct": q.get("is_correct", False),
-                        "confidence": q.get("confidence", 0),
-                        "scoring_point_results": q.get("scoring_point_results") or [],
-                        "page_indices": q.get("page_indices") or [page.get("page_index")],
-                        "question_type": q.get("question_type") or q.get("questionType"),
-                        "grading_mode": grading_mode,
-                    })
-        
-        # 使用唯一的学生标识
-        fallback_student_key = "学生A"
-        fallback_student_id = "FALLBACK_001"
-        
-        return {
-            "student_boundaries": [{
-                "student_key": fallback_student_key,
-                "start_page": 0,
-                "end_page": len(grading_results) - 1,
-                "confidence": 0.0,
-                "needs_confirmation": True
-            }],
-            "student_results": [{
-                "student_key": fallback_student_key,
-                "student_id": fallback_student_id,
-                "total_score": total_score,
-                "max_total_score": max_total_score,
-                "page_results": grading_results,
-                "question_details": all_question_details,
-                "confidence": 0.0,
-                "needs_confirmation": True,
-                "grading_mode": grading_mode,
-            }],
-            "current_stage": "segment_completed",
-            "percentage": 80.0,
-            "errors": state.get("errors", []) + [{
-                "node": "segment",
-                "error": str(e),
-                "timestamp": datetime.now().isoformat()
-            }]
-        }
 
 
 def _apply_student_result_overrides(
@@ -4901,7 +4091,6 @@ async def self_report_node(state: BatchGradingGraphState) -> Dict[str, Any]:
         }
 
     from src.services.llm_reasoning import LLMReasoningClient
-    from src.api.routes.batch_langgraph import broadcast_progress
 
     reasoning_client = LLMReasoningClient(api_key=api_key, rubric_registry=None)
     max_workers = int(os.getenv("SELF_REPORT_MAX_WORKERS", "3"))
@@ -4915,7 +4104,7 @@ async def self_report_node(state: BatchGradingGraphState) -> Dict[str, Any]:
         agent_id = f"report-worker-{index}"
 
         try:
-            await broadcast_progress(batch_id, {
+            await _broadcast_progress(batch_id, {
                 "type": "agent_update",
                 "agentId": agent_id,
                 "agentName": student_key,
@@ -4935,7 +4124,7 @@ async def self_report_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                     "summary": "无题目需要审查",
                     "generated_at": datetime.now().isoformat(),
                 }
-                await broadcast_progress(batch_id, {
+                await _broadcast_progress(batch_id, {
                     "type": "agent_update",
                     "agentId": agent_id,
                     "parentNodeId": "self_report",
@@ -4982,7 +4171,7 @@ async def self_report_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                     output_text, thinking_text = split_thinking_content(chunk)
                     if output_text:
                         response_text += output_text
-                        await broadcast_progress(batch_id, {
+                        await _broadcast_progress(batch_id, {
                             "type": "stream_delta",
                             "nodeId": "self_report",
                             "agentId": agent_id,
@@ -5088,7 +4277,7 @@ async def self_report_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                 fallback_report["source"] = "rule_fallback"
                 updated_student["self_report"] = fallback_report
 
-            await broadcast_progress(batch_id, {
+            await _broadcast_progress(batch_id, {
                 "type": "agent_update",
                 "agentId": agent_id,
                 "parentNodeId": "self_report",
@@ -5414,7 +4603,6 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
         }
 
     from src.services.llm_reasoning import LLMReasoningClient
-    from src.api.routes.batch_langgraph import broadcast_progress
 
     reasoning_client = LLMReasoningClient(api_key=api_key, rubric_registry=None)
     max_workers = int(os.getenv("LOGIC_REVIEW_MAX_WORKERS", "3"))
@@ -5429,7 +4617,7 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
         agent_id = f"review-worker-{index}"
 
         try:
-            await broadcast_progress(batch_id, {
+            await _broadcast_progress(batch_id, {
                 "type": "agent_update",
                 "agentId": agent_id,
                 "agentName": student_key,
@@ -5446,7 +4634,7 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                 updated_student["self_audit"] = _build_self_audit(updated_student)
                 updated_student["logic_reviewed_at"] = datetime.now().isoformat()
                 review_summary = _build_logic_review_summary(question_details)
-                await broadcast_progress(batch_id, {
+                await _broadcast_progress(batch_id, {
                     "type": "agent_update",
                     "agentId": agent_id,
                     "parentNodeId": "logic_review",
@@ -5472,7 +4660,7 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                 async for chunk in reasoning_client._call_text_api_stream(prompt):
                     output_text, thinking_text = split_thinking_content(chunk)
                     if thinking_text:
-                        await broadcast_progress(batch_id, {
+                        await _broadcast_progress(batch_id, {
                             "type": "llm_stream_chunk",
                             "nodeId": "logic_review",
                             "nodeName": "Logic Review",
@@ -5482,7 +4670,7 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                             "chunk": thinking_text,
                         })
                     if output_text:
-                        await broadcast_progress(batch_id, {
+                        await _broadcast_progress(batch_id, {
                             "type": "llm_stream_chunk",
                             "nodeId": "logic_review",
                             "nodeName": "Logic Review",
@@ -5579,7 +4767,7 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                 }
 
             review_summary = _build_logic_review_summary(updated_details)
-            await broadcast_progress(batch_id, {
+            await _broadcast_progress(batch_id, {
                 "type": "agent_update",
                 "agentId": agent_id,
                 "parentNodeId": "logic_review",
@@ -5855,18 +5043,19 @@ async def export_node(state: BatchGradingGraphState) -> Dict[str, Any]:
             f"将保存部分结果"
         )
     
-    # 尝试持久化到数据库
+    # 检查数据库可用性（留作持久化扩展）
+    # 注意：当前未实现持久化逻辑，保持 persisted=False 以确保 JSON 备份落盘
     persisted = False
     try:
-        from src.utils.database import get_db_pool
+        from src.utils.database import get_db_pool, db
         
         db_pool = await get_db_pool()
-        if db_pool:
-            # TODO: 实际的持久化逻辑
-            persisted = True
-            logger.info(f"[export] 结果已持久化到数据库: batch_id={batch_id}")
+        if db_pool is not None or db.is_available:
+            logger.info(
+                "[export] 数据库连接可用，但未实现持久化逻辑，继续导出 JSON 以确保数据安全"
+            )
     except Exception as e:
-        logger.warning(f"[export] 数据库持久化失败（离线模式）: {e}")
+        logger.warning(f"[export] 数据库连接检查失败（离线模式）: {e}")
     
     # 准备导出数据
     export_data = {
@@ -6257,11 +5446,8 @@ __all__ = [
     # 节点函数
     "intake_node",
     "preprocess_node",
-    "index_node",
     "rubric_parse_node",
     "grade_batch_node",
-    "cross_page_merge_node",
-    "index_merge_node",
     "self_report_node",
     "logic_review_node",
     "annotation_generation_node",  # 新增批注生成节点
