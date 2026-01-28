@@ -82,16 +82,16 @@
 ## 第五阶段：自白-记忆集成
 
 ### 7. 实现自白驱动的记忆更新
-- [ ] 7.1 扩展 `SelfReportIssue` 数据结构
-- [ ] 7.2 实现 `update_memory_from_self_report()` 函数
-- [ ] 7.3 在 `generate_self_report()` 中标记需要创建记忆的问题
-- [ ] 7.4 添加 `memory_updates` 到自白输出
+- [x] 7.1 扩展 `SelfReportIssue` 数据结构
+- [x] 7.2 实现 `update_memory_from_self_report()` 函数
+- [x] 7.3 在 `generate_self_report()` 中标记需要创建记忆的问题
+- [x] 7.4 添加 `memory_updates` 到自白输出
 - [ ] 7.5 编写属性测试验证 P4（自白-记忆一致性）
 
 ### 8. 实现记忆审查机制
-- [ ] 8.1 实现 `review_memory_conflict()` 函数
+- [x] 8.1 实现 `review_memory_conflict()` 函数
 - [ ] 8.2 在逻辑复核后调用记忆审查
-- [ ] 8.3 记录审查结果到记忆条目
+- [x] 8.3 记录审查结果到记忆条目
 - [ ] 8.4 添加单元测试
 
 ---
@@ -99,34 +99,34 @@
 ## 第六阶段：逻辑复核独立性
 
 ### 9. 确保逻辑复核独立性
-- [ ] 9.1 审查 `logic_review` 相关函数，移除记忆依赖
-- [ ] 9.2 添加代码注释说明独立性要求
-- [ ] 9.3 编写属性测试验证 P3（逻辑复核独立性）
+- [x] 9.1 审查 `logic_review` 相关函数，移除记忆依赖
+- [x] 9.2 添加代码注释说明独立性要求
+- [x] 9.3 编写属性测试验证 P3（逻辑复核独立性）
 
 ---
 
 ## 第七阶段：API 接口
 
 ### 10. 创建记忆管理 API
-- [ ] 10.1 创建 `src/api/routes/memory_api.py`
-- [ ] 10.2 实现 `GET /api/memory/stats` 统计接口
-- [ ] 10.3 实现 `GET /api/memory/list` 查询接口
-- [ ] 10.4 实现 `POST /api/memory/{id}/verify` 验证接口
-- [ ] 10.5 实现 `DELETE /api/memory/{id}` 软删除接口
-- [ ] 10.6 实现 `POST /api/memory/{id}/rollback` 回滚接口
-- [ ] 10.7 注册路由到 `main.py`
+- [x] 10.1 创建 `src/api/routes/memory_api.py`
+- [x] 10.2 实现 `GET /api/memory/stats` 统计接口
+- [x] 10.3 实现 `GET /api/memory/list` 查询接口
+- [x] 10.4 实现 `POST /api/memory/{id}/verify` 验证接口
+- [x] 10.5 实现 `DELETE /api/memory/{id}` 软删除接口
+- [x] 10.6 实现 `POST /api/memory/{id}/rollback` 回滚接口
+- [x] 10.7 注册路由到 `main.py`
 
 ### 11. 增强自白 API
-- [ ] 11.1 更新 `GET /api/grading/{batch_id}/self-report` 返回格式
-- [ ] 11.2 添加 `memory_updates` 字段
-- [ ] 11.3 添加 API 文档
+- [x] 11.1 更新 `GET /api/grading/{batch_id}/self-report` 返回格式
+- [x] 11.2 添加 `memory_updates` 字段
+- [x] 11.3 添加 API 文档
 
 ---
 
 ## 第八阶段：测试与文档
 
 ### 12. 综合测试与文档
-- [ ] 12.1 编写端到端测试
+- [x] 12.1 编写端到端测试
 - [ ] 12.2 更新 API 文档
 - [ ] 12.3 更新 README 说明新功能
 - [ ] 12.4 添加使用示例

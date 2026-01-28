@@ -283,6 +283,14 @@ try:
 except ImportError as e:
     logger.warning(f"辅助批改 API 导入失败: {e}")
 
+# 记忆管理 API (新增)
+try:
+    from src.api.routes import memory_api
+    app.include_router(memory_api.router, prefix="/api", tags=["记忆管理"])
+    logger.info("记忆管理 API 已注册")
+except ImportError as e:
+    logger.warning(f"记忆管理 API 导入失败: {e}")
+
 # Phase 6: 班级系统集成 API (延迟导入避免循环依赖)
 try:
     from src.api.routes import class_integration

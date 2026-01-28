@@ -2736,3 +2736,162 @@ async def render_batch_annotations(
     except Exception as e:
         logger.error(f"批量渲染批注失败: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"渲染失败: {str(e)}")
+
+
+# ==================== 自白 API (Task 11) ====================
+
+class SelfReportResponse(BaseModel):
+    """自白报告响应"""
+    batch_id: str
+    overall_status: str
+    overall_confidence: float
+    issues: List[Dict[str, Any]]
+    warnings: List[str]
+    summary: str
+    memory_updates: List[Dict[str, Any]]
+    generated_at: str
+
+
+@router.get("/self-report/{batch_id}")
+async def get_batch_self_report(
+    batch_id: str,
+    include_memory_updates: bool = True,
+    orchestrator: Orchestrator = Depends(get_orchestrator)
+):
+    """
+    获取批次批改自白报告（增强版）
+    
+    自白报告包含：
+    - 整体状态和置信度
+    - 问题列表（低置信度、缺失证据、另类解法等）
+    - 警告信息
+    - 记忆更新记录（新增）
+    
+    Args:
+        batch_id: 批次 ID
+        include_memory_updates: 是否包含记忆更新记录
+        orchestrator: LangGraph Orchestrator
+        
+    Returns:
+        自白报告
+        
+    Requirements: Task 11 (增强自白 API)
+    """
+    try:
+        if not orchestrator:
+            raise HTTPException(status_code=503, detail="编排器未初始化")
+        
+        run_id = f"batch_grading_{batch_id}"
+        run_info = await orchestrator.get_run_info(run_id)
+        
+        if not run_info:
+            raise HTTPException(status_code=404, detail="批次不存在")
+        
+        state = run_info.state or {}
+        student_results = state.get("student_results", [])
+        
+        if not student_results:
+            raise HTTPException(status_code=404, detail="无批改结果")
+        
+        # 汇总所有学生的自白
+        all_issues: List[Dict[str, Any]] = []
+        all_warnings: List[str] = []
+        total_confidence = 0.0
+        student_count = 0
+        
+        for student in student_results:
+            self_report = student.get("self_report") or student.get("selfReport") or {}
+            self_audit = student.get("self_audit") or student.get("selfAudit") or {}
+            
+            # 收集问题
+            issues = self_report.get("issues", [])
+            if issues:
+                student_key = student.get("student_key") or student.get("studentKey") or "Unknown"
+                for issue in issues:
+                    issue_copy = dict(issue)
+                    issue_copy["student_key"] = student_key
+                    all_issues.append(issue_copy)
+            
+            # 收集警告
+            warnings = self_report.get("warnings", [])
+            all_warnings.extend(warnings)
+            
+            # 计算置信度
+            conf = self_report.get("overall_confidence") or self_audit.get("overall_confidence")
+            if conf:
+                total_confidence += float(conf)
+                student_count += 1
+        
+        # 计算整体置信度
+        avg_confidence = total_confidence / student_count if student_count > 0 else 0.5
+        
+        # 确定整体状态
+        error_count = sum(1 for i in all_issues if i.get("severity") == "error")
+        warning_count = sum(1 for i in all_issues if i.get("severity") == "warning")
+        
+        if error_count > 0:
+            overall_status = "needs_review"
+        elif warning_count > 3:
+            overall_status = "caution"
+        else:
+            overall_status = "ok"
+        
+        # 获取记忆更新记录
+        memory_updates: List[Dict[str, Any]] = []
+        if include_memory_updates:
+            try:
+                from src.services.grading_memory import get_memory_service
+                memory_service = get_memory_service()
+                batch_memory = memory_service.get_batch_memory(batch_id)
+                
+                if batch_memory:
+                    # 从批次记忆中提取更新记录
+                    for correction in batch_memory.corrections:
+                        memory_updates.append({
+                            "type": "correction",
+                            "question_id": correction.get("question_id"),
+                            "original_score": correction.get("original_score"),
+                            "corrected_score": correction.get("corrected_score"),
+                            "reason": correction.get("reason"),
+                            "source": correction.get("source"),
+                            "timestamp": correction.get("timestamp"),
+                        })
+                    
+                    # 添加错误模式记录
+                    for pattern, count in batch_memory.error_patterns.items():
+                        if count >= 2:
+                            memory_updates.append({
+                                "type": "error_pattern",
+                                "pattern": pattern,
+                                "occurrence_count": count,
+                                "action": "recorded",
+                            })
+            except Exception as e:
+                logger.warning(f"获取记忆更新失败: {e}")
+        
+        # 生成摘要
+        summary_parts = [f"批次 {batch_id}: 共 {len(student_results)} 名学生"]
+        if error_count > 0:
+            summary_parts.append(f"{error_count} 处需核查")
+        if warning_count > 0:
+            summary_parts.append(f"{warning_count} 条警告")
+        summary_parts.append(f"平均置信度 {avg_confidence:.1%}")
+        
+        return {
+            "batch_id": batch_id,
+            "overall_status": overall_status,
+            "overall_confidence": round(avg_confidence, 3),
+            "issues": all_issues,
+            "warnings": list(set(all_warnings)),  # 去重
+            "summary": "，".join(summary_parts),
+            "memory_updates": memory_updates,
+            "generated_at": datetime.now().isoformat(),
+            "student_count": len(student_results),
+            "issue_count": len(all_issues),
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"获取自白报告失败: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"获取失败: {str(e)}")

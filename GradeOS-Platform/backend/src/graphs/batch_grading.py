@@ -4356,6 +4356,27 @@ def _build_logic_review_prompt(
     - 不允许引入新事实/新推理
     - 要有批判性思维，查漏补缺
     - 具备有限的修正能力（明显错误）
+    
+    ⚠️ 重要：逻辑复核独立性原则 (P3)
+    =========================================
+    此函数构建的 prompt 不能包含任何记忆系统的数据！
+    
+    逻辑复核必须是"无状态"的：
+    1. 不能引用历史批改经验或记忆
+    2. 不能使用 generate_confession_context() 的输出
+    3. 评分决策完全基于当前评分标准和学生答案
+    
+    允许的输入：
+    - student: 当前学生的批改结果
+    - question_details: 当前批改的题目详情
+    - rubric_map: 评分标准（从 parsed_rubric 构建）
+    - confession: 自白报告（仅用于交叉验证，不影响评分）
+    
+    禁止的输入：
+    - 任何来自 GradingMemoryService 的数据
+    - 历史批改模式或经验
+    - 校准建议或置信度调整
+    =========================================
     """
     student_key = student.get("student_key") or student.get("student_name") or "Unknown"
     max_questions = limits.get("max_questions", 20)
@@ -4551,10 +4572,23 @@ def _build_logic_review_prompt(
 
 async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     """
-    逻辑复核节点（文本输入）- 集成记忆系统
-
+    逻辑复核节点（文本输入）
+    
     每个学生进行一次纯文本 LLM 复核，输出题目置信度与自白说明。
-    **新增**：记录修正历史到记忆系统，用于未来的批改改进。
+    
+    ⚠️ 重要：逻辑复核独立性原则 (P3)
+    =========================================
+    逻辑复核必须是"无状态"的，即：
+    1. 评分决策不能依赖记忆系统中的任何数据
+    2. LLM prompt 不能包含历史记忆上下文
+    3. 复核结果完全基于当前评分标准和学生答案
+    
+    记忆系统在此节点的使用仅限于：
+    - 记录修正历史（用于未来的批改改进）
+    - 整合批次记忆到长期记忆
+    
+    这些操作发生在评分决策之后，不影响评分结果。
+    =========================================
     """
     batch_id = state["batch_id"]
     student_results = state.get("student_results", []) or []
