@@ -1293,39 +1293,36 @@ def grading_fanout_router(state: BatchGradingGraphState) -> List[Send]:
     processed_images = state.get("processed_images", [])
     rubric = state.get("rubric", "")
     parsed_rubric = state.get("parsed_rubric", {})
-    page_index_contexts = state.get("page_index_contexts", {})
     api_key = state.get("api_key", "")
-    student_boundaries = state.get("student_boundaries", [])
+    inputs = state.get("inputs", {})
+    
+    # 从前端获取 student_mapping
+    student_mapping = state.get("student_mapping") or inputs.get("student_mapping")
+    student_boundaries = []
+    
+    # 如果前端提供了 student_mapping，转换为 student_boundaries
+    if student_mapping and isinstance(student_mapping, list):
+        for idx, mapping in enumerate(student_mapping):
+            pages = mapping.get("pages") or mapping.get("page_indices") or mapping.get("pageIndices")
+            if pages:
+                pages_list = list(pages) if not isinstance(pages, list) else pages
+                if pages_list:
+                    student_boundaries.append({
+                        "student_key": mapping.get("student_key") or mapping.get("studentKey") or f"学生{idx+1}",
+                        "student_id": mapping.get("student_id") or mapping.get("studentId"),
+                        "student_name": mapping.get("student_name") or mapping.get("studentName"),
+                        "start_page": min(pages_list),
+                        "end_page": max(pages_list),
+                        "pages": sorted(pages_list)
+                    })
+        logger.info(f"[grading_fanout] 从前端获取 {len(student_boundaries)} 个学生映射")
     
     if not processed_images:
         logger.warning(f"[grading_fanout] 没有待批改的图像: batch_id={batch_id}")
-        return [Send("index_merge", state)]
+        return [Send("simple_aggregate", state)]
 
-    if not student_boundaries and page_index_contexts:
-        grouped: Dict[str, List[int]] = {}
-        for page_idx, context in page_index_contexts.items():
-            if context is None:
-                continue
-            student_key = context.get("student_key")
-            if not student_key:
-                continue
-            grouped.setdefault(str(student_key), []).append(int(page_idx))
-        derived_boundaries = []
-        for idx, (student_key, pages) in enumerate(grouped.items()):
-            pages_sorted = sorted(pages)
-            if not pages_sorted:
-                continue
-            needs_confirmation = student_key.upper() in ("UNKNOWN", "UNASSIGNED") or student_key.startswith("Unassigned")
-            derived_boundaries.append({
-                "student_key": student_key,
-                "start_page": pages_sorted[0],
-                "end_page": pages_sorted[-1],
-                "confidence": 0.0,
-                "needs_confirmation": needs_confirmation,
-                "detection_method": "index_context",
-            })
-        if derived_boundaries:
-            student_boundaries = derived_boundaries
+    # 不再从 page_index_contexts 推导 student_boundaries
+    # 如果前端没有提供 student_mapping，则按批次大小分配
 
     # 获取批次配置 (Requirements: 3.1, 10.1)
     config = get_batch_config()
@@ -1352,12 +1349,6 @@ def grading_fanout_router(state: BatchGradingGraphState) -> List[Send]:
             if not batch_images:
                 logger.warning(f"[grading_fanout] 学生 {student_key} 没有图像，跳过")
                 continue
-            
-            batch_contexts = {
-                idx: page_index_contexts.get(idx)
-                for idx in page_indices
-                if idx in page_index_contexts
-            }
 
             task_state = {
                 "batch_id": batch_id,
@@ -1368,11 +1359,10 @@ def grading_fanout_router(state: BatchGradingGraphState) -> List[Send]:
                 "images": batch_images,
                 "rubric": rubric,
                 "parsed_rubric": copy.deepcopy(parsed_rubric),
-                "page_index_contexts": copy.deepcopy(batch_contexts),
                 "api_key": api_key,
                 "retry_count": 0,
                 "max_retries": max_retries,
-                "inputs": copy.deepcopy(state.get("inputs", {})),
+                "inputs": copy.deepcopy(inputs),
             }
             
             sends.append(Send("grade_batch", task_state))
@@ -1399,12 +1389,6 @@ def grading_fanout_router(state: BatchGradingGraphState) -> List[Send]:
         start_idx = batch_idx * batch_size
         end_idx = min(start_idx + batch_size, total_pages)
         batch_images = processed_images[start_idx:end_idx]
-        
-        batch_contexts = {
-            idx: page_index_contexts.get(idx)
-            for idx in range(start_idx, end_idx)
-            if idx in page_index_contexts
-        }
 
         task_state = {
             "batch_id": batch_id,
@@ -1414,11 +1398,10 @@ def grading_fanout_router(state: BatchGradingGraphState) -> List[Send]:
             "images": batch_images,
             "rubric": rubric,
             "parsed_rubric": copy.deepcopy(parsed_rubric),
-            "page_index_contexts": copy.deepcopy(batch_contexts),
             "api_key": api_key,
             "retry_count": 0,
             "max_retries": max_retries,
-            "inputs": copy.deepcopy(state.get("inputs", {})),
+            "inputs": copy.deepcopy(inputs),
         }
         
         sends.append(Send("grade_batch", task_state))
@@ -2819,169 +2802,74 @@ async def _grade_batch_node_impl(state: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-async def cross_page_merge_node(state: BatchGradingGraphState) -> Dict[str, Any]:
+async def simple_aggregate_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     """
-    跨页题目合并节点
+    简单聚合节点
     
-    在索引聚合之前执行，负责：
-    1. 检测跨页题目
-    2. 合并跨页题目的评分结果
-    3. 确保满分不重复计算
-    
-    Requirements: 2.1, 4.2, 4.3
+    将 grading_results 按 student_key 聚合为 student_results
+    不再进行跨页合并和复杂的学生分割，只做简单分组
     """
     batch_id = state["batch_id"]
     grading_results = state.get("grading_results", [])
     
-    logger.info(f"[cross_page_merge] 开始跨页题目合并: batch_id={batch_id}")
+    logger.info(f"[simple_aggregate] 开始聚合学生结果: batch_id={batch_id}")
     
-    # 去重：由于并行聚合可能导致重复，按 page_index 去重
-    seen_pages = set()
-    unique_results = []
+    # 按 student_key 分组
+    from collections import defaultdict
+    students_dict = defaultdict(lambda: {
+        "questions": [],
+        "pages": set(),
+        "total_score": 0.0,
+        "max_total_score": 0.0
+    })
+    
+    # 遍历每页结果，按 student_key 分组
     for result in grading_results:
-        page_idx = result.get("page_index")
-        if page_idx is not None and page_idx not in seen_pages:
-            seen_pages.add(page_idx)
-            unique_results.append(result)
+        student_key = result.get("student_key", "未知学生")
+        page_index = result.get("page_index", 0)
+        
+        students_dict[student_key]["pages"].add(page_index)
+        
+        # 添加题目到学生
+        for question in result.get("question_details", []):
+            students_dict[student_key]["questions"].append(question)
+            students_dict[student_key]["total_score"] += question.get("score", 0.0)
+            students_dict[student_key]["max_total_score"] += question.get("max_score", 0.0)
     
-    # 按页码排序
-    unique_results.sort(key=lambda x: x.get("page_index", 0))
-    grading_results = unique_results
+    # 转换为 student_results 列表
+    student_results = []
+    for student_key, data in students_dict.items():
+        pages_sorted = sorted(list(data["pages"]))
+        student_results.append({
+            "student_key": student_key,
+            "student_id": None,  # 从 grade_batch 获取
+            "student_name": None,
+            "start_page": pages_sorted[0] if pages_sorted else 0,
+            "end_page": pages_sorted[-1] if pages_sorted else 0,
+            "total_score": data["total_score"],
+            "max_total_score": data["max_total_score"],
+            "question_details": data["questions"],
+            "grading_mode": _resolve_grading_mode(state.get("inputs", {}), state.get("parsed_rubric", {}))
+        })
     
-    try:
-        # 将字典格式转换为 PageGradingResult 对象
-        from src.models.grading_models import PageGradingResult, QuestionResult, ScoringPoint, ScoringPointResult
-        
-        page_results = []
-        for result in grading_results:
-            # 转换 question_details 为 QuestionResult 对象
-            question_results = []
-            for q in result.get("question_details", []):
-                # 构建得分点结果
-                scoring_point_results = []
-                for sp in q.get("scoring_point_results", []):
-                    scoring_point = ScoringPoint(
-                        description=sp.get("description", ""),
-                        score=sp.get("score", 0.0),
-                        is_required=sp.get("is_required", False),
-                        point_id=(
-                            sp.get("point_id")
-                            or sp.get("pointId")
-                            or (sp.get("scoring_point") or {}).get("point_id")
-                            or ""
-                        ),
-                    )
-                    scoring_point_result = ScoringPointResult(
-                        scoring_point=scoring_point,
-                        awarded=sp.get("awarded", 0.0),
-                        evidence=sp.get("evidence", "")
-                    )
-                    scoring_point_results.append(scoring_point_result)
-                
-                question_result = QuestionResult(
-                    question_id=q.get("question_id", ""),
-                    score=q.get("score", 0.0),
-                    max_score=q.get("max_score", 0.0),
-                    confidence=q.get("confidence", 1.0),
-                    feedback=q.get("feedback", ""),
-                    scoring_point_results=scoring_point_results,
-                    page_indices=[result.get("page_index", 0)],
-                    is_cross_page=False,
-                    merge_source=None,
-                    student_answer=q.get("student_answer", ""),
-                    question_type=q.get("question_type") or q.get("questionType"),
-                    annotations=q.get("annotations", []),
-                )
-                question_results.append(question_result)
-            
-            page_result = PageGradingResult(
-                page_index=result.get("page_index", 0),
-                question_results=question_results,
-                student_info=result.get("student_info"),
-                is_blank_page=result.get("is_blank_page", False),
-                raw_response=result.get("page_summary", "")
-            )
-            page_results.append(page_result)
-        
-        # 使用 ResultMerger 进行跨页合并
-        from src.services.result_merger import ResultMerger
-        
-        merger = ResultMerger()
-        merged_questions, cross_page_questions = merger.merge_cross_page_questions(page_results)
-        
-        # 将合并后的结果转换回字典格式
-        merged_question_dicts = []
-        for q in merged_questions:
-            merged_question_dicts.append({
-                "question_id": q.question_id,
-                "score": q.score,
-                "max_score": q.max_score,
-                "confidence": q.confidence,
-                "feedback": q.feedback,
-                "student_answer": q.student_answer,
-                "question_type": q.question_type,
-                "is_cross_page": q.is_cross_page,
-                "page_indices": q.page_indices,
-                "merge_source": q.merge_source,
-                "annotations": q.annotations if hasattr(q, 'annotations') else [],
-                "scoring_point_results": [
-                    {
-                        "description": spr.scoring_point.description,
-                        "score": spr.scoring_point.score,
-                        "is_required": spr.scoring_point.is_required,
-                        "awarded": spr.awarded,
-                        "evidence": spr.evidence,
-                        "point_id": spr.scoring_point.point_id if hasattr(spr.scoring_point, 'point_id') else "",
-                    }
-                    for spr in q.scoring_point_results
-                ]
-            })
-        
-        # 转换跨页题目信息
-        cross_page_info = []
-        for cpq in cross_page_questions:
-            cross_page_info.append({
-                "question_id": cpq.question_id,
-                "page_indices": cpq.page_indices,
-                "confidence": cpq.confidence,
-                "merge_reason": cpq.merge_reason
-            })
-        
-        logger.info(
-            f"[cross_page_merge] 跨页合并完成: batch_id={batch_id}, "
-            f"检测到 {len(cross_page_questions)} 个跨页题目, "
-            f"合并后共 {len(merged_questions)} 道题目"
-        )
-        
-        return {
-            "merged_questions": merged_question_dicts,
-            "cross_page_questions": cross_page_info,
-            "current_stage": "cross_page_merge_completed",
-            "percentage": 75.0,
-            "timestamps": {
-                **state.get("timestamps", {}),
-                "cross_page_merge_at": datetime.now().isoformat()
-            }
+    logger.info(
+        f"[simple_aggregate] 聚合完成: batch_id={batch_id}, "
+        f"共 {len(student_results)} 个学生"
+    )
+    
+    return {
+        "student_results": student_results,
+        "current_stage": "aggregate_completed",
+        "percentage": 75.0,
+        "timestamps": {
+            **state.get("timestamps", {}),
+            "aggregate_at": datetime.now().isoformat()
         }
-        
-    except Exception as e:
-        logger.error(f"[cross_page_merge] 跨页合并失败: {e}", exc_info=True)
-        
-        # 降级处理：不进行跨页合并，直接传递原始结果
-        return {
-            "merged_questions": [],
-            "cross_page_questions": [],
-            "current_stage": "cross_page_merge_completed",
-            "percentage": 75.0,
-            "errors": state.get("errors", []) + [{
-                "node": "cross_page_merge",
-                "error": str(e),
-                "timestamp": datetime.now().isoformat()
-            }]
-        }
+    }
 
 
-async def index_merge_node(state: BatchGradingGraphState) -> Dict[str, Any]:
+# 删除 index_merge_node，不再需要
+# async def index_merge_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     """
     索引对齐聚合节点
 
@@ -6226,18 +6114,20 @@ def create_batch_grading_graph(
     checkpointer: Optional[AsyncPostgresSaver] = None,
     batch_config: Optional[BatchConfig] = None,
 ) -> StateGraph:
-    """创建批量批改 Graph
+    """创建批量批改 Graph（简化版）
     
     工作流：
     1. intake: 接收文件
     2. preprocess: 图像预处理
-    3. index: 批改前索引（题目信息 + 学生识别）
-    4. rubric_parse: 解析评分标准
-    5. grade_batch (并行): 可配置分批批改所有页面
-    6. cross_page_merge: 跨页题目合并
-    7. index_merge: 基于索引聚合学生结果
-    8. review: 结果审核
-    9. export: 导出结果
+    3. rubric_parse: 解析评分标准
+    4. rubric_review: 人工审核（可跳过）
+    5. grade_batch (并行): 按学生或批次大小并行批改
+    6. simple_aggregate: 简单聚合为学生结果
+    7. self_report: 自白节点（风险分析）
+    8. logic_review: 逻辑复核
+    9. annotation_generation: 生成批注
+    10. review: 结果审核
+    11. export: 导出结果
     
     流程图：
     ```
@@ -6245,17 +6135,21 @@ def create_batch_grading_graph(
       ↓
     preprocess
       ↓
-    index
-      ↓
     rubric_parse
       ↓
+    rubric_review (可跳过)
+      ↓
     ┌─────────────────┐
-    │ grade_batch (N) │  ← 并行批改（可配置批次大小）
+    │ grade_batch (N) │  ← 并行批改（按学生分批）
     └─────────────────┘
       ↓
-    cross_page_merge  ← 跨页题目合并
+    simple_aggregate  ← 简单聚合
       ↓
-    index_merge  ← 基于索引聚合
+    self_report  ← 自白（记忆系统）
+      ↓
+    logic_review  ← 逻辑复核
+      ↓
+    annotation_generation  ← 批注生成
       ↓
     review
       ↓
@@ -6265,11 +6159,16 @@ def create_batch_grading_graph(
     ```
     
     特性：
-    - 可配置批次大小 (Requirements: 3.1, 10.1)
+    - 按学生分批批改（前端提供 student_mapping）
     - Worker 独立性保证 (Requirements: 3.2)
     - 批次失败重试 (Requirements: 3.3, 9.3)
     - 实时进度报告 (Requirements: 3.4)
-    - 跨页题目合并 (Requirements: 2.1, 4.2, 4.3)
+    - 记忆系统集成（科目隔离）
+    
+    已移除：
+    - index 节点（不再需要索引层）
+    - cross_page_merge 节点（不再需要跨页合并）
+    - index_merge 节点（不再需要索引聚合）
     
     Args:
         checkpointer: PostgreSQL Checkpointer（可选）
@@ -6294,43 +6193,41 @@ def create_batch_grading_graph(
     # 添加节点
     graph.add_node("intake", intake_node)
     graph.add_node("preprocess", preprocess_node)
-    graph.add_node("index", index_node)
+    # graph.add_node("index", index_node)  # 已移除：不再需要索引层
     graph.add_node("rubric_parse", rubric_parse_node)
     graph.add_node("rubric_review", rubric_review_node)
     graph.add_node("grade_batch", grade_batch_node)
-    graph.add_node("cross_page_merge", cross_page_merge_node)
-    graph.add_node("index_merge", index_merge_node)
+    graph.add_node("simple_aggregate", simple_aggregate_node)  # 简单聚合节点
+    # graph.add_node("cross_page_merge", cross_page_merge_node)  # 已移除：不再需要跨页合并
+    # graph.add_node("index_merge", index_merge_node)  # 已移除：不再需要索引聚合
     graph.add_node("self_report", self_report_node)
     graph.add_node("logic_review", logic_review_node)
-    graph.add_node("annotation_generation", annotation_generation_node)  # 新增批注生成节点
+    graph.add_node("annotation_generation", annotation_generation_node)
     graph.add_node("review", review_node)
     graph.add_node("export", export_node)
     
     # 入口点
     graph.set_entry_point("intake")
     
-    # 线性流程：intake → preprocess → rubric_parse
+    # 简化流程：intake → preprocess → rubric_parse → rubric_review
     graph.add_edge("intake", "preprocess")
-    graph.add_edge("preprocess", "index")
-    graph.add_edge("index", "rubric_parse")
+    graph.add_edge("preprocess", "rubric_parse")  # 跳过 index
     graph.add_edge("rubric_parse", "rubric_review")
 
     # rubric_review 后扇出到并行批改
     graph.add_conditional_edges(
         "rubric_review",
         grading_fanout_router,
-        ["grade_batch", "cross_page_merge", "index_merge"]
+        ["grade_batch", "simple_aggregate"]  # 简化：只需要 grade_batch 和 simple_aggregate
     )
     
-    # 并行批改后聚合到 cross_page_merge
-    graph.add_edge("grade_batch", "cross_page_merge")
+    # 并行批改后聚合
+    graph.add_edge("grade_batch", "simple_aggregate")
     
-    # cross_page_merge → index_merge → self_report → logic_review → review → export → END
-    # cross_page_merge → index_merge → self_report → logic_review → annotation_generation → review → export → END
-    graph.add_edge("cross_page_merge", "index_merge")
-    graph.add_edge("index_merge", "self_report")
+    # 简化流程：simple_aggregate → self_report → logic_review → annotation_generation → review → export → END
+    graph.add_edge("simple_aggregate", "self_report")
     graph.add_edge("self_report", "logic_review")
-    graph.add_edge("logic_review", "annotation_generation")  # 逻辑复核后生成批注
+    graph.add_edge("logic_review", "annotation_generation")
     graph.add_edge("annotation_generation", "review")
     graph.add_edge("review", "export")
     graph.add_edge("export", END)
