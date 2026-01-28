@@ -695,11 +695,21 @@ export const ResultsView: React.FC = () => {
 
     // 🔥 API 备用方案：当 WebSocket 失败时，主动调用 API 获取结果
     useEffect(() => {
+        // 调试日志
+        console.log('[API Fallback Check]', {
+            submissionId,
+            finalResultsLength: finalResults.length,
+            status,
+            alreadyAttempted: submissionId ? apiFallbackAttemptedRef.current.has(submissionId) : false
+        });
+        
         // 条件：有 submissionId，没有结果，状态为 COMPLETED，且未尝试过
         if (!submissionId || finalResults.length > 0 || status !== 'COMPLETED') {
+            console.log('[API Fallback] Skipping - conditions not met');
             return;
         }
         if (apiFallbackAttemptedRef.current.has(submissionId)) {
+            console.log('[API Fallback] Skipping - already attempted for this submissionId');
             return;
         }
         
@@ -2636,6 +2646,14 @@ export const ResultsView: React.FC = () => {
 
     // === Dashboard View ===
     if (results.length === 0) {
+        // 调试日志
+        console.log('[ResultsView Empty State]', {
+            submissionId,
+            status,
+            apiFallbackLoading,
+            apiFallbackError
+        });
+        
         return (
             <div className="flex flex-col items-center justify-center h-full text-slate-400 gap-4">
                 <div className="p-8 flex flex-col items-center gap-4">
@@ -2651,7 +2669,8 @@ export const ResultsView: React.FC = () => {
                             {apiFallbackError && (
                                 <p className="text-sm text-red-500">{apiFallbackError}</p>
                             )}
-                            {submissionId && (
+                            {/* 始终显示重新获取按钮（当有 submissionId 或 status 为 COMPLETED 时） */}
+                            {(submissionId || status === 'COMPLETED') && (
                                 <SmoothButton onClick={handleRetryFetch} variant="primary" size="sm">
                                     <Loader2 className="w-4 h-4 mr-2" /> 重新获取结果
                                 </SmoothButton>
