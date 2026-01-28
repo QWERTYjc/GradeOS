@@ -94,6 +94,88 @@ export default function GradingScanner() {
       setError('请先选择答题文件');
       return;
     }
+    
+    // ⚠️ 分批提示弹窗
+    const shouldContinue = await new Promise<boolean>((resolve) => {
+      // 创建弹窗
+      const overlay = document.createElement('div');
+      overlay.className = 'fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 backdrop-blur-sm';
+      
+      const modal = document.createElement('div');
+      modal.className = 'bg-white rounded-xl shadow-2xl p-8 max-w-lg mx-4 animate-in fade-in zoom-in duration-200';
+      modal.innerHTML = `
+        <div class="flex items-start gap-4 mb-6">
+          <div class="flex-shrink-0 w-12 h-12 rounded-full bg-amber-100 flex items-center justify-center">
+            <svg class="w-6 h-6 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+            </svg>
+          </div>
+          <div class="flex-1">
+            <h3 class="text-xl font-semibold text-gray-900 mb-2">重要提示：请确认已按学生分批</h3>
+            <div class="space-y-3 text-gray-600">
+              <p class="text-sm leading-relaxed">
+                为确保批改准确性，<span class="font-semibold text-gray-900">请在上传前完成学生试卷的分批</span>。
+              </p>
+              <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <p class="text-sm font-medium text-blue-900 mb-2">分批要求：</p>
+                <ul class="text-sm text-blue-800 space-y-1 list-disc list-inside">
+                  <li>每个学生的试卷应该按顺序排列</li>
+                  <li>不同学生的试卷应该明确分开</li>
+                  <li>确保页面顺序正确，没有遗漏或重复</li>
+                </ul>
+              </div>
+              <p class="text-sm font-medium text-gray-700">
+                确认已完成分批后，点击"继续批改"开始。
+              </p>
+            </div>
+          </div>
+        </div>
+        <div class="flex gap-3 justify-end">
+          <button id="cancel-btn" class="px-6 py-2.5 rounded-lg border border-gray-300 text-gray-700 font-medium hover:bg-gray-50 transition-colors">
+            取消
+          </button>
+          <button id="continue-btn" class="px-6 py-2.5 rounded-lg bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-medium hover:from-blue-700 hover:to-indigo-700 transition-all shadow-sm">
+            已分批，继续批改
+          </button>
+        </div>
+      `;
+      
+      overlay.appendChild(modal);
+      document.body.appendChild(overlay);
+      
+      // 绑定按钮事件
+      const cancelBtn = overlay.querySelector('#cancel-btn');
+      const continueBtn = overlay.querySelector('#continue-btn');
+      
+      const cleanup = () => {
+        overlay.remove();
+      };
+      
+      cancelBtn?.addEventListener('click', () => {
+        cleanup();
+        resolve(false);
+      });
+      
+      continueBtn?.addEventListener('click', () => {
+        cleanup();
+        resolve(true);
+      });
+      
+      // ESC 键关闭
+      const handleEsc = (e: KeyboardEvent) => {
+        if (e.key === 'Escape') {
+          cleanup();
+          resolve(false);
+          document.removeEventListener('keydown', handleEsc);
+        }
+      };
+      document.addEventListener('keydown', handleEsc);
+    });
+    
+    if (!shouldContinue) {
+      return; // 用户取消
+    }
+    
     setIsUploading(true);
     setError(null);
     setStatus('UPLOADING');
