@@ -6,15 +6,21 @@ export const dynamic = 'force-dynamic';
 import React, { useState, useEffect, useMemo } from 'react';
 import { Images, ScanLine, Send, ArrowLeft, CheckCircle2, Loader2 } from 'lucide-react';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import { AppContext, AppContextType } from '@/components/bookscan/AppContext';
 import Scanner from '@/components/bookscan/Scanner';
 import Gallery from '@/components/bookscan/Gallery';
 import { ScannedImage, Session } from '@/components/bookscan/types';
-import { submitToGradingSystem } from '@/components/bookscan/submissionService';
+import { homeworkApi, HomeworkResponse } from '@/services/api';
+import { useAuthStore } from '@/store/authStore';
 
 type ViewTab = 'scan' | 'gallery';
 
 export default function StudentScanPage() {
+  const searchParams = useSearchParams();
+  const homeworkId = searchParams.get('homeworkId');
+  const { user } = useAuthStore();
+  
   const [sessions, setSessions] = useState<Session[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<ViewTab>('scan');
@@ -26,23 +32,41 @@ export default function StudentScanPage() {
     score?: number;
     feedback?: string;
   } | null>(null);
+  
+  // 作业信息
+  const [homework, setHomework] = useState<HomeworkResponse | null>(null);
+  const [loadingHomework, setLoadingHomework] = useState(false);
+
+  // 加载作业信息
+  useEffect(() => {
+    if (homeworkId) {
+      setLoadingHomework(true);
+      homeworkApi.getDetail(homeworkId)
+        .then(setHomework)
+        .catch(console.error)
+        .finally(() => setLoadingHomework(false));
+    }
+  }, [homeworkId]);
 
   useEffect(() => {
-    const saved = localStorage.getItem('gradeos_scan_sessions');
-    if (saved) {
-      const parsed = JSON.parse(saved);
-      setSessions(parsed);
-      if (parsed.length > 0) setCurrentSessionId(parsed[0].id);
-    } else {
-      createNewSession('默认扫描会话');
+    try {
+      // 清空所有可能的旧 localStorage 数据，避免配额问题
+      const keysToRemove = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && (key.includes('scan') || key.includes('gradeos') || key.includes('session'))) {
+          keysToRemove.push(key);
+        }
+      }
+      keysToRemove.forEach(key => localStorage.removeItem(key));
+    } catch (e) {
+      // 忽略错误
     }
+    createNewSession('默认扫描会话');
   }, []);
 
-  useEffect(() => {
-    if (sessions.length > 0) {
-      localStorage.setItem('gradeos_scan_sessions', JSON.stringify(sessions));
-    }
-  }, [sessions]);
+  // 不再保存 sessions 到 localStorage，避免配额问题
+  // 图片数据只保存在内存中，提交后清空
 
   const createNewSession = (name?: string) => {
     const newSession: Session = {
@@ -118,19 +142,34 @@ export default function StudentScanPage() {
       alert('请先扫描或上传图片');
       return;
     }
+    
+    if (!homeworkId) {
+      alert('缺少作业ID，请从作业列表进入');
+      return;
+    }
 
     setIsSubmitting(true);
     try {
-      const result = await submitToGradingSystem(
-        currentSession.images,
-        'hw-001',
-        'student-001',
-        '测试学生'
-      );
+      const images = currentSession.images.map(img => img.url);
+      const studentId = user?.id || 'student-001';
+      const studentName = user?.name || '测试学生';
+      
+      const result = await homeworkApi.submitScan({
+        homework_id: homeworkId,
+        student_id: studentId,
+        student_name: studentName,
+        images
+      });
+      
+      // 清空扫描会话
+      setSessions([]);
+      localStorage.removeItem('gradeos_scan_sessions');
+      createNewSession('默认扫描会话');
+      
       setSubmitResult({
         success: true,
         score: result.score,
-        feedback: result.feedback
+        feedback: result.feedback || '作业已提交，等待批改'
       });
     } catch (error: any) {
       setSubmitResult({ success: false, feedback: error.message });
@@ -204,8 +243,12 @@ export default function StudentScanPage() {
               <button className="p-2 hover:bg-slate-100 rounded-xl"><ArrowLeft size={20} className="text-slate-600" /></button>
             </Link>
             <div>
-              <h1 className="text-lg font-black text-slate-800">扫描提交作业</h1>
-              <p className="text-xs text-slate-400">BookScan AI Engine</p>
+              <h1 className="text-lg font-black text-slate-800">
+                {loadingHomework ? '加载中...' : (homework?.title || '扫描提交作业')}
+              </h1>
+              <p className="text-xs text-slate-400">
+                {homework?.deadline ? `截止: ${homework.deadline}` : 'BookScan AI Engine'}
+              </p>
             </div>
           </div>
           {imageCount > 0 && (

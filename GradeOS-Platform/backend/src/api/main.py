@@ -282,6 +282,14 @@ try:
 except ImportError as e:
     logger.warning(f"班级系统集成 API 导入失败: {e}")
 
+# OpenBoard 论坛 API
+try:
+    from src.api.routes import openboard
+    app.include_router(openboard.router, prefix="/api", tags=["OpenBoard论坛"])
+    logger.info("OpenBoard 论坛 API 已注册")
+except ImportError as e:
+    logger.warning(f"OpenBoard 论坛 API 导入失败: {e}")
+
 # app.include_router(submissions.router)
 # app.include_router(rubrics.router)
 # app.include_router(reviews.router)

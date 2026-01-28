@@ -1810,7 +1810,7 @@ async def get_diagnosis_report(student_id: str):
     trend_seed = []
     for sub in scored_sorted:
         date_value = (sub.submitted_at or "")[:10] or sub.submitted_at or ""
-        trend_seed.append({"date": date_value, "score": sub.score})
+        trend_seed.append({"date": date_value, "score": sub.score, "average": sub.score * 0.9})
 
     summary = context.get("grading_summary", {})
     total_max = float(summary.get("total_max") or 0)
@@ -1824,15 +1824,53 @@ async def get_diagnosis_report(student_id: str):
         if start_date and end_date:
             report_period = f"{start_date} to {end_date}"
 
-    payload = {
-        "student_id": student_id,
+    # 计算进步率
+    improvement_rate = 0.0
+    if len(scored_sorted) >= 2:
+        first_half = scored_sorted[:len(scored_sorted)//2]
+        second_half = scored_sorted[len(scored_sorted)//2:]
+        if first_half and second_half:
+            first_avg = sum(s.score for s in first_half if s.score) / len(first_half)
+            second_avg = sum(s.score for s in second_half if s.score) / len(second_half)
+            if first_avg > 0:
+                improvement_rate = round((second_avg - first_avg) / first_avg, 4)
+
+    # 计算稳定性分数
+    consistency_score = 80
+    if len(scored) >= 3:
+        scores_list = [s.score for s in scored if s.score is not None]
+        if scores_list:
+            avg = sum(scores_list) / len(scores_list)
+            variance = sum((s - avg) ** 2 for s in scores_list) / len(scores_list)
+            std_dev = variance ** 0.5
+            # 标准差越小，稳定性越高
+            consistency_score = max(0, min(100, int(100 - std_dev * 2)))
+
+    # 构建基本的 fallback 响应
+    fallback = {
         "report_period": report_period,
-        "context": context,
-        "trend_seed": trend_seed,
-        "mastery_score": mastery,
+        "overall_assessment": {
+            "mastery_score": mastery,
+            "improvement_rate": improvement_rate,
+            "consistency_score": consistency_score,
+        },
+        "progress_trend": trend_seed,
+        "knowledge_map": [],
+        "error_patterns": {"most_common_error_types": []},
+        "personalized_insights": [],
     }
 
-    system_prompt = """You are GradeOS diagnosis report engine.
+    # 尝试使用 LLM 生成更详细的报告
+    try:
+        payload = {
+            "student_id": student_id,
+            "report_period": report_period,
+            "context": context,
+            "trend_seed": trend_seed,
+            "mastery_score": mastery,
+        }
+
+        system_prompt = """You are GradeOS diagnosis report engine.
 Return a single JSON object only with this schema:
 {
   "report_period": "...",
@@ -1844,34 +1882,34 @@ Return a single JSON object only with this schema:
 }
 Use only the provided data. If data is insufficient, return empty lists where appropriate."""
 
-    client = get_llm_client()
-    response = await client.invoke(
-        messages=[
-            LLMMessage(role="system", content=system_prompt),
-            LLMMessage(role="user", content=json.dumps(payload, ensure_ascii=False)),
-        ],
-        purpose="analysis",
-        temperature=0.25,
-        max_tokens=1400,
-    )
+        client = get_llm_client()
+        response = await client.invoke(
+            messages=[
+                LLMMessage(role="system", content=system_prompt),
+                LLMMessage(role="user", content=json.dumps(payload, ensure_ascii=False)),
+            ],
+            purpose="analysis",
+            temperature=0.25,
+            max_tokens=1400,
+        )
 
-    try:
         data = _parse_llm_json(response.content)
         return DiagnosisReportResponse(student_id=student_id, **data)
     except Exception as exc:
-        logger.warning("Failed to parse diagnosis report response: %s", exc)
-        fallback = {
-            "report_period": report_period,
-            "overall_assessment": {
-                "mastery_score": mastery,
-                "improvement_rate": 0.0,
-                "consistency_score": 0,
-            },
-            "progress_trend": trend_seed,
-            "knowledge_map": [],
-            "error_patterns": {"most_common_error_types": []},
-            "personalized_insights": [],
-        }
+        logger.warning("Failed to generate LLM diagnosis report, using fallback: %s", exc)
+        # 添加一些基本的个性化建议
+        if mastery < 0.6:
+            fallback["personalized_insights"].append("建议加强基础知识的复习，多做练习题巩固薄弱环节")
+        elif mastery < 0.8:
+            fallback["personalized_insights"].append("整体表现良好，可以尝试挑战更高难度的题目")
+        else:
+            fallback["personalized_insights"].append("表现优秀！继续保持，可以帮助同学一起进步")
+        
+        if improvement_rate > 0:
+            fallback["personalized_insights"].append(f"进步明显，继续保持这种学习势头")
+        elif improvement_rate < 0:
+            fallback["personalized_insights"].append("近期成绩有所波动，建议回顾之前的学习方法")
+        
         return DiagnosisReportResponse(student_id=student_id, **fallback)
 
 

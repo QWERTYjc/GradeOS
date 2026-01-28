@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { useAuthStore } from '@/store/authStore';
 import { Homework, ClassEntity } from '@/types';
@@ -8,6 +9,7 @@ import { classApi, homeworkApi } from '@/services/api';
 
 export default function StudentDashboard() {
   const { user, updateUser } = useAuthStore();
+  const router = useRouter();
   const [inviteCode, setInviteCode] = useState('');
   const [joining, setJoining] = useState(false);
   const [myClasses, setMyClasses] = useState<ClassEntity[]>([]);
@@ -218,12 +220,20 @@ export default function StudentDashboard() {
                       🤖 View AI Analysis
                     </button>
                   ) : (
-                    <button
-                      onClick={() => { setActiveHw(hw); setSubmitModalOpen(true); }}
-                      className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium"
-                    >
-                      Start →
-                    </button>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => router.push(`/student/scan?homeworkId=${hw.id}`)}
+                        className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors text-sm font-medium"
+                      >
+                        📸 扫描提交
+                      </button>
+                      <button
+                        onClick={() => { setActiveHw(hw); setSubmitModalOpen(true); }}
+                        className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium"
+                      >
+                        文字提交 →
+                      </button>
+                    </div>
                   )}
                 </div>
               </div>

@@ -330,10 +330,10 @@ def get_user_by_username(username: str) -> Optional[UserRecord]:
     if not row:
         return None
     return UserRecord(
-        id=row["id"],
+        id=row["user_id"],
         username=row["username"],
-        name=row["name"],
-        role=row["role"],
+        name=row["real_name"] or row["username"],
+        role=row["user_type"],
         password_hash=row["password_hash"],
         created_at=row["created_at"],
     )
@@ -343,16 +343,16 @@ def get_user_by_id(user_id: str) -> Optional[UserRecord]:
     """Get user by id."""
     with get_connection() as conn:
         row = conn.execute(
-            "SELECT * FROM users WHERE id = ?",
+            "SELECT * FROM users WHERE user_id = ?",
             (user_id,),
         ).fetchone()
     if not row:
         return None
     return UserRecord(
-        id=row["id"],
+        id=row["user_id"],
         username=row["username"],
-        name=row["name"],
-        role=row["role"],
+        name=row["real_name"] or row["username"],
+        role=row["user_type"],
         password_hash=row["password_hash"],
         created_at=row["created_at"],
     )
@@ -392,14 +392,14 @@ def get_class_by_id(class_id: str) -> Optional[ClassRecord]:
     """Get class by id."""
     with get_connection() as conn:
         row = conn.execute(
-            "SELECT * FROM classes WHERE id = ?",
+            "SELECT * FROM classes WHERE class_id = ?",
             (class_id,),
         ).fetchone()
     if not row:
         return None
     return ClassRecord(
-        id=row["id"],
-        name=row["name"],
+        id=row["class_id"],
+        name=row["class_name"],
         teacher_id=row["teacher_id"],
         invite_code=row["invite_code"],
         created_at=row["created_at"],
@@ -416,8 +416,8 @@ def get_class_by_invite_code(invite_code: str) -> Optional[ClassRecord]:
     if not row:
         return None
     return ClassRecord(
-        id=row["id"],
-        name=row["name"],
+        id=row["class_id"],
+        name=row["class_name"],
         teacher_id=row["teacher_id"],
         invite_code=row["invite_code"],
         created_at=row["created_at"],
@@ -433,8 +433,8 @@ def list_classes_by_teacher(teacher_id: str) -> List[ClassRecord]:
         ).fetchall()
     return [
         ClassRecord(
-            id=row["id"],
-            name=row["name"],
+            id=row["class_id"],
+            name=row["class_name"],
             teacher_id=row["teacher_id"],
             invite_code=row["invite_code"],
             created_at=row["created_at"],
@@ -450,7 +450,7 @@ def list_classes_by_student(student_id: str) -> List[ClassRecord]:
             """
             SELECT c.*
             FROM classes c
-            JOIN class_students cs ON c.id = cs.class_id
+            JOIN student_class_relations cs ON c.class_id = cs.class_id
             WHERE cs.student_id = ?
             ORDER BY c.created_at DESC
             """,
@@ -458,8 +458,8 @@ def list_classes_by_student(student_id: str) -> List[ClassRecord]:
         ).fetchall()
     return [
         ClassRecord(
-            id=row["id"],
-            name=row["name"],
+            id=row["class_id"],
+            name=row["class_name"],
             teacher_id=row["teacher_id"],
             invite_code=row["invite_code"],
             created_at=row["created_at"],

@@ -141,6 +141,7 @@ export interface HomeworkResponse {
   description: string;
   deadline: string;
   allow_early_grading?: boolean;
+  rubric_images?: string[];
   created_at: string;
 }
 
@@ -164,7 +165,7 @@ export const homeworkApi = {
   getDetail: (homeworkId: string) =>
     request<HomeworkResponse>(`/homework/detail/${homeworkId}`),
 
-  create: (data: { class_id: string; title: string; description: string; deadline: string; allow_early_grading?: boolean }) =>
+  create: (data: { class_id: string; title: string; description: string; deadline: string; allow_early_grading?: boolean; rubric_images?: string[] }) =>
     request<HomeworkResponse>('/homework/create', {
       method: 'POST',
       body: JSON.stringify(data),
@@ -747,6 +748,110 @@ export const api = {
       total_pages: number;
     }>(`/class/${classId}/homework/${homeworkId}/submissions-for-grading`);
   },
+};
+
+// ============ OpenBoard 论坛 API ============
+
+import { Forum, ForumPost, ForumReply, ForumSearchResult, ForumUserStatus, ForumModLog } from '@/types';
+
+export interface CreateForumRequest {
+  name: string;
+  description: string;
+  creator_id: string;
+}
+
+export interface ApproveForumRequest {
+  approved: boolean;
+  reason?: string;
+  moderator_id: string;
+}
+
+export interface CreatePostRequest {
+  forum_id: string;
+  title: string;
+  content: string;
+  author_id: string;
+  images?: string[];  // 图片列表（base64）
+}
+
+export interface CreateReplyRequest {
+  content: string;
+  author_id: string;
+  images?: string[];  // 图片列表（base64）
+}
+
+export interface BanUserRequest {
+  user_id: string;
+  moderator_id: string;
+  banned: boolean;
+  reason?: string;
+}
+
+export const openboardApi = {
+  // 论坛管理
+  getForums: (includePending: boolean = false) =>
+    request<Forum[]>(`/openboard/forums${includePending ? '?include_pending=true' : ''}`),
+
+  createForum: (data: CreateForumRequest) =>
+    request<Forum>('/openboard/forums', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  approveForum: (forumId: string, data: ApproveForumRequest) =>
+    request<Forum>(`/openboard/forums/${forumId}/approve`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  // 帖子管理
+  getForumPosts: (forumId: string, page: number = 1, limit: number = 20) =>
+    request<ForumPost[]>(`/openboard/forums/${forumId}/posts?page=${page}&limit=${limit}`),
+
+  createPost: (data: CreatePostRequest) =>
+    request<ForumPost>('/openboard/posts', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  getPostDetail: (postId: string) =>
+    request<{ post: ForumPost; replies: ForumReply[] }>(`/openboard/posts/${postId}`),
+
+  // 回复
+  createReply: (postId: string, data: CreateReplyRequest) =>
+    request<ForumReply>(`/openboard/posts/${postId}/replies`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  // 搜索
+  searchPosts: (query: string, forumId?: string, limit: number = 20) => {
+    const params = new URLSearchParams({ q: query, limit: limit.toString() });
+    if (forumId) params.set('forum_id', forumId);
+    return request<ForumSearchResult[]>(`/openboard/search?${params.toString()}`);
+  },
+
+  // 管理员功能
+  getPendingForums: () =>
+    request<Forum[]>('/openboard/admin/pending-forums'),
+
+  deletePost: (postId: string, moderatorId: string, reason?: string) =>
+    request<{ success: boolean; message: string }>(`/openboard/admin/posts/${postId}`, {
+      method: 'DELETE',
+      body: JSON.stringify({ moderator_id: moderatorId, reason }),
+    }),
+
+  banUser: (data: BanUserRequest) =>
+    request<{ success: boolean; message: string }>('/openboard/admin/ban', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  getUserStatus: (userId: string) =>
+    request<ForumUserStatus>(`/openboard/admin/users/${userId}/status`),
+
+  getModLogs: (limit: number = 50) =>
+    request<ForumModLog[]>(`/openboard/admin/mod-logs?limit=${limit}`),
 };
 
 export default api;
