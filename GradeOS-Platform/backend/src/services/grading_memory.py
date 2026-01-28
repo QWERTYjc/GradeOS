@@ -453,6 +453,9 @@ class GradingMemoryService:
                 existing.last_updated_at = datetime.now().isoformat()
                 if batch_id and batch_id not in existing.source_batch_ids:
                     existing.source_batch_ids.append(batch_id)
+                    # 限制 source_batch_ids 长度，保留最近 100 个
+                    if len(existing.source_batch_ids) > 100:
+                        existing.source_batch_ids = existing.source_batch_ids[-100:]
                 logger.debug(f"[Memory] 更新已有记忆: {memory_id}, 出现次数: {existing.occurrence_count}")
                 return memory_id
             
@@ -741,12 +744,21 @@ class GradingMemoryService:
                     new_memories += 1
             
             # 更新置信度校准数据
+            # 校准统计最大样本数
+            MAX_CALIBRATION_SAMPLES = 1000
+            
             for question_type, confidences in batch_mem.confidence_distribution.items():
                 if question_type not in self._calibration_stats:
                     self._calibration_stats[question_type] = CalibrationStats(
                         question_type=question_type
                     )
-                self._calibration_stats[question_type].predicted_confidences.extend(confidences)
+                stats = self._calibration_stats[question_type]
+                stats.predicted_confidences.extend(confidences)
+                # 限制样本数量，保留最近的样本
+                if len(stats.predicted_confidences) > MAX_CALIBRATION_SAMPLES:
+                    stats.predicted_confidences = stats.predicted_confidences[-MAX_CALIBRATION_SAMPLES:]
+                if len(stats.actual_accuracies) > MAX_CALIBRATION_SAMPLES:
+                    stats.actual_accuracies = stats.actual_accuracies[-MAX_CALIBRATION_SAMPLES:]
             
             # 从修正记录中学习
             for correction in batch_mem.corrections:
@@ -764,6 +776,21 @@ class GradingMemoryService:
                     new_memories += 1
             
             logger.info(f"[Memory] 批次 {batch_id} 整合完成，新增 {new_memories} 条长期记忆")
+            
+            # 清理已整合的批次记忆，避免内存无限增长
+            # 保留最近 100 个批次记忆
+            MAX_BATCH_MEMORIES = 100
+            if len(self._batch_memories) > MAX_BATCH_MEMORIES:
+                # 按创建时间排序，删除最老的
+                sorted_batches = sorted(
+                    self._batch_memories.items(),
+                    key=lambda x: x[1].created_at
+                )
+                to_remove = len(self._batch_memories) - MAX_BATCH_MEMORIES
+                for batch_id_to_remove, _ in sorted_batches[:to_remove]:
+                    del self._batch_memories[batch_id_to_remove]
+                logger.debug(f"[Memory] 清理了 {to_remove} 个旧批次记忆")
+            
             return new_memories
     
     # ==================== 自白辅助 ====================

@@ -815,8 +815,11 @@ class MultiLayerStorageBackend(MemoryStorageBackend):
     特性：
     - 读取时先查 Redis，未命中则查 PostgreSQL 并回填 Redis
     - 写入时同时写入 Redis 和 PostgreSQL
-    - Redis 故障时降级到 PostgreSQL
+    - Redis 故障时降级到 PostgreSQL，定期尝试恢复
     """
+    
+    # 恢复检查间隔（秒）
+    REDIS_RECOVERY_INTERVAL = 60
     
     def __init__(
         self,
@@ -828,9 +831,38 @@ class MultiLayerStorageBackend(MemoryStorageBackend):
         self._postgres = postgres_backend
         self._redis_ttl = redis_ttl_seconds
         self._redis_available = redis_backend is not None
+        self._last_redis_check = 0.0  # 上次检查 Redis 健康的时间
+        self._redis_failure_count = 0  # 连续失败次数
+    
+    async def _maybe_recover_redis(self) -> None:
+        """定期检查 Redis 是否恢复"""
+        import time
+        
+        # 如果 Redis 已可用或没有 Redis 后端，跳过
+        if self._redis_available or not self._redis:
+            return
+        
+        # 检查是否到了恢复检查时间
+        now = time.time()
+        if now - self._last_redis_check < self.REDIS_RECOVERY_INTERVAL:
+            return
+        
+        self._last_redis_check = now
+        
+        try:
+            health = await self._redis.health_check()
+            if health.get("status") == "healthy":
+                self._redis_available = True
+                self._redis_failure_count = 0
+                logger.info("[MultiLayer] Redis 已恢复，重新启用 L1 缓存")
+        except Exception as e:
+            logger.debug(f"[MultiLayer] Redis 恢复检查失败: {e}")
     
     async def save_memory(self, memory_id: str, data: Dict[str, Any], ttl_seconds: Optional[int] = None) -> bool:
         success = False
+        
+        # 尝试恢复 Redis
+        await self._maybe_recover_redis()
         
         # 写入 PostgreSQL（持久化）
         if self._postgres:
@@ -841,22 +873,31 @@ class MultiLayerStorageBackend(MemoryStorageBackend):
             try:
                 redis_ttl = min(ttl_seconds or self._redis_ttl, self._redis_ttl)
                 await self._redis.save_memory(memory_id, data, redis_ttl)
+                self._redis_failure_count = 0  # 重置失败计数
             except Exception as e:
-                logger.warning(f"[MultiLayer] Redis 写入失败（降级）: {e}")
-                self._redis_available = False
+                self._redis_failure_count += 1
+                if self._redis_failure_count >= 3:  # 连续 3 次失败才降级
+                    logger.warning(f"[MultiLayer] Redis 连续 {self._redis_failure_count} 次失败，暂时降级: {e}")
+                    self._redis_available = False
         
         return success
     
     async def get_memory(self, memory_id: str) -> Optional[Dict[str, Any]]:
+        # 尝试恢复 Redis
+        await self._maybe_recover_redis()
+        
         # 先查 Redis
         if self._redis and self._redis_available:
             try:
                 data = await self._redis.get_memory(memory_id)
                 if data:
+                    self._redis_failure_count = 0
                     return data
             except Exception as e:
-                logger.warning(f"[MultiLayer] Redis 读取失败（降级）: {e}")
-                self._redis_available = False
+                self._redis_failure_count += 1
+                if self._redis_failure_count >= 3:
+                    logger.warning(f"[MultiLayer] Redis 连续 {self._redis_failure_count} 次失败，暂时降级: {e}")
+                    self._redis_available = False
         
         # 查 PostgreSQL
         if self._postgres:

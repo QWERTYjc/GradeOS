@@ -572,7 +572,11 @@ class RubricParserService:
                     "scoring_points": scoring_points,
                     "alternative_solutions": alternative_solutions,
                     "deduction_rules": deduction_rules,
-                    "grading_notes": ensure_string(q.get("grading_notes", ""))
+                    "grading_notes": ensure_string(q.get("grading_notes", "")),
+                    # LLM 输出的置信度字段
+                    "parse_confidence": float(q.get("parse_confidence", 1.0) or 1.0),
+                    "parse_uncertainties": q.get("parse_uncertainties") or [],
+                    "parse_quality_issues": q.get("parse_quality_issues") or [],
                 })
             
             # 按标准化题目编号合并子题
@@ -594,6 +598,14 @@ class RubricParserService:
                         existing["standard_answer"] += f"\n子题答案: {q['standard_answer']}"
                     if q["grading_notes"] and q["grading_notes"] not in existing["grading_notes"]:
                         existing["grading_notes"] += f"\n{q['grading_notes']}"
+                    
+                    # 合并置信度字段（取最小置信度，合并不确定性和质量问题）
+                    existing["parse_confidence"] = min(
+                        existing.get("parse_confidence", 1.0),
+                        q.get("parse_confidence", 1.0)
+                    )
+                    existing["parse_uncertainties"].extend(q.get("parse_uncertainties", []))
+                    existing["parse_quality_issues"].extend(q.get("parse_quality_issues", []))
                 else:
                     # 新题目
                     merged_questions[norm_id] = q.copy()
@@ -612,16 +624,29 @@ class RubricParserService:
                     scoring_points=q["scoring_points"],
                     alternative_solutions=q["alternative_solutions"],
                     deduction_rules=q["deduction_rules"],
-                    grading_notes=q["grading_notes"]
+                    grading_notes=q["grading_notes"],
+                    # LLM 解析置信度字段
+                    parse_confidence=q.get("parse_confidence", 1.0),
+                    parse_uncertainties=q.get("parse_uncertainties", []),
+                    parse_quality_issues=q.get("parse_quality_issues", []),
                 ))
             
-            # 返回批次结果
+            # 返回批次结果（包含 LLM 输出的整体置信度）
+            llm_overall_confidence = float(data.get("overall_parse_confidence", 1.0) or 1.0)
+            # 如果 LLM 没有输出整体置信度，从各题置信度计算
+            if llm_overall_confidence >= 1.0 and questions:
+                question_confidences = [q.parse_confidence for q in questions if q.parse_confidence < 1.0]
+                if question_confidences:
+                    llm_overall_confidence = sum(question_confidences) / len(question_confidences)
+            
             batch_result = ParsedRubric(
                 total_questions=len(questions),
                 total_score=sum(q.max_score for q in questions),
                 questions=questions,
                 general_notes=ensure_string(data.get("general_notes", "")),
-                rubric_format=ensure_string(data.get("rubric_format", "standard"))
+                rubric_format=ensure_string(data.get("rubric_format", "standard")),
+                # LLM 解析置信度
+                overall_parse_confidence=llm_overall_confidence,
             )
             
             logger.info(
