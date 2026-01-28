@@ -722,51 +722,115 @@ export const ResultsView: React.FC = () => {
                 console.log('[API Fallback] Fetching results for batch:', submissionId);
                 const response = await gradingApi.getBatchResults(submissionId);
                 
-                if (response.student_results && response.student_results.length > 0) {
+                // 后端可能返回 results（camelCase）或 student_results（snake_case）
+                const rawResults = (response as any).results || response.student_results || [];
+                console.log('[API Fallback] Raw results:', rawResults.length, 'items');
+                
+                if (rawResults.length > 0) {
+                    // 检测数据格式（camelCase 或 snake_case）
+                    const firstResult = rawResults[0];
+                    const isCamelCase = 'studentName' in firstResult;
+                    console.log('[API Fallback] Data format:', isCamelCase ? 'camelCase' : 'snake_case');
+                    
                     // 转换 API 响应格式到前端格式
-                    const formattedResults: StudentResult[] = response.student_results.map((r) => ({
-                        studentName: r.student_name || 'Unknown',
-                        score: r.total_score || 0,
-                        maxScore: r.max_score || 100,
-                        startPage: r.start_page,
-                        endPage: r.end_page,
-                        confidence: r.confidence,
-                        needsConfirmation: r.needs_confirmation,
-                        questionResults: (r.questions || []).map((q) => ({
-                            questionId: q.question_id || '',
-                            score: q.score || 0,
-                            maxScore: q.max_score || 0,
-                            feedback: q.feedback || '',
-                            confidence: q.confidence,
-                            confidenceReason: q.confidence_reason,
-                            selfCritique: q.self_critique,
-                            selfCritiqueConfidence: q.self_critique_confidence,
-                            rubricRefs: q.rubric_refs,
-                            typoNotes: q.typo_notes,
-                            pageIndices: q.page_indices,
-                            isCrossPage: q.is_cross_page,
-                            mergeSource: q.merge_source,
-                            scoringPointResults: (q.scoring_point_results || []).map((spr: any) => ({
-                                pointId: spr.point_id || spr.scoring_point?.point_id,
-                                description: spr.description || spr.scoring_point?.description || '',
-                                awarded: spr.awarded ?? 0,
-                                maxPoints: spr.max_points ?? spr.scoring_point?.score ?? 0,
-                                evidence: spr.evidence || '',
-                                rubricReference: spr.rubric_reference,
-                                rubricReferenceSource: spr.rubric_reference_source,
-                                decision: spr.decision,
-                                reason: spr.reason,
-                                scoringPoint: spr.scoring_point ? {
-                                    description: spr.scoring_point.description || '',
-                                    score: spr.scoring_point.score || 0,
-                                    maxScore: spr.scoring_point.score || 0,
-                                    isCorrect: (spr.awarded ?? 0) > 0,
-                                    isRequired: spr.scoring_point.is_required,
-                                    explanation: spr.reason || spr.evidence || '',
-                                } : undefined,
-                            })),
-                        })),
-                    }));
+                    const formattedResults: StudentResult[] = rawResults.map((r: any) => {
+                        if (isCamelCase) {
+                            // 数据已经是 camelCase 格式，直接使用
+                            return {
+                                studentName: r.studentName || 'Unknown',
+                                score: r.score || 0,
+                                maxScore: r.maxScore || 100,
+                                startPage: r.startPage,
+                                endPage: r.endPage,
+                                pageRange: r.pageRange,
+                                confidence: r.confidence,
+                                needsConfirmation: r.needsConfirmation,
+                                gradingMode: r.gradingMode,
+                                studentSummary: r.studentSummary,
+                                selfAudit: r.selfAudit,
+                                selfReport: r.selfReport,
+                                questionResults: (r.questionResults || []).map((q: any) => ({
+                                    questionId: q.questionId || '',
+                                    score: q.score || 0,
+                                    maxScore: q.maxScore || 0,
+                                    feedback: q.feedback || '',
+                                    confidence: q.confidence,
+                                    confidenceReason: q.confidenceReason,
+                                    selfCritique: q.selfCritique,
+                                    selfCritiqueConfidence: q.selfCritiqueConfidence,
+                                    rubricRefs: q.rubricRefs,
+                                    typoNotes: q.typoNotes,
+                                    pageIndices: q.pageIndices,
+                                    isCrossPage: q.isCrossPage,
+                                    mergeSource: q.mergeSource,
+                                    scoringPointResults: (q.scoringPointResults || []).map((spr: any) => ({
+                                        pointId: spr.pointId || spr.scoringPoint?.pointId,
+                                        description: spr.description || spr.scoringPoint?.description || '',
+                                        awarded: spr.awarded ?? 0,
+                                        maxPoints: spr.maxPoints ?? spr.scoringPoint?.score ?? 0,
+                                        evidence: spr.evidence || '',
+                                        rubricReference: spr.rubricReference,
+                                        rubricReferenceSource: spr.rubricReferenceSource,
+                                        decision: spr.decision,
+                                        reason: spr.reason,
+                                        scoringPoint: spr.scoringPoint ? {
+                                            description: spr.scoringPoint.description || '',
+                                            score: spr.scoringPoint.score || 0,
+                                            maxScore: spr.scoringPoint.score || 0,
+                                            isCorrect: (spr.awarded ?? 0) > 0,
+                                            isRequired: spr.scoringPoint.isRequired,
+                                            explanation: spr.reason || spr.evidence || '',
+                                        } : undefined,
+                                    })),
+                                })),
+                            };
+                        } else {
+                            // snake_case 格式，需要转换
+                            return {
+                                studentName: r.student_name || 'Unknown',
+                                score: r.total_score || 0,
+                                maxScore: r.max_score || 100,
+                                startPage: r.start_page,
+                                endPage: r.end_page,
+                                confidence: r.confidence,
+                                needsConfirmation: r.needs_confirmation,
+                                questionResults: (r.questions || []).map((q: any) => ({
+                                    questionId: q.question_id || '',
+                                    score: q.score || 0,
+                                    maxScore: q.max_score || 0,
+                                    feedback: q.feedback || '',
+                                    confidence: q.confidence,
+                                    confidenceReason: q.confidence_reason,
+                                    selfCritique: q.self_critique,
+                                    selfCritiqueConfidence: q.self_critique_confidence,
+                                    rubricRefs: q.rubric_refs,
+                                    typoNotes: q.typo_notes,
+                                    pageIndices: q.page_indices,
+                                    isCrossPage: q.is_cross_page,
+                                    mergeSource: q.merge_source,
+                                    scoringPointResults: (q.scoring_point_results || []).map((spr: any) => ({
+                                        pointId: spr.point_id || spr.scoring_point?.point_id,
+                                        description: spr.description || spr.scoring_point?.description || '',
+                                        awarded: spr.awarded ?? 0,
+                                        maxPoints: spr.max_points ?? spr.scoring_point?.score ?? 0,
+                                        evidence: spr.evidence || '',
+                                        rubricReference: spr.rubric_reference,
+                                        rubricReferenceSource: spr.rubric_reference_source,
+                                        decision: spr.decision,
+                                        reason: spr.reason,
+                                        scoringPoint: spr.scoring_point ? {
+                                            description: spr.scoring_point.description || '',
+                                            score: spr.scoring_point.score || 0,
+                                            maxScore: spr.scoring_point.score || 0,
+                                            isCorrect: (spr.awarded ?? 0) > 0,
+                                            isRequired: spr.scoring_point.is_required,
+                                            explanation: spr.reason || spr.evidence || '',
+                                        } : undefined,
+                                    })),
+                                })),
+                            };
+                        }
+                    });
                     
                     console.log('[API Fallback] Successfully fetched', formattedResults.length, 'results');
                     setFinalResults(formattedResults);
@@ -2586,50 +2650,115 @@ export const ResultsView: React.FC = () => {
             console.log('[Manual Retry] Fetching results for batch:', submissionId);
             const response = await gradingApi.getBatchResults(submissionId);
             
-            if (response.student_results && response.student_results.length > 0) {
-                const formattedResults: StudentResult[] = response.student_results.map((r) => ({
-                    studentName: r.student_name || 'Unknown',
-                    score: r.total_score || 0,
-                    maxScore: r.max_score || 100,
-                    startPage: r.start_page,
-                    endPage: r.end_page,
-                    confidence: r.confidence,
-                    needsConfirmation: r.needs_confirmation,
-                    questionResults: (r.questions || []).map((q) => ({
-                        questionId: q.question_id || '',
-                        score: q.score || 0,
-                        maxScore: q.max_score || 0,
-                        feedback: q.feedback || '',
-                        confidence: q.confidence,
-                        confidenceReason: q.confidence_reason,
-                        selfCritique: q.self_critique,
-                        selfCritiqueConfidence: q.self_critique_confidence,
-                        rubricRefs: q.rubric_refs,
-                        typoNotes: q.typo_notes,
-                        pageIndices: q.page_indices,
-                        isCrossPage: q.is_cross_page,
-                        mergeSource: q.merge_source,
-                        scoringPointResults: (q.scoring_point_results || []).map((spr: any) => ({
-                            pointId: spr.point_id || spr.scoring_point?.point_id,
-                            description: spr.description || spr.scoring_point?.description || '',
-                            awarded: spr.awarded ?? 0,
-                            maxPoints: spr.max_points ?? spr.scoring_point?.score ?? 0,
-                            evidence: spr.evidence || '',
-                            rubricReference: spr.rubric_reference,
-                            rubricReferenceSource: spr.rubric_reference_source,
-                            decision: spr.decision,
-                            reason: spr.reason,
-                            scoringPoint: spr.scoring_point ? {
-                                description: spr.scoring_point.description || '',
-                                score: spr.scoring_point.score || 0,
-                                maxScore: spr.scoring_point.score || 0,
-                                isCorrect: (spr.awarded ?? 0) > 0,
-                                isRequired: spr.scoring_point.is_required,
-                                explanation: spr.reason || spr.evidence || '',
-                            } : undefined,
-                        })),
-                    })),
-                }));
+            // 后端可能返回 results（camelCase）或 student_results（snake_case）
+            const rawResults = (response as any).results || response.student_results || [];
+            console.log('[Manual Retry] Raw results:', rawResults.length, 'items');
+            
+            if (rawResults.length > 0) {
+                // 检测数据格式（camelCase 或 snake_case）
+                const firstResult = rawResults[0];
+                const isCamelCase = 'studentName' in firstResult;
+                console.log('[Manual Retry] Data format:', isCamelCase ? 'camelCase' : 'snake_case');
+                
+                // 转换 API 响应格式到前端格式
+                const formattedResults: StudentResult[] = rawResults.map((r: any) => {
+                    if (isCamelCase) {
+                        // 数据已经是 camelCase 格式，直接使用
+                        return {
+                            studentName: r.studentName || 'Unknown',
+                            score: r.score || 0,
+                            maxScore: r.maxScore || 100,
+                            startPage: r.startPage,
+                            endPage: r.endPage,
+                            pageRange: r.pageRange,
+                            confidence: r.confidence,
+                            needsConfirmation: r.needsConfirmation,
+                            gradingMode: r.gradingMode,
+                            studentSummary: r.studentSummary,
+                            selfAudit: r.selfAudit,
+                            selfReport: r.selfReport,
+                            questionResults: (r.questionResults || []).map((q: any) => ({
+                                questionId: q.questionId || '',
+                                score: q.score || 0,
+                                maxScore: q.maxScore || 0,
+                                feedback: q.feedback || '',
+                                confidence: q.confidence,
+                                confidenceReason: q.confidenceReason,
+                                selfCritique: q.selfCritique,
+                                selfCritiqueConfidence: q.selfCritiqueConfidence,
+                                rubricRefs: q.rubricRefs,
+                                typoNotes: q.typoNotes,
+                                pageIndices: q.pageIndices,
+                                isCrossPage: q.isCrossPage,
+                                mergeSource: q.mergeSource,
+                                scoringPointResults: (q.scoringPointResults || []).map((spr: any) => ({
+                                    pointId: spr.pointId || spr.scoringPoint?.pointId,
+                                    description: spr.description || spr.scoringPoint?.description || '',
+                                    awarded: spr.awarded ?? 0,
+                                    maxPoints: spr.maxPoints ?? spr.scoringPoint?.score ?? 0,
+                                    evidence: spr.evidence || '',
+                                    rubricReference: spr.rubricReference,
+                                    rubricReferenceSource: spr.rubricReferenceSource,
+                                    decision: spr.decision,
+                                    reason: spr.reason,
+                                    scoringPoint: spr.scoringPoint ? {
+                                        description: spr.scoringPoint.description || '',
+                                        score: spr.scoringPoint.score || 0,
+                                        maxScore: spr.scoringPoint.score || 0,
+                                        isCorrect: (spr.awarded ?? 0) > 0,
+                                        isRequired: spr.scoringPoint.isRequired,
+                                        explanation: spr.reason || spr.evidence || '',
+                                    } : undefined,
+                                })),
+                            })),
+                        };
+                    } else {
+                        // snake_case 格式，需要转换
+                        return {
+                            studentName: r.student_name || 'Unknown',
+                            score: r.total_score || 0,
+                            maxScore: r.max_score || 100,
+                            startPage: r.start_page,
+                            endPage: r.end_page,
+                            confidence: r.confidence,
+                            needsConfirmation: r.needs_confirmation,
+                            questionResults: (r.questions || []).map((q: any) => ({
+                                questionId: q.question_id || '',
+                                score: q.score || 0,
+                                maxScore: q.max_score || 0,
+                                feedback: q.feedback || '',
+                                confidence: q.confidence,
+                                confidenceReason: q.confidence_reason,
+                                selfCritique: q.self_critique,
+                                selfCritiqueConfidence: q.self_critique_confidence,
+                                rubricRefs: q.rubric_refs,
+                                typoNotes: q.typo_notes,
+                                pageIndices: q.page_indices,
+                                isCrossPage: q.is_cross_page,
+                                mergeSource: q.merge_source,
+                                scoringPointResults: (q.scoring_point_results || []).map((spr: any) => ({
+                                    pointId: spr.point_id || spr.scoring_point?.point_id,
+                                    description: spr.description || spr.scoring_point?.description || '',
+                                    awarded: spr.awarded ?? 0,
+                                    maxPoints: spr.max_points ?? spr.scoring_point?.score ?? 0,
+                                    evidence: spr.evidence || '',
+                                    rubricReference: spr.rubric_reference,
+                                    rubricReferenceSource: spr.rubric_reference_source,
+                                    decision: spr.decision,
+                                    reason: spr.reason,
+                                    scoringPoint: spr.scoring_point ? {
+                                        description: spr.scoring_point.description || '',
+                                        score: spr.scoring_point.score || 0,
+                                        maxScore: spr.scoring_point.score || 0,
+                                        isCorrect: (spr.awarded ?? 0) > 0,
+                                        isRequired: spr.scoring_point.is_required,
+                                        explanation: spr.reason || spr.evidence || '',
+                                    } : undefined,
+                                })),
+                            })),
+                        };
+                    }
+                });
                 
                 console.log('[Manual Retry] Successfully fetched', formattedResults.length, 'results');
                 setFinalResults(formattedResults);
