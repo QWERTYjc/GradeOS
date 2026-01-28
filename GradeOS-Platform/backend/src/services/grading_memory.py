@@ -56,9 +56,27 @@ class MemoryImportance(str, Enum):
     LOW = "low"              # 低重要性
 
 
+class MemoryVerificationStatus(str, Enum):
+    """记忆验证状态"""
+    PENDING = "pending"       # 待验证
+    VERIFIED = "verified"     # 已验证
+    CORE = "core"             # 核心记忆
+    SUSPICIOUS = "suspicious" # 可疑（可信度低）
+    DEPRECATED = "deprecated" # 已废弃
+
+
 @dataclass
 class MemoryEntry:
-    """单条记忆条目"""
+    """单条记忆条目
+    
+    扩展字段（记忆验证与审计）：
+    - verification_status: 验证状态（待验证/已验证/核心/可疑/已废弃）
+    - verification_history: 验证历史记录
+    - source_self_report_id: 来源自白ID
+    - is_soft_deleted: 是否软删除
+    - deleted_at: 删除时间
+    - deleted_reason: 删除原因
+    """
     memory_id: str                          # 唯一标识
     memory_type: MemoryType                 # 记忆类型
     importance: MemoryImportance            # 重要性
@@ -90,6 +108,14 @@ class MemoryEntry:
     # 元数据
     metadata: Dict[str, Any] = field(default_factory=dict)
     
+    # 新增字段：验证状态与审计
+    verification_status: MemoryVerificationStatus = MemoryVerificationStatus.PENDING
+    verification_history: List[Dict[str, Any]] = field(default_factory=list)
+    source_self_report_id: Optional[str] = None  # 来源自白ID
+    is_soft_deleted: bool = False
+    deleted_at: Optional[str] = None
+    deleted_reason: Optional[str] = None
+    
     @property
     def confidence(self) -> float:
         """计算该记忆的可信度"""
@@ -117,6 +143,7 @@ class MemoryEntry:
         result = asdict(self)
         result["memory_type"] = self.memory_type.value
         result["importance"] = self.importance.value
+        result["verification_status"] = self.verification_status.value
         result["confidence"] = self.confidence
         result["relevance_score"] = self.relevance_score
         return result
@@ -128,6 +155,8 @@ class MemoryEntry:
             data["memory_type"] = MemoryType(data["memory_type"])
         if isinstance(data.get("importance"), str):
             data["importance"] = MemoryImportance(data["importance"])
+        if isinstance(data.get("verification_status"), str):
+            data["verification_status"] = MemoryVerificationStatus(data["verification_status"])
         # 移除计算属性
         data.pop("confidence", None)
         data.pop("relevance_score", None)
@@ -529,6 +558,7 @@ class GradingMemoryService:
         max_results: int = 10,
         subject: Optional[str] = None,
         include_general: bool = True,
+        include_deleted: bool = False,
     ) -> List[MemoryEntry]:
         """
         检索相关记忆
@@ -542,6 +572,7 @@ class GradingMemoryService:
                      例如: economics, physics, mathematics
                      如果为 None，则不按科目过滤
             include_general: 是否包含通用记忆（subject="general"）
+            include_deleted: 是否包含已删除的记忆（默认 False）
             
         Returns:
             List[MemoryEntry]: 相关记忆列表（按相关性排序）
@@ -584,7 +615,12 @@ class GradingMemoryService:
             # 过滤和排序
             for memory_id in memory_ids:
                 entry = self._long_term_memory.get(memory_id)
-                if entry and entry.confidence >= min_confidence:
+                if not entry:
+                    continue
+                # 排除已删除的记忆（除非明确要求包含）
+                if entry.is_soft_deleted and not include_deleted:
+                    continue
+                if entry.confidence >= min_confidence:
                     candidates.append(entry)
                     # 更新访问时间
                     entry.last_accessed_at = datetime.now().isoformat()
@@ -1161,7 +1197,313 @@ class GradingMemoryService:
                 "total_batch_memories": len(self._batch_memories),
                 "calibration_question_types": list(self._calibration_stats.keys()),
                 "storage_path": self.storage_path,
+                # 新增：按验证状态统计
+                "memory_by_verification_status": self._count_by_verification_status(),
             }
+    
+    def _count_by_verification_status(self) -> Dict[str, int]:
+        """按验证状态统计记忆数量"""
+        counts = {status.value: 0 for status in MemoryVerificationStatus}
+        for entry in self._long_term_memory.values():
+            if not entry.is_soft_deleted:
+                counts[entry.verification_status.value] += 1
+        return counts
+    
+    # ==================== 记忆验证机制 (任务 5) ====================
+    
+    def verify_memory(
+        self,
+        memory_id: str,
+        verified_by: str = "system",
+        reason: str = "",
+    ) -> bool:
+        """
+        验证记忆（从 PENDING 转为 VERIFIED）
+        
+        状态转换规则 (P2):
+        - PENDING → VERIFIED
+        - 其他状态不允许直接验证
+        
+        Args:
+            memory_id: 记忆ID
+            verified_by: 验证者标识
+            reason: 验证原因
+            
+        Returns:
+            bool: 是否成功验证
+        """
+        with self._lock:
+            entry = self._long_term_memory.get(memory_id)
+            if not entry:
+                logger.warning(f"[Memory] 验证失败：记忆 {memory_id} 不存在")
+                return False
+            
+            if entry.is_soft_deleted:
+                logger.warning(f"[Memory] 验证失败：记忆 {memory_id} 已被删除")
+                return False
+            
+            # 状态转换验证 (P2)
+            if entry.verification_status != MemoryVerificationStatus.PENDING:
+                logger.warning(
+                    f"[Memory] 验证失败：记忆 {memory_id} 当前状态为 "
+                    f"{entry.verification_status.value}，只有 PENDING 状态可以验证"
+                )
+                return False
+            
+            # 更新状态
+            old_status = entry.verification_status
+            entry.verification_status = MemoryVerificationStatus.VERIFIED
+            entry.last_updated_at = datetime.now().isoformat()
+            entry.confirmation_count += 1
+            
+            # 记录验证历史
+            entry.verification_history.append({
+                "action": "verify",
+                "from_status": old_status.value,
+                "to_status": MemoryVerificationStatus.VERIFIED.value,
+                "verified_by": verified_by,
+                "reason": reason,
+                "timestamp": datetime.now().isoformat(),
+            })
+            
+            logger.info(f"[Memory] 记忆 {memory_id} 已验证: {old_status.value} → VERIFIED")
+            return True
+    
+    def promote_to_core(
+        self,
+        memory_id: str,
+        promoted_by: str = "system",
+        reason: str = "",
+    ) -> bool:
+        """
+        将记忆提升为核心记忆（从 VERIFIED 转为 CORE）
+        
+        状态转换规则 (P2):
+        - VERIFIED → CORE
+        - 其他状态不允许直接提升
+        
+        Args:
+            memory_id: 记忆ID
+            promoted_by: 提升者标识
+            reason: 提升原因
+            
+        Returns:
+            bool: 是否成功提升
+        """
+        with self._lock:
+            entry = self._long_term_memory.get(memory_id)
+            if not entry:
+                logger.warning(f"[Memory] 提升失败：记忆 {memory_id} 不存在")
+                return False
+            
+            if entry.is_soft_deleted:
+                logger.warning(f"[Memory] 提升失败：记忆 {memory_id} 已被删除")
+                return False
+            
+            # 状态转换验证 (P2)
+            if entry.verification_status != MemoryVerificationStatus.VERIFIED:
+                logger.warning(
+                    f"[Memory] 提升失败：记忆 {memory_id} 当前状态为 "
+                    f"{entry.verification_status.value}，只有 VERIFIED 状态可以提升为 CORE"
+                )
+                return False
+            
+            # 更新状态
+            old_status = entry.verification_status
+            entry.verification_status = MemoryVerificationStatus.CORE
+            entry.last_updated_at = datetime.now().isoformat()
+            entry.importance = MemoryImportance.CRITICAL  # 核心记忆自动提升重要性
+            
+            # 记录验证历史
+            entry.verification_history.append({
+                "action": "promote_to_core",
+                "from_status": old_status.value,
+                "to_status": MemoryVerificationStatus.CORE.value,
+                "promoted_by": promoted_by,
+                "reason": reason,
+                "timestamp": datetime.now().isoformat(),
+            })
+            
+            logger.info(f"[Memory] 记忆 {memory_id} 已提升为核心: {old_status.value} → CORE")
+            return True
+    
+    def mark_suspicious(
+        self,
+        memory_id: str,
+        marked_by: str = "system",
+        reason: str = "",
+    ) -> bool:
+        """
+        标记记忆为可疑（从 PENDING/VERIFIED 转为 SUSPICIOUS）
+        
+        状态转换规则 (P2):
+        - PENDING → SUSPICIOUS
+        - VERIFIED → SUSPICIOUS（当 contradiction_count 过高时）
+        - CORE 状态不允许直接标记为可疑
+        
+        Args:
+            memory_id: 记忆ID
+            marked_by: 标记者标识
+            reason: 标记原因
+            
+        Returns:
+            bool: 是否成功标记
+        """
+        with self._lock:
+            entry = self._long_term_memory.get(memory_id)
+            if not entry:
+                logger.warning(f"[Memory] 标记失败：记忆 {memory_id} 不存在")
+                return False
+            
+            if entry.is_soft_deleted:
+                logger.warning(f"[Memory] 标记失败：记忆 {memory_id} 已被删除")
+                return False
+            
+            # 状态转换验证 (P2)
+            allowed_from = [
+                MemoryVerificationStatus.PENDING,
+                MemoryVerificationStatus.VERIFIED,
+            ]
+            if entry.verification_status not in allowed_from:
+                logger.warning(
+                    f"[Memory] 标记失败：记忆 {memory_id} 当前状态为 "
+                    f"{entry.verification_status.value}，不允许标记为可疑"
+                )
+                return False
+            
+            # 更新状态
+            old_status = entry.verification_status
+            entry.verification_status = MemoryVerificationStatus.SUSPICIOUS
+            entry.last_updated_at = datetime.now().isoformat()
+            entry.contradiction_count += 1
+            
+            # 记录验证历史
+            entry.verification_history.append({
+                "action": "mark_suspicious",
+                "from_status": old_status.value,
+                "to_status": MemoryVerificationStatus.SUSPICIOUS.value,
+                "marked_by": marked_by,
+                "reason": reason,
+                "timestamp": datetime.now().isoformat(),
+            })
+            
+            logger.info(f"[Memory] 记忆 {memory_id} 已标记为可疑: {old_status.value} → SUSPICIOUS")
+            return True
+    
+    # ==================== 记忆软删除和回滚 (任务 6) ====================
+    
+    def soft_delete_memory(
+        self,
+        memory_id: str,
+        deleted_by: str = "system",
+        reason: str = "",
+    ) -> bool:
+        """
+        软删除记忆
+        
+        软删除不会真正删除记忆，而是标记为已删除状态。
+        可以通过 rollback_memory 恢复。
+        
+        Args:
+            memory_id: 记忆ID
+            deleted_by: 删除者标识
+            reason: 删除原因
+            
+        Returns:
+            bool: 是否成功删除
+        """
+        with self._lock:
+            entry = self._long_term_memory.get(memory_id)
+            if not entry:
+                logger.warning(f"[Memory] 删除失败：记忆 {memory_id} 不存在")
+                return False
+            
+            if entry.is_soft_deleted:
+                logger.warning(f"[Memory] 删除失败：记忆 {memory_id} 已被删除")
+                return False
+            
+            # 记录删除前的状态
+            old_status = entry.verification_status
+            
+            # 软删除
+            entry.is_soft_deleted = True
+            entry.deleted_at = datetime.now().isoformat()
+            entry.deleted_reason = reason
+            entry.verification_status = MemoryVerificationStatus.DEPRECATED
+            entry.last_updated_at = datetime.now().isoformat()
+            
+            # 记录验证历史
+            entry.verification_history.append({
+                "action": "soft_delete",
+                "from_status": old_status.value,
+                "to_status": MemoryVerificationStatus.DEPRECATED.value,
+                "deleted_by": deleted_by,
+                "reason": reason,
+                "timestamp": datetime.now().isoformat(),
+            })
+            
+            logger.info(f"[Memory] 记忆 {memory_id} 已软删除")
+            return True
+    
+    def rollback_memory(
+        self,
+        memory_id: str,
+        rollback_by: str = "system",
+        reason: str = "",
+    ) -> bool:
+        """
+        回滚记忆到删除前的状态
+        
+        只能回滚已软删除的记忆。
+        
+        Args:
+            memory_id: 记忆ID
+            rollback_by: 回滚者标识
+            reason: 回滚原因
+            
+        Returns:
+            bool: 是否成功回滚
+        """
+        with self._lock:
+            entry = self._long_term_memory.get(memory_id)
+            if not entry:
+                logger.warning(f"[Memory] 回滚失败：记忆 {memory_id} 不存在")
+                return False
+            
+            if not entry.is_soft_deleted:
+                logger.warning(f"[Memory] 回滚失败：记忆 {memory_id} 未被删除")
+                return False
+            
+            # 查找删除前的状态
+            previous_status = MemoryVerificationStatus.PENDING
+            for history in reversed(entry.verification_history):
+                if history.get("action") == "soft_delete":
+                    previous_status = MemoryVerificationStatus(history.get("from_status", "pending"))
+                    break
+            
+            # 回滚
+            entry.is_soft_deleted = False
+            entry.deleted_at = None
+            entry.deleted_reason = None
+            entry.verification_status = previous_status
+            entry.last_updated_at = datetime.now().isoformat()
+            
+            # 记录验证历史
+            entry.verification_history.append({
+                "action": "rollback",
+                "from_status": MemoryVerificationStatus.DEPRECATED.value,
+                "to_status": previous_status.value,
+                "rollback_by": rollback_by,
+                "reason": reason,
+                "timestamp": datetime.now().isoformat(),
+            })
+            
+            logger.info(f"[Memory] 记忆 {memory_id} 已回滚到 {previous_status.value}")
+            return True
+    
+    def get_memory_by_id(self, memory_id: str) -> Optional[MemoryEntry]:
+        """获取指定ID的记忆"""
+        return self._long_term_memory.get(memory_id)
 
 
 # 全局单例
@@ -1250,6 +1592,7 @@ def reset_memory_service() -> None:
 __all__ = [
     "MemoryType",
     "MemoryImportance",
+    "MemoryVerificationStatus",
     "MemoryEntry",
     "CalibrationStats",
     "BatchMemory",

@@ -22,10 +22,7 @@ from .retry import (
     PERSISTENCE_RETRY_CONFIG,
 )
 
-from .exam_paper import (
-    create_exam_paper_graph,
-    create_simple_exam_paper_graph,
-)
+
 
 from .batch_grading import (
     create_batch_grading_graph,
@@ -55,8 +52,6 @@ __all__ = [
     "PERSISTENCE_RETRY_CONFIG",
     
     # Graph factories
-    "create_exam_paper_graph",
-    "create_simple_exam_paper_graph",
     "create_batch_grading_graph",
     "create_rule_upgrade_graph",
     "create_scheduled_rule_upgrade_graph",

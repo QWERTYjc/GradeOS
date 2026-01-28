@@ -462,6 +462,16 @@ export interface ConsoleState {
     // 新增：班级批改上下文
     classContext: ClassContext;
     reviewFocus: 'rubric' | 'results' | null;
+    expectedTotalScore: number | null;
+    rubricScoreMismatch: {
+        expectedTotalScore: number;
+        parsedTotalScore: number;
+        message: string;
+    } | null;
+    rubricParseError: {
+        message: string;
+        details?: string;
+    } | null;
 
     setView: (view: 'LANDING' | 'CONSOLE') => void;
     setCurrentTab: (tab: ConsoleTab) => void;
@@ -509,6 +519,15 @@ export interface ConsoleState {
     setInteractionEnabled: (enabled: boolean) => void;
     setGradingMode: (mode: string) => void;
     setReviewFocus: (focus: 'rubric' | 'results' | null) => void;
+    setExpectedTotalScore: (score: number | null) => void;
+    setRubricScoreMismatch: (
+        mismatch: {
+            expectedTotalScore: number;
+            parsedTotalScore: number;
+            message: string;
+        } | null
+    ) => void;
+    setRubricParseError: (error: { message: string; details?: string } | null) => void;
 }
 
 const normalizeImageSource = (value: string) => {
@@ -743,6 +762,9 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
         studentImageMapping: [],
     },
     reviewFocus: null,
+    expectedTotalScore: null,
+    rubricScoreMismatch: null,
+    rubricParseError: null,
 
     setView: (view) => set({ view }),
     setCurrentTab: (tab) => set({ currentTab: tab }),
@@ -751,6 +773,9 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
     setInteractionEnabled: (enabled) => set({ interactionEnabled: enabled }),
     setGradingMode: (mode) => set({ gradingMode: mode }),
     setReviewFocus: (focus) => set({ reviewFocus: focus }),
+    setExpectedTotalScore: (score) => set({ expectedTotalScore: score }),
+    setRubricScoreMismatch: (mismatch) => set({ rubricScoreMismatch: mismatch }),
+    setRubricParseError: (error) => set({ rubricParseError: error }),
     addLog: (message, level = 'INFO') => set((state) => ({
         logs: [...state.logs, {
             timestamp: new Date().toISOString(),
@@ -944,6 +969,9 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
             rubricImages: [],
             pendingReview: null,
             classReport: null,
+            expectedTotalScore: null,
+            rubricScoreMismatch: null,
+            rubricParseError: null,
         });
     },
 
@@ -1167,12 +1195,68 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
             console.log('Rubric Parsed:', data);
             const normalized = normalizeParsedRubricPayload(data);
             if (normalized) {
+                const expectedTotalScore = get().expectedTotalScore;
+                if (typeof expectedTotalScore === 'number' && expectedTotalScore > 0) {
+                    const parsedTotalScore = normalized.totalScore ?? 0;
+                    if (parsedTotalScore > 0 && parsedTotalScore < expectedTotalScore) {
+                        const message = `Parsed total (${parsedTotalScore}) is lower than expected (${expectedTotalScore}). Please re-upload the rubric.`;
+                        get().setRubricScoreMismatch({
+                            expectedTotalScore,
+                            parsedTotalScore,
+                            message,
+                        });
+                        get().setRubricParseError(null);
+                        set({
+                            status: 'IDLE',
+                            currentTab: 'process',
+                            submissionId: null,
+                        });
+                        get().addLog(message, 'ERROR');
+                        return;
+                    }
+                }
                 get().setParsedRubric(normalized);
                 get().addLog(
                     `Rubric parsed: ${normalized.totalQuestions} questions, total ${normalized.totalScore} points`,
                     'INFO'
                 );
             }
+        });
+        wsClient.on('rubric_score_mismatch', (data) => {
+            console.log('Rubric Score Mismatch:', data);
+            const expectedTotalScore = Number(data.expectedTotalScore ?? data.expected_total_score);
+            const parsedTotalScore = Number(data.parsedTotalScore ?? data.parsed_total_score);
+            if (Number.isFinite(expectedTotalScore) && Number.isFinite(parsedTotalScore)) {
+                const message = data.message
+                    || `Parsed total (${parsedTotalScore}) is lower than expected (${expectedTotalScore}). Please re-upload the rubric.`;
+                get().setRubricScoreMismatch({
+                    expectedTotalScore,
+                    parsedTotalScore,
+                    message,
+                });
+                get().setRubricParseError(null);
+                set({
+                    status: 'IDLE',
+                    currentTab: 'process',
+                    submissionId: null,
+                });
+                get().addLog(message, 'ERROR');
+            }
+        });
+        wsClient.on('rubric_parse_failed', (data) => {
+            console.log('Rubric Parse Failed:', data);
+            const message = data.message || 'Rubric parse failed. Please re-upload a clear rubric.';
+            get().setRubricParseError({
+                message,
+                details: data.error,
+            });
+            get().setRubricScoreMismatch(null);
+            set({
+                status: 'IDLE',
+                currentTab: 'process',
+                submissionId: null,
+            });
+            get().addLog(message, 'ERROR');
         });
 
         // 🔥 处理图片预处理完成事件 - 用于结果页显示答题图片
@@ -1679,6 +1763,9 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
         // 处理工作流错误（对应设计文档 EventType.ERROR）
         wsClient.on('workflow_error', (data) => {
             console.log('Workflow Error:', data);
+            if (get().rubricScoreMismatch || get().rubricParseError) {
+                return;
+            }
             set({ status: 'FAILED' });
             get().addLog(`Error: ${data.message}`, 'ERROR');
         });

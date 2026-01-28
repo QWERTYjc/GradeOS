@@ -556,7 +556,8 @@ export const gradingApi = {
     },
     enableReview: boolean = true,
     gradingMode?: string,
-    teacherId?: string
+    teacherId?: string,
+    expectedTotalScore?: number
   ): Promise<Submission> => {
     const formData = new FormData();
 
@@ -592,6 +593,9 @@ export const gradingApi = {
     }
     if (teacherId) {
       formData.append('teacher_id', teacherId);
+    }
+    if (typeof expectedTotalScore === 'number' && expectedTotalScore >= 0) {
+      formData.append('expected_total_score', expectedTotalScore.toString());
     }
 
     // 使用正确的批改 API 端点
@@ -712,7 +716,8 @@ export const api = {
     },
     enableReview: boolean = true,
     gradingMode?: string,
-    teacherId?: string
+    teacherId?: string,
+    expectedTotalScore?: number
   ) => gradingApi.createSubmission(
     examFiles,
     rubricFiles,
@@ -721,7 +726,8 @@ export const api = {
     classContext,
     enableReview,
     gradingMode,
-    teacherId
+    teacherId,
+    expectedTotalScore
   ),
   getSubmission: gradingApi.getSubmission,
   getResults: gradingApi.getResults,

@@ -1,5 +1,6 @@
 ---
 name: backend-algorithm-engineer
+model: claude-4.5-sonnet-thinking
 description: 专业后端算法工程师，专注于优化后端算法性能、时间复杂度和空间复杂度。擅长批量处理优化、数据结构选择、并行算法设计、缓存策略、算法重构。当需要优化算法性能、改进数据处理效率、设计高效数据结构、优化批处理逻辑时主动使用。
 ---
 

@@ -1,9 +1,9 @@
 """
 LangGraph 工作流集成测试
 
-验证跨页题目合并节点和 ResultMerger 集成是否正常工作。
+验证导出节点和数据格式。
 
-Requirements: 2.1, 4.2, 4.3, 11.4
+Requirements: 2.1, 11.4
 """
 
 import pytest
@@ -11,109 +11,13 @@ from datetime import datetime
 from typing import Dict, Any, List
 
 from src.graphs.batch_grading import (
-    cross_page_merge_node,
     export_node,
     BatchGradingGraphState,
 )
 
 
-@pytest.fixture
-def sample_grading_results() -> List[Dict[str, Any]]:
-    """创建示例批改结果"""
-    return [
-        {
-            "page_index": 0,
-            "status": "completed",
-            "score": 5.0,
-            "max_score": 10.0,
-            "confidence": 0.9,
-            "question_details": [
-                {
-                    "question_id": "1",
-                    "score": 5.0,
-                    "max_score": 10.0,
-                    "feedback": "部分正确",
-                    "student_answer": "答案内容...",
-                    "is_correct": False,
-                    "scoring_point_results": []
-                }
-            ],
-            "is_blank_page": False
-        },
-        {
-            "page_index": 1,
-            "status": "completed",
-            "score": 5.0,
-            "max_score": 10.0,
-            "confidence": 0.85,
-            "question_details": [
-                {
-                    "question_id": "1",  # 同一题目，跨页
-                    "score": 5.0,
-                    "max_score": 10.0,
-                    "feedback": "继续答题",
-                    "student_answer": "答案继续...",
-                    "is_correct": False,
-                    "scoring_point_results": []
-                }
-            ],
-            "is_blank_page": False
-        },
-        {
-            "page_index": 2,
-            "status": "completed",
-            "score": 8.0,
-            "max_score": 10.0,
-            "confidence": 0.95,
-            "question_details": [
-                {
-                    "question_id": "2",
-                    "score": 8.0,
-                    "max_score": 10.0,
-                    "feedback": "很好",
-                    "student_answer": "答案2...",
-                    "is_correct": True,
-                    "scoring_point_results": []
-                }
-            ],
-            "is_blank_page": False
-        }
-    ]
-
-
 @pytest.mark.asyncio
-async def test_cross_page_merge_node(sample_grading_results):
-    """测试跨页题目合并节点"""
-    # 准备状态
-    state: BatchGradingGraphState = {
-        "batch_id": "test_batch_001",
-        "grading_results": sample_grading_results,
-        "timestamps": {}
-    }
-    
-    # 执行跨页合并
-    result = await cross_page_merge_node(state)
-    
-    # 验证结果
-    assert "merged_questions" in result
-    assert "cross_page_questions" in result
-    assert result["current_stage"] == "cross_page_merge_completed"
-    assert result["percentage"] == 75.0
-    
-    # 验证合并后的题目数量（应该少于原始数量，因为跨页题目被合并了）
-    merged_questions = result["merged_questions"]
-    assert len(merged_questions) <= len(sample_grading_results)
-    
-    # 验证跨页题目信息
-    cross_page_questions = result["cross_page_questions"]
-    if cross_page_questions:
-        # 应该检测到题目1是跨页的
-        cross_page_ids = [cpq["question_id"] for cpq in cross_page_questions]
-        assert "1" in cross_page_ids or any("1" in qid for qid in cross_page_ids)
-
-
-@pytest.mark.asyncio
-async def test_export_node_with_merged_questions(sample_grading_results):
+async def test_export_node_with_merged_questions():
     """测试导出节点支持合并后的题目"""
     # 准备状态（包含合并后的题目）
     merged_questions = [
@@ -274,6 +178,66 @@ async def test_export_node_json_export():
         assert data["batch_id"] == "test_batch_003"
         assert len(data["students"]) == 1
         assert data["students"][0]["student_name"] == "学生B"
+
+
+@pytest.mark.asyncio
+async def test_export_node_json_export_even_when_db_available():
+    """测试数据库可用但未持久化时仍导出 JSON 以保证数据安全"""
+    import os
+    import json
+    import tempfile
+    from unittest.mock import patch, AsyncMock
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        os.environ["EXPORT_DIR"] = tmpdir
+
+        student_results = [
+            {
+                "student_key": "学生C",
+                "student_id": "003",
+                "start_page": 0,
+                "end_page": 1,
+                "total_score": 12.0,
+                "max_total_score": 20.0,
+                "question_details": [
+                    {
+                        "question_id": "1",
+                        "score": 12.0,
+                        "max_score": 20.0,
+                        "feedback": "需要改进",
+                        "student_answer": "答案...",
+                        "is_correct": False
+                    }
+                ],
+                "confidence": 0.7,
+                "needs_confirmation": False
+            }
+        ]
+
+        state: BatchGradingGraphState = {
+            "batch_id": "test_batch_004",
+            "student_results": student_results,
+            "cross_page_questions": [],
+            "merged_questions": [],
+            "timestamps": {}
+        }
+
+        # 模拟数据库可用（get_db_pool 返回对象）
+        with patch('src.utils.database.get_db_pool', new_callable=AsyncMock) as mock_db:
+            mock_db.return_value = object()
+            result = await export_node(state)
+
+        export_data = result["export_data"]
+        assert "json_file" in export_data
+
+        json_file = export_data["json_file"]
+        assert os.path.exists(json_file)
+
+        with open(json_file, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+
+        assert data["batch_id"] == "test_batch_004"
+        assert data["students"][0]["student_name"] == "学生C"
 
 
 if __name__ == "__main__":

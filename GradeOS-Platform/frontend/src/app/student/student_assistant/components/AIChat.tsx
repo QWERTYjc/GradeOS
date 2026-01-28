@@ -441,12 +441,12 @@ const AIChat: React.FC<Props> = ({ lang }) => {
     () => ({
       history: 'History',
       focus: 'Focus cues',
-      analytics: 'Learning analytics',
+      analytics: 'Learning progress',
       knowledgeMap: 'Knowledge map',
       question: 'Question',
       explanation: 'Explanation',
       highlight: 'Highlight',
-      progressTrace: 'Progress trace',
+      progressTrace: 'Progress',
     }),
     [],
   );

@@ -144,6 +144,13 @@ class QuestionRubric:
         return cls.from_dict(json.loads(json_str))
 
 
+class CitationQuality:
+    """引用质量枚举"""
+    EXACT = "exact"      # 精确引用
+    PARTIAL = "partial"  # 部分引用
+    NONE = "none"        # 无引用
+
+
 @dataclass
 class ScoringPointResult:
     """
@@ -151,18 +158,37 @@ class ScoringPointResult:
     
     记录单个得分点的评分情况，包含对应的得分点、获得的分数和证据。
     
+    扩展字段（评分标准引用与置信度优化）：
+    - rubric_reference: 评分标准引用（如 "1.2.a" 或原文摘要）
+    - is_alternative_solution: 是否为另类解法
+    - alternative_description: 另类解法描述
+    - point_confidence: 该得分点的置信度
+    - citation_quality: 引用质量（exact/partial/none）
+    
     Requirements: 8.2
     """
     scoring_point: ScoringPoint  # 对应的得分点
     awarded: float  # 获得的分数
     evidence: str = ""  # 证据/依据
     
+    # 新增字段：评分标准引用
+    rubric_reference: Optional[str] = None  # 评分标准引用，如 "1.2.a" 或原文摘要
+    is_alternative_solution: bool = False   # 是否为另类解法
+    alternative_description: str = ""       # 另类解法描述
+    point_confidence: float = 0.9           # 该得分点的置信度
+    citation_quality: str = "exact"         # exact/partial/none
+    
     def to_dict(self) -> Dict[str, Any]:
         """序列化为字典"""
         return {
             "scoring_point": self.scoring_point.to_dict(),
             "awarded": self.awarded,
-            "evidence": self.evidence
+            "evidence": self.evidence,
+            "rubric_reference": self.rubric_reference,
+            "is_alternative_solution": self.is_alternative_solution,
+            "alternative_description": self.alternative_description,
+            "point_confidence": self.point_confidence,
+            "citation_quality": self.citation_quality,
         }
     
     @classmethod
@@ -171,7 +197,12 @@ class ScoringPointResult:
         return cls(
             scoring_point=ScoringPoint.from_dict(data["scoring_point"]),
             awarded=data["awarded"],
-            evidence=data.get("evidence", "")
+            evidence=data.get("evidence", ""),
+            rubric_reference=data.get("rubric_reference"),
+            is_alternative_solution=data.get("is_alternative_solution", False),
+            alternative_description=data.get("alternative_description", ""),
+            point_confidence=data.get("point_confidence", 0.9),
+            citation_quality=data.get("citation_quality", "exact"),
         )
 
 
@@ -404,9 +435,17 @@ class CrossPageQuestion:
     """
     跨页题目信息
     
-    记录跨越多个页面的题目信息，用于合并处理。
+    ⚠️ 已废弃 (DEPRECATED)
+    ======================
+    当前架构使用一次 LLM 调用批改整个学生的所有页面（grade_student），
+    LLM 自己能看到跨页的完整答案，不再需要后续的跨页合并逻辑。
     
-    Requirements: 2.1, 2.2, 2.3
+    此类保留仅用于向后兼容（如反序列化旧数据）。
+    
+    ---
+    原设计：记录跨越多个页面的题目信息，用于合并处理。
+    
+    Requirements: 2.1, 2.2, 2.3 (已由 grade_student 内部实现)
     """
     question_id: str  # 题目编号
     page_indices: List[int] = field(default_factory=list)  # 涉及的页面索引
@@ -563,6 +602,7 @@ __all__ = [
     "AlternativeSolution",
     "QuestionRubric",
     "ScoringPointResult",
+    "CitationQuality",
     "QuestionResult",
     "StudentInfo",
     "PageGradingResult",

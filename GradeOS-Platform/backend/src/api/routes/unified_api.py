@@ -11,6 +11,7 @@ import logging
 import os
 import re
 import uuid
+import inspect
 import redis.asyncio as redis
 from datetime import datetime
 from pathlib import Path
@@ -30,7 +31,11 @@ from src.db import (
     HomeworkSubmission,
     save_homework_submission,
     list_grading_history,
-    get_grading_history,
+    get_grading_history as get_grading_history_record,
+    GradingHistory,
+    save_grading_history,
+    StudentGradingResult,
+    save_student_result,
     get_student_results,
     get_connection,
     UserRecord,
@@ -316,6 +321,12 @@ def _parse_deadline(deadline: str) -> datetime:
     if parsed.hour == 0 and parsed.minute == 0 and parsed.second == 0:
         parsed = parsed.replace(hour=23, minute=59, second=59)
     return parsed
+
+
+async def _maybe_await(value: Any) -> Any:
+    if inspect.isawaitable(value):
+        return await value
+    return value
 
 
 def _get_student_map(class_id: str) -> Dict[str, str]:
@@ -607,16 +618,41 @@ def _build_student_context(student_id: str, class_id: Optional[str] = None) -> D
 
 async def _get_formatted_results(batch_id: str, orchestrator: Orchestrator) -> List[Dict[str, Any]]:
     run_id = f"batch_grading_{batch_id}"
-    run_info = await orchestrator.get_run_info(run_id)
-    if not run_info:
+    run_info = await orchestrator.get_run_info(run_id) if orchestrator else None
+    if run_info:
+        state = run_info.state or {}
+        student_results = state.get("student_results", [])
+        if not student_results:
+            final_output = await orchestrator.get_final_output(run_id)
+            if final_output:
+                student_results = final_output.get("student_results", [])
+        if student_results:
+            return _format_results_for_frontend(student_results)
+
+    history = await _maybe_await(get_grading_history_record(batch_id))
+    if not history:
         raise HTTPException(status_code=404, detail="批改批次不存在")
-    state = run_info.state or {}
-    student_results = state.get("student_results", [])
-    if not student_results:
-        final_output = await orchestrator.get_final_output(run_id)
-        if final_output:
-            student_results = final_output.get("student_results", [])
-    return _format_results_for_frontend(student_results)
+
+    raw_results: List[Dict[str, Any]] = []
+    student_rows = await _maybe_await(get_student_results(history.id))
+    for row in student_rows:
+        data = row.result_data
+        if isinstance(data, str):
+            try:
+                data = json.loads(data)
+            except Exception:
+                data = {}
+        if not isinstance(data, dict):
+            data = {}
+        if not data:
+            data = {
+                "studentName": row.student_key,
+                "score": row.score,
+                "maxScore": row.max_score,
+            }
+        raw_results.append(data)
+
+    return _format_results_for_frontend(raw_results)
 
 
 async def _trigger_homework_grading(homework_id: str, orchestrator: Orchestrator) -> Optional[str]:
@@ -1176,6 +1212,39 @@ async def import_grading_results(
 
     records: List[GradingImportRecord] = []
     now = datetime.utcnow().isoformat()
+    history_record = get_grading_history_record(request.batch_id)
+    target_class_ids = [target.class_id for target in request.targets]
+    total_students = sum(len(target.student_ids) for target in request.targets)
+    if history_record:
+        merged_class_ids = set(history_record.class_ids or [])
+        merged_class_ids.update(target_class_ids)
+        updated_history = GradingHistory(
+            id=history_record.id,
+            batch_id=history_record.batch_id,
+            status="imported",
+            class_ids=list(merged_class_ids),
+            created_at=history_record.created_at or now,
+            completed_at=history_record.completed_at or now,
+            total_students=max(history_record.total_students or 0, total_students),
+            average_score=history_record.average_score,
+            result_data=history_record.result_data,
+        )
+        save_grading_history(updated_history)
+        history_id = history_record.id
+    else:
+        history_id = str(uuid.uuid4())
+        history = GradingHistory(
+            id=history_id,
+            batch_id=request.batch_id,
+            status="imported",
+            class_ids=target_class_ids,
+            created_at=now,
+            completed_at=now,
+            total_students=total_students,
+            average_score=None,
+            result_data=None,
+        )
+        save_grading_history(history)
 
     for target in request.targets:
         if not target.student_ids:
@@ -1254,6 +1323,67 @@ async def import_grading_results(
                         result_payload,
                     ),
                 )
+            if result:
+                score_value = (
+                    result.get("total_score")
+                    or result.get("totalScore")
+                    or result.get("score")
+                )
+                max_score_value = (
+                    result.get("max_score")
+                    or result.get("maxScore")
+                    or result.get("max_total_score")
+                    or result.get("maxTotalScore")
+                )
+                summary_data = (
+                    result.get("studentSummary")
+                    or result.get("student_summary")
+                    or result.get("summary")
+                )
+                self_report_data = (
+                    result.get("selfReport")
+                    or result.get("self_report")
+                    or result.get("selfAudit")
+                    or result.get("self_audit")
+                )
+                summary_text = None
+                if isinstance(summary_data, dict):
+                    summary_text = summary_data.get("overall")
+                elif isinstance(summary_data, str):
+                    summary_text = summary_data
+                self_report_text = None
+                if isinstance(self_report_data, dict):
+                    self_report_text = self_report_data.get("summary")
+                elif isinstance(self_report_data, str):
+                    self_report_text = self_report_data
+                identity_token = student_id or student_key or student_name
+                stable_key = f"{history_id}:{identity_token}"
+                result_id = str(uuid.uuid5(uuid.NAMESPACE_URL, stable_key))
+                with get_connection() as conn:
+                    if student_id:
+                        conn.execute(
+                            "DELETE FROM student_grading_results WHERE grading_history_id = ? AND student_id = ?",
+                            (str(history_id), student_id),
+                        )
+                    else:
+                        conn.execute(
+                            "DELETE FROM student_grading_results WHERE grading_history_id = ? AND student_key = ?",
+                            (str(history_id), student_key or student_name),
+                        )
+                student_result = StudentGradingResult(
+                    id=result_id,
+                    grading_history_id=str(history_id),
+                    student_key=student_key or student_name,
+                    score=float(score_value) if score_value is not None else None,
+                    max_score=float(max_score_value) if max_score_value is not None else None,
+                    class_id=target.class_id,
+                    student_id=student_id,
+                    summary=summary_text,
+                    self_report=self_report_text,
+                    result_data=result,
+                    imported_at=now,
+                )
+                save_student_result(student_result)
 
         records.append(GradingImportRecord(**record))
 
@@ -1272,10 +1402,14 @@ async def get_grading_history(
         histories = list_grading_history(class_id=class_id, limit=50)
         for history in histories:
             class_ids = history.class_ids or []
+            if isinstance(class_ids, str):
+                class_ids = [class_ids]
             target_class_id = class_id or (class_ids[0] if class_ids else None)
             if class_id and class_id not in class_ids:
                 continue
             result_meta = history.result_data or {}
+            if not isinstance(result_meta, dict):
+                result_meta = {}
             assignment_id_value = result_meta.get("homework_id") or result_meta.get("assignment_id")
             if assignment_id and assignment_id_value != assignment_id:
                 continue
@@ -1284,16 +1418,23 @@ async def get_grading_history(
             if assignment_id_value:
                 assignment = get_homework(assignment_id_value)
                 assignment_title = assignment.title if assignment else None
+            created_at_value = history.created_at
+            if isinstance(created_at_value, datetime):
+                created_at_value = created_at_value.isoformat()
+            elif created_at_value is not None:
+                created_at_value = str(created_at_value)
+            if not created_at_value:
+                created_at_value = ""
             records.append({
-                "import_id": history.id,
-                "batch_id": history.batch_id,
+                "import_id": str(history.id),
+                "batch_id": history.batch_id or "",
                 "class_id": target_class_id or "",
                 "class_name": class_info.name if class_info else None,
                 "assignment_id": assignment_id_value,
                 "assignment_title": assignment_title,
-                "student_count": history.total_students,
-                "status": history.status,
-                "created_at": history.created_at,
+                "student_count": history.total_students or 0,
+                "status": history.status or "unknown",
+                "created_at": created_at_value,
                 "revoked_at": None,
             })
     except Exception as exc:
@@ -1318,16 +1459,23 @@ async def get_grading_history(
             if row["assignment_id"]:
                 assignment = get_homework(row["assignment_id"])
                 assignment_title = assignment.title if assignment else None
+            created_at_value = row["created_at"]
+            if isinstance(created_at_value, datetime):
+                created_at_value = created_at_value.isoformat()
+            elif created_at_value is not None:
+                created_at_value = str(created_at_value)
+            if not created_at_value:
+                created_at_value = ""
             records.append({
-                "import_id": row["id"],
-                "batch_id": row["batch_id"],
+                "import_id": str(row["id"]),
+                "batch_id": row["batch_id"] or "",
                 "class_id": row["class_id"],
                 "class_name": class_info.name if class_info else None,
                 "assignment_id": row["assignment_id"],
                 "assignment_title": assignment_title,
                 "student_count": row["student_count"] or 0,
-                "status": row["status"],
-                "created_at": row["created_at"],
+                "status": row["status"] or "unknown",
+                "created_at": created_at_value,
                 "revoked_at": row["revoked_at"],
             })
     except Exception as exc:
@@ -1345,10 +1493,12 @@ async def get_grading_history_detail(import_id: str):
     if db.is_available:
         try:
             # 尝试通过 batch_id 查找（import_id 可能是 history.id 或 batch_id）
-            pg_history = get_grading_history(import_id)
+            pg_history = get_grading_history_record(import_id)
             if pg_history:
                 class_ids = pg_history.class_ids or []
                 result_data = pg_history.result_data or {}
+                if not isinstance(result_data, dict):
+                    result_data = {}
                 class_id = class_ids[0] if class_ids else ""
                 class_info = get_class_by_id(class_id) if class_id else None
                 assignment_id_value = result_data.get("homework_id") or result_data.get("assignment_id")
@@ -1356,16 +1506,23 @@ async def get_grading_history_detail(import_id: str):
                 if assignment_id_value:
                     assignment = get_homework(assignment_id_value)
                     assignment_title = assignment.title if assignment else None
+                created_at_value = pg_history.created_at
+                if isinstance(created_at_value, datetime):
+                    created_at_value = created_at_value.isoformat()
+                elif created_at_value is not None:
+                    created_at_value = str(created_at_value)
+                if not created_at_value:
+                    created_at_value = ""
                 record = {
-                    "import_id": pg_history.id,
-                    "batch_id": pg_history.batch_id,
+                    "import_id": str(pg_history.id),
+                    "batch_id": pg_history.batch_id or "",
                     "class_id": class_id,
                     "class_name": class_info.name if class_info else None,
                     "assignment_id": assignment_id_value,
                     "assignment_title": assignment_title,
                     "student_count": pg_history.total_students or 0,
-                    "status": pg_history.status,
-                    "created_at": pg_history.created_at,
+                    "status": pg_history.status or "unknown",
+                    "created_at": created_at_value,
                     "revoked_at": None,
                 }
                 items = []
@@ -1385,8 +1542,8 @@ async def get_grading_history_detail(import_id: str):
                         or f"Student {idx + 1}"
                     )
                     items.append({
-                        "item_id": item.id,
-                        "import_id": pg_history.id,
+                        "item_id": str(item.id),
+                        "import_id": str(pg_history.id),
                         "batch_id": pg_history.batch_id,
                         "class_id": class_id,
                         "student_id": item.student_id or "",

@@ -25,6 +25,24 @@ logger = logging.getLogger(__name__)
 # 数据库文件路径
 
 
+def _safe_json_load(value: Any) -> Any:
+    if value is None:
+        return None
+    if isinstance(value, (dict, list)):
+        return value
+    if isinstance(value, bytes):
+        try:
+            value = value.decode("utf-8")
+        except Exception:
+            return None
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except Exception:
+            return None
+    return None
+
+
 def _get_connection_string() -> str:
     database_url = os.getenv("DATABASE_URL", "").strip()
     if database_url:
@@ -151,6 +169,8 @@ def init_db():
         conn.execute("CREATE INDEX IF NOT EXISTS idx_workflow_batch_id ON workflow_state(batch_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_grading_batch_id ON grading_history(batch_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_student_grading_history ON student_grading_results(grading_history_id)")
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_student_grading_unique_id ON student_grading_results(grading_history_id, student_id) WHERE student_id IS NOT NULL")
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_student_grading_unique_key ON student_grading_results(grading_history_id, student_key) WHERE student_key IS NOT NULL")
         
         # 作业提交表 - 存储班级作业的学生提交图片
         conn.execute("""
@@ -741,10 +761,15 @@ def get_grading_history(batch_id: str) -> Optional[GradingHistory]:
         ).fetchone()
         
         if not row:
+            row = conn.execute(
+                "SELECT * FROM grading_history WHERE CAST(id AS TEXT) = ?",
+                (batch_id,)
+            ).fetchone()
+        if not row:
             return None
         
-        class_ids = json.loads(row["class_ids"]) if row["class_ids"] else None
-        result_data = json.loads(row["result_data"]) if row["result_data"] else None
+        class_ids = _safe_json_load(row["class_ids"]) if row["class_ids"] else None
+        result_data = _safe_json_load(row["result_data"]) if row["result_data"] else None
         
         return GradingHistory(
             id=row["id"],
@@ -764,8 +789,8 @@ def list_grading_history(class_id: Optional[str] = None, limit: int = 50) -> Lis
     with get_connection() as conn:
         if class_id:
             rows = conn.execute(
-                "SELECT * FROM grading_history WHERE class_ids LIKE ? ORDER BY created_at DESC LIMIT ?",
-                (f'%"{class_id}"%', limit)
+                "SELECT * FROM grading_history WHERE class_ids @> ?::jsonb ORDER BY created_at DESC LIMIT ?",
+                (json.dumps([class_id]), limit)
             ).fetchall()
         else:
             rows = conn.execute(
@@ -775,8 +800,8 @@ def list_grading_history(class_id: Optional[str] = None, limit: int = 50) -> Lis
         
         histories = []
         for row in rows:
-            class_ids = json.loads(row["class_ids"]) if row["class_ids"] else None
-            result_data = json.loads(row["result_data"]) if row["result_data"] else None
+            class_ids = _safe_json_load(row["class_ids"]) if row["class_ids"] else None
+            result_data = _safe_json_load(row["result_data"]) if row["result_data"] else None
             
             histories.append(GradingHistory(
                 id=row["id"],
@@ -858,7 +883,7 @@ def get_student_results(grading_history_id: str) -> List[StudentGradingResult]:
         
         results = []
         for row in rows:
-            result_data = json.loads(row["result_data"]) if row["result_data"] else None
+            result_data = _safe_json_load(row["result_data"]) if row["result_data"] else None
             
             results.append(StudentGradingResult(
                 id=row["id"],

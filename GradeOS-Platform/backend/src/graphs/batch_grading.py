@@ -664,20 +664,44 @@ async def rubric_parse_node(state: BatchGradingGraphState) -> Dict[str, Any]:
             parsed_rubric["raw_text"] = rubric_text
             
     except Exception as e:
-        logger.error(f"[rubric_parse] 评分标准解析失败: {e}", exc_info=True)
-        # 降级处理：返回空的评分标准
-        parsed_rubric = {
-            "total_questions": 0,
-            "total_score": 0,
-            "questions": [],
-            "error": str(e)
-        }
+        logger.error(f"[rubric_parse] Rubric parse failed: {e}", exc_info=True)
+        try:
+            await _broadcast_progress(batch_id, {
+                "type": "rubric_parse_failed",
+                "message": "Rubric parse failed. Please re-upload a clear rubric.",
+                "error": str(e),
+            })
+        except Exception:
+            logger.debug("[rubric_parse] Failed to broadcast parse error")
+        raise
+
     
     logger.info(
         f"[rubric_parse] 评分标准解析完成: batch_id={batch_id}, "
         f"题目数={parsed_rubric.get('total_questions', 0)}, "
         f"总分={parsed_rubric.get('total_score', 0)}"
     )
+
+    inputs_dict = state.get("inputs", {}) or {}
+    expected_total_score = inputs_dict.get("expected_total_score")
+    if expected_total_score is not None:
+        try:
+            expected_total_score = float(expected_total_score)
+            parsed_total_score = float(parsed_rubric.get("total_score", 0) or 0)
+            if parsed_total_score > 0 and parsed_total_score < expected_total_score:
+                message = (
+                    f"Parsed total score {parsed_total_score} is lower than "
+                    f"expected {expected_total_score}."
+                )
+                await _broadcast_progress(batch_id, {
+                    "type": "rubric_score_mismatch",
+                    "expected_total_score": expected_total_score,
+                    "parsed_total_score": parsed_total_score,
+                    "message": message,
+                })
+                raise ValueError(message)
+        except (TypeError, ValueError) as exc:
+            logger.warning(f"[rubric_parse] Expected total score check skipped: {exc}")
 
     try:
         await _broadcast_progress(batch_id, {
@@ -931,7 +955,7 @@ def grading_fanout_router(state: BatchGradingGraphState) -> List[Send]:
     
     if not processed_images:
         logger.warning(f"[grading_fanout] 没有待批改的图像: batch_id={batch_id}")
-        return [Send("simple_aggregate", state)]
+        return [Send("self_report", state)]
 
     # 不再从 page_index_contexts 推导 student_boundaries
     # 如果前端没有提供 student_mapping，则按批次大小分配
@@ -1831,6 +1855,14 @@ def _finalize_scoring_result(
             confidence_multiplier *= 0.9
         confidence = max(0.0, min(1.0, confidence * confidence_multiplier))
 
+        rubric_ref_coverage = 1.0
+        if scoring_point_results:
+            rubric_ref_coverage = sum(
+                1 for spr in scoring_point_results if spr.get("rubric_reference")
+            ) / max(1, len(scoring_point_results))
+            if rubric_ref_coverage < 1.0:
+                confidence = max(0.0, min(1.0, confidence * (0.6 + 0.4 * rubric_ref_coverage)))
+
         issues = []
         if missing_points:
             issues.append(f"Scoring coverage incomplete (missing {missing_points} points)")
@@ -1869,6 +1901,7 @@ def _finalize_scoring_result(
             confidence_reason = f"{confidence_reason}, type={question_type}"
         if used_alt or rubric.get("alternative_solutions"):
             confidence_reason = f"{confidence_reason}, alt_solution=1"
+        confidence_reason = f"{confidence_reason}, rubric_refs={rubric_ref_coverage:.2f}"
 
         feedback = raw_question.get("feedback", "")
         self_critique = raw_question.get("self_critique") or review_summary
@@ -1887,7 +1920,11 @@ def _finalize_scoring_result(
             "self_critique": self_critique,
             "self_critique_confidence": raw_question.get("self_critique_confidence", confidence),
             "typo_notes": typo_notes,
-            "rubric_refs": [sp.get("point_id") for sp in expected_points if sp.get("point_id")] if expected_points else [],
+            "rubric_refs": [
+                spr.get("rubric_reference")
+                for spr in scoring_point_results
+                if spr.get("rubric_reference")
+            ],
             "scoring_point_results": scoring_point_results,
             "review_summary": review_summary,
             "review_corrections": review_corrections,
@@ -2433,77 +2470,54 @@ async def _grade_batch_node_impl(state: Dict[str, Any]) -> Dict[str, Any]:
         "progress": 100,
     })
     
-    # 返回结果（使用 add reducer 聚合，不返回 grading_mode 避免并发冲突）
+    # ===== 直接构建 student_results 格式（移除 simple_aggregate_node 的需要）=====
+    student_results = []
+    for result in page_results:
+        if result.get("status") == "completed":
+            result_page_indices = result.get("page_indices", [])
+            pages_sorted = sorted(result_page_indices) if result_page_indices else [result.get("page_index", 0)]
+            
+            student_results.append({
+                "student_key": result.get("student_key", batch_student_key),
+                "student_id": None,
+                "student_name": None,
+                "start_page": pages_sorted[0] if pages_sorted else 0,
+                "end_page": pages_sorted[-1] if pages_sorted else 0,
+                "total_score": result.get("score", 0.0),
+                "max_total_score": result.get("max_score", 0.0),
+                "question_details": result.get("question_details", []),
+                "grading_mode": grading_mode,
+                "confidence": result.get("confidence", 0.8),
+                "feedback": result.get("feedback", ""),
+            })
+        else:
+            # 失败的结果也要记录
+            result_page_indices = result.get("page_indices", [result.get("page_index", 0)])
+            pages_sorted = sorted(result_page_indices) if result_page_indices else [0]
+            
+            student_results.append({
+                "student_key": result.get("student_key", batch_student_key),
+                "student_id": None,
+                "student_name": None,
+                "start_page": pages_sorted[0] if pages_sorted else 0,
+                "end_page": pages_sorted[-1] if pages_sorted else 0,
+                "total_score": 0.0,
+                "max_total_score": 0.0,
+                "question_details": [],
+                "grading_mode": grading_mode,
+                "status": "failed",
+                "error": result.get("error", "Unknown error"),
+            })
+    
+    # 返回结果（使用 add reducer 聚合，直接输出 student_results）
     return {
-        "grading_results": page_results,
+        "student_results": student_results,
+        "grading_results": page_results,  # 保留用于调试/日志
         "batch_progress": progress_info,
     }
 
 
-async def simple_aggregate_node(state: BatchGradingGraphState) -> Dict[str, Any]:
-    """
-    简单聚合节点
-    
-    将 grading_results 按 student_key 聚合为 student_results
-    不再进行跨页合并和复杂的学生分割，只做简单分组
-    """
-    batch_id = state["batch_id"]
-    grading_results = state.get("grading_results", [])
-    
-    logger.info(f"[simple_aggregate] 开始聚合学生结果: batch_id={batch_id}")
-    
-    # 按 student_key 分组
-    from collections import defaultdict
-    students_dict = defaultdict(lambda: {
-        "questions": [],
-        "pages": set(),
-        "total_score": 0.0,
-        "max_total_score": 0.0
-    })
-    
-    # 遍历每页结果，按 student_key 分组
-    for result in grading_results:
-        student_key = result.get("student_key", "未知学生")
-        page_index = result.get("page_index", 0)
-        
-        students_dict[student_key]["pages"].add(page_index)
-        
-        # 添加题目到学生
-        for question in result.get("question_details", []):
-            students_dict[student_key]["questions"].append(question)
-            students_dict[student_key]["total_score"] += question.get("score", 0.0)
-            students_dict[student_key]["max_total_score"] += question.get("max_score", 0.0)
-    
-    # 转换为 student_results 列表
-    student_results = []
-    for student_key, data in students_dict.items():
-        pages_sorted = sorted(list(data["pages"]))
-        student_results.append({
-            "student_key": student_key,
-            "student_id": None,  # 从 grade_batch 获取
-            "student_name": None,
-            "start_page": pages_sorted[0] if pages_sorted else 0,
-            "end_page": pages_sorted[-1] if pages_sorted else 0,
-            "total_score": data["total_score"],
-            "max_total_score": data["max_total_score"],
-            "question_details": data["questions"],
-            "grading_mode": _resolve_grading_mode(state.get("inputs", {}), state.get("parsed_rubric", {}))
-        })
-    
-    logger.info(
-        f"[simple_aggregate] 聚合完成: batch_id={batch_id}, "
-        f"共 {len(student_results)} 个学生"
-    )
-    
-    return {
-        "student_results": student_results,
-        "current_stage": "aggregate_completed",
-        "percentage": 75.0,
-        "timestamps": {
-            **state.get("timestamps", {}),
-            "aggregate_at": datetime.now().isoformat()
-        }
-    }
+
 
 
 def _apply_student_result_overrides(
@@ -5386,7 +5400,7 @@ def create_batch_grading_graph(
     graph.add_node("rubric_parse", rubric_parse_node)
     graph.add_node("rubric_review", rubric_review_node)
     graph.add_node("grade_batch", grade_batch_node)
-    graph.add_node("simple_aggregate", simple_aggregate_node)  # 简单聚合节点
+    # graph.add_node("simple_aggregate", simple_aggregate_node)  # 已移除：grade_batch 直接输出 student_results
     # graph.add_node("cross_page_merge", cross_page_merge_node)  # 已移除：不再需要跨页合并
     # graph.add_node("index_merge", index_merge_node)  # 已移除：不再需要索引聚合
     graph.add_node("self_report", self_report_node)
@@ -5407,14 +5421,13 @@ def create_batch_grading_graph(
     graph.add_conditional_edges(
         "rubric_review",
         grading_fanout_router,
-        ["grade_batch", "simple_aggregate"]  # 简化：只需要 grade_batch 和 simple_aggregate
+        ["grade_batch", "self_report"]  # 简化：grade_batch 直接输出 student_results，完成后进入 self_report
     )
     
-    # 并行批改后聚合
-    graph.add_edge("grade_batch", "simple_aggregate")
+    # 并行批改后直接进入 self_report（grade_batch 通过 add reducer 聚合 student_results）
+    graph.add_edge("grade_batch", "self_report")
     
-    # 简化流程：simple_aggregate → self_report → logic_review → annotation_generation → review → export → END
-    graph.add_edge("simple_aggregate", "self_report")
+    # 简化流程：self_report → logic_review → annotation_generation → review → export → END
     graph.add_edge("self_report", "logic_review")
     graph.add_edge("logic_review", "annotation_generation")
     graph.add_edge("annotation_generation", "review")

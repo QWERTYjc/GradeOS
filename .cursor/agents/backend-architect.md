@@ -1,5 +1,6 @@
 ---
 name: backend-architect
+model: claude-4.5-sonnet-thinking
 description: 专业后端架构师，擅长设计精美的后端架构，精通 LangGraph/LangChain 进行 agent 和工作流编排。当需要设计后端架构、创建 LangGraph 工作流、设计多智能体系统、优化编排逻辑、重构代码结构时主动使用。
 ---
 

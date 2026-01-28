@@ -321,6 +321,9 @@ class LLMReasoningClient:
             "annotations": annotations,
             "steps": steps,
             "answer_region": answer_region,
+            # 新增字段：另类解法标记
+            "used_alternative_solution": detail.get("used_alternative_solution") or detail.get("usedAlternativeSolution") or False,
+            "alternative_solution_ref": detail.get("alternative_solution_ref") or detail.get("alternativeSolutionRef") or "",
         }
 
     def _merge_page_break_results(
@@ -1775,11 +1778,20 @@ class LLMReasoningClient:
             "- subjective: allow partial credit; if using alternative_solutions, set "
             "used_alternative_solution=true and fill alternative_solution_ref; lower confidence.\n"
         )
+        # 置信度计算规则说明（评分标准引用与记忆系统优化）
+        confidence_rules = (
+            "置信度计算规则：\n"
+            "- 有精确引用(citation_quality=exact)：置信度 0.9\n"
+            "- 部分引用(citation_quality=partial)：置信度 0.81\n"
+            "- 无引用(citation_quality=none)：置信度最高 0.7\n"
+            "- 另类解法(is_alternative_solution=true)：置信度再降 25%\n"
+        )
         prompt = f"""你是严谨的阅卷老师，只能基于“评分标准”和“答案证据”评分。
 Mode: {mode_label}
 {fast_note}
 {output_constraints}
 {question_type_rules}
+{confidence_rules}
 禁止臆测；证据不足时必须给 0 分并说明。
 如评分标准包含扣分规则（deduction_rules），请按规则扣分并在原因中说明。
 如发现错别字/拼写错误，请在每道题的 typo_notes 中标出。
@@ -1813,7 +1825,10 @@ Mode: {mode_label}
       "scoring_point_results": [
         {{
           "point_id": "1.1",
-          "rubric_reference": "[1.1] 评分点描述",
+          "rubric_reference": "[1.1] 评分点描述（必须引用具体评分标准条目）",
+          "citation_quality": "exact|partial|none",
+          "is_alternative_solution": false,
+          "alternative_description": "",
           "decision": "得分/未得分",
           "awarded": 0,
           "max_points": 0,

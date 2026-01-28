@@ -70,7 +70,7 @@ export default function GradingImportPage() {
   const normalizeResults = (payload: BatchGradingResponse | GradingResult[] | any): ResultEntry[] => {
     const rawList = Array.isArray(payload)
       ? payload
-      : payload?.student_results || payload?.studentResults || [];
+      : payload?.results || payload?.student_results || payload?.studentResults || [];
     return (rawList as Array<Record<string, any>>).map((item, idx) => {
       const studentKey = String(
         item.student_name ||

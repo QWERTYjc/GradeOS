@@ -40,6 +40,8 @@ from src.db import (
     save_student_result,
     upsert_homework_submission_grade,
     list_class_students,
+    get_grading_history,
+    get_student_results,
 )
 
 
@@ -523,6 +525,7 @@ async def submit_batch(
     auto_identify: bool = Form(True, description="是否自动识别学生身份"),
     student_boundaries: Optional[str] = Form(None, description="手动设置的学生边界 (JSON List of page indices)"),
     expected_students: Optional[int] = Form(None, description="预期学生数量（强烈建议提供，用于更准确的分割）"),
+    expected_total_score: Optional[float] = Form(None, description="Expected total score"),
     # 新增：班级批改上下文
     class_id: Optional[str] = Form(None, description="班级 ID（用于成绩写回）"),
     homework_id: Optional[str] = Form(None, description="作业 ID（用于成绩写回）"),
@@ -750,6 +753,7 @@ async def submit_batch(
                 "auto_identify": auto_identify,
                 "manual_boundaries": parsed_boundaries,  # 传递人工边界
                 "expected_students": expected_students if expected_students else 2,  # 🔥 默认 2 名学生
+                "expected_total_score": expected_total_score,
                 "enable_review": enable_review,
                 "grading_mode": grading_mode or "auto",
             }
@@ -2130,15 +2134,68 @@ async def get_full_batch_results(
     Returns:
         完整批改结果（包含跨页题目信息）
     """
+    def _load_from_db() -> Dict[str, Any]:
+        history = get_grading_history(batch_id)
+        if not history:
+            raise HTTPException(status_code=404, detail="批次不存在")
+
+        raw_results: List[Dict[str, Any]] = []
+        for row in get_student_results(history.id):
+            data = row.result_data
+            if isinstance(data, str):
+                try:
+                    data = json.loads(data)
+                except Exception:
+                    data = {}
+            if not isinstance(data, dict):
+                data = {}
+            if not data:
+                data = {
+                    "studentName": row.student_key,
+                    "score": row.score,
+                    "maxScore": row.max_score,
+                }
+            raw_results.append(data)
+
+        class_report = None
+        history_data = history.result_data
+        if history_data:
+            if isinstance(history_data, str):
+                try:
+                    history_data = json.loads(history_data)
+                except Exception:
+                    history_data = {}
+            if isinstance(history_data, dict):
+                class_report = history_data.get("summary") or history_data.get("class_report")
+
+        formatted_results = _format_results_for_frontend(raw_results)
+        total_max = 0.0
+        for item in formatted_results:
+            try:
+                total_max = max(total_max, float(item.get("maxScore") or 0))
+            except (TypeError, ValueError):
+                continue
+
+        return {
+            "batch_id": batch_id,
+            "status": history.status or "completed",
+            "results": formatted_results,
+            "cross_page_questions": [],
+            "parsed_rubric": {},
+            "class_report": class_report,
+            "total_students": len(formatted_results),
+            "total_score": total_max or 100,
+        }
+
     try:
         if not orchestrator:
-            raise HTTPException(status_code=503, detail="编排器未初始化")
+            return _load_from_db()
         
         run_id = f"batch_grading_{batch_id}"
         run_info = await orchestrator.get_run_info(run_id)
         
         if not run_info:
-            raise HTTPException(status_code=404, detail="批次不存在")
+            return _load_from_db()
         
         state = run_info.state or {}
         student_results = state.get("student_results", [])

@@ -10,6 +10,7 @@ Requirements: Phase 6
 """
 
 import os
+import json
 import uuid
 import logging
 from datetime import datetime
@@ -25,6 +26,7 @@ from src.db import (
     save_grading_history,
     save_student_result,
     get_grading_history,
+    get_student_results,
     list_grading_history,
     get_homework_submissions,
     get_connection,
@@ -184,25 +186,49 @@ async def import_grading_to_class(
     将批改结果与班级学生关联，并保存到 PostgreSQL。
     """
     logger.info(f"导入批改结果到班级: batch_id={batch_id}, classes={request.class_ids}")
-    
-    if not orchestrator:
-        raise HTTPException(status_code=503, detail="编排器未初始化")
-    
+
+    def _load_from_db() -> List[Dict[str, Any]]:
+        history = get_grading_history(batch_id)
+        if not history:
+            return []
+        results: List[Dict[str, Any]] = []
+        for row in get_student_results(history.id):
+            data = row.result_data
+            if isinstance(data, str):
+                try:
+                    data = json.loads(data)
+                except Exception:
+                    data = {}
+            if not isinstance(data, dict):
+                data = {}
+            if not data:
+                data = {
+                    "studentName": row.student_key,
+                    "score": row.score,
+                    "maxScore": row.max_score,
+                }
+            results.append(data)
+        return results
+
+    student_results: List[Dict[str, Any]] = []
     # 获取批改结果
-    run_id = f"batch_grading_{batch_id}"
-    run_info = await orchestrator.get_run_info(run_id)
-    
-    if not run_info:
-        raise HTTPException(status_code=404, detail="批改批次不存在")
-    
-    state = run_info.state or {}
-    student_results = state.get("student_results", [])
-    
-    if not student_results:
-        final_output = await orchestrator.get_final_output(run_id)
-        if final_output:
-            student_results = final_output.get("student_results", [])
-    
+    if orchestrator:
+        run_id = f"batch_grading_{batch_id}"
+        run_info = await orchestrator.get_run_info(run_id)
+        if run_info:
+            state = run_info.state or {}
+            student_results = state.get("student_results", [])
+            if not student_results:
+                final_output = await orchestrator.get_final_output(run_id)
+                if final_output:
+                    student_results = final_output.get("student_results", [])
+        else:
+            student_results = _load_from_db()
+            if not student_results:
+                raise HTTPException(status_code=404, detail="批改批次不存在")
+    else:
+        student_results = _load_from_db()
+
     if not student_results:
         raise HTTPException(status_code=400, detail="未找到批改结果")
     
@@ -213,8 +239,8 @@ async def import_grading_to_class(
     total_score = 0.0
     total_max = 0.0
     for result in student_results:
-        total_score += result.get("totalScore", 0)
-        total_max += result.get("maxTotalScore", 0)
+        total_score += result.get("totalScore", result.get("score", 0) or 0)
+        total_max += result.get("maxTotalScore", result.get("maxScore", 0) or 0)
     
     avg_score = (total_score / len(student_results)) if student_results else 0.0
     
@@ -239,8 +265,8 @@ async def import_grading_to_class(
         student_id = key_to_id.get(student_key)
         
         # 从 result 中提取 summary 和 self_report
-        summary_data = result.get("summary")
-        self_report_data = result.get("selfReport")
+        summary_data = result.get("summary") or result.get("studentSummary")
+        self_report_data = result.get("selfReport") or result.get("self_report") or result.get("selfAudit")
         
         for class_id in request.class_ids:
             student_result = StudentGradingResult(
@@ -249,8 +275,8 @@ async def import_grading_to_class(
                 student_key=student_key,
                 class_id=class_id,
                 student_id=student_id,
-                score=result.get("totalScore"),
-                max_score=result.get("maxTotalScore"),
+                score=result.get("totalScore", result.get("score")),
+                max_score=result.get("maxTotalScore", result.get("maxScore")),
                 summary=summary_data.get("overall") if isinstance(summary_data, dict) else None,
                 self_report=self_report_data.get("summary") if isinstance(self_report_data, dict) else None,
                 result_data=result,

@@ -659,6 +659,22 @@ export const ResultsView: React.FC = () => {
     const needsConfirmCount = sortedResults.filter(r => r.needsConfirmation).length;
     const totalCrossPageQuestions = crossPageQuestions.length;
     const hasScores = scoredCount > 0;
+    const rubricCoverage = useMemo(() => {
+        let total = 0;
+        let withRef = 0;
+        sortedResults.forEach((student) => {
+            (student.questionResults || []).forEach((q) => {
+                (q.scoringPointResults || []).forEach((spr) => {
+                    total += 1;
+                    if (spr.rubricReference) {
+                        withRef += 1;
+                    }
+                });
+            });
+        });
+        if (total === 0) return null;
+        return withRef / total;
+    }, [sortedResults]);
     const metrics = [
         {
             label: 'Total Students',
@@ -715,30 +731,30 @@ export const ResultsView: React.FC = () => {
     const renderAnnotationsForPage = useCallback(async (pageIdx: number, imageUrl: string, studentKey: string) => {
         // 使用 studentKey + pageIdx 作为唯一标识，避免重复渲染
         const renderKey = `${studentKey}-${pageIdx}`;
-        
+
         // 如果已经处理过，跳过
         if (renderedPagesRef.current.has(renderKey)) return;
-        
+
         // 标记为已处理（立即标记，防止并发调用）
         renderedPagesRef.current.add(renderKey);
-        
+
         // 标记为加载中
         setAnnotationLoading(prev => new Set(prev).add(pageIdx));
-        
+
         try {
             // 从当前学生的批改结果中提取该页的批注
             const student = detailViewStudent;
             if (!student) return;
-            
+
             // 收集该页的所有批注
             const pageAnnotations: VisualAnnotation[] = [];
-            
+
             // 从 questionResults 中提取批注
             student.questionResults?.forEach(q => {
                 // 检查该题目是否在当前页
                 const questionPages = q.pageIndices || [];
                 if (!questionPages.includes(pageIdx) && questionPages.length > 0) return;
-                
+
                 // 优先使用后端返回的 annotations 字段
                 if (q.annotations && q.annotations.length > 0) {
                     q.annotations.forEach(ann => {
@@ -753,25 +769,25 @@ export const ResultsView: React.FC = () => {
                         }
                     });
                 }
-                
+
                 // 从 steps 字段提取步骤批注
                 if (q.steps && q.steps.length > 0) {
                     q.steps.forEach(step => {
                         if (step.step_region) {
                             // 构建 M/A mark 文本（如 "M1", "M0", "A1", "A0"）
-                            const markText = step.mark_type === 'M' 
-                                ? `M${step.mark_value}` 
+                            const markText = step.mark_type === 'M'
+                                ? `M${step.mark_value}`
                                 : `A${step.mark_value}`;
                             // 使用 m_mark 或 a_mark 类型，根据 mark_type 决定
                             const annotationType = step.mark_type === 'M' ? 'm_mark' : 'a_mark';
-                            
+
                             pageAnnotations.push({
                                 annotation_type: annotationType,
                                 bounding_box: step.step_region,
                                 text: markText,
                                 color: step.is_correct ? '#00AA00' : '#FF0000',
                             } as VisualAnnotation);
-                            
+
                             // 如果步骤错误，额外添加错误圈选
                             if (!step.is_correct && step.feedback) {
                                 pageAnnotations.push({
@@ -789,7 +805,7 @@ export const ResultsView: React.FC = () => {
                         }
                     });
                 }
-                
+
                 // 从 scoringPointResults 中提取错误区域批注
                 q.scoringPointResults?.forEach((spr: any, idx: number) => {
                     // 如果有错误区域坐标，创建错误圈选批注
@@ -803,7 +819,7 @@ export const ResultsView: React.FC = () => {
                         } as VisualAnnotation);
                     }
                 });
-                
+
                 // 添加答案区域的分数批注
                 if (q.answerRegion) {
                     pageAnnotations.push({
@@ -819,7 +835,7 @@ export const ResultsView: React.FC = () => {
                     } as VisualAnnotation);
                 }
             });
-            
+
             // 🔥 如果有批注坐标，存储批注数据用于 Canvas 直接渲染（快速路径）
             if (pageAnnotations.length > 0) {
                 console.log(`[Canvas渲染] 页面 ${pageIdx} 有 ${pageAnnotations.length} 个批注，使用前端 Canvas 直接渲染`);
@@ -836,7 +852,7 @@ export const ResultsView: React.FC = () => {
                 });
                 return;
             }
-            
+
             // 获取图片的 base64（仅在需要调用 API 时才获取）
             let imageBase64 = imageUrl;
             if (imageUrl.startsWith('data:')) {
@@ -854,11 +870,11 @@ export const ResultsView: React.FC = () => {
                     reader.readAsDataURL(blob);
                 });
             }
-            
+
             // 如果没有批注坐标但有评分标准，调用 annotate-and-render API
             if (parsedRubric?.questions && parsedRubric.questions.length > 0) {
                 const { annotateAndRender } = await import('@/services/annotationApi');
-                
+
                 // 构建评分标准
                 const rubrics = parsedRubric.questions.map(q => ({
                     question_id: q.questionId,
@@ -873,7 +889,7 @@ export const ResultsView: React.FC = () => {
                     })),
                     grading_notes: q.gradingNotes || '',
                 }));
-                
+
                 try {
                     const blob = await annotateAndRender(imageBase64, rubrics, pageIdx);
                     const reader = new FileReader();
@@ -881,7 +897,7 @@ export const ResultsView: React.FC = () => {
                         reader.onload = () => resolve(reader.result as string);
                         reader.readAsDataURL(blob);
                     });
-                    
+
                     setAnnotatedImages(prev => {
                         const next = new Map(prev);
                         next.set(pageIdx, dataUrl);
@@ -892,7 +908,7 @@ export const ResultsView: React.FC = () => {
                     console.error('调用 annotate-and-render API 失败:', err);
                 }
             }
-            
+
             // 如果是 Assist 模式且没有批注数据，生成演示批注
             const isAssistMode = (student.gradingMode || '').startsWith('assist') || student.maxScore <= 0;
             if (isAssistMode && pageAnnotations.length === 0) {
@@ -931,7 +947,7 @@ export const ResultsView: React.FC = () => {
                         color: '#0066CC',
                     },
                 ];
-                
+
                 try {
                     const result = await renderAnnotationsToBase64(imageBase64, demoAnnotations);
                     if (result.success && result.image_base64) {
@@ -959,10 +975,10 @@ export const ResultsView: React.FC = () => {
     // 当开启批注显示时，渲染当前学生的所有页面
     useEffect(() => {
         if (!showAnnotations || !detailViewStudent) return;
-        
+
         // 获取学生唯一标识
         const studentKey = detailViewStudent.studentName || `student-${detailViewIndex}`;
-        
+
         const pages = new Set<number>();
         if (detailViewStudent.startPage !== undefined) {
             const start = detailViewStudent.startPage;
@@ -972,14 +988,14 @@ export const ResultsView: React.FC = () => {
         detailViewStudent.questionResults?.forEach(q => {
             (q.pageIndices || []).forEach(p => pages.add(p));
         });
-        
+
         // 如果没有找到任何页面信息，默认使用第一页（索引 0）
         if (pages.size === 0) {
             pages.add(0);
         }
-        
+
         const uniquePages = Array.from(pages).filter(p => Number.isFinite(p));
-        
+
         uniquePages.forEach(pageIdx => {
             const imageUrl = uploadedImages[pageIdx] || currentSession?.images[pageIdx]?.url;
             if (imageUrl) {
@@ -1025,7 +1041,7 @@ export const ResultsView: React.FC = () => {
     }, [detailViewIndex]);
 
     // ==================== 导出处理函数 ====================
-    
+
     const handleExportAnnotatedImages = async () => {
         if (!submissionId) return;
         setExportLoading('images');
@@ -1088,7 +1104,7 @@ export const ResultsView: React.FC = () => {
                     reader.readAsDataURL(smartExcelTemplate);
                 });
             }
-            
+
             const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || ''}/batch/export/smart-excel/${submissionId}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -1887,16 +1903,26 @@ export const ResultsView: React.FC = () => {
     if (detailViewStudent) {
         // (Detail View Logic - Simplified for brevity but functionally complete with improved styles)
         const isAssist = (detailViewStudent.gradingMode || '').startsWith('assist') || detailViewStudent.maxScore <= 0;
-        const pageIndices = detailViewStudent.questionResults?.flatMap(q => q.pageIndices || []) || [];
-        const fallbackPages: number[] = [];
+
+        // 🔥 修改：优先使用 startPage/endPage 范围内的所有页面，不过滤"冗余"页面
+        // 确保显示学生边界内的所有页面，而不只是有题目关联的页面
+        let uniquePages: number[] = [];
+
         if (detailViewStudent.startPage !== undefined) {
+            // 有学生边界时，显示边界内的所有页面
             const start = detailViewStudent.startPage;
             const end = detailViewStudent.endPage ?? start;
             for (let i = start; i <= end; i += 1) {
-                fallbackPages.push(i);
+                uniquePages.push(i);
             }
+        } else {
+            // 没有边界时，从 questionResults 中收集 pageIndices 作为回退
+            const pageIndices = detailViewStudent.questionResults?.flatMap(q => q.pageIndices || []) || [];
+            uniquePages = Array.from(new Set(pageIndices));
         }
-        const uniquePages = Array.from(new Set([...pageIndices, ...fallbackPages]))
+
+        // 过滤无效值并排序
+        uniquePages = uniquePages
             .filter(p => Number.isFinite(p))
             .sort((a, b) => a - b);
         const auditItems = (detailViewStudent.questionResults || []).filter((q) => (
@@ -2071,33 +2097,33 @@ export const ResultsView: React.FC = () => {
                                                     </div>
                                                 )}
                                             </div>
-                                            
+
                                             {/* 状态和置信度 */}
                                             <div className="flex items-center gap-4 mb-3">
                                                 {detailViewStudent.selfReport.overallStatus && (
                                                     <div className={clsx(
                                                         "px-2.5 py-1 rounded-full text-xs font-semibold",
-                                                        detailViewStudent.selfReport.overallStatus === 'ok' 
+                                                        detailViewStudent.selfReport.overallStatus === 'ok'
                                                             ? "bg-emerald-100 text-emerald-700"
                                                             : detailViewStudent.selfReport.overallStatus === 'caution'
-                                                            ? "bg-amber-100 text-amber-700"
-                                                            : "bg-rose-100 text-rose-700"
+                                                                ? "bg-amber-100 text-amber-700"
+                                                                : "bg-rose-100 text-rose-700"
                                                     )}>
-                                                        状态: {detailViewStudent.selfReport.overallStatus === 'ok' ? '✓ 正常' 
+                                                        状态: {detailViewStudent.selfReport.overallStatus === 'ok' ? '✓ 正常'
                                                             : detailViewStudent.selfReport.overallStatus === 'caution' ? '⚠ 需注意'
-                                                            : '⚠ 需复核'}
+                                                                : '⚠ 需复核'}
                                                     </div>
                                                 )}
                                                 {detailViewStudent.selfReport.overallConfidence !== undefined && (
                                                     <div className="flex items-center gap-2">
                                                         <span className="text-xs text-amber-600">置信度:</span>
                                                         <div className="w-20 h-2 bg-amber-200 rounded-full overflow-hidden">
-                                                            <div 
+                                                            <div
                                                                 className={clsx(
                                                                     "h-full rounded-full transition-all",
                                                                     detailViewStudent.selfReport.overallConfidence >= 0.8 ? "bg-emerald-500"
                                                                         : detailViewStudent.selfReport.overallConfidence >= 0.5 ? "bg-amber-500"
-                                                                        : "bg-rose-500"
+                                                                            : "bg-rose-500"
                                                                 )}
                                                                 style={{ width: `${detailViewStudent.selfReport.overallConfidence * 100}%` }}
                                                             />
@@ -2509,20 +2535,20 @@ export const ResultsView: React.FC = () => {
                         <SmoothButton onClick={() => setShowClassReport(true)} variant="secondary" size="sm">
                             <BarChartOutlined className="mr-2" /> 班级报告
                         </SmoothButton>
-                        
+
                         {/* 导出下拉菜单 */}
                         <div className="relative">
-                            <SmoothButton 
-                                onClick={() => setExportMenuOpen(!exportMenuOpen)} 
-                                variant="secondary" 
+                            <SmoothButton
+                                onClick={() => setExportMenuOpen(!exportMenuOpen)}
+                                variant="secondary"
                                 size="sm"
                                 disabled={!submissionId}
                             >
-                                <Download className="w-4 h-4 mr-2" /> 
+                                <Download className="w-4 h-4 mr-2" />
                                 导出
                                 <ChevronDown className={clsx("w-4 h-4 ml-1 transition-transform", exportMenuOpen && "rotate-180")} />
                             </SmoothButton>
-                            
+
                             {exportMenuOpen && (
                                 <div className="absolute right-0 top-full mt-1 w-56 bg-white rounded-lg shadow-lg border border-slate-200 py-1 z-50">
                                     <button
@@ -2584,6 +2610,35 @@ export const ResultsView: React.FC = () => {
                             </div>
                         </div>
                     ))}
+                </div>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white px-5 py-4">
+                <div className="flex items-center gap-2 text-sm font-semibold text-slate-700">
+                    <BookOpen className="h-4 w-4 text-slate-400" />
+                    评分依据透明度
+                </div>
+                <div className="mt-3 grid gap-4 md:grid-cols-3 text-xs text-slate-600">
+                    <div className="space-y-1">
+                        <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">来源</div>
+                        <div>
+                            {parsedRubric
+                                ? `解析评分标准 · ${parsedRubric.totalQuestions} 题 / ${parsedRubric.totalScore} 分`
+                                : '未解析评分标准'}
+                        </div>
+                    </div>
+                    <div className="space-y-1">
+                        <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">去重策略</div>
+                        <div>按题号归一 + 跨页题合并 + 分值纠偏</div>
+                    </div>
+                    <div className="space-y-1">
+                        <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">评分依据摘要</div>
+                        <div>
+                            {rubricCoverage === null
+                                ? '暂无评分点'
+                                : `评分点引用覆盖 ${(rubricCoverage * 100).toFixed(0)}%`}
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -2658,7 +2713,7 @@ export const ResultsView: React.FC = () => {
                                     <X className="w-5 h-5 text-slate-400" />
                                 </button>
                             </div>
-                            
+
                             <div className="p-6 space-y-4">
                                 {/* 模板上传 */}
                                 <div>
@@ -2694,7 +2749,7 @@ export const ResultsView: React.FC = () => {
                                         </label>
                                     </div>
                                 </div>
-                                
+
                                 {/* 格式描述 */}
                                 <div>
                                     <label className="block text-sm font-medium text-slate-700 mb-2">
@@ -2707,7 +2762,7 @@ export const ResultsView: React.FC = () => {
                                         className="w-full h-32 px-3 py-2 border border-slate-200 rounded-lg text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                                     />
                                 </div>
-                                
+
                                 {/* 示例提示 */}
                                 <div className="bg-blue-50 rounded-lg p-3">
                                     <div className="text-xs font-medium text-blue-700 mb-1">💡 提示</div>
@@ -2718,14 +2773,14 @@ export const ResultsView: React.FC = () => {
                                     </div>
                                 </div>
                             </div>
-                            
+
                             <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex justify-end gap-3">
                                 <SmoothButton variant="secondary" size="sm" onClick={() => setSmartExcelOpen(false)}>
                                     取消
                                 </SmoothButton>
-                                <SmoothButton 
-                                    variant="primary" 
-                                    size="sm" 
+                                <SmoothButton
+                                    variant="primary"
+                                    size="sm"
                                     onClick={handleSmartExcelSubmit}
                                     disabled={!smartExcelPrompt.trim() || smartExcelLoading}
                                 >

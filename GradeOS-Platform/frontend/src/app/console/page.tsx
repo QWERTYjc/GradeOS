@@ -59,6 +59,8 @@ interface ScannerContainerProps {
     onInteractionToggle: (enabled: boolean) => void;
     gradingMode: string;
     onGradingModeChange: (mode: string) => void;
+    expectedTotalScore: number | null;
+    onExpectedTotalScoreChange: (score: number | null) => void;
 
     // 班级批改模式下的学生映射
     studentNameMapping?: Array<{ studentId: string; studentName: string; startIndex: number; endIndex: number }>;
@@ -74,6 +76,8 @@ const ScannerContainer = ({
     onInteractionToggle,
     gradingMode,
     onGradingModeChange,
+    expectedTotalScore,
+    onExpectedTotalScoreChange,
     studentNameMapping = []
 }: ScannerContainerProps) => {
     const { user } = useAuthStore();
@@ -134,6 +138,30 @@ const ScannerContainer = ({
                     </div>
 
                     <div className="flex items-center gap-4">
+                        {viewMode === 'exams' && (
+                            <div className="flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-[11px] font-semibold text-slate-600">
+                                <span className="uppercase tracking-[0.2em] text-slate-400">Total</span>
+                                <input
+                                    type="number"
+                                    min={0}
+                                    step={0.5}
+                                    value={expectedTotalScore ?? ''}
+                                    onChange={(event) => {
+                                        const nextValue = event.target.value.trim();
+                                        if (!nextValue) {
+                                            onExpectedTotalScoreChange(null);
+                                            return;
+                                        }
+                                        const parsed = Number(nextValue);
+                                        if (Number.isFinite(parsed) && parsed >= 0) {
+                                            onExpectedTotalScoreChange(parsed);
+                                        }
+                                    }}
+                                    placeholder="Max score"
+                                    className="w-20 bg-transparent text-xs font-semibold text-slate-900 outline-none placeholder:text-slate-300"
+                                />
+                            </div>
+                        )}
                         <button
                             onClick={() => onTabChange('scan')}
                             className={clsx(
@@ -198,6 +226,12 @@ export default function ConsolePage() {
     const setInteractionEnabled = useConsoleStore((state) => state.setInteractionEnabled);
     const gradingMode = useConsoleStore((state) => state.gradingMode);
     const setGradingMode = useConsoleStore((state) => state.setGradingMode);
+    const expectedTotalScore = useConsoleStore((state) => state.expectedTotalScore);
+    const setExpectedTotalScore = useConsoleStore((state) => state.setExpectedTotalScore);
+    const rubricScoreMismatch = useConsoleStore((state) => state.rubricScoreMismatch);
+    const setRubricScoreMismatch = useConsoleStore((state) => state.setRubricScoreMismatch);
+    const rubricParseError = useConsoleStore((state) => state.rubricParseError);
+    const setRubricParseError = useConsoleStore((state) => state.setRubricParseError);
     const currentTab = useConsoleStore((state) => state.currentTab);
     const isResultsView = currentTab === 'results';
     const setCurrentTab = useConsoleStore((state) => state.setCurrentTab);
@@ -229,6 +263,12 @@ export default function ConsolePage() {
         }
         setIsStreamOpen(false);
     }, [selectedAgentId, selectedNodeId]);
+
+    useEffect(() => {
+        if (rubricScoreMismatch || rubricParseError) {
+            setActiveTab('scan');
+        }
+    }, [rubricScoreMismatch, rubricParseError]);
 
     const handleStreamClose = () => {
         setIsStreamOpen(false);
@@ -534,7 +574,8 @@ export default function ConsolePage() {
                 classContextPayload,
                 interactionEnabled,
                 gradingMode,
-                user?.id
+                user?.id,
+                expectedTotalScore ?? undefined
             );
 
             useConsoleStore.getState().setSubmissionId(response.id);
@@ -714,6 +755,41 @@ export default function ConsolePage() {
                                 exit={{ opacity: 0, scale: 0.95, y: -30 }}
                                 className="w-full h-full"
                             >
+                                {rubricScoreMismatch && (
+                                    <div className="mx-auto max-w-3xl px-6 pt-6">
+                                        <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 flex items-start justify-between gap-4">
+                                            <div>
+                                                <div className="font-semibold">Rubric total mismatch</div>
+                                                <div className="mt-1 text-xs text-rose-600">{rubricScoreMismatch.message}</div>
+                                            </div>
+                                            <button
+                                                onClick={() => setRubricScoreMismatch(null)}
+                                                className="shrink-0 rounded-full border border-rose-200 bg-white px-3 py-1 text-xs font-semibold text-rose-600 hover:bg-rose-100"
+                                            >
+                                                Got it
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
+                                {rubricParseError && (
+                                    <div className="mx-auto max-w-3xl px-6 pt-4">
+                                        <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 flex items-start justify-between gap-4">
+                                            <div>
+                                                <div className="font-semibold">Rubric parse failed</div>
+                                                <div className="mt-1 text-xs text-rose-600">{rubricParseError.message}</div>
+                                                {rubricParseError.details && (
+                                                    <div className="mt-1 text-[10px] text-rose-500">{rubricParseError.details}</div>
+                                                )}
+                                            </div>
+                                            <button
+                                                onClick={() => setRubricParseError(null)}
+                                                className="shrink-0 rounded-full border border-rose-200 bg-white px-3 py-1 text-xs font-semibold text-rose-600 hover:bg-rose-100"
+                                            >
+                                                Got it
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
                                 <ScannerContainer
                                     activeTab={activeTab}
                                     onTabChange={setActiveTab}
@@ -724,6 +800,8 @@ export default function ConsolePage() {
                                     onInteractionToggle={setInteractionEnabled}
                                     gradingMode={gradingMode}
                                     onGradingModeChange={setGradingMode}
+                                    expectedTotalScore={expectedTotalScore}
+                                    onExpectedTotalScoreChange={setExpectedTotalScore}
                                     studentNameMapping={useConsoleStore.getState().classContext.studentImageMapping}
                                 />
                             </motion.div>

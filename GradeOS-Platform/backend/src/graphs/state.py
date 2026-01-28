@@ -99,7 +99,6 @@ class BatchGradingGraphState(TypedDict, total=False):
 
     # ===== 索引层输出 =====
     index_results: Dict[str, Any]        # 索引结果（按页题目信息与学生映射）
-    page_index_contexts: Dict[int, Dict[str, Any]]  # 页级上下文索引
     student_page_map: Dict[int, str]     # 页面 -> 学生标识映射
     indexed_students: List[Dict[str, Any]]  # 索引阶段识别的学生信息
     index_unidentified_pages: List[int]  # 未识别学生的页面
@@ -120,7 +119,7 @@ class BatchGradingGraphState(TypedDict, total=False):
     
     # ===== 学生聚合（基于索引）=====
     student_boundaries: List[Dict[str, Any]]  # 学生试卷边界列表
-    student_results: List[Dict[str, Any]]     # 按学生聚合的结果
+    student_results: Annotated[List[Dict[str, Any]], operator.add]  # 按学生聚合的结果（使用 add reducer 聚合并行结果）
     
     # ===== 审核结果 =====
     review_summary: Dict[str, Any]       # 审核摘要
@@ -289,7 +288,6 @@ def create_initial_batch_state(
         pdf_path=pdf_path,
         rubric=rubric,
         index_results={},
-        page_index_contexts={},
         student_page_map={},
         indexed_students=[],
         index_unidentified_pages=[],
@@ -351,4 +349,146 @@ def create_initial_upgrade_state(
         timestamps={
             "created_at": datetime.now().isoformat()
         }
+    )
+
+
+# ==================== 辅助批改状态定义 ====================
+
+
+class AssistantGradingState(TypedDict, total=False):
+    """辅助批改状态定义
+    
+    用于深度分析学生作业，不依赖评分标准（Rubric）。
+    与主批改系统并行运行，专注于理解作业内容、发现错误、提供改进建议。
+    
+    工作流：
+    初始化 → 理解分析 → 错误识别 → 建议生成 → 深度分析 → 报告生成 → 完成
+    """
+    
+    # ===== 基础信息 =====
+    analysis_id: str                          # 分析任务唯一标识符
+    submission_id: Optional[str]              # 关联的提交 ID（可选）
+    student_id: Optional[str]                 # 学生 ID（可选）
+    subject: Optional[str]                    # 科目标识
+    
+    # ===== 输入数据 =====
+    inputs: Dict[str, Any]                    # 输入数据（原始输入）
+    image_paths: List[str]                    # 作业图片路径列表
+    image_base64_list: List[str]              # 图片 Base64 编码列表
+    context_info: Optional[Dict[str, Any]]    # 上下文信息（可选）
+    
+    # ===== 理解分析结果 =====
+    understanding: Dict[str, Any]             # 作业理解结果
+    # {
+    #   "knowledge_points": [...],  # 识别的知识点
+    #   "question_types": [...],    # 题目类型
+    #   "solution_approaches": [...],  # 解题思路
+    #   "logic_chain": [...],       # 逻辑链条
+    # }
+    
+    # ===== 错误识别结果 =====
+    errors: List[Dict[str, Any]]              # 错误记录列表
+    # [
+    #   {
+    #     "error_id": "err_001",
+    #     "error_type": "calculation|logic|concept|writing",
+    #     "description": "错误描述",
+    #     "severity": "high|medium|low",
+    #     "location": {...}
+    #   }
+    # ]
+    
+    # ===== 改进建议结果 =====
+    suggestions: List[Dict[str, Any]]         # 改进建议列表
+    # [
+    #   {
+    #     "suggestion_id": "sug_001",
+    #     "suggestion_type": "correction|improvement|alternative",
+    #     "description": "建议内容",
+    #     "priority": "high|medium|low"
+    #   }
+    # ]
+    
+    # ===== 深度分析结果 =====
+    deep_analysis: Dict[str, Any]             # 深度分析结果
+    # {
+    #   "understanding_score": 85.0,
+    #   "logic_coherence": 80.0,
+    #   "completeness": 90.0,
+    #   "overall_score": 85.0,
+    #   "strengths": [...],
+    #   "weaknesses": [...]
+    # }
+    
+    # ===== 最终报告 =====
+    report: Dict[str, Any]                    # 完整分析报告
+    report_url: Optional[str]                 # 报告 URL（如果已导出）
+    
+    # ===== 进度信息 =====
+    progress: Dict[str, Any]                  # 进度详情
+    current_stage: str                        # 当前执行阶段
+    percentage: float                         # 完成百分比 (0.0-100.0)
+    
+    # ===== 错误处理 =====
+    processing_errors: List[Dict[str, Any]]   # 处理过程中的错误
+    retry_count: int                          # 重试次数
+    
+    # ===== 时间戳 =====
+    timestamps: Dict[str, str]                # 各阶段时间戳（ISO 格式）
+
+
+def create_initial_assistant_state(
+    analysis_id: str,
+    images: List[str],
+    submission_id: Optional[str] = None,
+    student_id: Optional[str] = None,
+    subject: Optional[str] = None,
+    context_info: Optional[Dict[str, Any]] = None,
+) -> AssistantGradingState:
+    """创建初始辅助分析状态
+    
+    Args:
+        analysis_id: 分析任务 ID
+        images: 图片 Base64 编码列表
+        submission_id: 提交 ID（可选，用于关联主批改）
+        student_id: 学生 ID（可选）
+        subject: 科目标识（可选）
+        context_info: 上下文信息（可选）
+        
+    Returns:
+        初始化的 AssistantGradingState
+    """
+    return AssistantGradingState(
+        analysis_id=analysis_id,
+        submission_id=submission_id,
+        student_id=student_id,
+        subject=subject,
+        inputs={
+            "images": images,
+            "context_info": context_info,
+        },
+        image_base64_list=images,
+        image_paths=[],
+        context_info=context_info or {},
+        understanding={},
+        errors=[],
+        suggestions=[],
+        deep_analysis={},
+        report={},
+        report_url=None,
+        progress={
+            "initialized": True,
+            "understand_completed": False,
+            "errors_identified": False,
+            "suggestions_generated": False,
+            "deep_analysis_completed": False,
+            "report_generated": False,
+        },
+        current_stage="initialized",
+        percentage=0.0,
+        processing_errors=[],
+        retry_count=0,
+        timestamps={
+            "created_at": datetime.now().isoformat()
+        },
     )

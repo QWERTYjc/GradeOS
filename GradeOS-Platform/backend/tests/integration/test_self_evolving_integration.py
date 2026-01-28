@@ -21,7 +21,6 @@ from src.workflows.batch_grading_enhanced import EnhancedBatchGradingWorkflow
 from src.agents.grading_agent_enhanced import EnhancedGradingAgent
 from src.workflows.rule_upgrade import RuleUpgradeWorkflow
 from src.services.streaming import StreamingService, EventType
-from src.services.student_boundary_detector import StudentBoundaryDetector
 from src.services.exemplar_memory import ExemplarMemory
 from src.services.prompt_assembler import PromptAssembler
 from src.services.calibration import CalibrationService
@@ -73,11 +72,6 @@ class TestSelfEvolvingIntegration:
         )
     
     @pytest.fixture
-    async def boundary_detector(self):
-        """学生边界检测器 fixture"""
-        return StudentBoundaryDetector()
-    
-    @pytest.fixture
     async def exemplar_memory(self, pool_manager):
         """判例记忆服务 fixture"""
         # 使用初始化好的 pool_manager
@@ -104,7 +98,6 @@ class TestSelfEvolvingIntegration:
     async def test_complete_grading_flow(
         self,
         streaming_service,
-        boundary_detector,
         exemplar_memory,
         prompt_assembler,
         calibration_service,
@@ -115,7 +108,6 @@ class TestSelfEvolvingIntegration:
         
         验证：
         - 流式推送正常工作
-        - 学生边界检测正确
         - 判例检索和动态提示词集成
         - 批改日志记录完整
         """
@@ -192,19 +184,7 @@ class TestSelfEvolvingIntegration:
             success = await streaming_service.push_event(stream_id, event)
             assert success
         
-        # 2. 测试学生边界检测
-        boundary_result = await boundary_detector.detect_boundaries(grading_results)
-        
-        assert boundary_result.total_students >= 1
-        assert len(boundary_result.boundaries) >= 1
-        
-        # 验证边界正确性
-        for boundary in boundary_result.boundaries:
-            assert boundary.start_page <= boundary.end_page
-            assert boundary.confidence >= 0.0
-            assert boundary.confidence <= 1.0
-        
-        # 3. 测试判例检索
+        # 2. 测试判例检索
         # 先存储一个判例
         exemplar_id = await exemplar_memory.store_exemplar(
             grading_result={
@@ -229,7 +209,7 @@ class TestSelfEvolvingIntegration:
         assert len(exemplars) >= 0
         assert len(exemplars) <= 5
         
-        # 4. 测试动态提示词拼装
+        # 3. 测试动态提示词拼装
         assembled_prompt = prompt_assembler.assemble(
             question_type="objective",
             rubric="评分细则：...",
@@ -317,63 +297,6 @@ class TestSelfEvolvingIntegration:
         
         # 清理
         await streaming_service.close_stream(stream_id)
-    
-    async def test_student_boundary_detection(self, boundary_detector):
-        """
-        测试学生边界检测
-        
-        验证：需求 3.1, 3.2
-        """
-        # 准备测试数据：3 个学生的批改结果
-        grading_results = []
-        
-        # 学生1：页面 0-1
-        for i in range(2):
-            grading_results.append({
-                "page_index": i,
-                "question_id": f"Q{i+1}",
-                "student_info": {
-                    "name": "学生A",
-                    "student_id": "001",
-                    "confidence": 0.9
-                }
-            })
-        
-        # 学生2：页面 2-3
-        for i in range(2, 4):
-            grading_results.append({
-                "page_index": i,
-                "question_id": f"Q{i-1}",
-                "student_info": {
-                    "name": "学生B",
-                    "student_id": "002",
-                    "confidence": 0.85
-                }
-            })
-        
-        # 学生3：页面 4-5
-        for i in range(4, 6):
-            grading_results.append({
-                "page_index": i,
-                "question_id": f"Q{i-3}",
-                "student_info": {
-                    "name": "学生C",
-                    "student_id": "003",
-                    "confidence": 0.8
-                }
-            })
-        
-        # 执行边界检测
-        result = await boundary_detector.detect_boundaries(grading_results)
-        
-        # 验证结果
-        assert result.total_students >= 1
-        assert result.total_pages == 6
-        
-        # 验证边界不重叠
-        boundaries_sorted = sorted(result.boundaries, key=lambda b: b.start_page)
-        for i in range(len(boundaries_sorted) - 1):
-            assert boundaries_sorted[i].end_page < boundaries_sorted[i + 1].start_page
     
     async def test_exemplar_retrieval_and_prompt_assembly(
         self,

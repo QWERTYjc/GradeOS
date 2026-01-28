@@ -1,0 +1,16 @@
+{
+  "name": "Figma Component Code Connect",
+  "version": "1.0.0",
+  "description": "Check if UI component should be connected to Figma design when created or updated",
+  "when": {
+    "type": "fileEdited",
+    "patterns": [
+      "GradeOS-Platform/frontend/src/components/**/*.tsx",
+      "GradeOS-Platform/frontend/src/components/**/*.jsx"
+    ]
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "A component file was just edited. Ask the user if they would like to connect this code to a Figma component. If the user approves: first run the get_code_connect_map tool for the last Figma URL provided by the user (prompt them to provide it if unavailable). If the response is empty, run the add_code_connect_map tool to create the mapping. If a mapping already exists, inform the user. If the user declines: do nothing."
+  }
+}

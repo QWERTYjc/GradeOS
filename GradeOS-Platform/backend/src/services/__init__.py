@@ -13,7 +13,6 @@ from src.services.distributed_transaction import (
     SagaTransaction,
     ReviewOverrideSagaBuilder,
 )
-from src.services.grading_worker import GradingWorker, create_grading_worker
 from src.services.grading_self_report import generate_self_report, generate_student_self_report
 from src.services.student_summary import generate_student_summary, generate_class_summary
 # 批注批改服务
@@ -59,9 +58,7 @@ __all__ = [
     "SagaTransactionStatus",
     "SagaTransaction",
     "ReviewOverrideSagaBuilder",
-    # Phase 4: 双阶段批改
-    "GradingWorker",
-    "create_grading_worker",
+    # Self Report
     "generate_self_report",
     "generate_student_self_report",
     "generate_student_summary",
