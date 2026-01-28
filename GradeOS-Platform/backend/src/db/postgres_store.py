@@ -753,18 +753,44 @@ def save_grading_history(history: GradingHistory) -> None:
 
 
 def get_grading_history(batch_id: str) -> Optional[GradingHistory]:
-    """获取批改历史"""
+    """获取批改历史（支持 batch_id、完整 UUID 或短 ID 前缀查询）"""
     with get_connection() as conn:
+        # 1. 先尝试通过 batch_id 精确匹配
         row = conn.execute(
             "SELECT * FROM grading_history WHERE batch_id = ?",
             (batch_id,)
         ).fetchone()
         
+        # 2. 如果没找到，尝试通过 id 精确匹配（完整 UUID）
         if not row:
-            row = conn.execute(
-                "SELECT * FROM grading_history WHERE CAST(id AS TEXT) = ?",
-                (batch_id,)
-            ).fetchone()
+            try:
+                row = conn.execute(
+                    "SELECT * FROM grading_history WHERE CAST(id AS TEXT) = ?",
+                    (batch_id,)
+                ).fetchone()
+            except Exception:
+                pass
+        
+        # 3. 如果还没找到，尝试通过 id 前缀匹配（短 ID）
+        if not row and len(batch_id) >= 8:
+            try:
+                row = conn.execute(
+                    "SELECT * FROM grading_history WHERE CAST(id AS TEXT) LIKE ?",
+                    (f"{batch_id}%",)
+                ).fetchone()
+            except Exception:
+                pass
+        
+        # 4. 尝试通过 batch_id 前缀匹配
+        if not row and len(batch_id) >= 8:
+            try:
+                row = conn.execute(
+                    "SELECT * FROM grading_history WHERE batch_id LIKE ?",
+                    (f"{batch_id}%",)
+                ).fetchone()
+            except Exception:
+                pass
+        
         if not row:
             return None
         

@@ -1566,8 +1566,23 @@ async def get_grading_history_detail(import_id: str):
         with get_connection() as conn:
             row = conn.execute("SELECT * FROM grading_history WHERE id = ?", (import_id,)).fetchone()
         if row:
-            class_ids = json.loads(row["class_ids"]) if row["class_ids"] else []
-            result_data = json.loads(row["result_data"]) if row["result_data"] else {}
+            # 安全解析 JSON 字段（可能已经是 dict）
+            raw_class_ids = row["class_ids"]
+            if isinstance(raw_class_ids, str):
+                class_ids = json.loads(raw_class_ids) if raw_class_ids else []
+            elif isinstance(raw_class_ids, list):
+                class_ids = raw_class_ids
+            else:
+                class_ids = []
+            
+            raw_result_data = row["result_data"]
+            if isinstance(raw_result_data, str):
+                result_data = json.loads(raw_result_data) if raw_result_data else {}
+            elif isinstance(raw_result_data, dict):
+                result_data = raw_result_data
+            else:
+                result_data = {}
+            
             class_id = class_ids[0] if class_ids else ""
             class_info = get_class_by_id(class_id) if class_id else None
             assignment_id_value = result_data.get("homework_id") or result_data.get("assignment_id")
@@ -1694,8 +1709,20 @@ async def revoke_grading_import(import_id: str, request: GradingRevokeRequest):
                     (now, import_id),
                 )
                 conn.execute("UPDATE grading_history SET status = 'revoked' WHERE id = ?", (import_id,))
-            class_ids = json.loads(row["class_ids"]) if row["class_ids"] else []
-            result_data = json.loads(row["result_data"]) if row["result_data"] else {}
+            raw_class_ids = row["class_ids"]
+            if isinstance(raw_class_ids, str):
+                class_ids = json.loads(raw_class_ids) if raw_class_ids else []
+            elif isinstance(raw_class_ids, list):
+                class_ids = raw_class_ids
+            else:
+                class_ids = []
+            raw_result_data = row["result_data"]
+            if isinstance(raw_result_data, str):
+                result_data = json.loads(raw_result_data) if raw_result_data else {}
+            elif isinstance(raw_result_data, dict):
+                result_data = raw_result_data
+            else:
+                result_data = {}
             class_id = class_ids[0] if class_ids else ""
             class_info = get_class_by_id(class_id) if class_id else None
             assignment_id_value = result_data.get("homework_id") or result_data.get("assignment_id")
