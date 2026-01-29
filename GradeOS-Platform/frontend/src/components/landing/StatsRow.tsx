@@ -6,30 +6,30 @@ import { FileText, Users, Clock, Award, Workflow, Cpu, GitBranch, ShieldCheck } 
 
 // 技术特性展示
 const techFeatures = [
-  { 
+  {
     icon: Workflow,
-    label: "LangGraph", 
+    label: "LangGraph",
     value: "工作流编排",
     desc: "多智能体协作",
     color: "#3b82f6"
   },
-  { 
+  {
     icon: Cpu,
-    label: "Gemini 3.0", 
+    label: "Gemini 3.0",
     value: "Vision原生",
     desc: "视觉理解模型",
     color: "#06b6d4"
   },
-  { 
+  {
     icon: GitBranch,
-    label: "并行处理", 
+    label: "并行处理",
     value: "批量批改",
     desc: "多学生同时处理",
     color: "#8b5cf6"
   },
-  { 
+  {
     icon: ShieldCheck,
-    label: "人机协同", 
+    label: "人机协同",
     value: "审核机制",
     desc: "可介入审核修改",
     color: "#10b981"
@@ -38,43 +38,43 @@ const techFeatures = [
 
 // 统计数据
 const stats = [
-  { 
-    icon: FileText, 
-    value: 50000, 
-    suffix: '+', 
+  {
+    icon: FileText,
+    value: 50000,
+    suffix: '+',
     label: '已批改试卷',
     color: '#3b82f6'
   },
-  { 
-    icon: Users, 
-    value: 1200, 
-    suffix: '+', 
+  {
+    icon: Users,
+    value: 1200,
+    suffix: '+',
     label: '教师用户',
     color: '#06b6d4'
   },
-  { 
-    icon: Clock, 
-    value: 90, 
-    suffix: 's', 
+  {
+    icon: Clock,
+    value: 90,
+    suffix: 's',
     label: '平均批改时间',
     color: '#8b5cf6'
   },
-  { 
-    icon: Award, 
-    value: 98, 
-    suffix: '%', 
+  {
+    icon: Award,
+    value: 98,
+    suffix: '%',
     label: '准确率',
     color: '#10b981'
   },
 ];
 
 // 数字计数动画组件
-const CountUp = ({ 
-  end, 
-  suffix, 
-  duration = 2000 
-}: { 
-  end: number; 
+const CountUp = ({
+  end,
+  suffix,
+  duration = 2000
+}: {
+  end: number;
   suffix: string;
   duration?: number;
 }) => {
@@ -87,11 +87,11 @@ const CountUp = ({
       if (!startTimeRef.current) startTimeRef.current = timestamp;
       const progress = timestamp - startTimeRef.current;
       const percentage = Math.min(progress / duration, 1);
-      
+
       // 使用缓动函数
       const easeOutQuart = 1 - Math.pow(1 - percentage, 4);
       const currentCount = Math.floor(easeOutQuart * end);
-      
+
       if (currentCount !== countRef.current) {
         countRef.current = currentCount;
         setCount(currentCount);
@@ -131,7 +131,7 @@ const StatCard = ({ stat, index, isInView }: { stat: typeof stats[0]; index: num
     >
       <div className="relative bg-white rounded-2xl p-6 border border-gray-100 shadow-sm hover:shadow-lg transition-all duration-300 hover:-translate-y-1">
         {/* 图标 */}
-        <div 
+        <div
           className="w-12 h-12 rounded-xl flex items-center justify-center mb-4 transition-transform group-hover:scale-110"
           style={{ background: `${stat.color}15` }}
         >
@@ -139,7 +139,7 @@ const StatCard = ({ stat, index, isInView }: { stat: typeof stats[0]; index: num
         </div>
 
         {/* 数值 */}
-        <div 
+        <div
           className="text-4xl font-bold mb-2"
           style={{ color: stat.color }}
         >
@@ -154,7 +154,7 @@ const StatCard = ({ stat, index, isInView }: { stat: typeof stats[0]; index: num
         <div className="text-gray-600 text-sm">{stat.label}</div>
 
         {/* 悬停装饰 */}
-        <div 
+        <div
           className="absolute bottom-0 left-0 right-0 h-1 rounded-b-2xl opacity-0 group-hover:opacity-100 transition-opacity"
           style={{ background: `linear-gradient(to right, ${stat.color}, ${stat.color}80)` }}
         />
@@ -178,24 +178,24 @@ const TechFeatureCard = ({ feature, index }: { feature: typeof techFeatures[0]; 
       whileHover={{ y: -5, transition: { duration: 0.2 } }}
       className="group cursor-default"
     >
-      <div 
+      <div
         className="flex items-center gap-4 p-4 rounded-xl bg-white border transition-all duration-300 hover:shadow-md"
         style={{ borderColor: `${feature.color}20` }}
       >
         {/* 图标 */}
-        <div 
+        <div
           className="w-12 h-12 rounded-lg flex items-center justify-center transition-all duration-300"
           style={{ background: `${feature.color}15` }}
         >
           <Icon className="w-6 h-6" style={{ color: feature.color }} />
         </div>
-        
+
         {/* 内容 */}
         <div className="flex-1">
           <div className="text-xs text-gray-500 uppercase tracking-wider mb-0.5">
             {feature.label}
           </div>
-          <div 
+          <div
             className="text-lg font-bold text-gray-900 transition-colors"
             style={{ color: feature.color }}
           >
@@ -230,44 +230,7 @@ export const StatsRow = () => {
           </div>
         </motion.div>
 
-        {/* 统计数据 */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={isInView ? { opacity: 1, y: 0 } : {}}
-          transition={{ delay: 0.2 }}
-          className="text-center mb-12"
-        >
-          <h2 className="text-3xl font-bold text-gray-900 mb-3">
-            数据见证实力
-          </h2>
-          <p className="text-gray-600">
-            已有数千名教师选择 GradeOS，累计批改超过 5 万份试卷
-          </p>
-        </motion.div>
 
-        {/* 统计数据网格 */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
-          {stats.map((stat, index) => (
-            <StatCard key={stat.label} stat={stat} index={index} isInView={isInView} />
-          ))}
-        </div>
-
-        {/* 信任标识 */}
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={isInView ? { opacity: 1 } : {}}
-          transition={{ delay: 0.5 }}
-          className="mt-16 text-center"
-        >
-          <p className="text-sm text-gray-500 mb-6">受到以下教育机构信赖</p>
-          <div className="flex flex-wrap items-center justify-center gap-8 opacity-50">
-            {['北京大学', '清华大学', '复旦大学', '浙江大学'].map((school, i) => (
-              <span key={i} className="text-lg font-semibold text-gray-400">
-                {school}
-              </span>
-            ))}
-          </div>
-        </motion.div>
       </div>
     </section>
   );

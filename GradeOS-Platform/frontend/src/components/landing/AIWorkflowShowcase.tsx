@@ -2,11 +2,11 @@
 
 import React, { useRef, useState, useEffect } from 'react';
 import { motion, useScroll, useTransform, useInView } from 'framer-motion';
-import { 
-  FileUp, 
-  ScanLine, 
-  BrainCircuit, 
-  CheckCircle2, 
+import {
+  FileUp,
+  ScanLine,
+  BrainCircuit,
+  CheckCircle2,
   Zap,
   ChevronLeft,
   ChevronRight,
@@ -135,8 +135,8 @@ const workflowStages = [
 ];
 
 // 单个工作流卡片组件
-const WorkflowCard = ({ stage, isActive, onClick }: { 
-  stage: typeof workflowStages[0]; 
+const WorkflowCard = ({ stage, isActive, onClick }: {
+  stage: typeof workflowStages[0];
   isActive: boolean;
   onClick: () => void;
 }) => {
@@ -151,9 +151,8 @@ const WorkflowCard = ({ stage, isActive, onClick }: {
       animate={isInView ? { opacity: 1, y: 0 } : {}}
       transition={{ duration: 0.6 }}
       onClick={onClick}
-      className={`relative flex-shrink-0 w-[350px] md:w-[400px] cursor-pointer group ${
-        isActive ? 'z-10' : 'z-0'
-      }`}
+      className={`relative flex-shrink-0 w-[280px] md:w-[320px] cursor-pointer group ${isActive ? 'z-10' : 'z-0'
+        }`}
     >
       <motion.div
         animate={{
@@ -161,11 +160,10 @@ const WorkflowCard = ({ stage, isActive, onClick }: {
           y: isActive ? -10 : 0,
         }}
         transition={{ type: "spring", stiffness: 300, damping: 30 }}
-        className={`relative bg-white rounded-2xl p-6 border-2 transition-all duration-300 ${
-          isActive 
-            ? `border-[${stage.color}] shadow-2xl` 
+        className={`relative bg-white rounded-2xl p-6 border-2 transition-all duration-300 ${isActive
+            ? `border-[${stage.color}] shadow-2xl`
             : 'border-gray-100 shadow-lg hover:border-gray-200'
-        }`}
+          }`}
         style={{
           boxShadow: isActive ? `0 25px 50px -12px ${stage.color}20` : undefined
         }}
@@ -177,7 +175,7 @@ const WorkflowCard = ({ stage, isActive, onClick }: {
 
         {/* 头部 */}
         <div className="flex items-start gap-4 mb-4">
-          <div 
+          <div
             className="w-14 h-14 rounded-xl flex items-center justify-center transition-transform group-hover:scale-110"
             style={{ background: `${stage.color}15` }}
           >
@@ -200,7 +198,7 @@ const WorkflowCard = ({ stage, isActive, onClick }: {
         <ul className="space-y-2 mb-4">
           {stage.features.map((feature, i) => (
             <li key={i} className="flex items-center gap-2 text-sm text-gray-500">
-              <div 
+              <div
                 className="w-1.5 h-1.5 rounded-full"
                 style={{ background: stage.color }}
               />
@@ -210,7 +208,7 @@ const WorkflowCard = ({ stage, isActive, onClick }: {
         </ul>
 
         {/* 统计 */}
-        <div 
+        <div
           className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium"
           style={{ background: `${stage.color}10`, color: stage.color }}
         >
@@ -241,7 +239,7 @@ const PreviewPanel = ({ stage }: { stage: typeof workflowStages[0] }) => {
       {/* 面板头部 */}
       <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div 
+          <div
             className="w-8 h-8 rounded-lg flex items-center justify-center"
             style={{ background: `${stage.color}15` }}
           >
@@ -266,16 +264,15 @@ const PreviewPanel = ({ stage }: { stage: typeof workflowStages[0] }) => {
                 <div className="flex-1">
                   <div className="text-sm text-gray-700">{item.name}</div>
                   <div className="progress-bar h-1.5 mt-2">
-                    <div 
+                    <div
                       className="progress-bar-fill transition-all duration-500"
                       style={{ width: `${item.progress}%` }}
                     />
                   </div>
                 </div>
-                <span className={`text-xs ${
-                  item.status === 'completed' ? 'text-emerald-500' :
-                  item.status === 'processing' ? 'text-blue-500' : 'text-gray-400'
-                }`}>
+                <span className={`text-xs ${item.status === 'completed' ? 'text-emerald-500' :
+                    item.status === 'processing' ? 'text-blue-500' : 'text-gray-400'
+                  }`}>
                   {item.status === 'completed' ? '✓' : item.status === 'processing' ? '...' : '○'}
                 </span>
               </div>
@@ -335,14 +332,13 @@ const PreviewPanel = ({ stage }: { stage: typeof workflowStages[0] }) => {
                     </div>
                     <span className="text-sm text-gray-700">{worker.student}</span>
                   </div>
-                  <span className={`text-xs ${
-                    worker.status === 'grading' ? 'text-emerald-500' : 'text-blue-500'
-                  }`}>
+                  <span className={`text-xs ${worker.status === 'grading' ? 'text-emerald-500' : 'text-blue-500'
+                    }`}>
                     {worker.status === 'grading' ? '批改中' : '审核中'}
                   </span>
                 </div>
                 <div className="progress-bar h-1.5">
-                  <div 
+                  <div
                     className="progress-bar-fill transition-all duration-1000"
                     style={{ width: `${worker.progress}%` }}
                   />
@@ -433,7 +429,7 @@ export const AIWorkflowVisualization = () => {
   return (
     <section ref={sectionRef} className="py-24 relative overflow-hidden bg-gradient-to-b from-white via-blue-50/50 to-white">
       {/* 背景装饰 */}
-      <motion.div 
+      <motion.div
         className="absolute inset-0 pointer-events-none"
         style={{ y: backgroundY }}
       >
@@ -452,12 +448,12 @@ export const AIWorkflowVisualization = () => {
             <BrainCircuit className="w-4 h-4 text-blue-500" />
             <span className="text-sm text-blue-600 font-medium">AI Workflow</span>
           </div>
-          
+
           <h2 className="text-4xl md:text-5xl font-bold text-gray-900 mb-6">
             智能批改
             <span className="gradient-text">全流程可视化</span>
           </h2>
-          
+
           <p className="text-lg text-gray-600">
             从试卷上传到成绩导出，每一步都清晰可见。基于 LangGraph 的多智能体编排系统，
             让复杂的批改流程变得简单透明。
@@ -473,7 +469,7 @@ export const AIWorkflowVisualization = () => {
           >
             <ChevronLeft className="w-6 h-6" />
           </button>
-          
+
           <button
             onClick={() => scrollToCard(Math.min(workflowStages.length - 1, activeStage + 1))}
             className="absolute right-0 top-1/2 -translate-y-1/2 z-20 w-12 h-12 rounded-full bg-white shadow-lg border border-gray-200 flex items-center justify-center text-gray-600 hover:text-blue-600 hover:border-blue-300 transition-all hidden lg:flex"
@@ -482,9 +478,9 @@ export const AIWorkflowVisualization = () => {
           </button>
 
           {/* 卡片容器 */}
-          <div 
+          <div
             ref={scrollContainerRef}
-            className="horizontal-scroll-section gap-6 px-4 lg:px-16 pb-4"
+            className="horizontal-scroll-section gap-6 px-4 lg:px-8 pb-4"
           >
             {workflowStages.map((stage, index) => (
               <WorkflowCard
@@ -508,11 +504,10 @@ export const AIWorkflowVisualization = () => {
             <button
               key={index}
               onClick={() => scrollToCard(index)}
-              className={`h-2 rounded-full transition-all duration-300 ${
-                index === activeStage 
-                  ? 'w-8 bg-blue-500' 
+              className={`h-2 rounded-full transition-all duration-300 ${index === activeStage
+                  ? 'w-8 bg-blue-500'
                   : 'w-2 bg-gray-300 hover:bg-gray-400'
-              }`}
+                }`}
             />
           ))}
         </div>
