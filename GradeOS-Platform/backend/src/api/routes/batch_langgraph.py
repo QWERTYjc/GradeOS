@@ -667,6 +667,8 @@ async def submit_batch(
                 pdf_path = temp_path / f"answer_{idx}.pdf"
                 with open(pdf_path, "wb") as f:
                     f.write(content)
+                loop = asyncio.get_event_loop()
+                pdf_images = await loop.run_in_executor(None, _pdf_to_images, str(pdf_path), 150)
                 answer_images.extend(pdf_images)
                 logger.debug(f"PDF 文件 {file_name} 转换为 {len(pdf_images)} 页图片")
             elif file_name.lower().endswith(".txt"):
