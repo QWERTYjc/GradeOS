@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { CheckCircle2, ArrowRight, AlertTriangle } from 'lucide-react';
 import clsx from 'clsx';
 import { useConsoleStore } from '@/store/consoleStore';
@@ -25,6 +26,7 @@ const REVIEW_LABELS: Record<string, string> = {
 
 export default function ReviewOverlay() {
   const { pendingReview, submissionId, setPendingReview, setStatus, setCurrentTab, setReviewFocus } = useConsoleStore();
+  const router = useRouter();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -42,8 +44,12 @@ export default function ReviewOverlay() {
 
   const handleNavigate = () => {
     if (!reviewFocus) return;
+    const target = isRubricReview
+      ? `/grading/rubric-review/${submissionId}`
+      : `/grading/results-review/${submissionId}`;
     setReviewFocus(reviewFocus);
     setCurrentTab('results');
+    router.push(target);
   };
 
   const handleSkip = async () => {

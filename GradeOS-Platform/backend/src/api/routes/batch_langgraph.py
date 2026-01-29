@@ -10,6 +10,7 @@ import uuid
 import logging
 import tempfile
 import asyncio
+import inspect
 import base64
 import json
 from datetime import datetime
@@ -56,6 +57,10 @@ from src.db import (
 
 
 logger = logging.getLogger(__name__)
+
+
+async def _maybe_await(value):
+    return await value if inspect.isawaitable(value) else value
 router = APIRouter(prefix="/batch", tags=["批量提交"])
 
 # 存储活跃的 WebSocket 连接
@@ -2249,12 +2254,12 @@ async def get_results_review_context(
 
     async def _load_from_db() -> ResultsReviewContextResponse:
         """从数据库加载批改结果"""
-        history = await get_grading_history(batch_id)
+        history = await _maybe_await(get_grading_history(batch_id))
         if not history:
             raise HTTPException(status_code=404, detail="批次不存在")
 
         raw_results: List[Dict[str, Any]] = []
-        student_rows = await get_student_results(history.id)
+        student_rows = await _maybe_await(get_student_results(history.id))
         for row in student_rows:
             data = row.result_data
             if isinstance(data, str):
