@@ -73,18 +73,17 @@ export const normalizeStudentResults = (raw: RawObject[]): StudentResult[] => {
         const pointResults = Array.isArray(rawPointResults)
           ? rawPointResults.map((spr: RawObject) => {
             const awardedRaw = spr.awarded ?? spr.score ?? 0;
+            const scoringPointObj = (spr.scoring_point || spr.scoringPoint) as RawObject | undefined;
             const maxPointsRaw =
               spr.max_points ??
               spr.maxPoints ??
-              spr.scoring_point?.score ??
-              spr.scoringPoint?.score ??
+              scoringPointObj?.score ??
               0;
             return {
-              pointId: String(spr.point_id || spr.pointId || spr.scoring_point?.point_id || spr.scoringPoint?.pointId || ''),
+              pointId: String(spr.point_id || spr.pointId || scoringPointObj?.point_id || scoringPointObj?.pointId || ''),
               description: String(
                 spr.description ||
-                spr.scoring_point?.description ||
-                spr.scoringPoint?.description ||
+                scoringPointObj?.description ||
                 ''
               ),
               awarded: Number(awardedRaw),
@@ -99,11 +98,11 @@ export const normalizeStudentResults = (raw: RawObject[]): StudentResult[] => {
               reviewReason: (spr.review_reason || spr.reviewReason) as string | undefined,
               reviewBy: (spr.review_by || spr.reviewBy) as string | undefined,
               scoringPoint: {
-                description: String(spr.scoring_point?.description || spr.scoringPoint?.description || ''),
-                score: Number(spr.scoring_point?.score || spr.scoringPoint?.score || 0),
-                maxScore: Number(spr.scoring_point?.score || spr.scoringPoint?.score || 0),
+                description: String(scoringPointObj?.description || ''),
+                score: Number(scoringPointObj?.score || 0),
+                maxScore: Number(scoringPointObj?.score || 0),
                 isCorrect: Number(awardedRaw) > 0,
-                isRequired: (spr.scoring_point?.is_required || spr.scoringPoint?.isRequired) as boolean | undefined,
+                isRequired: (scoringPointObj?.is_required || scoringPointObj?.isRequired) as boolean | undefined,
                 explanation: '',
               },
             };
