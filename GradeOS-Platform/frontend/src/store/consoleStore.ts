@@ -1,5 +1,8 @@
 import { create } from 'zustand';
 import { wsClient, buildWsUrl } from '@/services/ws';
+import { GradingAnnotationResult } from '@/types/annotation';
+
+let wsHandlersBound = false;
 
 export type WorkflowStatus = 'IDLE' | 'UPLOADING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'REVIEWING';
 export type NodeStatus = 'pending' | 'running' | 'completed' | 'failed';
@@ -214,6 +217,8 @@ export interface StudentResult {
     pageRange?: string;
     /** 页面列表 */
     pages?: string;
+    /** 批注结果（按页） */
+    gradingAnnotations?: GradingAnnotationResult;
 }
 
 export interface KnowledgePointSummary {
@@ -1143,6 +1148,10 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
 
     connectWs: (batchId) => {
         wsClient.connect(buildWsUrl(`/api/batch/ws/${batchId}`));
+        if (wsHandlersBound) {
+            return;
+        }
+        wsHandlersBound = true;
 
         // 处理工作流节点更新
         wsClient.on('workflow_update', (data) => {
@@ -1586,6 +1595,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
                         draftTotalScore: r.draftTotalScore || r.draft_total_score,
                         draftMaxScore: r.draftMaxScore || r.draft_max_score,
                         logicReviewedAt: r.logicReviewedAt || r.logic_reviewed_at,
+                        gradingAnnotations: r.gradingAnnotations || r.grading_annotations || r.annotations || r.annotation_result,
                         questionResults: (r.questionResults || r.question_results || []).map((q: any) => {
                             const rawPointResults = q.scoring_point_results
                                 || q.scoringPointResults
