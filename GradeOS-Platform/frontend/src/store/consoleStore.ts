@@ -160,7 +160,8 @@ export interface QuestionResult {
     };
 }
 
-// LLM 流式思考输�?export interface LLMThought {
+// LLM streaming thought
+export interface LLMThought {
     id: string;
     nodeId: string;
     nodeName: string;
