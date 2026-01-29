@@ -2474,10 +2474,18 @@ async def get_full_batch_results(
             return _load_from_db()
 
         state = run_info.state or {}
-        student_results = state.get("student_results", [])
-        cross_page_questions = state.get("cross_page_questions", [])
-        parsed_rubric = state.get("parsed_rubric", {})
+        student_results = state.get("student_results", []) or []
+        cross_page_questions = state.get("cross_page_questions", []) or []
+        parsed_rubric = state.get("parsed_rubric", {}) or {}
         class_report = state.get("class_report") or state.get("export_data", {}).get("class_report")
+        if not student_results or not parsed_rubric:
+            final_output = await orchestrator.get_final_output(run_id)
+            if final_output:
+                student_results = student_results or final_output.get("student_results") or final_output.get(
+                    "results"
+                ) or []
+                parsed_rubric = parsed_rubric or final_output.get("parsed_rubric", {}) or {}
+                cross_page_questions = cross_page_questions or final_output.get("cross_page_questions", []) or []
 
         return {
             "batch_id": batch_id,
