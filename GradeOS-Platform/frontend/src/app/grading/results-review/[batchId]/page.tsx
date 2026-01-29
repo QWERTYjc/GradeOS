@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState, use } from 'react';
+import React, { useEffect, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
 import { gradingApi } from '@/services/api';
@@ -17,9 +17,9 @@ type ResultsReviewContext = {
   answer_images: string[];
 };
 
-export default function ResultsReviewPage({ params }: { params: Promise<{ batchId: string }> }) {
+export default function ResultsReviewPage({ params }: { params: { batchId: string } }) {
   const router = useRouter();
-  const { batchId } = use(params);
+  const { batchId } = params;
   const setFinalResults = useConsoleStore((state) => state.setFinalResults);
   const setUploadedImages = useConsoleStore((state) => state.setUploadedImages);
   const setSubmissionId = useConsoleStore((state) => state.setSubmissionId);

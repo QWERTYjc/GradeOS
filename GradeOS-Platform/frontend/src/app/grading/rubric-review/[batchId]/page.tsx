@@ -1,6 +1,6 @@
 "use client";
 
-import React, { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import clsx from "clsx";
 import { gradingApi } from "@/services/api";
@@ -132,9 +132,9 @@ const buildRubricPayload = (draft: ParsedRubricDraft) => ({
   })),
 });
 
-export default function RubricReviewPage({ params }: { params: Promise<{ batchId: string }> }) {
+export default function RubricReviewPage({ params }: { params: { batchId: string } }) {
   const router = useRouter();
-  const { batchId } = use(params);
+  const { batchId } = params;
   const [rubricImages, setRubricImages] = useState<string[]>([]);
   const [rubricDraft, setRubricDraft] = useState<ParsedRubricDraft | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
