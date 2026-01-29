@@ -11,7 +11,6 @@ import type {
   BatchAnnotateRequest,
   BatchAnnotateResponse,
   RenderRequest,
-  PageAnnotations,
   VisualAnnotation,
   QuestionRubricInput,
 } from '@/types/annotation';

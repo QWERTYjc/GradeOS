@@ -1,5 +1,3 @@
-import { create } from 'zustand';
-
 const stripTrailingSlash = (value: string) => value.replace(/\/+$/, '');
 
 const resolveFromApiBase = (apiBase: string, fallbackOrigin: string) => {
@@ -51,22 +49,6 @@ export const buildWsUrl = (path: string) => {
 };
 
 type WebSocketStatus = 'CONNECTING' | 'OPEN' | 'CLOSED' | 'ERROR';
-
-interface WebSocketService {
-    url: string;
-    socket: WebSocket | null;
-    status: WebSocketStatus;
-    reconnectAttempts: number;
-    maxReconnectAttempts: number;
-    reconnectInterval: number;
-    listeners: Map<string, ((data: any) => void)[]>;
-
-    connect: (url: string) => void;
-    disconnect: () => void;
-    send: (type: string, payload: any) => void;
-    on: (type: string, callback: (data: any) => void) => void;
-    off: (type: string, callback: (data: any) => void) => void;
-}
 
 class WSClient {
     private socket: WebSocket | null = null;

@@ -4,7 +4,7 @@ import React, { useEffect, useState, useContext, useCallback } from 'react';
 import dynamic from 'next/dynamic';
 import { useConsoleStore } from '@/store/consoleStore';
 import { useAuthStore } from '@/store/authStore';
-import { useSearchParams, useRouter } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
     Images,
@@ -80,7 +80,6 @@ const ScannerContainer = ({
     onExpectedTotalScoreChange,
     studentNameMapping = []
 }: ScannerContainerProps) => {
-    const { user } = useAuthStore();
     const { setCurrentSessionId, sessions } = useContext(AppContext)!;
     const [viewMode, setViewMode] = useState<ScanViewMode>('exams');
     const [studentBoundaries, setStudentBoundaries] = useState<number[]>([]);
@@ -519,9 +518,6 @@ export default function ConsolePage() {
         splitImageIds,
         markImageAsSplit
     };
-
-    // Prepare Header Count
-    const activeSession = sessions.find(s => s.id === currentSessionId);
 
     // Batch Submission
     const handleSubmitBatch = async (images: ScannedImage[], boundaries: number[]) => {

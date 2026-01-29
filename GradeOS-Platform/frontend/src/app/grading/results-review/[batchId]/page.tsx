@@ -13,7 +13,7 @@ type ResultsReviewContext = {
   batch_id: string;
   status?: string;
   current_stage?: string;
-  student_results: Array<Record<string, any>>;
+  student_results: Array<Record<string, unknown>>;
   answer_images: string[];
 };
 
@@ -30,7 +30,6 @@ export default function ResultsReviewPage({ params }: { params: Promise<{ batchI
 
   useEffect(() => {
     let active = true;
-    setLoading(true);
     gradingApi
       .getResultsReviewContext(batchId)
       .then((data: ResultsReviewContext) => {

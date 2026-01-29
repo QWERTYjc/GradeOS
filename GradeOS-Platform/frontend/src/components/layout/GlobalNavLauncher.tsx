@@ -105,7 +105,7 @@ export default function GlobalNavLauncher() {
           setActiveRuns(response.runs || []);
           setRunsError(null);
         }
-      } catch (error) {
+      } catch {
         if (mounted) {
           setRunsError('无法加载批改批次');
         }
