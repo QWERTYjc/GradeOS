@@ -22,7 +22,14 @@ type ResultEntry = {
   displayName: string;
   score: number;
   maxScore: number;
+  /** 从批改结果中提取的可能的学号 */
+  possibleStudentId?: string;
+  /** 编辑后的学生名称（用户可修改） */
+  editableName?: string;
 };
+
+/** 匹配模式 */
+type MatchMode = 'name' | 'id' | 'fuzzy' | 'manual';
 
 export default function GradingImportPage() {
   const router = useRouter();
@@ -35,6 +42,8 @@ export default function GradingImportPage() {
   const [batchId, setBatchId] = useState('');
   const [resultEntries, setResultEntries] = useState<ResultEntry[]>([]);
   const [studentMapping, setStudentMapping] = useState<Record<string, string>>({});
+  const [editableEntries, setEditableEntries] = useState<Record<string, ResultEntry>>({});
+  const [editingRowId, setEditingRowId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadingResults, setLoadingResults] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -67,12 +76,49 @@ export default function GradingImportPage() {
       .catch(() => setAssignments([]));
   }, [selectedClassId]);
 
+  /**
+   * 从字符串中提取可能的学号
+   * 支持格式：纯数字、字母+数字组合、带学号前缀等
+   */
+  const extractStudentId = (str: string): string | undefined => {
+    // 匹配常见的学号格式：
+    // 1. 纯数字（6-12位）
+    // 2. 字母+数字组合
+    // 3. 带"学号"、"ID"等前缀
+    const patterns = [
+      /(?:学号|ID|id|学号[：:]?\s*)\s*([a-zA-Z0-9]+)/i,
+      /\b([a-zA-Z]\d{6,11})\b/,
+      /\b(\d{6,12})\b/,
+    ];
+    
+    for (const pattern of patterns) {
+      const match = str.match(pattern);
+      if (match) {
+        return match[1] || match[0];
+      }
+    }
+    return undefined;
+  };
+
+  /**
+   * 清理学生名称，移除学号等元信息
+   */
+  const cleanStudentName = (rawName: string): string => {
+    // 移除常见的学号前缀/后缀
+    return rawName
+      .replace(/学号[：:]?\s*[a-zA-Z0-9]+/gi, '')
+      .replace(/ID[：:]?\s*[a-zA-Z0-9]+/gi, '')
+      .replace(/\d{6,12}/g, '')
+      .replace(/[_-]+/g, ' ')
+      .trim();
+  };
+
   const normalizeResults = (payload: BatchGradingResponse | GradingResult[] | unknown): ResultEntry[] => {
     const rawList = Array.isArray(payload)
       ? payload
       : (payload as Record<string, unknown>)?.results || (payload as Record<string, unknown>)?.student_results || (payload as Record<string, unknown>)?.studentResults || [];
     return (rawList as Array<Record<string, unknown>>).map((item, idx) => {
-      const studentKey = String(
+      const rawStudentKey = String(
         item.student_name ||
           item.studentName ||
           item.student_key ||
@@ -85,28 +131,127 @@ export default function GradingImportPage() {
       const maxScore = Number(
         item.max_score ?? item.maxScore ?? item.max_total_score ?? item.maxTotalScore ?? item.max_score ?? 0
       );
+      
+      // 提取可能的学号和清理后的名称
+      const possibleStudentId = extractStudentId(rawStudentKey);
+      const cleanName = cleanStudentName(rawStudentKey) || rawStudentKey;
+      
       return {
-        rowId: `${studentKey}__${idx}`,
-        studentKey,
-        displayName: studentKey,
+        rowId: `${rawStudentKey}__${idx}`,
+        studentKey: rawStudentKey,
+        displayName: cleanName,
+        editableName: cleanName,
         score,
         maxScore,
+        possibleStudentId,
       };
     });
   };
 
+  /**
+   * 计算两个字符串的相似度（Levenshtein距离）
+   */
+  const calculateSimilarity = (str1: string, str2: string): number => {
+    const s1 = str1.toLowerCase().trim();
+    const s2 = str2.toLowerCase().trim();
+    
+    if (s1 === s2) return 1;
+    
+    const len1 = s1.length;
+    const len2 = s2.length;
+    const matrix: number[][] = [];
+    
+    for (let i = 0; i <= len1; i++) {
+      matrix[i] = [i];
+    }
+    for (let j = 0; j <= len2; j++) {
+      matrix[0][j] = j;
+    }
+    
+    for (let i = 1; i <= len1; i++) {
+      for (let j = 1; j <= len2; j++) {
+        const cost = s1[i - 1] === s2[j - 1] ? 0 : 1;
+        matrix[i][j] = Math.min(
+          matrix[i - 1][j] + 1,
+          matrix[i][j - 1] + 1,
+          matrix[i - 1][j - 1] + cost
+        );
+      }
+    }
+    
+    const distance = matrix[len1][len2];
+    const maxLen = Math.max(len1, len2);
+    return 1 - distance / maxLen;
+  };
+
+  /**
+   * 智能匹配学生
+   * 优先级：
+   * 1. 学号精确匹配
+   * 2. 姓名精确匹配
+   * 3. ID精确匹配
+   * 4. 模糊匹配（相似度>0.7）
+   */
+  const findBestMatch = (entry: ResultEntry, availableStudents: StudentInfo[], usedIds: Set<string>): StudentInfo | null => {
+    let bestMatch: StudentInfo | null = null;
+    let bestScore = 0;
+    
+    for (const student of availableStudents) {
+      // 如果该学生已经被匹配，跳过
+      if (usedIds.has(student.id)) continue;
+      
+      let score = 0;
+      const studentNameLower = student.name.toLowerCase().trim();
+      const entryNameLower = (entry.editableName || entry.displayName).toLowerCase().trim();
+      
+      // 1. 学号精确匹配（最高优先级）
+      if (entry.possibleStudentId && 
+          (student.id === entry.possibleStudentId || 
+           student.id.includes(entry.possibleStudentId) ||
+           entry.possibleStudentId.includes(student.id))) {
+        score = 100;
+      }
+      // 2. 姓名精确匹配
+      else if (studentNameLower === entryNameLower) {
+        score = 90;
+      }
+      // 3. ID精确匹配
+      else if (student.id === entry.studentKey) {
+        score = 80;
+      }
+      // 4. 姓名包含关系
+      else if (studentNameLower.includes(entryNameLower) || entryNameLower.includes(studentNameLower)) {
+        score = 70;
+      }
+      // 5. 模糊匹配
+      else {
+        const similarity = calculateSimilarity(studentNameLower, entryNameLower);
+        if (similarity > 0.7) {
+          score = similarity * 60;
+        }
+      }
+      
+      if (score > bestScore) {
+        bestScore = score;
+        bestMatch = student;
+      }
+    }
+    
+    return bestMatch;
+  };
+
   const applyAutoMatch = (entries: ResultEntry[], availableStudents: StudentInfo[]) => {
     const nextMapping: Record<string, string> = {};
+    const usedIds = new Set<string>();
+    
     entries.forEach((entry) => {
-      const match = availableStudents.find((student) => {
-        const studentName = student.name.trim().toLowerCase();
-        const entryName = entry.displayName.trim().toLowerCase();
-        return studentName === entryName || student.id === entry.studentKey;
-      });
+      const match = findBestMatch(entry, availableStudents, usedIds);
       if (match) {
         nextMapping[entry.rowId] = match.id;
+        usedIds.add(match.id);
       }
     });
+    
     setStudentMapping(nextMapping);
   };
 
@@ -126,6 +271,12 @@ export default function GradingImportPage() {
       const response = await gradingApi.getBatchResults(batchId.trim());
       const entries = normalizeResults(response);
       setResultEntries(entries);
+      // 初始化可编辑条目
+      const editableMap: Record<string, ResultEntry> = {};
+      entries.forEach(entry => {
+        editableMap[entry.rowId] = entry;
+      });
+      setEditableEntries(editableMap);
       applyAutoMatch(entries, students);
     } catch (err) {
       setError(err instanceof Error ? err.message : '拉取批改结果失败');
@@ -144,6 +295,38 @@ export default function GradingImportPage() {
       hasDuplicates: duplicates,
     };
   }, [studentMapping, resultEntries]);
+
+  /**
+   * 更新条目的可编辑名称
+   */
+  const updateEntryName = (rowId: string, newName: string) => {
+    setEditableEntries(prev => ({
+      ...prev,
+      [rowId]: {
+        ...prev[rowId],
+        editableName: newName,
+      },
+    }));
+  };
+
+  /**
+   * 获取匹配状态信息
+   */
+  const getMatchInfo = (entry: ResultEntry): { type: 'exact' | 'fuzzy' | 'none'; student?: StudentInfo } => {
+    const mappedId = studentMapping[entry.rowId];
+    if (!mappedId) return { type: 'none' };
+    
+    const student = students.find(s => s.id === mappedId);
+    if (!student) return { type: 'none' };
+    
+    const entryName = (entry.editableName || entry.displayName).toLowerCase().trim();
+    const studentName = student.name.toLowerCase().trim();
+    
+    if (studentName === entryName) {
+      return { type: 'exact', student };
+    }
+    return { type: 'fuzzy', student };
+  };
 
   const handleSubmit = async () => {
     setError('');
@@ -314,19 +497,32 @@ export default function GradingImportPage() {
             <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Step 03</p>
             <h2 className="mt-2 text-lg font-semibold text-slate-800">匹配学生</h2>
             <p className="mt-2 text-sm text-slate-500">
-              按批改结果逐条选择班级学生，系统会自动尝试同名匹配。
+              智能匹配会根据学号、姓名自动关联。您也可以手动调整。
             </p>
 
             <div className="mt-4 flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-              <div>
-                已匹配 {mappingStats.mappedCount} / {mappingStats.totalResults}
+              <div className="flex items-center gap-2">
+                <span>已匹配 {mappingStats.mappedCount} / {mappingStats.totalResults}</span>
+                {mappingStats.mappedCount > 0 && (
+                  <span className="text-emerald-600 text-xs">
+                    ({Math.round((mappingStats.mappedCount / mappingStats.totalResults) * 100)}%)
+                  </span>
+                )}
               </div>
-              <button
-                onClick={() => applyAutoMatch(resultEntries, students)}
-                className="rounded-full border border-slate-300 bg-white px-3 py-1 text-xs font-semibold text-slate-600 hover:border-slate-400"
-              >
-                重新自动匹配
-              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => applyAutoMatch(resultEntries, students)}
+                  className="rounded-full bg-emerald-50 border border-emerald-200 px-3 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 transition-colors"
+                >
+                  一键智能匹配
+                </button>
+                <button
+                  onClick={() => setStudentMapping({})}
+                  className="rounded-full border border-slate-300 bg-white px-3 py-1 text-xs font-semibold text-slate-600 hover:border-slate-400"
+                >
+                  清空匹配
+                </button>
+              </div>
             </div>
 
             <div className="mt-4 max-h-[520px] overflow-auto space-y-3 pr-1">
@@ -335,35 +531,104 @@ export default function GradingImportPage() {
                   暂无批改结果，请先加载。
                 </div>
               )}
-              {resultEntries.map((entry) => (
-                <div
-                  key={entry.rowId}
-                  className="rounded-xl border border-slate-200 px-4 py-3 text-sm"
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="font-semibold text-slate-700">{entry.displayName}</div>
-                    <div className="text-xs text-slate-500">
-                      {entry.score}/{entry.maxScore || '--'}
+              {resultEntries.map((entry) => {
+                const matchInfo = getMatchInfo(entry);
+                const editableEntry = editableEntries[entry.rowId] || entry;
+                const isEditing = editingRowId === entry.rowId;
+                
+                return (
+                  <div
+                    key={entry.rowId}
+                    className={`rounded-xl border px-4 py-3 text-sm transition-all ${
+                      matchInfo.type === 'exact' 
+                        ? 'border-emerald-200 bg-emerald-50/30' 
+                        : matchInfo.type === 'fuzzy'
+                        ? 'border-amber-200 bg-amber-50/30'
+                        : 'border-slate-200'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex-1 min-w-0">
+                        {isEditing ? (
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="text"
+                              value={editableEntry.editableName || editableEntry.displayName}
+                              onChange={(e) => updateEntryName(entry.rowId, e.target.value)}
+                              onBlur={() => setEditingRowId(null)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  setEditingRowId(null);
+                                  // 重新匹配
+                                  applyAutoMatch(Object.values(editableEntries), students);
+                                }
+                              }}
+                              autoFocus
+                              className="flex-1 rounded-lg border border-blue-300 px-2 py-1 text-sm font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-200"
+                            />
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-2">
+                            <span className="font-semibold text-slate-700 truncate">
+                              {editableEntry.editableName || editableEntry.displayName}
+                            </span>
+                            <button
+                              onClick={() => setEditingRowId(entry.rowId)}
+                              className="text-[10px] text-slate-400 hover:text-blue-600 transition-colors"
+                              title="编辑名称"
+                            >
+                              ✎
+                            </button>
+                          </div>
+                        )}
+                        {entry.possibleStudentId && (
+                          <div className="text-[10px] text-slate-500 mt-0.5">
+                            检测到学号: <span className="font-mono text-blue-600">{entry.possibleStudentId}</span>
+                          </div>
+                        )}
+                      </div>
+                      <div className="text-right ml-3">
+                        <div className="text-xs text-slate-500">
+                          {entry.score}/{entry.maxScore || '--'}
+                        </div>
+                        {matchInfo.type !== 'none' && (
+                          <div className={`text-[10px] ${
+                            matchInfo.type === 'exact' ? 'text-emerald-600' : 'text-amber-600'
+                          }`}>
+                            {matchInfo.type === 'exact' ? '精确匹配' : '模糊匹配'}
+                          </div>
+                        )}
+                      </div>
                     </div>
+                    <div className="mt-3">
+                      <select
+                        value={studentMapping[entry.rowId] || ''}
+                        onChange={(e) =>
+                          setStudentMapping((prev) => ({ ...prev, [entry.rowId]: e.target.value }))
+                        }
+                        className={`w-full rounded-lg border px-3 py-2 text-xs focus:outline-none focus:ring-2 transition-all ${
+                          studentMapping[entry.rowId]
+                            ? 'border-emerald-200 bg-emerald-50 text-slate-700 focus:ring-emerald-200'
+                            : 'border-slate-200 text-slate-600 focus:ring-slate-300'
+                        }`}
+                      >
+                        <option value="">选择班级学生</option>
+                        {students.map((student) => (
+                          <option key={student.id} value={student.id}>
+                            {student.name} (ID: {student.id})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    {matchInfo.student && (
+                      <div className="mt-2 flex items-center gap-1 text-[10px] text-emerald-600">
+                        <span>✓</span>
+                        <span>已匹配: {matchInfo.student.name}</span>
+                      </div>
+                    )}
                   </div>
-                  <div className="mt-3">
-                    <select
-                      value={studentMapping[entry.rowId] || ''}
-                      onChange={(e) =>
-                        setStudentMapping((prev) => ({ ...prev, [entry.rowId]: e.target.value }))
-                      }
-                      className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs text-slate-600 focus:outline-none focus:ring-2 focus:ring-slate-300"
-                    >
-                      <option value="">选择班级学生</option>
-                      {students.map((student) => (
-                        <option key={student.id} value={student.id}>
-                          {student.name} ({student.id})
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         </div>

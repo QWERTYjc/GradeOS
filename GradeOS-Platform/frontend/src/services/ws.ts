@@ -57,7 +57,7 @@ class WSClient {
     private maxReconnectAttempts = 5;
     private reconnectInterval = 1000;
     private maxReconnectInterval = 15000;
-    private listeners = new Map<string, ((data: unknown) => void)[]>();
+    private listeners = new Map<string, ((data: any) => void)[]>();
     private url: string = '';
     private statusChangeCallback: ((status: WebSocketStatus) => void) | null = null;
     private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -184,21 +184,21 @@ class WSClient {
         }
     }
 
-    on(type: string, callback: (data: unknown) => void) {
+    on(type: string, callback: (data: any) => void) {
         if (!this.listeners.has(type)) {
             this.listeners.set(type, []);
         }
         this.listeners.get(type)?.push(callback);
     }
 
-    off(type: string, callback: (data: unknown) => void) {
+    off(type: string, callback: (data: any) => void) {
         const callbacks = this.listeners.get(type);
         if (callbacks) {
             this.listeners.set(type, callbacks.filter(cb => cb !== callback));
         }
     }
 
-    private dispatch(type: string, payload: unknown) {
+    private dispatch(type: string, payload: any) {
         const callbacks = this.listeners.get(type);
         if (callbacks) {
             callbacks.forEach(cb => cb(payload));

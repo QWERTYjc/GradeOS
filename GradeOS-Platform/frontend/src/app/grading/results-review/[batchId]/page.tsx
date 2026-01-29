@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import dynamic from 'next/dynamic';
-import { useRouter } from 'next/navigation';
+import { useRouter, useParams } from 'next/navigation';
 import { gradingApi } from '@/services/api';
 import { useConsoleStore } from '@/store/consoleStore';
 import { normalizeStudentResults } from '@/lib/gradingResults';
@@ -17,9 +17,10 @@ type ResultsReviewContext = {
   answer_images: string[];
 };
 
-export default function ResultsReviewPage({ params }: { params: { batchId: string } }) {
+export default function ResultsReviewPage() {
   const router = useRouter();
-  const { batchId } = params;
+  const params = useParams();
+  const batchId = params?.batchId as string;
   const setFinalResults = useConsoleStore((state) => state.setFinalResults);
   const setUploadedImages = useConsoleStore((state) => state.setUploadedImages);
   const setSubmissionId = useConsoleStore((state) => state.setSubmissionId);

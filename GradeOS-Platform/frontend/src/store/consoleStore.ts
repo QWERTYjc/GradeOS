@@ -1158,7 +1158,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
             handlersRegistered = true;
 
             // 处理工作流节点更�?
-            wsClient.on('workflow_update', (data) => {
+            wsClient.on('workflow_update', (data: any) => {
             console.log('Workflow Update:', data);
             const { nodeId, status, message } = data as {
                 nodeId?: string;
@@ -1181,7 +1181,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
         });
 
 // 处理并行 Agent 创建
-wsClient.on('parallel_agents_created', (data) => {
+wsClient.on('parallel_agents_created', (data: any) => {
     console.log('Parallel Agents Created:', data);
     const { parentNodeId, agents } = data as {
         parentNodeId?: string;
@@ -1197,7 +1197,7 @@ wsClient.on('parallel_agents_created', (data) => {
 });
 
 // 处理单个 Agent 更新
-wsClient.on('agent_update', (data) => {
+wsClient.on('agent_update', (data: any) => {
     console.log('Agent Update:', data);
     const payload = data as any;
     const { agentId, status, progress, message, output, logs, error } = payload;
@@ -1219,7 +1219,7 @@ wsClient.on('agent_update', (data) => {
 // ===== 设计文档新增事件类型 =====
 
 // 处理评分标准解析完成事件
-wsClient.on('rubric_parsed', (data) => {
+wsClient.on('rubric_parsed', (data: any) => {
     console.log('Rubric Parsed:', data);
     const normalized = normalizeParsedRubricPayload(data);
     if (normalized) {
@@ -1250,7 +1250,7 @@ wsClient.on('rubric_parsed', (data) => {
         );
     }
 });
-wsClient.on('rubric_score_mismatch', (data) => {
+wsClient.on('rubric_score_mismatch', (data: any) => {
     console.log('Rubric Score Mismatch:', data);
     const expectedTotalScore = Number(data.expectedTotalScore ?? data.expected_total_score);
     const parsedTotalScore = Number(data.parsedTotalScore ?? data.parsed_total_score);
@@ -1271,7 +1271,7 @@ wsClient.on('rubric_score_mismatch', (data) => {
         get().addLog(message, 'ERROR');
     }
 });
-wsClient.on('rubric_parse_failed', (data) => {
+wsClient.on('rubric_parse_failed', (data: any) => {
     console.log('Rubric Parse Failed:', data);
     const message = data.message || 'Rubric parse failed. Please re-upload a clear rubric.';
     get().setRubricParseError({
@@ -1288,7 +1288,7 @@ wsClient.on('rubric_parse_failed', (data) => {
 });
 
 // 🔥 处理图片预处理完成事�?- 用于结果页显示答题图�?
-wsClient.on('images_ready', (data) => {
+wsClient.on('images_ready', (data: any) => {
 console.log('Images Ready:', data);
 const { images, totalCount } = data as any;
 if (images && Array.isArray(images)) {
@@ -1297,7 +1297,7 @@ if (images && Array.isArray(images)) {
 }
         });
 
-wsClient.on('rubric_images_ready', (data) => {
+wsClient.on('rubric_images_ready', (data: any) => {
     console.log('Rubric Images Ready:', data);
     const { images } = data as any;
     if (images && Array.isArray(images)) {
@@ -1307,7 +1307,7 @@ wsClient.on('rubric_images_ready', (data) => {
 });
 
 // 处理批次开始事件（对应设计文档 EventType.BATCH_START�?
-wsClient.on('batch_start', (data) => {
+wsClient.on('batch_start', (data: any) => {
 console.log('Batch Start:', data);
 const { batchIndex, totalBatches } = data as any;
 if (typeof batchIndex === 'number' && typeof totalBatches === 'number') {
@@ -1322,7 +1322,7 @@ if (typeof batchIndex === 'number' && typeof totalBatches === 'number') {
         });
 
 // 处理批次进度事件（后�?state_update -> batch_progress�?
-wsClient.on('batch_progress', (data) => {
+wsClient.on('batch_progress', (data: any) => {
 console.log('Batch Progress:', data);
 const batchIndex = data.batchIndex ?? data.batch_index;
 const totalBatches = data.totalBatches ?? data.total_batches;
@@ -1339,7 +1339,7 @@ if (typeof batchIndex === 'number' && typeof totalBatches === 'number') {
         });
 
 // 处理单页完成事件（对应设计文�?EventType.PAGE_COMPLETE�?
-wsClient.on('page_complete', (data) => {
+wsClient.on('page_complete', (data: any) => {
 console.log('Page Complete:', data);
 const { pageIndex, success, batchIndex, revisionCount } = data as any;
 const currentProgress = get().batchProgress;
@@ -1376,7 +1376,7 @@ if (revisionCount && revisionCount > 0) {
         });
 
 // 处理 LLM 流式输出消息 (P4) - 统一流式输出展示
-wsClient.on('llm_stream_chunk', (data) => {
+wsClient.on('llm_stream_chunk', (data: any) => {
     const rawNodeId = data.nodeId || data.node || 'unknown';
     const normalizedNodeId = normalizeNodeId(rawNodeId);
     const nodeName = data.nodeName;
@@ -1436,7 +1436,7 @@ if (streamType !== 'thinking' && normalizedNodeId === 'grade_batch') {
         });
 
 // 处理 LLM 思考完成事�?
-wsClient.on('llm_thought_complete', (data) => {
+wsClient.on('llm_thought_complete', (data: any) => {
 const { nodeId, pageIndex, agentId } = data as any;
 const rawStreamType = data.streamType || data.stream_type;
 const streamType = rawStreamType === 'thinking' ? 'thinking' : 'output';
@@ -1444,7 +1444,7 @@ get().completeLLMThought(nodeId || "unknown", pageIndex, streamType, agentId);
         });
 
 // 处理批次完成事件（对应设计文�?EventType.BATCH_COMPLETE�?
-wsClient.on('batch_complete', (data) => {
+wsClient.on('batch_complete', (data: any) => {
 console.log('Batch Complete:', data);
 const { batchIndex, successCount, failureCount, processingTimeMs, totalScore, totalBatches } = data as any;
 const resolvedBatchIndex = typeof batchIndex === 'number'
@@ -1470,7 +1470,7 @@ if (typeof batchIndex === 'number') {
         });
 
 // 处理学生识别事件（对应设计文�?EventType.STUDENT_IDENTIFIED�?
-wsClient.on('students_identified', (data) => {
+wsClient.on('students_identified', (data: any) => {
 console.log('Students Identified:', data);
 const { students, studentCount } = data as any;
 if (students && Array.isArray(students)) {
@@ -1504,7 +1504,7 @@ if (students && Array.isArray(students)) {
         });
 
 // 处理审核请求事件
-wsClient.on('review_required', (data) => {
+wsClient.on('review_required', (data: any) => {
     console.log('Review Required:', data);
     // 规范化数据结构以匹配 PendingReview 接口
     const reviewData = {
@@ -1535,7 +1535,7 @@ wsClient.on('review_required', (data) => {
 });
 
 // 处理跨页题目检测事�?
-wsClient.on('cross_page_detected', (data) => {
+wsClient.on('cross_page_detected', (data: any) => {
 console.log('Cross Page Questions Detected:', data);
 const { questions, mergedCount, crossPageCount } = data as any;
 if (questions && Array.isArray(questions)) {
@@ -1551,7 +1551,7 @@ if (questions && Array.isArray(questions)) {
 
 // 处理工作流完�?
             // Workflow completed handler commented out due to syntax error
-            //         wsClient.on('workflow_completed', (data) => {
+            //         wsClient.on('workflow_completed', (data: any) => {
             //             console.log('Workflow Completed:', data);
             //             get().addLog(data.message || 'Workflow completed', 'SUCCESS');
             //         
@@ -1565,7 +1565,7 @@ if (questions && Array.isArray(questions)) {
             //                 }, 1500);
             //             }
             //         });
-wsClient.on('page_graded', (data) => {
+wsClient.on('page_graded', (data: any) => {
     console.log('Page Graded:', data);
     const { pageIndex, score, maxScore, questionNumbers } = data as any;
     get().addLog(
@@ -1575,7 +1575,7 @@ wsClient.on('page_graded', (data) => {
 });
 
 // 处理批改进度事件
-wsClient.on('grading_progress', (data) => {
+wsClient.on('grading_progress', (data: any) => {
     console.log('Grading Progress:', data);
     const { completedPages, totalPages, percentage } = data as any;
     // 更新 grading 节点的进�?
@@ -1639,14 +1639,14 @@ wsClient.on('grading_progress', (data) => {
 });
 
 // 处理批次完成事件
-wsClient.on('batch_completed', (data) => {
+wsClient.on('batch_completed', (data: any) => {
     console.log('Batch Completed:', data);
     const { batchSize, successCount, totalScore } = data as any;
     get().addLog(`Run completed: ${successCount}/${batchSize} pages succeeded, total ${totalScore}`, 'INFO');
 });
 
 // 处理审核完成事件
-wsClient.on('review_completed', (data) => {
+wsClient.on('review_completed', (data: any) => {
     console.log('Review Completed:', data);
     const { summary } = data as any;
     if (summary) {
@@ -1658,7 +1658,7 @@ wsClient.on('review_completed', (data) => {
 });
 
 // 处理工作流错误（对应设计文档 EventType.ERROR�?
-wsClient.on('workflow_error', (data) => {
+wsClient.on('workflow_error', (data: any) => {
 console.log('Workflow Error:', data);
 if (get().rubricScoreMismatch || get().rubricParseError) {
     return;

@@ -23,6 +23,13 @@ interface ResultCardProps {
     isExpanded: boolean;
 }
 
+interface ResultsViewProps {
+    /** 是否默认展开题目详情（用于批改历史页面） */
+    defaultExpandDetails?: boolean;
+    /** 隐藏批改透明度区块 */
+    hideGradingTransparency?: boolean;
+}
+
 const LOW_CONFIDENCE_THRESHOLD = 0.7;
 
 type ReviewQuestionDraft = {
@@ -204,7 +211,7 @@ const renderParagraphs = (text: string) => {
     ));
 };
 
-const QuestionDetail: React.FC<{ question: QuestionResult; gradingMode?: string }> = ({ question, gradingMode }) => {
+const QuestionDetail: React.FC<{ question: QuestionResult; gradingMode?: string; defaultExpanded?: boolean }> = ({ question, gradingMode, defaultExpanded = false }) => {
     const percentage = question.maxScore > 0 ? (question.score / question.maxScore) * 100 : 0;
     const questionLabel = question.questionId === 'unknown' ? '未识别' : question.questionId;
     const normalizedType = (question.questionType || '').toLowerCase();
@@ -223,7 +230,7 @@ const QuestionDetail: React.FC<{ question: QuestionResult; gradingMode?: string 
     const showScoringDetails = !isAssist && !isChoice;
     const hasDetails = Boolean(question.studentAnswer)
         || (showScoringDetails && ((question.scoringPointResults?.length || 0) > 0 || (question.scoringPoints?.length || 0) > 0));
-    const [detailsOpen, setDetailsOpen] = useState(false);
+    const [detailsOpen, setDetailsOpen] = useState(defaultExpanded);
     const scoreLabel = isAssist ? 'Assist' : (question.maxScore > 0 ? `${question.score} / ${question.maxScore}` : 'N/A');
     const scoreClass = isAssist || question.maxScore <= 0
         ? 'text-slate-400'
@@ -546,7 +553,7 @@ const normalizeQuestionResults = (questionResults?: QuestionResult[]) => {
     });
 };
 
-export const ResultsView: React.FC = () => {
+export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails = false, hideGradingTransparency = false }) => {
     const {
         finalResults,
         workflowNodes,
@@ -2634,7 +2641,7 @@ export const ResultsView: React.FC = () => {
                                 </div>
                                 {detailViewStudent.questionResults?.map((q, idx) => (
                                     <div key={idx} className="border-b border-slate-100 pb-4 last:border-b-0">
-                                        <QuestionDetail question={q} gradingMode={detailViewStudent.gradingMode} />
+                                        <QuestionDetail question={q} gradingMode={detailViewStudent.gradingMode} defaultExpanded={defaultExpandDetails} />
                                     </div>
                                 ))}
                             </div>
