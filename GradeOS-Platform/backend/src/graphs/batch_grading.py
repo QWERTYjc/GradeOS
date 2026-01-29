@@ -576,11 +576,28 @@ async def rubric_parse_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                     },
                 )
 
-            result = await parser.parse_rubric(
-                rubric_images=rubric_images,
-                progress_callback=progress_callback,
-                stream_callback=stream_callback,
-            )
+            # 添加超时保护，默认 10 分钟（评分标准可能很长）
+            rubric_parse_timeout = int(os.getenv("RUBRIC_PARSE_TIMEOUT", "600"))
+            try:
+                result = await asyncio.wait_for(
+                    parser.parse_rubric(
+                        rubric_images=rubric_images,
+                        progress_callback=progress_callback,
+                        stream_callback=stream_callback,
+                    ),
+                    timeout=rubric_parse_timeout,
+                )
+            except asyncio.TimeoutError:
+                logger.error(f"[rubric_parse] 解析超时（{rubric_parse_timeout}秒），batch_id={batch_id}")
+                await _broadcast_progress(
+                    batch_id,
+                    {
+                        "type": "workflow_error",
+                        "error": f"评分标准解析超时（{rubric_parse_timeout}秒），请尝试减少评分标准页数或稍后重试",
+                        "stage": "rubric_parse",
+                    },
+                )
+                raise Exception(f"Rubric parse timeout after {rubric_parse_timeout}s")
 
             # 转换为字典格式
             parsed_rubric = {

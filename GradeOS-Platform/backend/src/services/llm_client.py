@@ -43,7 +43,10 @@ class UnifiedLLMClient:
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
-            self._client = httpx.AsyncClient(timeout=120.0)
+            # 增加超时时间以支持大型视觉分析任务
+            # 可通过环境变量 LLM_HTTP_TIMEOUT 覆盖
+            timeout = self._read_float_env("LLM_HTTP_TIMEOUT", 300.0)
+            self._client = httpx.AsyncClient(timeout=timeout)
         return self._client
 
     async def close(self) -> None:

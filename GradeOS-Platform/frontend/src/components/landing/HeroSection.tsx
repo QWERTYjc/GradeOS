@@ -2,10 +2,10 @@
 
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { 
-  ArrowRight, 
-  Terminal, 
-  Sparkles, 
+import {
+  ArrowRight,
+  Terminal,
+  Sparkles,
   Zap,
   FileUp,
   ScanLine,
@@ -48,7 +48,7 @@ export const HeroSection = () => {
   // 工作流动画循环
   useEffect(() => {
     if (!isPlaying) return;
-    
+
     const interval = setInterval(() => {
       setActiveStage((prev) => {
         const next = (prev + 1) % workflowStages.length;
@@ -62,7 +62,7 @@ export const HeroSection = () => {
   // 进度条动画
   useEffect(() => {
     if (!isPlaying) return;
-    
+
     const interval = setInterval(() => {
       setProgress((prev) => {
         if (prev >= 100) {
@@ -84,7 +84,7 @@ export const HeroSection = () => {
   useEffect(() => {
     let currentLogIndex = 0;
     let currentCharIndex = 0;
-    
+
     const typeLog = () => {
       if (currentLogIndex >= consoleLogs.length) {
         setTimeout(() => {
@@ -96,7 +96,7 @@ export const HeroSection = () => {
       }
 
       const log = consoleLogs[currentLogIndex];
-      
+
       if (currentCharIndex === 0) {
         setLogs(prev => [...prev, '']);
       }
@@ -137,7 +137,7 @@ export const HeroSection = () => {
     <section className="hero-section">
       {/* 背景网格 */}
       <div className="hero-grid" />
-      
+
       {/* 浮动光球 */}
       <div className="hero-orb hero-orb-1" />
       <div className="hero-orb hero-orb-2" />
@@ -164,9 +164,9 @@ export const HeroSection = () => {
               transition={{ duration: 0.6, delay: 0.1 }}
               className="text-5xl lg:text-6xl xl:text-7xl font-bold text-gray-900 leading-tight"
             >
-              智能批改
+              GradeOS
               <br />
-              <span className="gradient-text-animated">从此可视化</span>
+              <span className="gradient-text-animated">AI-Powered Grading System</span>
             </motion.h1>
 
             {/* 描述 */}
@@ -187,15 +187,15 @@ export const HeroSection = () => {
               transition={{ duration: 0.6, delay: 0.3 }}
               className="flex flex-col sm:flex-row items-center gap-4"
             >
-              <Link 
-                href="/console" 
+              <Link
+                href="/console"
                 className="btn-primary group flex items-center gap-2"
               >
                 <span>开始体验</span>
                 <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
               </Link>
-              
-              <button 
+
+              <button
                 onClick={() => setIsPlaying(!isPlaying)}
                 className="btn-secondary flex items-center gap-2"
               >
@@ -212,7 +212,7 @@ export const HeroSection = () => {
               className="flex flex-wrap items-center gap-3 pt-4"
             >
               {['Gemini 3.0', 'LangGraph', 'Vision AI', '多智能体'].map((tag, i) => (
-                <span 
+                <span
                   key={i}
                   className="px-3 py-1.5 rounded-lg bg-white border border-gray-200 text-xs text-gray-600 shadow-sm"
                 >
@@ -252,7 +252,7 @@ export const HeroSection = () => {
             <div className="console-preview rounded-2xl p-6 relative overflow-hidden">
               {/* 扫描线效果 */}
               <div className="scan-line" />
-              
+
               {/* 窗口标题栏 */}
               <div className="flex items-center justify-between mb-6 border-b border-slate-700/50 pb-4">
                 <div className="flex items-center gap-3">
@@ -275,7 +275,7 @@ export const HeroSection = () => {
                   const Icon = stage.icon;
                   const isActive = index === activeStage;
                   const isCompleted = index < activeStage;
-                  
+
                   return (
                     <motion.div
                       key={stage.id}
@@ -285,13 +285,12 @@ export const HeroSection = () => {
                         opacity: isActive || isCompleted ? 1 : 0.5,
                       }}
                     >
-                      <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all duration-300 ${
-                        isActive 
-                          ? `${stage.bg} ${stage.color} ring-2 ring-offset-2 ring-offset-slate-900 ring-current` 
-                          : isCompleted 
-                            ? 'bg-emerald-500/20 text-emerald-400' 
+                      <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all duration-300 ${isActive
+                          ? `${stage.bg} ${stage.color} ring-2 ring-offset-2 ring-offset-slate-900 ring-current`
+                          : isCompleted
+                            ? 'bg-emerald-500/20 text-emerald-400'
                             : 'bg-slate-800 text-slate-500'
-                      }`}>
+                        }`}>
                         <Icon className="w-5 h-5" />
                       </div>
                       <span className={`text-xs ${isActive ? stage.color : 'text-slate-500'}`}>
@@ -309,7 +308,7 @@ export const HeroSection = () => {
                   <span>{progress}%</span>
                 </div>
                 <div className="progress-bar h-2">
-                  <motion.div 
+                  <motion.div
                     className="progress-bar-fill"
                     style={{ width: `${progress}%` }}
                   />
@@ -351,35 +350,6 @@ export const HeroSection = () => {
                 )}
               </AnimatePresence>
             </div>
-
-            {/* 浮动装饰卡片 */}
-            <motion.div
-              animate={{ y: [0, -10, 0] }}
-              transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
-              className="absolute -right-4 -bottom-4 glass-card rounded-xl p-4 shadow-xl"
-            >
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-emerald-400 to-teal-500 flex items-center justify-center text-white font-bold">
-                  A
-                </div>
-                <div>
-                  <div className="text-xs text-gray-500">最新完成</div>
-                  <div className="text-sm font-semibold text-gray-900">张三 - 95分</div>
-                </div>
-              </div>
-            </motion.div>
-
-            {/* 系统状态卡片 */}
-            <motion.div
-              animate={{ y: [0, 10, 0] }}
-              transition={{ duration: 3, repeat: Infinity, ease: "easeInOut", delay: 0.5 }}
-              className="absolute -left-4 top-1/2 glass-card rounded-lg px-4 py-2 shadow-xl"
-            >
-              <div className="flex items-center gap-2">
-                <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                <span className="text-xs font-medium text-gray-600">System Online</span>
-              </div>
-            </motion.div>
           </motion.div>
         </div>
       </div>

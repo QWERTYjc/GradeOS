@@ -42,6 +42,7 @@ from src.utils.image import to_jpeg_bytes, pil_to_jpeg_bytes
 from src.utils.pool_manager import UnifiedPoolManager, PoolNotInitializedError
 from src.services.grading_run_control import GradingRunSnapshot, get_run_controller
 from src.services.annotation_grading import update_annotations_after_review
+from src.services.file_storage import get_file_storage_service, StoredFile
 
 # PostgreSQL 作为主存储
 from src.db import (
@@ -765,6 +766,38 @@ async def submit_batch(
             f"rubric_pages={len(rubric_images)}, "
             f"answer_pages={total_pages}"
         )
+
+        # 📁 持久化存储原始文件（可选，通过环境变量 ENABLE_FILE_STORAGE 控制）
+        stored_files: List[StoredFile] = []
+        if os.getenv("ENABLE_FILE_STORAGE", "false").lower() == "true":
+            try:
+                file_storage = get_file_storage_service()
+                
+                # 保存答题文件（以处理后的图片形式）
+                answer_filenames = [f"answer_page_{i+1}.jpg" for i in range(len(answer_images))]
+                stored_answers = await file_storage.save_answer_files(
+                    batch_id=batch_id,
+                    files=answer_images,
+                    filenames=answer_filenames,
+                )
+                stored_files.extend(stored_answers)
+                
+                # 保存评分标准文件（如果有）
+                if rubric_images:
+                    rubric_filenames = [f"rubric_page_{i+1}.jpg" for i in range(len(rubric_images))]
+                    stored_rubrics = await file_storage.save_rubric_files(
+                        batch_id=batch_id,
+                        files=rubric_images,
+                        filenames=rubric_filenames,
+                    )
+                    stored_files.extend(stored_rubrics)
+                
+                logger.info(
+                    f"[FileStorage] 文件存储完成: batch_id={batch_id}, "
+                    f"共保存 {len(stored_files)} 个文件"
+                )
+            except Exception as e:
+                logger.warning(f"[FileStorage] 文件存储失败（不影响批改流程）: {e}")
 
         # 🚀 使用 LangGraph Orchestrator 启动批改流程
 
@@ -3429,3 +3462,71 @@ async def get_batch_self_report(
     except Exception as e:
         logger.error(f"获取自白报告失败: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"获取失败: {str(e)}")
+
+
+# ==================== 文件存储 API ====================
+
+@router.get("/{batch_id}/files")
+async def list_batch_files(batch_id: str):
+    """获取批次的所有存储文件列表"""
+    try:
+        file_storage = get_file_storage_service()
+        files = await file_storage.list_batch_files(batch_id)
+        
+        return {
+            "batch_id": batch_id,
+            "files": [f.to_dict() for f in files],
+            "total_count": len(files),
+        }
+    except Exception as e:
+        logger.error(f"获取文件列表失败: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"获取文件列表失败: {str(e)}")
+
+
+@router.get("/files/{file_id}")
+async def get_file(file_id: str):
+    """获取文件信息"""
+    try:
+        file_storage = get_file_storage_service()
+        file_info = await file_storage.get_file_info(file_id)
+        
+        if not file_info:
+            raise HTTPException(status_code=404, detail="文件不存在")
+        
+        return file_info.to_dict()
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"获取文件信息失败: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"获取文件信息失败: {str(e)}")
+
+
+@router.get("/files/{file_id}/download")
+async def download_file(file_id: str):
+    """下载文件"""
+    from fastapi.responses import Response
+    
+    try:
+        file_storage = get_file_storage_service()
+        file_info = await file_storage.get_file_info(file_id)
+        
+        if not file_info:
+            raise HTTPException(status_code=404, detail="文件不存在")
+        
+        content = await file_storage.get_file(file_id)
+        if not content:
+            raise HTTPException(status_code=404, detail="文件内容不存在")
+        
+        return Response(
+            content=content,
+            media_type=file_info.content_type,
+            headers={
+                "Content-Disposition": f'attachment; filename="{file_info.filename}"',
+            },
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"下载文件失败: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"下载文件失败: {str(e)}")
+

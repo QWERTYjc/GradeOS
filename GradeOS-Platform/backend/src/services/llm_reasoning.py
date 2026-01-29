@@ -49,6 +49,36 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# 精简的 System Prompt - 提取所有通用约束
+SYSTEM_PROMPT = """你是一位专业阅卷教师。请严格按以下规则批改：
+
+【坐标系统】
+- 原点：左上角，x向右(0-1)，y向下(0-1)
+- 使用 {{x_min, y_min, x_max, y_max}} 格式
+
+【输出要求】
+- 必须返回有效JSON
+- 每个得分点必须包含：point_id, awarded, max_points, evidence
+- evidence必须以【原文引用】开头，引用学生原文
+- 坐标必须精确到图片中的具体位置
+
+【评分原则】
+1. 严格按评分标准给分，禁止自创分值
+2. 过程正确但结果错误，仍给过程分
+3. 前步错误导致后步错误，只扣一次分
+4. 非标准但正确的方法同样给分
+5. 证据不足时给0分并说明"未找到"
+
+【题型处理】
+- 选择题/填空题：快速判断正误
+- 计算题：逐步骤评分
+- 证明题：检查逻辑链条
+- 应用题：检查建模、计算、结论
+
+【空白页】
+- 空白页/封面页：is_blank_page=true, score=0, max_score=0
+"""
+
 
 class LLMReasoningClient:
     """
@@ -910,271 +940,80 @@ class LLMReasoningClient:
 
     # ==================== grade_page 拆分为多个私有方法 ====================
 
+    def _build_compact_rubric_info(
+        self, parsed_rubric: Optional[Dict[str, Any]], rubric: str
+    ) -> str:
+        """构建精简的评分标准信息"""
+        if parsed_rubric and parsed_rubric.get("rubric_context"):
+            return parsed_rubric["rubric_context"]
+
+        if parsed_rubric and parsed_rubric.get("questions"):
+            lines = []
+            for q in self._limit_questions_for_prompt(parsed_rubric.get("questions", [])):
+                qid = q.get("question_id", "?")
+                max_score = q.get("max_score", 0)
+                lines.append(f"第{qid}题(满分{max_score}分):")
+
+                scoring_points = q.get("scoring_points", [])
+                for idx, sp in enumerate(self._limit_criteria_for_prompt(scoring_points), 1):
+                    point_id = sp.get("point_id") or f"{qid}.{idx}"
+                    lines.append(
+                        f"  [{point_id}] {sp.get('score', 0)}分: {sp.get('description', '')}"
+                    )
+            return "\n".join(lines)
+
+        return rubric or "请根据答案正确性评分"
+
     def _build_grading_prompt(
         self,
         rubric: str,
         parsed_rubric: Optional[Dict[str, Any]],
         page_context: Optional[Dict[str, Any]] = None,
     ) -> str:
-        """
-        构建评分提示词
-
-        Args:
-            rubric: 评分细则文本
-            parsed_rubric: 解析后的评分标准
-
-        Returns:
-            str: 完整的评分提示词
-        """
-        # 优先使用解析后的评分标准上下文
-        rubric_info = ""
-
-        if parsed_rubric and parsed_rubric.get("rubric_context"):
-            # 使用格式化的评分标准上下文
-            rubric_info = parsed_rubric["rubric_context"]
-        elif parsed_rubric and parsed_rubric.get("questions"):
-            # 从题目信息构建评分标准
-            questions_info = []
-            for q in self._limit_questions_for_prompt(parsed_rubric.get("questions", [])):
-                q_info = f"第{q.get('question_id', '?')}题 (满分{q.get('max_score', 0)}分):"
-
-                # 添加评分要点
-                criteria = q.get("criteria", [])
-                scoring_points = q.get("scoring_points", [])
-
-                if scoring_points:
-                    for idx, sp in enumerate(self._limit_criteria_for_prompt(scoring_points), 1):
-                        point_id = (
-                            sp.get("point_id")
-                            or sp.get("pointId")
-                            or f"{q.get('question_id', '?')}.{idx}"
-                        )
-                        q_info += f"\n  - [{point_id}] [{sp.get('score', 0)}分] {sp.get('description', '')}"
-                elif criteria:
-                    for criterion in self._limit_criteria_for_prompt(criteria):
-                        q_info += f"\n  - {criterion}"
-
-                # 添加标准答案摘要
-                if q.get("standard_answer"):
-                    answer_preview = (
-                        q["standard_answer"][:100] + "..."
-                        if len(q["standard_answer"]) > 100
-                        else q["standard_answer"]
-                    )
-                    q_info += f"\n  标准答案: {answer_preview}"
-
-                questions_info.append(q_info)
-
-            rubric_info = (
-                f"评分标准（共{parsed_rubric.get('total_questions', 0)}题，总分{parsed_rubric.get('total_score', 0)}分）：\n\n"
-                + "\n\n".join(questions_info)
-            )
-        elif rubric:
-            # 使用原始评分细则
-            rubric_info = rubric
-        else:
-            # 默认评分标准
-            rubric_info = "请根据答案的正确性、完整性和清晰度进行评分"
-
+        """构建评分提示词（精简版）"""
+        rubric_info = self._build_compact_rubric_info(parsed_rubric, rubric)
         index_context = self._format_page_index_context(page_context)
 
-        return f"""你是一位专业、资深的阅卷教师，拥有丰富的批改经验。请仔细分析这张学生答题图像并进行精确评分。
-
-## 评分标准
+        return f"""## 评分标准
 {rubric_info}
 {index_context}
 
-## 评分任务
+## 任务
+1. 判断页面类型（空白页/封面页直接返回is_blank_page=true）
+2. 识别题目并定位作答区域（坐标0-1）
+3. 按评分标准逐题批改，输出JSON格式
 
-### 第一步：页面类型判断
-首先判断这是否是以下类型的页面：
-- 空白页（无任何内容）
-- 封面页（只有标题、姓名、学号等信息）
-- 目录页
-- 无学生作答内容的页面
-
-如果是上述类型，直接返回 score=0, max_score=0, is_blank_page=true
-如果索引上下文标记 is_cover_page=true，也直接返回空白页结果
-
-### 第二步：题目识别、定位与评分
-如果页面包含学生作答内容：
-1. **识别题目**：识别页面中出现的所有题目编号（如提供了索引上下文，必须以索引为准）
-2. **定位作答区域**：精确标注每道题学生作答区域的坐标（归一化坐标 0.0-1.0）
-3. **逐步骤分析**：识别学生作答的每个步骤/行，记录每步的位置坐标
-4. **严格评分**：对每道题逐一评分，严格按照评分标准
-5. **记录证据**：记录学生答案的关键内容及其在图片中的位置
-
-### 第三步：学生信息提取
-尝试从页面中识别：
-- 学生姓名
-- 学号
-- 班级信息
-
-## 坐标系统说明（非常重要）
-- 坐标原点在图片**左上角**
-- x 轴向右增加 (0.0 = 最左, 1.0 = 最右)
-- y 轴向下增加 (0.0 = 最上, 1.0 = 最下)
-- 使用 bounding_box 表示区域: {{x_min, y_min, x_max, y_max}}
-- 所有坐标必须是 0.0-1.0 之间的小数
-
-## 输出格式（JSON）
+## 输出JSON格式
 ```json
 {{
-    "score": 本页总得分,
-    "max_score": 本页涉及题目的满分总和,
-    "confidence": 评分置信度（0.0-1.0）,
-    "is_blank_page": false,
-    "question_numbers": ["1", "2", "3"],
-    "question_details": [
+  "score": 总得分,
+  "max_score": 满分,
+  "confidence": 0.0-1.0,
+  "is_blank_page": false,
+  "question_numbers": ["1", "2"],
+  "question_details": [
+    {{
+      "question_id": "1",
+      "score": 8,
+      "max_score": 10,
+      "student_answer": "学生答案摘要",
+      "feedback": "评语",
+      "answer_region": {{"x_min": 0.05, "y_min": 0.15, "x_max": 0.95, "y_max": 0.45}},
+      "scoring_point_results": [
         {{
-            "question_id": "1",
-            "score": 8,
-            "max_score": 10,
-            "student_answer": "学生作答原文（逐字摘录，保留换行，用 \\n 表示；无法辨识则为空字符串）",
-            "is_correct": false,
-            "feedback": "第1步正确得3分，第2步计算错误扣2分...",
-            "answer_region": {{
-                "x_min": 0.05,
-                "y_min": 0.15,
-                "x_max": 0.95,
-                "y_max": 0.45
-            }},
-            "steps": [
-                {{
-                    "step_id": "1.1",
-                    "step_content": "学生写的第一步内容",
-                    "step_region": {{
-                        "x_min": 0.05,
-                        "y_min": 0.15,
-                        "x_max": 0.90,
-                        "y_max": 0.22
-                    }},
-                    "is_correct": true,
-                    "mark_type": "M",
-                    "mark_value": 1
-                }},
-                {{
-                    "step_id": "1.2",
-                    "step_content": "学生写的第二步内容",
-                    "step_region": {{
-                        "x_min": 0.05,
-                        "y_min": 0.23,
-                        "x_max": 0.85,
-                        "y_max": 0.30
-                    }},
-                    "is_correct": false,
-                    "mark_type": "M",
-                    "mark_value": 0,
-                    "error_detail": "计算错误：3+5≠9"
-                }}
-            ],
-            "scoring_point_results": [
-                {{
-                    "point_index": 1,
-                    "point_id": "1.1",
-                    "description": "第1步计算",
-                    "max_score": 3,
-                    "awarded": 3,
-                    "mark_type": "M",
-                    "evidence": "【必填】学生在图片第2行写道：'x = 3/2'，计算正确",
-                    "evidence_region": {{
-                        "x_min": 0.10,
-                        "y_min": 0.18,
-                        "x_max": 0.40,
-                        "y_max": 0.22
-                    }}
-                }},
-                {{
-                    "point_index": 2,
-                    "point_id": "1.2",
-                    "description": "第2步逻辑",
-                    "max_score": 7,
-                    "awarded": 5,
-                    "mark_type": "M",
-                    "evidence": "【必填】学生在图片中间部分尝试代入验证，但最终结果'y = 5'与标准答案'y = 4'不符",
-                    "evidence_region": {{
-                        "x_min": 0.10,
-                        "y_min": 0.25,
-                        "x_max": 0.70,
-                        "y_max": 0.35
-                    }},
-                    "error_region": {{
-                        "x_min": 0.50,
-                        "y_min": 0.30,
-                        "x_max": 0.70,
-                        "y_max": 0.35
-                    }}
-                }}
-            ]
+          "point_id": "1.1",
+          "awarded": 3,
+          "max_points": 3,
+          "evidence": "【原文引用】学生写了...",
+          "evidence_region": {{"x_min": 0.1, "y_min": 0.2, "x_max": 0.4, "y_max": 0.25}}
         }}
-    ],
-    "page_summary": "本页包含第1-3题，学生整体表现良好，主要在计算方面有失误",
-    "student_info": {{
-        "name": "张三",
-        "student_id": "2024001"
+      ]
     }}
+  ],
+  "page_summary": "简要总结",
+  "student_info": {{"name": "", "student_id": ""}}
 }}
-```
-
-## 批改经验与技巧
-
-### 1. 题型识别策略
-- **选择题/填空题**：通常答案简短，只需标注答案位置
-- **计算题**：识别每个计算步骤，标注过程和结果
-- **证明题**：识别逻辑链条，每个推理步骤独立评分
-- **作图题**：识别图形区域，评估准确性
-- **应用题**：识别建模、计算、结论等阶段
-
-### 2. 常见扣分点识别
-- **计算错误**：数值计算失误（最常见）
-- **符号错误**：正负号、运算符号错误
-- **单位遗漏**：物理量未标单位
-- **格式问题**：最终答案未明确标注
-- **步骤缺失**：跳步、省略关键步骤
-- **概念错误**：公式/定理使用错误
-
-### 3. 给分原则
-- **得分点独立**：每个得分点独立评判，不相互影响
-- **过程重于结果**：方法正确但结果错误，仍可得过程分
-- **错误不重复扣分**：前步错误导致的后续错误，只扣一次分
-- **另类解法认可**：非标准但正确的解法同样给分
-
-## 重要评分原则
-1. **【最重要】严格使用评分标准中的分值**：
-   - 每道题的 max_score 必须严格等于评分标准中规定的满分值
-   - 每个得分点的分值必须严格等于评分标准中规定的分值
-   - **禁止自行设定分值**，必须从评分标准中查找对应题目的分值
-   - 如果评分标准没有提供某题的分值，使用默认分值并在 feedback 中说明
-
-2. **得分点评分**：每个得分点必须有明确的评分依据和坐标位置
-3. **部分分数**：如果学生答案部分正确，给予相应的部分分数
-4. **max_score 计算**：只计算本页实际出现的题目的满分，不是整张试卷的总分
-5. **详细反馈**：明确指出正确和错误的部分，给出具体的扣分原因
-6. **客观公正**：不因字迹潦草等非内容因素扣分，除非评分标准明确要求
-7. **空白页处理**：空白页、封面页、目录页的 score 和 max_score 都为 0
-
-## 【关键】坐标与证据要求
-
-### 坐标输出要求
-1. **answer_region**：每道题必须输出学生作答的整体区域坐标
-2. **steps**：尽可能拆分学生作答的每个步骤，每步都要有 step_region 坐标
-3. **evidence_region**：每个得分点的证据位置坐标
-4. **error_region**：如果该得分点有错误，标注错误的具体位置
-
-### 证据字段要求
-**evidence 字段是必填项**，必须满足以下要求：
-1. **具体位置**：说明证据在图片中的大致位置（如"第X行"、"左上角"、"中间区域"）
-2. **原文引用**：尽可能引用学生的原始文字或公式
-3. **对比说明**：如果答案错误，说明学生写的内容与正确答案的差异
-4. **未找到情况**：如果找不到相关内容，写明"学生未作答此部分"或"图片中未找到相关内容"
-
-### mark_type 说明
-- **M (Method mark)**：方法分，看解题步骤/方法是否正确
-- **A (Answer mark)**：答案分，只看最终答案是否正确
-- **B (Both)**：既是方法又是答案的综合得分点
-
-禁止在 evidence 中写空字符串或模糊描述！
-禁止输出没有坐标的 steps 或 scoring_point_results！"""
+```"""
 
     def _parse_grading_response(self, response_text: str, max_score: float) -> Dict[str, Any]:
         """
@@ -1420,7 +1259,7 @@ class LLMReasoningClient:
             result["feedback"] = self._generate_feedback(result)
 
             logger.info(
-                f"批改完成: score={result.get('score')}, " f"confidence={result.get('confidence')}"
+                f"批改完成: score={result.get('score')}, confidence={result.get('confidence')}"
             )
 
             return result
@@ -2983,7 +2822,7 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
             required_mark = "【必须】" if sp.is_required else "【可选】"
 
             lines.append(
-                f"  {i}. {status} {required_mark} {sp.description}: " f"{spr.awarded}/{sp.score}分"
+                f"  {i}. {status} {required_mark} {sp.description}: {spr.awarded}/{sp.score}分"
             )
             if spr.evidence:
                 lines.append(f"      证据: {spr.evidence[:100]}...")
