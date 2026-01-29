@@ -149,7 +149,20 @@ export const normalizeStudentResults = (raw: RawObject[]): StudentResult[] => {
           scoringPoints: (q.scoringPoints || q.scoring_points) as any,
           scoringPointResults: pointResults,
           // 🔥 新增：批注坐标和步骤信息
-          annotations: q.annotations || [],
+          annotations: Array.isArray(q.annotations)
+            ? q.annotations.map((ann: RawObject) => ({
+              type: String(ann.type || ann.annotation_type || ''),
+              page_index: ann.page_index as number | undefined,
+              bounding_box: {
+                x_min: Number((ann.bounding_box as RawObject)?.x_min ?? 0),
+                y_min: Number((ann.bounding_box as RawObject)?.y_min ?? 0),
+                x_max: Number((ann.bounding_box as RawObject)?.x_max ?? 0),
+                y_max: Number((ann.bounding_box as RawObject)?.y_max ?? 0),
+              },
+              text: (ann.text ?? ann.label) as string | undefined,
+              color: ann.color as string | undefined,
+            }))
+            : undefined,
           steps: (q.steps || []).map((step: RawObject) => ({
             step_id: String(step.step_id || step.stepId || ''),
             step_content: String(step.step_content || step.stepContent || ''),
