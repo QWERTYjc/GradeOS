@@ -622,13 +622,13 @@ async def submit_batch(
     parsed_boundaries = []
     if student_boundaries:
         try:
-            logger.info(
+            logger.debug(
                 f"接收到原始 student_boundaries: {student_boundaries} (type: {type(student_boundaries)})"
             )
             import json
 
             parsed_boundaries = json.loads(student_boundaries)
-            logger.info(f"解析后的 manual_boundaries: {parsed_boundaries}")
+            logger.debug(f"解析后的 manual_boundaries: {parsed_boundaries}")
         except Exception as e:
             logger.debug(f"解析手动学生边界失败: {e}")
 
@@ -667,14 +667,12 @@ async def submit_batch(
                 pdf_path = temp_path / f"answer_{idx}.pdf"
                 with open(pdf_path, "wb") as f:
                     f.write(content)
-                loop = asyncio.get_event_loop()
-                pdf_images = await loop.run_in_executor(None, _pdf_to_images, str(pdf_path), 150)
                 answer_images.extend(pdf_images)
-                logger.info(f"PDF 文件 {file_name} 转换为 {len(pdf_images)} 页图片")
+                logger.debug(f"PDF 文件 {file_name} 转换为 {len(pdf_images)} 页图片")
             elif file_name.lower().endswith(".txt"):
                 # 文本文件：直接使用内容
                 answer_images.append(content)
-                logger.info(f"文本文件处理完成: {file_name}, 内容长度={len(content)}")
+                logger.debug(f"文本文件处理完成: {file_name}, 内容长度={len(content)}")
             else:
                 # 尝试作为图片处理（可能没有扩展名）
                 answer_images.append(_safe_to_jpeg_bytes(content, file_name))
