@@ -160,8 +160,7 @@ export interface QuestionResult {
     };
 }
 
-// LLM streaming thought
-export interface LLMThought {
+// LLM 流式思考输�?export interface LLMThought {
     id: string;
     nodeId: string;
     nodeName: string;
@@ -286,16 +285,14 @@ export interface PendingReview {
     payload: any;
 }
 
-// Interface definition
-export interface CrossPageQuestion {
+// 跨页题目信息（对应设计文�?CrossPageQuestion�?export interface CrossPageQuestion {
     questionId: string;
     pageIndices: number[];
     confidence: number;
     mergeReason: string;
 }
 
-// Interface definition
-export interface StudentBoundary {
+// 学生边界信息（对应设计文�?StudentBoundary�?export interface StudentBoundary {
     studentKey: string;
     startPage: number;
     endPage: number;
@@ -303,8 +300,7 @@ export interface StudentBoundary {
     needsConfirmation: boolean;
 }
 
-// Interface definition
-export interface BatchProgress {
+// 批次处理状态（对应设计文档 BatchResult�?export interface BatchProgress {
     batchIndex: number;
     totalBatches: number;
     successCount: number;
@@ -312,8 +308,7 @@ export interface BatchProgress {
     processingTimeMs?: number;
 }
 
-// Interface definition
-export interface RubricScoringPoint {
+// 解析的评分标�?- 得分点详�?export interface RubricScoringPoint {
     pointId?: string;
     description: string;
     expectedValue?: string;
