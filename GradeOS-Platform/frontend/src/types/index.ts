@@ -70,7 +70,7 @@ export interface GradingImportItem {
   status: string;
   createdAt: string;
   revokedAt?: string;
-  result?: Record<string, any>;
+  result?: Record<string, unknown>;
 }
 
 // ============ Student Assistant Types ============

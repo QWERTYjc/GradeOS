@@ -949,9 +949,29 @@ export const ResultsView: React.FC = () => {
 
             // 收集该页的所有批注
             const pageAnnotations: VisualAnnotation[] = [];
+            const gradingAnnotations = student.gradingAnnotations || (student as any).annotations || (student as any).annotation_result;
+            const annotationPages = gradingAnnotations?.pages || [];
+            const matchedPage = Array.isArray(annotationPages)
+                ? annotationPages.find((page: any) => page.page_index === pageIdx || page.pageIndex === pageIdx)
+                : null;
+            if (matchedPage?.annotations && Array.isArray(matchedPage.annotations)) {
+                matchedPage.annotations.forEach((ann: any) => {
+                    pageAnnotations.push({
+                        annotation_type: ann.annotation_type || ann.type,
+                        bounding_box: ann.bounding_box || ann.boundingBox,
+                        text: ann.text || '',
+                        color: ann.color || '#FF0000',
+                        question_id: ann.question_id || ann.questionId,
+                        scoring_point_id: ann.scoring_point_id || ann.scoringPointId,
+                        arrow_end: ann.arrow_end || ann.arrowEnd,
+                        metadata: ann.metadata,
+                    } as VisualAnnotation);
+                });
+            }
 
             // 从 questionResults 中提取批注
-            student.questionResults?.forEach(q => {
+            if (pageAnnotations.length === 0) {
+                student.questionResults?.forEach(q => {
                 // 检查该题目是否在当前页
                 const questionPages = q.pageIndices || [];
                 if (!questionPages.includes(pageIdx) && questionPages.length > 0) return;
@@ -1035,7 +1055,8 @@ export const ResultsView: React.FC = () => {
                         color: q.score >= q.maxScore * 0.8 ? '#00AA00' : q.score >= q.maxScore * 0.5 ? '#FF8800' : '#FF0000',
                     } as VisualAnnotation);
                 }
-            });
+                });
+            }
 
             // 🔥 如果有批注坐标，存储批注数据用于 Canvas 直接渲染（快速路径）
             if (pageAnnotations.length > 0) {

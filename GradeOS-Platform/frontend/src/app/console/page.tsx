@@ -1,10 +1,10 @@
 'use client';
 
-import React, { useEffect, useState, useContext } from 'react';
+import React, { useEffect, useState, useContext, useCallback } from 'react';
 import dynamic from 'next/dynamic';
 import { useConsoleStore } from '@/store/consoleStore';
 import { useAuthStore } from '@/store/authStore';
-import { useSearchParams, useRouter } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
     Images,
@@ -14,7 +14,7 @@ import {
 import clsx from 'clsx';
 import { AppContext } from '@/components/bookscan/AppContext';
 import { ScannedImage, Session } from '@/components/bookscan/types';
-import { api, ActiveRunItem } from '@/services/api';
+import { api } from '@/services/api';
 
 // Dynamic imports - Scanner and Gallery use pdfjs-dist which requires browser APIs
 const Scanner = dynamic(() => import('@/components/bookscan/Scanner'), { ssr: false });
@@ -80,7 +80,6 @@ const ScannerContainer = ({
     onExpectedTotalScoreChange,
     studentNameMapping = []
 }: ScannerContainerProps) => {
-    const { user } = useAuthStore();
     const { setCurrentSessionId, sessions } = useContext(AppContext)!;
     const [viewMode, setViewMode] = useState<ScanViewMode>('exams');
     const [studentBoundaries, setStudentBoundaries] = useState<number[]>([]);
@@ -236,6 +235,7 @@ export default function ConsolePage() {
     const isResultsView = currentTab === 'results';
     const setCurrentTab = useConsoleStore((state) => state.setCurrentTab);
     const isIdleView = status === 'IDLE';
+    const dismissedRunsKey = user?.id ? `gradeos-dismissed-runs:${user.id}` : null;
 
     // Initial Sessions State
     const [sessions, setSessions] = useState<Session[]>([]);
@@ -251,10 +251,6 @@ export default function ConsolePage() {
     const [activeTab, setActiveTab] = useState<ScanTab>('scan'); // Sub-tab for ScannerContainer
 
     const [isStreamOpen, setIsStreamOpen] = useState(false);
-    const [activeRuns, setActiveRuns] = useState<ActiveRunItem[]>([]);
-    const [activeRunsLoading, setActiveRunsLoading] = useState(false);
-    const [activeRunsError, setActiveRunsError] = useState<string | null>(null);
-    const [activeRunsLoaded, setActiveRunsLoaded] = useState(false);
 
     useEffect(() => {
         if (selectedAgentId || selectedNodeId) {
@@ -270,52 +266,31 @@ export default function ConsolePage() {
         }
     }, [rubricScoreMismatch, rubricParseError]);
 
+    const dismissCompletedRun = useCallback((batchId: string) => {
+        if (!dismissedRunsKey || typeof window === 'undefined') return;
+        try {
+            const raw = window.localStorage.getItem(dismissedRunsKey);
+            const parsed = raw ? (JSON.parse(raw) as string[]) : [];
+            if (!parsed.includes(batchId)) {
+                const next = [...parsed, batchId];
+                window.localStorage.setItem(dismissedRunsKey, JSON.stringify(next));
+            }
+        } catch (error) {
+            console.warn('Failed to persist dismissed run:', error);
+        }
+    }, [dismissedRunsKey]);
+
+    useEffect(() => {
+        if (status === 'COMPLETED' && currentTab === 'results' && submissionId) {
+            dismissCompletedRun(submissionId);
+        }
+    }, [status, currentTab, submissionId, dismissCompletedRun]);
+
     const handleStreamClose = () => {
         setIsStreamOpen(false);
         setSelectedNodeId(null);
     };
 
-    useEffect(() => {
-        if (!user?.id) {
-            setActiveRuns([]);
-            setActiveRunsLoaded(false);
-            return;
-        }
-
-        let mounted = true;
-        const fetchRuns = async () => {
-            if (!mounted) return;
-            if (!activeRunsLoaded) {
-                setActiveRunsLoading(true);
-            }
-            try {
-                const data = await api.getActiveRuns(user.id);
-                if (mounted) {
-                    setActiveRuns(data.runs || []);
-                    setActiveRunsError(null);
-                    setActiveRunsLoaded(true);
-                }
-            } catch (error) {
-                console.error('Failed to load active runs:', error);
-                if (mounted) {
-                    setActiveRunsError('Unable to load active runs');
-                    setActiveRunsLoaded(true);
-                }
-            } finally {
-                if (mounted) {
-                    setActiveRunsLoading(false);
-                }
-            }
-        };
-
-        fetchRuns();
-        const interval = setInterval(fetchRuns, 8000);
-
-        return () => {
-            mounted = false;
-            clearInterval(interval);
-        };
-    }, [user?.id, activeRunsLoaded]);
 
     // Create default sessions on mount
     useEffect(() => {
@@ -432,10 +407,13 @@ export default function ConsolePage() {
         if (!batchId) {
             return;
         }
+        if (submissionId !== batchId) {
+            reset();
+        }
         useConsoleStore.getState().setSubmissionId(batchId);
         useConsoleStore.getState().connectWs(batchId);
         useConsoleStore.getState().setStatus('RUNNING');
-    }, [searchParams]);
+    }, [searchParams, reset, submissionId]);
 
     // Provider Methods
     const createNewSession = (name?: string) => {
@@ -541,9 +519,6 @@ export default function ConsolePage() {
         markImageAsSplit
     };
 
-    // Prepare Header Count
-    const activeSession = sessions.find(s => s.id === currentSessionId);
-
     // Batch Submission
     const handleSubmitBatch = async (images: ScannedImage[], boundaries: number[]) => {
         try {
@@ -588,33 +563,6 @@ export default function ConsolePage() {
         }
     };
 
-    const mapRunStatus = (statusValue: string): 'UPLOADING' | 'RUNNING' | 'COMPLETED' | 'FAILED' => {
-        if (statusValue === 'completed') return 'COMPLETED';
-        if (statusValue === 'failed') return 'FAILED';
-        if (statusValue === 'queued') return 'UPLOADING';
-        return 'RUNNING';
-    };
-
-    const formatStageLabel = (stage?: string) => {
-        if (!stage) return 'pending';
-        return stage.replace(/_/g, ' ');
-    };
-
-    const runStatusTone = (statusValue: string) => {
-        if (statusValue === 'running') return 'bg-emerald-500';
-        if (statusValue === 'queued') return 'bg-amber-400';
-        if (statusValue === 'failed') return 'bg-rose-500';
-        if (statusValue === 'completed') return 'bg-slate-800';
-        return 'bg-slate-400';
-    };
-
-    const handleRunSelect = (run: ActiveRunItem) => {
-        useConsoleStore.getState().setSubmissionId(run.batch_id);
-        useConsoleStore.getState().connectWs(run.batch_id);
-        useConsoleStore.getState().setStatus(mapRunStatus(run.status));
-        useConsoleStore.getState().setCurrentTab('process');
-    };
-
     return (
         <AppContext.Provider value={contextValue}>
             <div className={clsx(
@@ -656,79 +604,6 @@ export default function ConsolePage() {
                             >
                                 View results
                             </button>
-                        </motion.div>
-                    )}
-                </AnimatePresence>
-
-                <AnimatePresence>
-                    {(activeRunsLoading || activeRuns.length > 0 || activeRunsError) && (
-                        <motion.div
-                            initial={{ opacity: 0, y: -8 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            exit={{ opacity: 0, y: -8 }}
-                            className="fixed left-6 top-24 z-40 w-[280px] rounded-2xl border border-slate-200 bg-white/90 p-4 shadow-xl backdrop-blur"
-                        >
-                            <div className="text-[10px] font-semibold uppercase tracking-[0.4em] text-slate-500">
-                                Active runs
-                            </div>
-                            {activeRunsError && (
-                                <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
-                                    {activeRunsError}
-                                </div>
-                            )}
-                            {!activeRunsError && activeRuns.length === 0 && activeRunsLoading && (
-                                <div className="mt-3 text-xs text-slate-400">Loading active runs...</div>
-                            )}
-                            {!activeRunsError && activeRuns.length > 0 && (
-                                <div className="mt-3 max-h-[60vh] space-y-3 overflow-y-auto pr-1">
-                                    {activeRuns.map((run) => {
-                                        const progressValue =
-                                            typeof run.progress === 'number'
-                                                ? Math.round(run.progress * 100)
-                                                : null;
-                                        const stageLabel = formatStageLabel(run.current_stage);
-                                        const isActive = submissionId === run.batch_id;
-
-                                        return (
-                                            <button
-                                                key={run.batch_id}
-                                                type="button"
-                                                onClick={() => handleRunSelect(run)}
-                                                className={clsx(
-                                                    'w-full rounded-xl border px-3 py-3 text-left transition hover:border-slate-400',
-                                                    isActive
-                                                        ? 'border-slate-900 bg-slate-900 text-white'
-                                                        : 'border-slate-200 bg-white text-slate-700'
-                                                )}
-                                            >
-                                                <div className="flex items-center justify-between text-xs font-semibold">
-                                                    <span>Batch {run.batch_id.slice(0, 8)}</span>
-                                                    <span className="flex items-center gap-2 text-[10px] uppercase tracking-[0.2em]">
-                                                        <span className={clsx('h-1.5 w-1.5 rounded-full', runStatusTone(run.status))} />
-                                                        {run.status}
-                                                    </span>
-                                                </div>
-                                                {(run.class_id || run.homework_id) && (
-                                                    <div className={clsx('mt-1 text-[11px]', isActive ? 'text-white/70' : 'text-slate-500')}>
-                                                        {run.class_id ? `Class ${run.class_id}` : 'Class run'}
-                                                        {run.homework_id ? ` · HW ${run.homework_id}` : ''}
-                                                    </div>
-                                                )}
-                                                <div className="mt-3 h-1.5 w-full rounded-full bg-slate-200">
-                                                    <div
-                                                        className={clsx('h-full rounded-full', isActive ? 'bg-white' : 'bg-slate-900')}
-                                                        style={{ width: `${Math.max(progressValue ?? 8, 8)}%` }}
-                                                    />
-                                                </div>
-                                                <div className={clsx('mt-2 flex items-center justify-between text-[10px] uppercase', isActive ? 'text-white/70' : 'text-slate-500')}>
-                                                    <span>{stageLabel}</span>
-                                                    <span>{progressValue !== null ? `${progressValue}%` : '—'}</span>
-                                                </div>
-                                            </button>
-                                        );
-                                    })}
-                                </div>
-                            )}
                         </motion.div>
                     )}
                 </AnimatePresence>
