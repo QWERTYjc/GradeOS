@@ -6,6 +6,9 @@ export type WorkflowStatus = 'IDLE' | 'UPLOADING' | 'RUNNING' | 'COMPLETED' | 'F
 export type NodeStatus = 'pending' | 'running' | 'completed' | 'failed';
 export type ConsoleTab = 'process' | 'results';
 
+const isNodeStatus = (value: unknown): value is NodeStatus =>
+    value === 'pending' || value === 'running' || value === 'completed' || value === 'failed';
+
 export interface LogEntry {
     timestamp: string;
     level: 'INFO' | 'WARNING' | 'ERROR' | 'SUCCESS';
@@ -1161,15 +1164,19 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
             console.log('Workflow Update:', data);
             const { nodeId, status, message } = data as {
                 nodeId?: string;
-                status?: WorkflowStatus;
+                status?: unknown;
                 message?: string;
             };
             // 后端节点 ID 映射到前端（兼容旧名称）
             const mappedNodeId = nodeId === 'grading' ? 'grade_batch' : nodeId;
+            const normalizedStatus = isNodeStatus(status) ? status : undefined;
+            if (!mappedNodeId || !normalizedStatus) {
+                return;
+            }
             if (mappedNodeId === 'intake' || mappedNodeId === 'preprocess' || mappedNodeId === 'index') {
                 return;
             }
-            get().updateNodeStatus(mappedNodeId, status, message);
+            get().updateNodeStatus(mappedNodeId, normalizedStatus, message);
             if (message) {
                 get().addLog(message, 'INFO');
             }
