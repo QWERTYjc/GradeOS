@@ -1159,7 +1159,11 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
         // 处理工作流节点更新
         wsClient.on('workflow_update', (data) => {
             console.log('Workflow Update:', data);
-            const { nodeId, status, message } = data;
+            const { nodeId, status, message } = data as {
+                nodeId?: string;
+                status?: WorkflowStatus;
+                message?: string;
+            };
             // 后端节点 ID 映射到前端（兼容旧名称）
             const mappedNodeId = nodeId === 'grading' ? 'grade_batch' : nodeId;
             if (mappedNodeId === 'intake' || mappedNodeId === 'preprocess' || mappedNodeId === 'index') {
