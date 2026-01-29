@@ -19,32 +19,33 @@ logger = logging.getLogger(__name__)
 
 class DeploymentMode(Enum):
     """部署模式枚举"""
-    DATABASE = "database"      # 完整数据库模式
+
+    DATABASE = "database"  # 完整数据库模式
     NO_DATABASE = "no_database"  # 无数据库模式（轻量级）
 
 
 class DeploymentConfig:
     """
     部署配置管理器
-    
+
     根据环境变量自动检测运行模式：
     - 如果 DATABASE_URL 为空或未设置，使用无数据库模式
     - 如果 DATABASE_URL 已设置，使用数据库模式
-    
+
     验证：需求 11.1, 11.8
     """
-    
+
     def __init__(self):
         self._mode: Optional[DeploymentMode] = None
         self._database_url: Optional[str] = None
         self._redis_url: Optional[str] = None
         self._redis_configured: bool = False
         self._detect_mode()
-    
+
     def _detect_mode(self) -> None:
         """
         检测部署模式
-        
+
         检测逻辑：
         1. 检查 DATABASE_URL 环境变量
         2. 默认为数据库模式（使用 SQLite 或 PostgreSQL）
@@ -76,21 +77,21 @@ class DeploymentConfig:
             logger.info(f"检测到 Redis 配置：REDIS_HOST={redis_host}")
         else:
             logger.info("未检测到 Redis 配置，将使用内存缓存")
-    
+
     @staticmethod
     def _mask_connection_string(conn_str: str) -> str:
         """
         遮蔽连接字符串中的敏感信息
-        
+
         Args:
             conn_str: 连接字符串
-            
+
         Returns:
             遮蔽后的连接字符串
         """
         if not conn_str:
             return ""
-        
+
         # 简单遮蔽：只显示协议和主机
         try:
             if "://" in conn_str:
@@ -102,36 +103,36 @@ class DeploymentConfig:
             return "***"
         except Exception:
             return "***"
-    
+
     @property
     def mode(self) -> DeploymentMode:
         """获取当前部署模式"""
         return self._mode
-    
+
     @property
     def is_database_mode(self) -> bool:
         """是否为数据库模式"""
         return self._mode == DeploymentMode.DATABASE
-    
+
     @property
     def is_no_database_mode(self) -> bool:
         """是否为无数据库模式"""
         return self._mode == DeploymentMode.NO_DATABASE
-    
+
     @property
     def database_url(self) -> Optional[str]:
         """获取数据库 URL"""
         return self._database_url if self._database_url else None
-    
+
     @property
     def redis_url(self) -> Optional[str]:
         """获取 Redis URL"""
         return self._redis_url if self._redis_url else None
-    
+
     def get_feature_availability(self) -> dict:
         """
         获取功能可用性
-        
+
         Returns:
             功能可用性字典
         """
@@ -143,7 +144,7 @@ class DeploymentConfig:
                 "analytics": True,
                 "caching": self._redis_configured,
                 "websocket": self._redis_configured,
-                "mode": "database"
+                "mode": "database",
             }
         else:
             return {
@@ -153,7 +154,7 @@ class DeploymentConfig:
                 "analytics": False,
                 "caching": True,  # 内存缓存
                 "websocket": False,
-                "mode": "no_database"
+                "mode": "no_database",
             }
 
 
@@ -164,7 +165,7 @@ _deployment_config: Optional[DeploymentConfig] = None
 def get_deployment_mode() -> DeploymentConfig:
     """
     获取部署配置实例（单例）
-    
+
     Returns:
         DeploymentConfig: 部署配置实例
     """

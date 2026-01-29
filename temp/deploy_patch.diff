@@ -1,0 +1,27 @@
+diff --git a/GradeOS-Platform/frontend/src/app/grading/results-review/[batchId]/page.tsx b/GradeOS-Platform/frontend/src/app/grading/results-review/[batchId]/page.tsx
+index d3d6260..44bd264 100644
+--- a/GradeOS-Platform/frontend/src/app/grading/results-review/[batchId]/page.tsx
++++ b/GradeOS-Platform/frontend/src/app/grading/results-review/[batchId]/page.tsx
+@@ -3 +3 @@
+-import React, { useEffect, useState, use } from 'react';
++import React, { useEffect, useState } from 'react';
+@@ -20 +20 @@ type ResultsReviewContext = {
+-export default function ResultsReviewPage({ params }: { params: Promise<{ batchId: string }> }) {
++export default function ResultsReviewPage({ params }: { params: { batchId: string } }) {
+@@ -22 +22 @@ export default function ResultsReviewPage({ params }: { params: Promise<{ batchI
+-  const { batchId } = use(params);
++  const { batchId } = params;
+
+diff --git a/GradeOS-Platform/frontend/src/app/grading/rubric-review/[batchId]/page.tsx b/GradeOS-Platform/frontend/src/app/grading/rubric-review/[batchId]/page.tsx
+index 2e94733..771eada 100644
+--- a/GradeOS-Platform/frontend/src/app/grading/rubric-review/[batchId]/page.tsx
++++ b/GradeOS-Platform/frontend/src/app/grading/rubric-review/[batchId]/page.tsx
+@@ -3 +3 @@
+-import React, { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
++import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+@@ -135 +135 @@ const buildRubricPayload = (draft: ParsedRubricDraft) => ({
+-export default function RubricReviewPage({ params }: { params: Promise<{ batchId: string }> }) {
++export default function RubricReviewPage({ params }: { params: { batchId: string } }) {
+@@ -137 +137 @@ export default function RubricReviewPage({ params }: { params: Promise<{ batchId
+-  const { batchId } = use(params);
++  const { batchId } = params;

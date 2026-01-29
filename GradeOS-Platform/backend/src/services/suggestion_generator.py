@@ -57,14 +57,14 @@ SUGGESTION_PROMPT = """你是一位耐心的教师，需要为学生的错误提
 
 class SuggestionGenerator:
     """建议生成器"""
-    
+
     def __init__(self, llm_client: Optional[UnifiedLLMClient] = None):
         """
         Args:
             llm_client: LLM 客户端
         """
         self.llm_client = llm_client or UnifiedLLMClient()
-    
+
     async def generate_suggestions(
         self,
         errors: List[ErrorRecord],
@@ -72,11 +72,11 @@ class SuggestionGenerator:
     ) -> List[Suggestion]:
         """
         生成建议
-        
+
         Args:
             errors: 错误记录列表
             understanding: 理解分析结果
-            
+
         Returns:
             建议列表
         """
@@ -84,39 +84,39 @@ class SuggestionGenerator:
             if not errors:
                 logger.info("[SuggestionGenerator] 没有错误，无需生成建议")
                 return []
-            
+
             logger.info(f"[SuggestionGenerator] 开始生成建议: errors={len(errors)}")
-            
+
             # 构建消息
             messages = self._build_suggestion_messages(errors, understanding)
-            
+
             # 调用 LLM
             response = await self.llm_client.complete(
                 messages=messages,
                 temperature=0.4,  # 中等温度，保持创造性
                 max_tokens=3000,
             )
-            
+
             # 解析响应
             suggestions = self._parse_suggestion_response(response.content, errors)
-            
+
             logger.info(f"[SuggestionGenerator] 建议生成完成: 生成 {len(suggestions)} 条建议")
-            
+
             return suggestions
-            
+
         except Exception as e:
             logger.error(f"[SuggestionGenerator] 建议生成失败: {e}", exc_info=True)
             return []
-    
+
     def _build_suggestion_messages(
         self,
         errors: List[ErrorRecord],
         understanding: Dict[str, Any],
     ) -> List[LLMMessage]:
         """构建建议消息"""
-        
+
         prompt = SUGGESTION_PROMPT
-        
+
         # 添加错误列表
         errors_json = [
             {
@@ -128,15 +128,15 @@ class SuggestionGenerator:
             }
             for err in errors
         ]
-        
+
         prompt += f"\n\n**识别的错误**：\n```json\n{json.dumps(errors_json, ensure_ascii=False, indent=2)}\n```"
-        
+
         # 添加理解上下文
         if understanding:
             prompt += f"\n\n**作业理解上下文**：\n{json.dumps(understanding, ensure_ascii=False, indent=2)[:300]}"
-        
+
         return [LLMMessage(role="user", content=prompt)]
-    
+
     def _parse_suggestion_response(
         self,
         response_text: str,
@@ -155,14 +155,14 @@ class SuggestionGenerator:
                 end = json_text.rfind("}")
                 if start != -1 and end != -1 and end > start:
                     json_text = json_text[start : end + 1]
-            
+
             data = json.loads(json_text)
             suggestions_data = data.get("suggestions", [])
             if not isinstance(suggestions_data, list):
                 suggestions_data = []
             error_ids = {err.error_id for err in errors}
             fallback_error_id = errors[0].error_id if errors else None
-            
+
             # 构建建议列表
             suggestions = []
             for sugg in suggestions_data:
@@ -176,21 +176,17 @@ class SuggestionGenerator:
                         "alternative": SuggestionType.ALTERNATIVE,
                     }
                     suggestion_type = type_map.get(
-                        sugg.get("suggestion_type", "correction"),
-                        SuggestionType.CORRECTION
+                        sugg.get("suggestion_type", "correction"), SuggestionType.CORRECTION
                     )
-                    
+
                     # 映射优先级
                     priority_map = {
                         "high": Severity.HIGH,
                         "medium": Severity.MEDIUM,
                         "low": Severity.LOW,
                     }
-                    priority = priority_map.get(
-                        sugg.get("priority", "medium"),
-                        Severity.MEDIUM
-                    )
-                    
+                    priority = priority_map.get(sugg.get("priority", "medium"), Severity.MEDIUM)
+
                     related_error_id = sugg.get("related_error_id")
                     if related_error_id not in error_ids:
                         related_error_id = fallback_error_id
@@ -198,7 +194,9 @@ class SuggestionGenerator:
                     resources = sugg.get("resources", [])
                     if not isinstance(resources, list):
                         resources = []
-                    resources = [str(r).strip() for r in resources if r is not None and str(r).strip()]
+                    resources = [
+                        str(r).strip() for r in resources if r is not None and str(r).strip()
+                    ]
 
                     # 构建建议
                     suggestion = Suggestion(
@@ -211,20 +209,20 @@ class SuggestionGenerator:
                         resources=resources,
                         expected_improvement=sugg.get("expected_improvement"),
                     )
-                    
+
                     suggestions.append(suggestion)
-                    
+
                 except Exception as e:
                     logger.warning(f"[SuggestionGenerator] 解析单个建议失败: {e}")
                     continue
-            
+
             return suggestions
-            
+
         except Exception as e:
             logger.error(f"[SuggestionGenerator] 解析建议响应失败: {e}")
             logger.debug(f"Response text: {response_text[:500]}")
             return []
-    
+
     async def close(self):
         """关闭资源"""
         if self.llm_client:
@@ -240,11 +238,11 @@ async def generate_suggestions(
 ) -> List[Suggestion]:
     """
     便捷函数：生成建议
-    
+
     Args:
         errors: 错误记录列表
         understanding: 理解分析结果
-        
+
     Returns:
         建议列表
     """

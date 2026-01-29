@@ -102,7 +102,7 @@ export function MathText({ text, className }: MathTextProps) {
               dangerouslySetInnerHTML={{ __html: html }}
             />
           );
-        } catch (error) {
+        } catch {
           return (
             <span key={`math-${index}`} className="text-rose-500">
               {segment.value}

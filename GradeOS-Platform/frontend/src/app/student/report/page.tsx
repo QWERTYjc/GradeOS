@@ -27,7 +27,6 @@ export default function StudentReportPage() {
 
   useEffect(() => {
     if (!user?.id) {
-      setLoading(false);
       return;
     }
     let active = true;

@@ -15,7 +15,17 @@ import json
 import logging
 import os
 import re
-from typing import Dict, Any, List, Optional, TYPE_CHECKING, AsyncIterator, Callable, Awaitable, Literal
+from typing import (
+    Dict,
+    Any,
+    List,
+    Optional,
+    TYPE_CHECKING,
+    AsyncIterator,
+    Callable,
+    Awaitable,
+    Literal,
+)
 
 from langchain_core.messages import HumanMessage
 
@@ -43,19 +53,19 @@ logger = logging.getLogger(__name__)
 class LLMReasoningClient:
     """
     LLM 深度推理客户端，用于批改智能体的各个推理节点
-    
+
     集成了 RubricRegistry 和 GradingSkills，支持：
     - 动态评分标准获取 (Requirement 1.1)
     - 得分点逐一核对 (Requirement 1.2)
     - 另类解法支持 (Requirement 1.3)
-    
+
     Requirements: 1.1, 1.2, 1.3
     """
-    
+
     # 类常量：避免魔法数字
     MAX_QUESTIONS_IN_PROMPT = 0  # 提示词中最多显示的题目数
     MAX_CRITERIA_PER_QUESTION = 0  # 每道题最多显示的评分要点数
-    
+
     def __init__(
         self,
         api_key: Optional[str] = None,
@@ -64,7 +74,7 @@ class LLMReasoningClient:
     ):
         """
         初始化 LLM 推理客户端
-        
+
         Args:
             api_key: Google AI API 密钥
             model_name: 使用的模型名称，默认使用全局配置
@@ -94,7 +104,7 @@ class LLMReasoningClient:
         )
         self.model_name = model_name
         self.temperature = 0.2  # 低温度以保持一致性
-        
+
         # 集成 RubricRegistry (Requirement 1.1)（已移除 Agent Skill）
         self._rubric_registry = rubric_registry
 
@@ -119,24 +129,24 @@ class LLMReasoningClient:
         if max_criteria <= 0:
             return criteria
         return criteria[:max_criteria]
-    
+
     @property
     def rubric_registry(self) -> Optional["RubricRegistry"]:
         """获取评分标准注册中心"""
         return self._rubric_registry
-    
+
     @rubric_registry.setter
     def rubric_registry(self, registry: "RubricRegistry") -> None:
         """设置评分标准注册中心"""
         self._rubric_registry = registry
-    
+
     def _extract_text_from_response(self, content: Any) -> str:
         """
         从响应中提取文本内容
-        
+
         Args:
             content: LLM 响应内容
-            
+
         Returns:
             str: 提取的文本
         """
@@ -152,14 +162,14 @@ class LLMReasoningClient:
                     text_parts.append(part["text"])
             return "".join(text_parts)
         return str(content)
-    
+
     def _extract_json_from_text(self, text: str) -> str:
         """
         从文本中提取 JSON 部分
-        
+
         Args:
             text: 包含 JSON 的文本
-            
+
         Returns:
             str: 提取的 JSON 字符串
         """
@@ -174,11 +184,11 @@ class LLMReasoningClient:
         return text
 
     def _escape_invalid_backslashes(self, text: str) -> str:
-        return re.sub(r'\\(?!["\\/bfnrtu])', r'\\\\', text)
+        return re.sub(r'\\(?!["\\/bfnrtu])', r"\\\\", text)
 
     def _strip_control_chars(self, text: str) -> str:
-        cleaned = re.sub(r'[\x00-\x1F]', ' ', text)
-        return re.sub(r'[\u2028\u2029]', ' ', cleaned)
+        cleaned = re.sub(r"[\x00-\x1F]", " ", text)
+        return re.sub(r"[\u2028\u2029]", " ", cleaned)
 
     def _load_json_with_repair(self, text: str) -> Dict[str, Any]:
         try:
@@ -196,14 +206,16 @@ class LLMReasoningClient:
         end = text.rfind("}")
         if start == -1 or end <= start:
             return None
-        return text[start:end + 1]
+        return text[start : end + 1]
 
     def _normalize_question_detail(
         self,
         detail: Dict[str, Any],
         page_index: Optional[int],
     ) -> Dict[str, Any]:
-        question_id = detail.get("question_id") or detail.get("questionId") or detail.get("id") or "unknown"
+        question_id = (
+            detail.get("question_id") or detail.get("questionId") or detail.get("id") or "unknown"
+        )
         score = float(detail.get("score") or 0)
         max_score = float(detail.get("max_score") or detail.get("maxScore") or 0)
         student_answer = detail.get("student_answer") or detail.get("studentAnswer") or ""
@@ -228,13 +240,13 @@ class LLMReasoningClient:
         )
         # 提取批注坐标
         annotations = detail.get("annotations") or []
-        
+
         # 提取步骤信息（包含坐标）
         steps = detail.get("steps") or []
-        
+
         # 提取答案区域坐标
         answer_region = detail.get("answer_region") or detail.get("answerRegion")
-        
+
         # 🔥 后备逻辑：如果 LLM 没有返回 annotations，从 scoring_point_results 构建基本批注
         if not annotations and scoring_point_results:
             fallback_annotations = []
@@ -242,40 +254,44 @@ class LLMReasoningClient:
                 # 从 error_region 构建错误圈选批注
                 error_region = spr.get("error_region") or spr.get("errorRegion")
                 if error_region:
-                    fallback_annotations.append({
-                        "type": "error_circle",
-                        "page_index": page_index,
-                        "bounding_box": error_region,
-                        "text": spr.get("evidence", ""),
-                        "color": "#FF0000",
-                    })
-                
+                    fallback_annotations.append(
+                        {
+                            "type": "error_circle",
+                            "page_index": page_index,
+                            "bounding_box": error_region,
+                            "text": spr.get("evidence", ""),
+                            "color": "#FF0000",
+                        }
+                    )
+
                 # 从 mark_type 构建 M/A mark 批注
                 mark_type = spr.get("mark_type") or spr.get("markType")
                 awarded = spr.get("awarded") or spr.get("score") or 0
                 if mark_type and error_region:
                     mark_text = f"{mark_type}{1 if awarded > 0 else 0}"
                     mark_color = "#00AA00" if awarded > 0 else "#FF0000"
-                    fallback_annotations.append({
-                        "type": f"{mark_type.lower()}_mark",
-                        "page_index": page_index,
-                        "bounding_box": {
-                            "x_min": min(error_region.get("x_max", 0.9) + 0.02, 0.95),
-                            "y_min": error_region.get("y_min", 0.1),
-                            "x_max": min(error_region.get("x_max", 0.9) + 0.08, 1.0),
-                            "y_max": error_region.get("y_max", 0.15),
-                        },
-                        "text": mark_text,
-                        "color": mark_color,
-                    })
-            
+                    fallback_annotations.append(
+                        {
+                            "type": f"{mark_type.lower()}_mark",
+                            "page_index": page_index,
+                            "bounding_box": {
+                                "x_min": min(error_region.get("x_max", 0.9) + 0.02, 0.95),
+                                "y_min": error_region.get("y_min", 0.1),
+                                "x_max": min(error_region.get("x_max", 0.9) + 0.08, 1.0),
+                                "y_max": error_region.get("y_max", 0.15),
+                            },
+                            "text": mark_text,
+                            "color": mark_color,
+                        }
+                    )
+
             if fallback_annotations:
                 annotations = fallback_annotations
                 logger.debug(
                     f"[_normalize_question_detail] 从 scoring_point_results 构建了 "
                     f"{len(fallback_annotations)} 个后备批注"
                 )
-        
+
         # 🔥 后备逻辑：如果 LLM 没有返回 steps，从 scoring_point_results 构建基本步骤
         if not steps and scoring_point_results:
             fallback_steps = []
@@ -283,27 +299,31 @@ class LLMReasoningClient:
                 point_id = spr.get("point_id") or spr.get("pointId") or f"{question_id}.{idx + 1}"
                 description = spr.get("description") or ""
                 awarded = spr.get("awarded") or spr.get("score") or 0
-                max_points = spr.get("max_points") or spr.get("maxPoints") or spr.get("max_score") or 0
+                max_points = (
+                    spr.get("max_points") or spr.get("maxPoints") or spr.get("max_score") or 0
+                )
                 mark_type = spr.get("mark_type") or spr.get("markType") or "M"
                 error_region = spr.get("error_region") or spr.get("errorRegion")
-                
-                fallback_steps.append({
-                    "step_id": point_id,
-                    "step_content": description,
-                    "step_region": error_region,  # 可能为 None
-                    "is_correct": awarded > 0,
-                    "mark_type": mark_type,
-                    "mark_value": 1 if awarded > 0 else 0,
-                    "feedback": spr.get("reason") or spr.get("evidence") or "",
-                })
-            
+
+                fallback_steps.append(
+                    {
+                        "step_id": point_id,
+                        "step_content": description,
+                        "step_region": error_region,  # 可能为 None
+                        "is_correct": awarded > 0,
+                        "mark_type": mark_type,
+                        "mark_value": 1 if awarded > 0 else 0,
+                        "feedback": spr.get("reason") or spr.get("evidence") or "",
+                    }
+                )
+
             if fallback_steps:
                 steps = fallback_steps
                 logger.debug(
                     f"[_normalize_question_detail] 从 scoring_point_results 构建了 "
                     f"{len(fallback_steps)} 个后备步骤"
                 )
-        
+
         return {
             "question_id": question_id,
             "score": score,
@@ -315,15 +335,20 @@ class LLMReasoningClient:
             "source_pages": source_pages,
             "scoring_point_results": scoring_point_results,
             "self_critique": detail.get("self_critique") or detail.get("selfCritique"),
-            "self_critique_confidence": detail.get("self_critique_confidence") or detail.get("selfCritiqueConfidence"),
+            "self_critique_confidence": detail.get("self_critique_confidence")
+            or detail.get("selfCritiqueConfidence"),
             "rubric_refs": detail.get("rubric_refs") or detail.get("rubricRefs"),
             "question_type": detail.get("question_type") or detail.get("questionType"),
             "annotations": annotations,
             "steps": steps,
             "answer_region": answer_region,
             # 新增字段：另类解法标记
-            "used_alternative_solution": detail.get("used_alternative_solution") or detail.get("usedAlternativeSolution") or False,
-            "alternative_solution_ref": detail.get("alternative_solution_ref") or detail.get("alternativeSolutionRef") or "",
+            "used_alternative_solution": detail.get("used_alternative_solution")
+            or detail.get("usedAlternativeSolution")
+            or False,
+            "alternative_solution_ref": detail.get("alternative_solution_ref")
+            or detail.get("alternativeSolutionRef")
+            or "",
         }
 
     def _merge_page_break_results(
@@ -341,11 +366,15 @@ class LLMReasoningClient:
             if isinstance(page_index, str) and page_index.isdigit():
                 page_index = int(page_index)
             if page_index is not None:
-                page_summaries.append({
-                    "page_index": page_index,
-                    "question_numbers": page.get("question_numbers") or page.get("questionNumbers") or [],
-                    "summary": page.get("page_summary") or page.get("summary") or "",
-                })
+                page_summaries.append(
+                    {
+                        "page_index": page_index,
+                        "question_numbers": page.get("question_numbers")
+                        or page.get("questionNumbers")
+                        or [],
+                        "summary": page.get("page_summary") or page.get("summary") or "",
+                    }
+                )
             if student_info is None and page.get("student_info"):
                 student_info = page.get("student_info")
             if not overall_feedback and page.get("overall_feedback"):
@@ -364,25 +393,30 @@ class LLMReasoningClient:
                 existing["source_pages"] = sorted(existing_pages)
 
                 existing["scoring_point_results"] = (
-                    (existing.get("scoring_point_results") or [])
-                    + (normalized.get("scoring_point_results") or [])
-                )
+                    existing.get("scoring_point_results") or []
+                ) + (normalized.get("scoring_point_results") or [])
 
                 existing_answer = (existing.get("student_answer") or "").strip()
                 new_answer = (normalized.get("student_answer") or "").strip()
                 if new_answer and new_answer not in existing_answer:
-                    existing["student_answer"] = "\n".join(filter(None, [existing_answer, new_answer]))
+                    existing["student_answer"] = "\n".join(
+                        filter(None, [existing_answer, new_answer])
+                    )
 
                 existing_feedback = (existing.get("feedback") or "").strip()
                 new_feedback = (normalized.get("feedback") or "").strip()
                 if new_feedback and new_feedback not in existing_feedback:
-                    existing["feedback"] = "\n".join(filter(None, [existing_feedback, new_feedback]))
+                    existing["feedback"] = "\n".join(
+                        filter(None, [existing_feedback, new_feedback])
+                    )
 
                 merged_max = max(
                     float(existing.get("max_score") or 0),
                     float(normalized.get("max_score") or 0),
                 )
-                merged_score = float(existing.get("score") or 0) + float(normalized.get("score") or 0)
+                merged_score = float(existing.get("score") or 0) + float(
+                    normalized.get("score") or 0
+                )
                 if merged_max > 0:
                     merged_score = min(merged_score, merged_max)
                 existing["score"] = merged_score
@@ -413,9 +447,7 @@ class LLMReasoningClient:
             "total_score": total_score,
             "max_score": max_score,
             "confidence": (
-                sum(confidence_values) / len(confidence_values)
-                if confidence_values
-                else 0.8
+                sum(confidence_values) / len(confidence_values) if confidence_values else 0.8
             ),
             "question_details": question_details,
             "page_summaries": page_summaries,
@@ -432,7 +464,9 @@ class LLMReasoningClient:
         student_key: str,
     ) -> Optional[Dict[str, Any]]:
         text = self._extract_json_from_text(full_response)
-        sections = [section.strip() for section in text.split("---PAGE_BREAK---") if section.strip()]
+        sections = [
+            section.strip() for section in text.split("---PAGE_BREAK---") if section.strip()
+        ]
         if not sections:
             return None
 
@@ -458,40 +492,37 @@ class LLMReasoningClient:
         if not page_results:
             return None
         return self._merge_page_break_results(page_results, student_key)
-    
+
     @with_retry(max_retries=3, initial_delay=1.0, max_delay=60.0)
     async def _call_vision_api(
         self,
         image_b64: str,
         prompt: str,
-        stream_callback: Optional[Callable[[str, str], Awaitable[None]]] = None
+        stream_callback: Optional[Callable[[str, str], Awaitable[None]]] = None,
     ) -> str:
         """
         调用视觉 API (带指数退避重试)
-        
+
         API 调用失败时使用指数退避策略重试最多3次。
-        
+
         Args:
             image_b64: Base64 编码的图像
             prompt: 提示词
             stream_callback: 流式回调函数 (stream_type, chunk) -> None
-            
+
         Returns:
             str: LLM 响应文本
-            
+
         验证：需求 9.1
         """
         try:
             message = HumanMessage(
                 content=[
                     {"type": "text", "text": prompt},
-                    {
-                        "type": "image_url",
-                        "image_url": f"data:image/png;base64,{image_b64}"
-                    }
+                    {"type": "image_url", "image_url": f"data:image/png;base64,{image_b64}"},
                 ]
             )
-            
+
             if stream_callback:
                 # 流式调用
                 full_response = ""
@@ -502,12 +533,12 @@ class LLMReasoningClient:
                             full_response += content
                             await stream_callback("text", content)
                         elif isinstance(content, list):
-                             # 处理复杂内容
-                             for part in content:
-                                 if isinstance(part, str):
-                                     full_response += part
-                                     await stream_callback("text", part)
-                
+                            # 处理复杂内容
+                            for part in content:
+                                if isinstance(part, str):
+                                    full_response += part
+                                    await stream_callback("text", part)
+
                 return self._extract_text_from_response(full_response)
             else:
                 # 非流式调用
@@ -522,23 +553,20 @@ class LLMReasoningClient:
                     "function": "_call_vision_api",
                     "prompt_length": len(prompt),
                     "image_size": len(image_b64),
-                }
+                },
             )
             raise
-    
+
     @with_retry(max_retries=3, initial_delay=1.0, max_delay=60.0)
-    async def _call_text_api(
-        self,
-        prompt: str
-    ) -> str:
+    async def _call_text_api(self, prompt: str) -> str:
         """
         调用纯文本 API (带指数退避重试)
-        
+
         用于处理纯文本输入（如文本文件内容），不包含图像。
-        
+
         Args:
             prompt: 提示词（包含学生答案文本）
-            
+
         Returns:
             str: LLM 响应文本
         """
@@ -553,74 +581,61 @@ class LLMReasoningClient:
                 context={
                     "function": "_call_text_api",
                     "prompt_length": len(prompt),
-                }
+                },
             )
             raise
 
-    async def _call_vision_api_stream(
-        self,
-        image_b64: str,
-        prompt: str
-    ) -> AsyncIterator[str]:
+    async def _call_vision_api_stream(self, image_b64: str, prompt: str) -> AsyncIterator[str]:
         """流式调用视觉 API"""
         message = HumanMessage(
             content=[
                 {"type": "text", "text": prompt},
-                {
-                    "type": "image_url",
-                    "image_url": f"data:image/png;base64,{image_b64}"
-                }
+                {"type": "image_url", "image_url": f"data:image/png;base64,{image_b64}"},
             ]
         )
         async for chunk in self.llm.astream([message]):
             yield self._extract_text_from_response(chunk.content)
 
-    async def _call_text_api_stream(
-        self,
-        prompt: str
-    ) -> AsyncIterator[str]:
+    async def _call_text_api_stream(self, prompt: str) -> AsyncIterator[str]:
         """流式调用纯文本 API"""
         message = HumanMessage(content=prompt)
         async for chunk in self.llm.astream([message]):
             yield self._extract_text_from_response(chunk.content)
-    
+
     def _is_text_content(self, data: bytes) -> bool:
         """
         检测输入是否为纯文本内容
-        
+
         Args:
             data: 输入数据（bytes）
-            
+
         Returns:
             bool: 如果是可解码的 UTF-8 文本返回 True
         """
         try:
             # 尝试解码为 UTF-8 文本
-            text = data.decode('utf-8')
+            text = data.decode("utf-8")
             # 检查是否包含常见的文本特征（中文字符、换行符等）
             # 排除二进制文件（如 PNG/PDF 的魔数）
-            if data[:4] in [b'\x89PNG', b'%PDF', b'\xff\xd8\xff']:
+            if data[:4] in [b"\x89PNG", b"%PDF", b"\xff\xd8\xff"]:
                 return False
             # 如果能成功解码且包含可打印字符，认为是文本
-            printable_ratio = sum(1 for c in text if c.isprintable() or c in '\n\r\t') / len(text)
+            printable_ratio = sum(1 for c in text if c.isprintable() or c in "\n\r\t") / len(text)
             return printable_ratio > 0.8
         except (UnicodeDecodeError, ZeroDivisionError):
             return False
-        
+
     async def vision_extraction(
-        self,
-        question_image_b64: str,
-        rubric: str,
-        standard_answer: Optional[str] = None
+        self, question_image_b64: str, rubric: str, standard_answer: Optional[str] = None
     ) -> str:
         """
         视觉提取节点：分析学生答案图像，生成详细的文字描述
-        
+
         Args:
             question_image_b64: Base64 编码的题目图像
             rubric: 评分细则
             standard_answer: 标准答案（可选）
-            
+
         Returns:
             str: 学生解题步骤的详细文字描述
         """
@@ -644,37 +659,34 @@ class LLMReasoningClient:
         message = HumanMessage(
             content=[
                 {"type": "text", "text": prompt},
-                {
-                    "type": "image_url",
-                    "image_url": f"data:image/jpeg;base64,{question_image_b64}"
-                }
+                {"type": "image_url", "image_url": f"data:image/jpeg;base64,{question_image_b64}"},
             ]
         )
-        
+
         # 调用 LLM
         response = await self.llm.ainvoke([message])
-        
+
         # 提取文本内容
         return self._extract_text_from_response(response.content)
-    
+
     async def rubric_mapping(
         self,
         vision_analysis: str,
         rubric: str,
         max_score: float,
         standard_answer: Optional[str] = None,
-        critique_feedback: Optional[str] = None
+        critique_feedback: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         评分映射节点：将评分细则的每个评分点映射到学生答案中的证据
-        
+
         Args:
             vision_analysis: 视觉分析结果
             rubric: 评分细则
             max_score: 满分
             standard_answer: 标准答案（可选）
             critique_feedback: 反思反馈（如果是修正循环）
-            
+
         Returns:
             Dict: 包含 rubric_mapping 和 initial_score
         """
@@ -722,10 +734,10 @@ class LLMReasoningClient:
         # 提取文本内容
         result_text = self._extract_text_from_response(full_response)
         result_text = self._extract_json_from_text(result_text)
-        
+
         result = json.loads(result_text)
         return result
-    
+
     async def critique(
         self,
         vision_analysis: str,
@@ -733,11 +745,11 @@ class LLMReasoningClient:
         rubric_mapping: List[Dict[str, Any]],
         initial_score: float,
         max_score: float,
-        standard_answer: Optional[str] = None
+        standard_answer: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         自我反思节点：审查评分逻辑，识别潜在的评分错误
-        
+
         Args:
             vision_analysis: 视觉分析结果
             rubric: 评分细则
@@ -745,7 +757,7 @@ class LLMReasoningClient:
             initial_score: 初始评分
             max_score: 满分
             standard_answer: 标准答案（可选）
-            
+
         Returns:
             Dict: 包含 critique_feedback 和 needs_revision
         """
@@ -790,11 +802,11 @@ class LLMReasoningClient:
         except Exception as e:
             logger.error(f"Critique streaming error: {e}")
             raise
-        
+
         # 提取文本内容
         result_text = self._extract_text_from_response(full_response)
         result_text = self._extract_json_from_text(result_text)
-        
+
         result = json.loads(result_text)
         return result
 
@@ -806,29 +818,26 @@ class LLMReasoningClient:
     ) -> Dict[str, Any]:
         """
         通用视觉分析方法：分析多张图像并返回结构化结果
-        
+
         Args:
             images: 图像字节列表
             prompt: 分析提示词
-            
+
         Returns:
             Dict: 包含 response 的结果
         """
         # 构建消息内容
         content = [{"type": "text", "text": prompt}]
-        
+
         # 添加图像
         for img_bytes in images:
             if isinstance(img_bytes, bytes):
-                img_b64 = base64.b64encode(img_bytes).decode('utf-8')
+                img_b64 = base64.b64encode(img_bytes).decode("utf-8")
             else:
                 img_b64 = img_bytes  # 已经是 base64 字符串
-            
-            content.append({
-                "type": "image_url",
-                "image_url": f"data:image/png;base64,{img_b64}"
-            })
-        
+
+            content.append({"type": "image_url", "image_url": f"data:image/png;base64,{img_b64}"})
+
         # 调用 LLM
         # 调用 LLM (使用流式)
         message = HumanMessage(content=content)
@@ -861,16 +870,13 @@ class LLMReasoningClient:
             logger.error(f"Vision streaming error: {e}")
             # Fallback to non-streaming if needed, or just re-raise
             raise
-        
+
         # 提取文本内容
         result_text = self._extract_text_from_response(full_response)
-        
+
         return {"response": result_text}
 
-    def _format_page_index_context(
-        self,
-        page_context: Optional[Dict[str, Any]]
-    ) -> str:
+    def _format_page_index_context(self, page_context: Optional[Dict[str, Any]]) -> str:
         """格式化索引上下文，用于提示词注入"""
         if not page_context:
             return ""
@@ -903,26 +909,26 @@ class LLMReasoningClient:
         )
 
     # ==================== grade_page 拆分为多个私有方法 ====================
-    
+
     def _build_grading_prompt(
         self,
         rubric: str,
         parsed_rubric: Optional[Dict[str, Any]],
-        page_context: Optional[Dict[str, Any]] = None
+        page_context: Optional[Dict[str, Any]] = None,
     ) -> str:
         """
         构建评分提示词
-        
+
         Args:
             rubric: 评分细则文本
             parsed_rubric: 解析后的评分标准
-            
+
         Returns:
             str: 完整的评分提示词
         """
         # 优先使用解析后的评分标准上下文
         rubric_info = ""
-        
+
         if parsed_rubric and parsed_rubric.get("rubric_context"):
             # 使用格式化的评分标准上下文
             rubric_info = parsed_rubric["rubric_context"]
@@ -931,29 +937,38 @@ class LLMReasoningClient:
             questions_info = []
             for q in self._limit_questions_for_prompt(parsed_rubric.get("questions", [])):
                 q_info = f"第{q.get('question_id', '?')}题 (满分{q.get('max_score', 0)}分):"
-                
+
                 # 添加评分要点
                 criteria = q.get("criteria", [])
                 scoring_points = q.get("scoring_points", [])
-                
+
                 if scoring_points:
                     for idx, sp in enumerate(self._limit_criteria_for_prompt(scoring_points), 1):
-                        point_id = sp.get("point_id") or sp.get("pointId") or f"{q.get('question_id', '?')}.{idx}"
-                        q_info += (
-                            f"\n  - [{point_id}] [{sp.get('score', 0)}分] {sp.get('description', '')}"
+                        point_id = (
+                            sp.get("point_id")
+                            or sp.get("pointId")
+                            or f"{q.get('question_id', '?')}.{idx}"
                         )
+                        q_info += f"\n  - [{point_id}] [{sp.get('score', 0)}分] {sp.get('description', '')}"
                 elif criteria:
                     for criterion in self._limit_criteria_for_prompt(criteria):
                         q_info += f"\n  - {criterion}"
-                
+
                 # 添加标准答案摘要
                 if q.get("standard_answer"):
-                    answer_preview = q["standard_answer"][:100] + "..." if len(q["standard_answer"]) > 100 else q["standard_answer"]
+                    answer_preview = (
+                        q["standard_answer"][:100] + "..."
+                        if len(q["standard_answer"]) > 100
+                        else q["standard_answer"]
+                    )
                     q_info += f"\n  标准答案: {answer_preview}"
-                
+
                 questions_info.append(q_info)
-            
-            rubric_info = f"评分标准（共{parsed_rubric.get('total_questions', 0)}题，总分{parsed_rubric.get('total_score', 0)}分）：\n\n" + "\n\n".join(questions_info)
+
+            rubric_info = (
+                f"评分标准（共{parsed_rubric.get('total_questions', 0)}题，总分{parsed_rubric.get('total_score', 0)}分）：\n\n"
+                + "\n\n".join(questions_info)
+            )
         elif rubric:
             # 使用原始评分细则
             rubric_info = rubric
@@ -1161,24 +1176,20 @@ class LLMReasoningClient:
 禁止在 evidence 中写空字符串或模糊描述！
 禁止输出没有坐标的 steps 或 scoring_point_results！"""
 
-    def _parse_grading_response(
-        self,
-        response_text: str,
-        max_score: float
-    ) -> Dict[str, Any]:
+    def _parse_grading_response(self, response_text: str, max_score: float) -> Dict[str, Any]:
         """
         解析评分响应，并确保 evidence 字段被正确填充
-        
+
         Args:
             response_text: LLM 响应文本
             max_score: 满分
-            
+
         Returns:
             Dict: 解析后的评分结果
         """
         json_text = self._extract_json_from_text(response_text)
         result = json.loads(json_text)
-        
+
         # 确保所有 scoring_point_results 都有 evidence 字段
         for q in result.get("question_details", []):
             for spr in q.get("scoring_point_results", []):
@@ -1189,41 +1200,43 @@ class LLMReasoningClient:
                     awarded = spr.get("awarded", 0)
                     max_sp_score = spr.get("max_score", 0)
                     description = spr.get("description", "该评分点")
-                    
+
                     if awarded == max_sp_score:
                         spr["evidence"] = f"学生正确完成了{description}，获得满分"
                     elif awarded == 0:
                         spr["evidence"] = f"学生未作答或未正确完成{description}"
                     else:
-                        spr["evidence"] = f"学生部分完成了{description}，获得{awarded}/{max_sp_score}分"
-                    
-                    logger.warning(
-                        f"evidence 字段为空，已自动补充: {spr['evidence']}"
-                    )
-        
+                        spr["evidence"] = (
+                            f"学生部分完成了{description}，获得{awarded}/{max_sp_score}分"
+                        )
+
+                    logger.warning(f"evidence 字段为空，已自动补充: {spr['evidence']}")
+
         return result
-    
+
     def _generate_feedback(self, result: Dict[str, Any]) -> str:
         """
         从评分结果生成综合反馈
-        
+
         Args:
             result: 评分结果字典
-            
+
         Returns:
             str: 综合反馈文本
         """
         feedback_parts = []
-        
+
         if result.get("page_summary"):
             feedback_parts.append(result["page_summary"])
-        
+
         for q in result.get("question_details", []):
-            q_feedback = f"第{q.get('question_id', '?')}题: {q.get('score', 0)}/{q.get('max_score', 0)}分"
+            q_feedback = (
+                f"第{q.get('question_id', '?')}题: {q.get('score', 0)}/{q.get('max_score', 0)}分"
+            )
             if q.get("feedback"):
                 q_feedback += f" - {q['feedback']}"
             feedback_parts.append(q_feedback)
-        
+
         return "\n".join(feedback_parts) if feedback_parts else "评分完成"
 
     def _build_text_grading_prompt(
@@ -1231,16 +1244,16 @@ class LLMReasoningClient:
         text_content: str,
         rubric: str,
         parsed_rubric: Optional[Dict[str, Any]],
-        page_context: Optional[Dict[str, Any]] = None
+        page_context: Optional[Dict[str, Any]] = None,
     ) -> str:
         """
         构建纯文本批改的提示词
-        
+
         Args:
             text_content: 学生答案文本内容
             rubric: 评分细则文本
             parsed_rubric: 解析后的评分标准
-            
+
         Returns:
             str: 完整的评分提示词
         """
@@ -1252,7 +1265,7 @@ class LLMReasoningClient:
             rubric_info = rubric
         else:
             rubric_info = "请根据答案的正确性、完整性和清晰度进行评分"
-        
+
         index_context = self._format_page_index_context(page_context)
 
         return f"""你是一位专业的阅卷教师，请仔细分析以下学生答案文本并进行精确评分。
@@ -1350,73 +1363,68 @@ class LLMReasoningClient:
         max_score: float = 10.0,
         parsed_rubric: Optional[Dict[str, Any]] = None,
         page_context: Optional[Dict[str, Any]] = None,
-
-        stream_callback: Optional[Callable[[str, str], Awaitable[None]]] = None
+        stream_callback: Optional[Callable[[str, str], Awaitable[None]]] = None,
     ) -> Dict[str, Any]:
         """
         批改单页：分析图像或文本并给出详细评分
-        
+
         自动检测输入类型（图像或文本），使用相应的 API 进行批改。
-        
+
         Args:
             image: 图像字节或文本字节
             rubric: 评分细则文本
             max_score: 满分
             parsed_rubric: 解析后的评分标准（包含题目信息）
-            
+
         Returns:
             Dict: 包含详细评分结果
         """
         logger.debug(f"开始批改单页, rubric长度={len(rubric)}")
-        
+
         # 检测输入类型：文本还是图像
         is_text = isinstance(image, bytes) and self._is_text_content(image)
-        
+
         try:
             if is_text:
                 # 纯文本输入：使用文本 API
-                text_content = image.decode('utf-8')
+                text_content = image.decode("utf-8")
                 logger.info(f"检测到文本输入，长度={len(text_content)}字符，使用文本API批改")
-                
+
                 # 构建文本批改提示词
                 prompt = self._build_text_grading_prompt(
-                    text_content,
-                    rubric,
-                    parsed_rubric,
-                    page_context
+                    text_content, rubric, parsed_rubric, page_context
                 )
-                
+
                 # 调用文本 API
                 response_text = await self._call_text_api(prompt, stream_callback)
             else:
                 # 图像输入：使用视觉 API
                 logger.info("检测到图像输入，使用视觉API批改")
-                
+
                 # 构建图像批改提示词
                 prompt = self._build_grading_prompt(rubric, parsed_rubric, page_context)
-                
+
                 # 转换图像为 base64
                 if isinstance(image, bytes):
-                    img_b64 = base64.b64encode(image).decode('utf-8')
+                    img_b64 = base64.b64encode(image).decode("utf-8")
                 else:
                     img_b64 = image
-                
+
                 # 调用视觉 API
                 response_text = await self._call_vision_api(img_b64, prompt, stream_callback)
-            
+
             # 解析响应
             result = self._parse_grading_response(response_text, max_score)
-            
+
             # 生成综合反馈
             result["feedback"] = self._generate_feedback(result)
-            
+
             logger.info(
-                f"批改完成: score={result.get('score')}, "
-                f"confidence={result.get('confidence')}"
+                f"批改完成: score={result.get('score')}, " f"confidence={result.get('confidence')}"
             )
-            
+
             return result
-            
+
         except json.JSONDecodeError as e:
             logger.error(f"评分 JSON 解析失败: {e}")
             return {
@@ -1426,7 +1434,7 @@ class LLMReasoningClient:
                 "feedback": f"评分解析失败: {str(e)}",
                 "question_numbers": [],
                 "question_details": [],
-                "student_info": None
+                "student_info": None,
             }
         except Exception as e:
             logger.error(f"评分失败: {e}", exc_info=True)
@@ -1437,7 +1445,7 @@ class LLMReasoningClient:
                 "feedback": f"评分失败: {str(e)}",
                 "question_numbers": [],
                 "question_details": [],
-                "student_info": None
+                "student_info": None,
             }
 
     def _normalize_question_id(self, value: Any) -> str:
@@ -1451,9 +1459,7 @@ class LLMReasoningClient:
         return text.strip().rstrip(".:：")
 
     def _build_question_hints(
-        self,
-        parsed_rubric: Optional[Dict[str, Any]],
-        page_context: Optional[Dict[str, Any]] = None
+        self, parsed_rubric: Optional[Dict[str, Any]], page_context: Optional[Dict[str, Any]] = None
     ) -> str:
         if not parsed_rubric:
             return ""
@@ -1486,22 +1492,22 @@ class LLMReasoningClient:
         return "\n".join(lines)
 
     def _infer_question_type(self, question: Dict[str, Any]) -> str:
-        raw_type = (
-            question.get("question_type")
-            or question.get("questionType")
-            or ""
-        )
+        raw_type = question.get("question_type") or question.get("questionType") or ""
         raw_type = str(raw_type).strip().lower()
         if raw_type:
             return raw_type
 
-        question_text = (question.get("question_text") or question.get("questionText") or "").strip()
-        grading_notes = (question.get("grading_notes") or question.get("gradingNotes") or "").strip()
-        standard_answer = (question.get("standard_answer") or question.get("standardAnswer") or "").strip()
+        question_text = (
+            question.get("question_text") or question.get("questionText") or ""
+        ).strip()
+        grading_notes = (
+            question.get("grading_notes") or question.get("gradingNotes") or ""
+        ).strip()
+        standard_answer = (
+            question.get("standard_answer") or question.get("standardAnswer") or ""
+        ).strip()
         alternative_solutions = (
-            question.get("alternative_solutions")
-            or question.get("alternativeSolutions")
-            or []
+            question.get("alternative_solutions") or question.get("alternativeSolutions") or []
         )
 
         text_blob = f"{question_text} {grading_notes}".lower()
@@ -1513,19 +1519,38 @@ class LLMReasoningClient:
             answer_clean = re.sub(r"\s+", "", standard_answer.upper())
             if re.fullmatch(r"[A-D](?:[、,/， ]*[A-D]){0,3}", answer_clean):
                 return "choice"
-        if any(token in text_blob for token in ["选择题", "单选", "多选", "选项", "请选择", "下列"]):
+        if any(
+            token in text_blob for token in ["选择题", "单选", "多选", "选项", "请选择", "下列"]
+        ):
             return "choice"
 
         if alternative_solutions:
             return "subjective"
-        if any(token in text_blob for token in ["简答", "论述", "证明", "推导", "解释", "分析", "讨论", "设计", "说明", "过程", "步骤"]):
+        if any(
+            token in text_blob
+            for token in [
+                "简答",
+                "论述",
+                "证明",
+                "推导",
+                "解释",
+                "分析",
+                "讨论",
+                "设计",
+                "说明",
+                "过程",
+                "步骤",
+            ]
+        ):
             return "subjective"
         if any(token in text_blob for token in ["判断", "填空", "对错", "是非", "true", "false"]):
             return "objective"
 
         if standard_answer:
             answer_compact = re.sub(r"\s+", "", standard_answer)
-            if len(answer_compact) <= 4 and re.fullmatch(r"[0-9A-Za-z+\\-.=()（）/\\\\]+", answer_compact):
+            if len(answer_compact) <= 4 and re.fullmatch(
+                r"[0-9A-Za-z+\\-.=()（）/\\\\]+", answer_compact
+            ):
                 return "objective"
             if len(standard_answer) > 30 or "\n" in standard_answer:
                 return "subjective"
@@ -1533,9 +1558,7 @@ class LLMReasoningClient:
         return "objective"
 
     def _build_rubric_payload(
-        self,
-        parsed_rubric: Optional[Dict[str, Any]],
-        question_ids: List[str]
+        self, parsed_rubric: Optional[Dict[str, Any]], question_ids: List[str]
     ) -> Dict[str, Any]:
         if not parsed_rubric:
             return {"questions": []}
@@ -1551,46 +1574,58 @@ class LLMReasoningClient:
             scoring_points = []
             for idx, sp in enumerate(q.get("scoring_points", [])):
                 point_id = sp.get("point_id") or sp.get("pointId") or f"{qid}.{idx + 1}"
-                scoring_points.append({
-                    "point_id": point_id,
-                    "description": sp.get("description", ""),
-                    "score": sp.get("score", 0),
-                    "is_required": sp.get("is_required", True),
-                    "keywords": sp.get("keywords") or [],
-                    "expected_value": sp.get("expected_value") or sp.get("expectedValue") or "",
-                })
+                scoring_points.append(
+                    {
+                        "point_id": point_id,
+                        "description": sp.get("description", ""),
+                        "score": sp.get("score", 0),
+                        "is_required": sp.get("is_required", True),
+                        "keywords": sp.get("keywords") or [],
+                        "expected_value": sp.get("expected_value") or sp.get("expectedValue") or "",
+                    }
+                )
             deduction_rules = []
             for idx, dr in enumerate(q.get("deduction_rules") or q.get("deductionRules") or []):
-                deduction_rules.append({
-                    "rule_id": dr.get("rule_id") or dr.get("ruleId") or f"{qid}.d{idx + 1}",
-                    "description": dr.get("description", ""),
-                    "deduction": dr.get("deduction", dr.get("score", 0)),
-                    "conditions": dr.get("conditions") or dr.get("when") or "",
-                })
+                deduction_rules.append(
+                    {
+                        "rule_id": dr.get("rule_id") or dr.get("ruleId") or f"{qid}.d{idx + 1}",
+                        "description": dr.get("description", ""),
+                        "deduction": dr.get("deduction", dr.get("score", 0)),
+                        "conditions": dr.get("conditions") or dr.get("when") or "",
+                    }
+                )
             alternative_solutions = []
             for alt in q.get("alternative_solutions") or q.get("alternativeSolutions") or []:
                 if not isinstance(alt, dict):
                     continue
-                alternative_solutions.append({
-                    "description": (alt.get("description", "") or "")[:200],
-                    "scoring_criteria": (alt.get("scoring_criteria")
-                                         or alt.get("scoringCriteria")
-                                         or alt.get("scoring_conditions")
-                                         or alt.get("scoringConditions")
-                                         or "")[:200],
-                    "max_score": alt.get("max_score", alt.get("maxScore", q.get("max_score", 0))),
-                })
-            selected.append({
-                "question_id": qid,
-                "max_score": q.get("max_score", 0),
-                "question_type": question_type,
-                "question_text": (q.get("question_text") or "")[:200],
-                "standard_answer": (q.get("standard_answer") or "")[:300],
-                "grading_notes": (q.get("grading_notes") or "")[:300],
-                "scoring_points": scoring_points,
-                "deduction_rules": deduction_rules,
-                "alternative_solutions": alternative_solutions,
-            })
+                alternative_solutions.append(
+                    {
+                        "description": (alt.get("description", "") or "")[:200],
+                        "scoring_criteria": (
+                            alt.get("scoring_criteria")
+                            or alt.get("scoringCriteria")
+                            or alt.get("scoring_conditions")
+                            or alt.get("scoringConditions")
+                            or ""
+                        )[:200],
+                        "max_score": alt.get(
+                            "max_score", alt.get("maxScore", q.get("max_score", 0))
+                        ),
+                    }
+                )
+            selected.append(
+                {
+                    "question_id": qid,
+                    "max_score": q.get("max_score", 0),
+                    "question_type": question_type,
+                    "question_text": (q.get("question_text") or "")[:200],
+                    "standard_answer": (q.get("standard_answer") or "")[:300],
+                    "grading_notes": (q.get("grading_notes") or "")[:300],
+                    "scoring_points": scoring_points,
+                    "deduction_rules": deduction_rules,
+                    "alternative_solutions": alternative_solutions,
+                }
+            )
 
         if not selected:
             for q in self._limit_questions_for_prompt(questions):
@@ -1601,46 +1636,60 @@ class LLMReasoningClient:
                 scoring_points = []
                 for idx, sp in enumerate(q.get("scoring_points", [])):
                     point_id = sp.get("point_id") or sp.get("pointId") or f"{qid}.{idx + 1}"
-                    scoring_points.append({
-                        "point_id": point_id,
-                        "description": sp.get("description", ""),
-                        "score": sp.get("score", 0),
-                        "is_required": sp.get("is_required", True),
-                        "keywords": sp.get("keywords") or [],
-                        "expected_value": sp.get("expected_value") or sp.get("expectedValue") or "",
-                    })
+                    scoring_points.append(
+                        {
+                            "point_id": point_id,
+                            "description": sp.get("description", ""),
+                            "score": sp.get("score", 0),
+                            "is_required": sp.get("is_required", True),
+                            "keywords": sp.get("keywords") or [],
+                            "expected_value": sp.get("expected_value")
+                            or sp.get("expectedValue")
+                            or "",
+                        }
+                    )
                 deduction_rules = []
                 for idx, dr in enumerate(q.get("deduction_rules") or q.get("deductionRules") or []):
-                    deduction_rules.append({
-                        "rule_id": dr.get("rule_id") or dr.get("ruleId") or f"{qid}.d{idx + 1}",
-                        "description": dr.get("description", ""),
-                        "deduction": dr.get("deduction", dr.get("score", 0)),
-                        "conditions": dr.get("conditions") or dr.get("when") or "",
-                    })
+                    deduction_rules.append(
+                        {
+                            "rule_id": dr.get("rule_id") or dr.get("ruleId") or f"{qid}.d{idx + 1}",
+                            "description": dr.get("description", ""),
+                            "deduction": dr.get("deduction", dr.get("score", 0)),
+                            "conditions": dr.get("conditions") or dr.get("when") or "",
+                        }
+                    )
                 alternative_solutions = []
                 for alt in q.get("alternative_solutions") or q.get("alternativeSolutions") or []:
                     if not isinstance(alt, dict):
                         continue
-                    alternative_solutions.append({
-                        "description": (alt.get("description", "") or "")[:200],
-                        "scoring_criteria": (alt.get("scoring_criteria")
-                                             or alt.get("scoringCriteria")
-                                             or alt.get("scoring_conditions")
-                                             or alt.get("scoringConditions")
-                                             or "")[:200],
-                        "max_score": alt.get("max_score", alt.get("maxScore", q.get("max_score", 0))),
-                    })
-                selected.append({
-                    "question_id": qid,
-                    "max_score": q.get("max_score", 0),
-                    "question_type": question_type,
-                    "question_text": (q.get("question_text") or "")[:200],
-                    "standard_answer": (q.get("standard_answer") or "")[:300],
-                    "grading_notes": (q.get("grading_notes") or "")[:300],
-                    "scoring_points": scoring_points,
-                    "deduction_rules": deduction_rules,
-                    "alternative_solutions": alternative_solutions,
-                })
+                    alternative_solutions.append(
+                        {
+                            "description": (alt.get("description", "") or "")[:200],
+                            "scoring_criteria": (
+                                alt.get("scoring_criteria")
+                                or alt.get("scoringCriteria")
+                                or alt.get("scoring_conditions")
+                                or alt.get("scoringConditions")
+                                or ""
+                            )[:200],
+                            "max_score": alt.get(
+                                "max_score", alt.get("maxScore", q.get("max_score", 0))
+                            ),
+                        }
+                    )
+                selected.append(
+                    {
+                        "question_id": qid,
+                        "max_score": q.get("max_score", 0),
+                        "question_type": question_type,
+                        "question_text": (q.get("question_text") or "")[:200],
+                        "standard_answer": (q.get("standard_answer") or "")[:300],
+                        "grading_notes": (q.get("grading_notes") or "")[:300],
+                        "scoring_points": scoring_points,
+                        "deduction_rules": deduction_rules,
+                        "alternative_solutions": alternative_solutions,
+                    }
+                )
 
         return {
             "total_score": parsed_rubric.get("total_score", 0),
@@ -1662,7 +1711,7 @@ class LLMReasoningClient:
         image: bytes,
         parsed_rubric: Optional[Dict[str, Any]] = None,
         page_context: Optional[Dict[str, Any]] = None,
-        stream_callback: Optional[Callable[[str, str], Awaitable[None]]] = None
+        stream_callback: Optional[Callable[[str, str], Awaitable[None]]] = None,
     ) -> Dict[str, Any]:
         """
         仅进行答案证据抽取，禁止评分。
@@ -1709,7 +1758,7 @@ class LLMReasoningClient:
 ```
 """
         if isinstance(image, bytes):
-            img_b64 = base64.b64encode(image).decode('utf-8')
+            img_b64 = base64.b64encode(image).decode("utf-8")
         else:
             img_b64 = image
 
@@ -1737,7 +1786,7 @@ class LLMReasoningClient:
         parsed_rubric: Optional[Dict[str, Any]] = None,
         page_context: Optional[Dict[str, Any]] = None,
         mode: Literal["fast", "strict"] = "fast",
-        stream_callback: Optional[Callable[[str, str], Awaitable[None]]] = None
+        stream_callback: Optional[Callable[[str, str], Awaitable[None]]] = None,
     ) -> Dict[str, Any]:
         """
         基于证据与评分标准进行评分（纯文本调用）。
@@ -1747,7 +1796,9 @@ class LLMReasoningClient:
             qid = self._normalize_question_id(item.get("question_id"))
             if qid:
                 answer_ids.append(qid)
-        question_numbers = evidence.get("question_numbers") or (page_context or {}).get("question_numbers") or []
+        question_numbers = (
+            evidence.get("question_numbers") or (page_context or {}).get("question_numbers") or []
+        )
         for qid in question_numbers:
             normalized = self._normalize_question_id(qid)
             if normalized and normalized not in answer_ids:
@@ -1861,7 +1912,7 @@ Mode: {mode_label}
         parsed_rubric: Optional[Dict[str, Any]] = None,
         page_context: Optional[Dict[str, Any]] = None,
         mode: Literal["teacher", "student"] = "teacher",
-        stream_callback: Optional[Callable[[str, str], Awaitable[None]]] = None
+        stream_callback: Optional[Callable[[str, str], Awaitable[None]]] = None,
     ) -> Dict[str, Any]:
         """
         Provide assistive feedback without grading or scoring.
@@ -1872,7 +1923,9 @@ Mode: {mode_label}
             if qid:
                 answer_ids.append(qid)
 
-        question_numbers = evidence.get("question_numbers") or (page_context or {}).get("question_numbers") or []
+        question_numbers = (
+            evidence.get("question_numbers") or (page_context or {}).get("question_numbers") or []
+        )
         for qid in question_numbers:
             normalized = self._normalize_question_id(qid)
             if normalized and normalized not in answer_ids:
@@ -1940,7 +1993,6 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
         except (TypeError, ValueError):
             return default
 
-
     def _sum_question_detail_scores(self, details: List[Dict[str, Any]]) -> tuple[float, float]:
         total = 0.0
         max_total = 0.0
@@ -1965,9 +2017,7 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
         questions = parsed_rubric.get("questions") or []
         expected = []
         for question in questions:
-            qid = self._normalize_question_id(
-                question.get("question_id") or question.get("id")
-            )
+            qid = self._normalize_question_id(question.get("question_id") or question.get("id"))
             if qid:
                 expected.append(qid)
         return expected
@@ -1998,28 +2048,28 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
         placeholders = []
         rubric_map = {}
         for question in parsed_rubric.get("questions") or []:
-            qid = self._normalize_question_id(
-                question.get("question_id") or question.get("id")
-            )
+            qid = self._normalize_question_id(question.get("question_id") or question.get("id"))
             if qid:
                 rubric_map[qid] = question
         for qid in missing_ids:
             rubric = rubric_map.get(qid, {})
             max_score = self._safe_float(rubric.get("max_score", 0))
-            placeholders.append({
-                "question_id": qid,
-                "score": 0.0,
-                "max_score": max_score,
-                "student_answer": "",
-                "is_correct": False,
-                "feedback": "No answer detected.",
-                "confidence": 0.0,
-                "self_critique": "Insufficient evidence to grade; manual review recommended.",
-                "self_critique_confidence": 0.0,
-                "scoring_point_results": [],
-                "page_indices": [],
-                "question_type": rubric.get("question_type") or rubric.get("questionType"),
-            })
+            placeholders.append(
+                {
+                    "question_id": qid,
+                    "score": 0.0,
+                    "max_score": max_score,
+                    "student_answer": "",
+                    "is_correct": False,
+                    "feedback": "No answer detected.",
+                    "confidence": 0.0,
+                    "self_critique": "Insufficient evidence to grade; manual review recommended.",
+                    "self_critique_confidence": 0.0,
+                    "scoring_point_results": [],
+                    "page_indices": [],
+                    "question_type": rubric.get("question_type") or rubric.get("questionType"),
+                }
+            )
         return placeholders
 
     async def _grade_missing_questions(
@@ -2044,10 +2094,10 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
             f"Rubric:\n{rubric_info}\n\n"
             f"Context:\n{context_info}\n\n"
             "Return JSON only with this structure:\n"
-            "{\"question_details\": [{\"question_id\": \"1\", \"score\": 0, \"max_score\": 0, "
-            "\"student_answer\": \"\", \"is_correct\": false, \"feedback\": \"\", "
-            "\"confidence\": 0.0, \"self_critique\": \"\", "
-            "\"self_critique_confidence\": 0.0, \"scoring_point_results\": []}]}\n"
+            '{"question_details": [{"question_id": "1", "score": 0, "max_score": 0, '
+            '"student_answer": "", "is_correct": false, "feedback": "", '
+            '"confidence": 0.0, "self_critique": "", '
+            '"self_critique_confidence": 0.0, "scoring_point_results": []}]}\n'
             "Rules:\n"
             "- Only include the specified questions.\n"
             "- If an answer is missing or unclear, score 0 and explain in self_critique.\n"
@@ -2059,10 +2109,12 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
                 img_b64 = base64.b64encode(img_bytes).decode("utf-8")
             else:
                 img_b64 = img_bytes
-            content.append({
-                "type": "image_url",
-                "image_url": f"data:image/jpeg;base64,{img_b64}",
-            })
+            content.append(
+                {
+                    "type": "image_url",
+                    "image_url": f"data:image/jpeg;base64,{img_b64}",
+                }
+            )
         message = HumanMessage(content=content)
         full_response = ""
         async for chunk in self.llm.astream([message]):
@@ -2162,36 +2214,33 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
         """构建学生批改用的评分标准信息"""
         if not parsed_rubric:
             return "请根据答案的正确性、完整性和清晰度进行评分"
-        
+
         if parsed_rubric.get("rubric_context"):
             return parsed_rubric["rubric_context"]
-        
+
         questions = parsed_rubric.get("questions", [])
         if question_ids:
-            normalized_ids = {
-                self._normalize_question_id(qid)
-                for qid in question_ids
-                if qid
-            }
+            normalized_ids = {self._normalize_question_id(qid) for qid in question_ids if qid}
             questions = [
-                q for q in questions
+                q
+                for q in questions
                 if self._normalize_question_id(q.get("question_id") or q.get("id"))
                 in normalized_ids
             ]
         if not questions:
             return "请根据答案的正确性、完整性和清晰度进行评分"
-        
+
         lines = [
             f"评分标准（共{parsed_rubric.get('total_questions', len(questions))}题，"
             f"总分{parsed_rubric.get('total_score', 0)}分）：",
-            ""
+            "",
         ]
-        
+
         for q in self._limit_questions_for_prompt(questions):
             qid = q.get("question_id") or q.get("id") or "?"
             max_score = q.get("max_score", 0)
             lines.append(f"第{qid}题 (满分{max_score}分):")
-            
+
             # 评分要点
             scoring_points = q.get("scoring_points", [])
             for idx, sp in enumerate(self._limit_criteria_for_prompt(scoring_points), 1):
@@ -2199,15 +2248,15 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
                 lines.append(
                     f"  - [{point_id}] [{sp.get('score', 0)}分] {sp.get('description', '')}"
                 )
-            
+
             # 标准答案
             if q.get("standard_answer"):
                 answer = q["standard_answer"]
                 preview = answer[:150] + "..." if len(answer) > 150 else answer
                 lines.append(f"  标准答案: {preview}")
-            
+
             lines.append("")
-        
+
         return "\n".join(lines)
 
     async def grade_batch_pages_stream(
@@ -2219,25 +2268,25 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
     ) -> AsyncIterator[Dict[str, str]]:
         """
         批量批改多页（一次 LLM 调用）
-        
+
         将多张图片一起发送给 LLM，要求按页顺序批改。
         这比每页单独调用更高效，输出也更有序。
-        
+
         Args:
             images: 图像字节列表
             page_indices: 对应的页面索引列表
             parsed_rubric: 解析后的评分标准
             page_contexts: 页面上下文字典 {page_index: context}
-            
+
         Yields:
             str: LLM 响应的文本数据块
         """
         if not images:
             return
-        
+
         # 构建评分标准信息（不让 LLM 决定 max_score）
         rubric_info = self._build_batch_rubric_info(parsed_rubric)
-        
+
         # 构建页面上下文信息
         page_context_info = ""
         if page_contexts:
@@ -2247,10 +2296,14 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
                 if ctx:
                     q_nums = ctx.get("question_numbers", [])
                     if q_nums:
-                        context_lines.append(f"- 图片 {page_indices.index(idx) + 1} (页 {idx + 1}): 预期题号 {q_nums}")
+                        context_lines.append(
+                            f"- 图片 {page_indices.index(idx) + 1} (页 {idx + 1}): 预期题号 {q_nums}"
+                        )
             if context_lines:
-                page_context_info = f"\n\n## 页面索引信息（请以此为准）\n" + "\n".join(context_lines)
-        
+                page_context_info = f"\n\n## 页面索引信息（请以此为准）\n" + "\n".join(
+                    context_lines
+                )
+
         # 构建批量批改 prompt
         prompt = f"""你是一位**严格但公平**的阅卷教师。请批改以下 {len(images)} 张学生答题图片。
 
@@ -2347,14 +2400,11 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
         # 构建包含所有图片的消息内容
         content = [{"type": "text", "text": prompt}]
         for i, image in enumerate(images):
-            img_b64 = base64.b64encode(image).decode('utf-8')
-            content.append({
-                "type": "image_url",
-                "image_url": f"data:image/png;base64,{img_b64}"
-            })
-        
+            img_b64 = base64.b64encode(image).decode("utf-8")
+            content.append({"type": "image_url", "image_url": f"data:image/png;base64,{img_b64}"})
+
         message = HumanMessage(content=content)
-        
+
         # 流式调用
         async for chunk in self.llm.astream([message]):
             output_text, thinking_text = split_thinking_content(chunk.content)
@@ -2367,7 +2417,7 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
         """构建批量批改的评分标准信息"""
         if not parsed_rubric:
             return "请根据答案的正确性、完整性和清晰度进行评分"
-        
+
         if parsed_rubric.get("rubric_context"):
             rubric_context = parsed_rubric["rubric_context"]
             questions = parsed_rubric.get("questions", [])
@@ -2386,29 +2436,35 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
                     expected_value = str(expected_value).strip()
                     expected_value_snippet = ""
                     if expected_value:
-                        snippet = expected_value if len(expected_value) <= 80 else f"{expected_value[:80]}..."
+                        snippet = (
+                            expected_value
+                            if len(expected_value) <= 80
+                            else f"{expected_value[:80]}..."
+                        )
                         expected_value_snippet = f"；标准值:{snippet}"
                     if point_id:
-                        entries.append(f"[{point_id}] {description}（{score}分{expected_value_snippet}）")
+                        entries.append(
+                            f"[{point_id}] {description}（{score}分{expected_value_snippet}）"
+                        )
                 if entries:
                     point_lines.append(f"第 {q_id} 题: " + "；".join(entries))
             if point_lines:
                 return rubric_context + "\n\n## 得分点编号索引\n" + "\n".join(point_lines)
             return rubric_context
-        
+
         # 从题目列表构建
         questions = parsed_rubric.get("questions", [])
         if not questions:
             return "请根据答案的正确性、完整性和清晰度进行评分"
-        
+
         total_score = parsed_rubric.get("total_score", 0)
         lines = [f"共 {len(questions)} 题，总分 {total_score} 分。\n"]
-        
+
         for q in self._limit_questions_for_prompt(questions):
             q_id = q.get("question_id", "?")
             max_score = q.get("max_score", 0)
             lines.append(f"第 {q_id} 题（满分 {max_score} 分）")
-            
+
             # 添加得分点（包含 point_id）
             scoring_points = q.get("scoring_points", [])
             for sp in self._limit_criteria_for_prompt(scoring_points):
@@ -2418,42 +2474,42 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
                 expected_value = str(expected_value).strip()
                 expected_value_snippet = ""
                 if expected_value:
-                    snippet = expected_value if len(expected_value) <= 80 else f"{expected_value[:80]}..."
+                    snippet = (
+                        expected_value if len(expected_value) <= 80 else f"{expected_value[:80]}..."
+                    )
                     expected_value_snippet = f"；标准值:{snippet}"
                 lines.append(
                     f"  - {point_label} {sp.get('description', '')}（{sp.get('score', 0)}分{expected_value_snippet}）"
                 )
-        
+
         return "\n".join(lines)
-    
+
     async def get_rubric_for_question(
         self,
         question_id: str,
     ) -> Optional[QuestionRubric]:
         """
         动态获取指定题目的评分标准 (Requirement 1.1)
-        
+
         从 RubricRegistry 获取指定题目的评分标准，包括得分点、标准答案、另类解法。
-        
+
         Args:
             question_id: 题目编号（如 "1", "7a", "15"）
-            
+
         Returns:
             QuestionRubric: 该题目的完整评分标准，如果未找到返回 None
         """
         if self._rubric_registry is None:
             logger.warning("未设置 RubricRegistry，无法获取评分标准")
             return None
-        
+
         result = self._rubric_registry.get_rubric_for_question(question_id)
-        
+
         if result.is_default:
-            logger.warning(
-                f"题目 {question_id} 使用默认评分标准，置信度: {result.confidence}"
-            )
-        
+            logger.warning(f"题目 {question_id} 使用默认评分标准，置信度: {result.confidence}")
+
         return result.rubric
-    
+
     def _build_scoring_point_prompt(
         self,
         rubric: QuestionRubric,
@@ -2462,11 +2518,11 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
     ) -> str:
         """
         构建得分点逐一核对的提示词 (Requirement 1.2)
-        
+
         Args:
             rubric: 评分标准
             student_answer: 学生答案描述
-            
+
         Returns:
             str: 得分点核对提示词
         """
@@ -2475,8 +2531,10 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
         for i, sp in enumerate(rubric.scoring_points, 1):
             required_mark = "【必须】" if sp.is_required else "【可选】"
             point_id = sp.point_id or f"{rubric.question_id}.{i}"
-            scoring_points_text += f"{i}. [{point_id}] {required_mark} {sp.description} ({sp.score}分)\n"
-        
+            scoring_points_text += (
+                f"{i}. [{point_id}] {required_mark} {sp.description} ({sp.score}分)\n"
+            )
+
         # 构建另类解法列表 (Requirement 1.3)
         alternative_text = ""
         if rubric.alternative_solutions:
@@ -2485,7 +2543,7 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
                 alternative_text += f"{i}. {alt.description}\n"
                 alternative_text += f"   评分条件: {alt.scoring_conditions}\n"
                 alternative_text += f"   最高分: {alt.max_score}分\n"
-        
+
         notes_block = reviewer_notes.strip() if reviewer_notes else ""
 
         return f"""请对以下学生答案进行得分点逐一核对评分。
@@ -2548,20 +2606,20 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
     ) -> QuestionResult:
         """
         使用得分点逐一核对方式评分单道题目 (Requirement 1.2)
-        
+
         动态获取评分标准，逐一核对每个得分点，支持另类解法。
-        
+
         Args:
             question_id: 题目编号
             student_answer: 学生答案描述（从视觉分析获得）
             image: 可选的题目图像（用于视觉验证）
-            
+
         Returns:
             QuestionResult: 包含得分点明细的评分结果
         """
         # 1. 动态获取评分标准 (Requirement 1.1)
         rubric = await self.get_rubric_for_question(question_id)
-        
+
         if rubric is None:
             logger.error(f"无法获取题目 {question_id} 的评分标准")
             return QuestionResult(
@@ -2575,25 +2633,27 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
                 is_cross_page=False,
                 student_answer=student_answer,
             )
-        
+
         # 2. 构建得分点核对提示词
         prompt = self._build_scoring_point_prompt(rubric, student_answer)
-        
+
         # 3. 调用 LLM 进行评分
         try:
             if image:
                 # 如果有图像，使用视觉 API
-                img_b64 = base64.b64encode(image).decode('utf-8') if isinstance(image, bytes) else image
+                img_b64 = (
+                    base64.b64encode(image).decode("utf-8") if isinstance(image, bytes) else image
+                )
                 response_text = await self._call_vision_api(img_b64, prompt)
             else:
                 # 纯文本评分
                 response = await self.llm.ainvoke([HumanMessage(content=prompt)])
                 response_text = self._extract_text_from_response(response.content)
-            
+
             # 4. 解析响应
             json_text = self._extract_json_from_text(response_text)
             result = json.loads(json_text)
-            
+
             # 5. 构建 QuestionResult
             scoring_point_results = []
             for spr_data in result.get("scoring_point_results", []):
@@ -2607,13 +2667,15 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
                         score=spr_data.get("max_score", 0),
                         is_required=True,
                     )
-                
-                scoring_point_results.append(ScoringPointResult(
-                    scoring_point=sp,
-                    awarded=spr_data.get("awarded", 0),
-                    evidence=spr_data.get("evidence", ""),
-                ))
-            
+
+                scoring_point_results.append(
+                    ScoringPointResult(
+                        scoring_point=sp,
+                        awarded=spr_data.get("awarded", 0),
+                        evidence=spr_data.get("evidence", ""),
+                    )
+                )
+
             question_result = QuestionResult(
                 question_id=question_id,
                 score=result.get("total_score", 0),
@@ -2625,15 +2687,15 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
                 is_cross_page=False,
                 student_answer=student_answer,
             )
-            
+
             logger.info(
                 f"题目 {question_id} 评分完成: "
                 f"{question_result.score}/{question_result.max_score}, "
                 f"置信度: {question_result.confidence}"
             )
-            
+
             return question_result
-            
+
         except json.JSONDecodeError as e:
             logger.error(f"得分点评分 JSON 解析失败: {e}")
             return QuestionResult(
@@ -2669,23 +2731,23 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
     ) -> PageGradingResult:
         """
         使用动态评分标准批改单页 (Requirements 1.1, 1.2, 1.3)
-        
+
         集成 RubricRegistry 和 GradingSkills，实现：
         1. 识别页面中的题目编号
         2. 为每道题动态获取评分标准
         3. 逐一核对得分点
         4. 支持另类解法
-        
+
         Args:
             image: 图像字节
             page_index: 页码索引
             parsed_rubric: 解析后的评分标准（可选，用于兼容旧接口）
-            
+
         Returns:
             PageGradingResult: 包含详细得分点明细的页面批改结果
         """
         logger.info(f"开始批改第 {page_index + 1} 页（使用动态评分标准）")
-        
+
         # 1. 首先进行基础批改，获取题目编号和学生答案
         basic_result = await self.grade_page(
             image=image,
@@ -2693,7 +2755,7 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
             max_score=100.0,
             parsed_rubric=parsed_rubric,
         )
-        
+
         # 2. 如果是空白页，直接返回
         if basic_result.get("is_blank_page", False):
             return PageGradingResult(
@@ -2703,7 +2765,7 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
                 is_blank_page=True,
                 raw_response=json.dumps(basic_result, ensure_ascii=False),
             )
-        
+
         # 3. 提取学生信息
         student_info = None
         if basic_result.get("student_info"):
@@ -2713,16 +2775,16 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
                 student_name=si.get("name"),
                 confidence=0.8,
             )
-        
+
         # 4. 对每道题进行得分点逐一核对评分
         question_results = []
         for q_detail in basic_result.get("question_details", []):
             question_id = q_detail.get("question_id", "")
             student_answer = q_detail.get("student_answer", "")
-            
+
             if not question_id:
                 continue
-            
+
             # 使用得分点核对方式评分
             if self._rubric_registry:
                 q_result = await self.grade_question_with_scoring_points(
@@ -2744,9 +2806,9 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
                     is_cross_page=False,
                     student_answer=student_answer,
                 )
-            
+
             question_results.append(q_result)
-        
+
         # 5. 构建页面批改结果
         page_result = PageGradingResult(
             page_index=page_index,
@@ -2755,16 +2817,16 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
             is_blank_page=False,
             raw_response=json.dumps(basic_result, ensure_ascii=False),
         )
-        
+
         total_score = sum(qr.score for qr in question_results)
         total_max = sum(qr.max_score for qr in question_results)
-        
+
         logger.info(
             f"第 {page_index + 1} 页批改完成: "
             f"{total_score}/{total_max}, "
             f"共 {len(question_results)} 道题"
         )
-        
+
         return page_result
 
     def _format_rubric_for_prompt(
@@ -2773,37 +2835,45 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
     ) -> str:
         """
         将 QuestionRubric 格式化为提示词中使用的文本
-        
+
         Args:
             rubric: 评分标准对象
-            
+
         Returns:
             str: 格式化的评分标准文本
         """
         lines = [
             f"第{rubric.question_id}题 (满分{rubric.max_score}分):",
-            f"  题目: {rubric.question_text[:200]}..." if len(rubric.question_text) > 200 else f"  题目: {rubric.question_text}",
+            (
+                f"  题目: {rubric.question_text[:200]}..."
+                if len(rubric.question_text) > 200
+                else f"  题目: {rubric.question_text}"
+            ),
         ]
-        
+
         # 添加得分点
         if rubric.scoring_points:
             lines.append("  得分点:")
             for sp in rubric.scoring_points:
                 required = "【必须】" if sp.is_required else "【可选】"
                 lines.append(f"    - {required} {sp.description} ({sp.score}分)")
-        
+
         # 添加标准答案
         if rubric.standard_answer:
-            answer_preview = rubric.standard_answer[:150] + "..." if len(rubric.standard_answer) > 150 else rubric.standard_answer
+            answer_preview = (
+                rubric.standard_answer[:150] + "..."
+                if len(rubric.standard_answer) > 150
+                else rubric.standard_answer
+            )
             lines.append(f"  标准答案: {answer_preview}")
-        
+
         # 添加另类解法 (Requirement 1.3)
         if rubric.alternative_solutions:
             lines.append("  另类解法:")
             for alt in rubric.alternative_solutions:
                 lines.append(f"    - {alt.description} (最高{alt.max_score}分)")
                 lines.append(f"      条件: {alt.scoring_conditions}")
-        
+
         return "\n".join(lines)
 
     async def build_dynamic_rubric_context(
@@ -2812,31 +2882,30 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
     ) -> str:
         """
         为指定题目列表构建动态评分标准上下文
-        
+
         Args:
             question_ids: 题目编号列表
-            
+
         Returns:
             str: 格式化的评分标准上下文文本
         """
         if not self._rubric_registry:
             return ""
-        
+
         rubric_texts = []
         for qid in question_ids:
             rubric = await self.get_rubric_for_question(qid)
             if rubric:
                 rubric_texts.append(self._format_rubric_for_prompt(rubric))
-        
+
         if not rubric_texts:
             return ""
-        
+
         total_score = self._rubric_registry.total_score
         return f"评分标准（总分{total_score}分）：\n\n" + "\n\n".join(rubric_texts)
 
-
     # ==================== 得分点明细生成 (Requirement 1.2) ====================
-    
+
     def _create_scoring_point_results_from_response(
         self,
         response_data: Dict[str, Any],
@@ -2844,19 +2913,19 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
     ) -> List[ScoringPointResult]:
         """
         从 LLM 响应创建得分点明细列表 (Requirement 1.2)
-        
+
         为每个得分点记录得分情况，生成详细的得分点明细。
-        
+
         Args:
             response_data: LLM 响应数据
             rubric: 评分标准
-            
+
         Returns:
             List[ScoringPointResult]: 得分点明细列表
         """
         scoring_point_results = []
         response_points = response_data.get("scoring_point_results", [])
-        
+
         # 确保每个评分标准中的得分点都有对应的结果
         for i, sp in enumerate(rubric.scoring_points):
             # 查找对应的响应数据
@@ -2869,7 +2938,7 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
                 if rp.get("description", "").strip() == sp.description.strip():
                     matched_response = rp
                     break
-            
+
             if matched_response:
                 awarded = matched_response.get("awarded", 0)
                 evidence = matched_response.get("evidence", "")
@@ -2877,54 +2946,55 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
                 # 如果没有匹配的响应，标记为未评估
                 awarded = 0
                 evidence = "未评估"
-            
-            scoring_point_results.append(ScoringPointResult(
-                scoring_point=sp,
-                awarded=awarded,
-                evidence=evidence,
-            ))
-        
+
+            scoring_point_results.append(
+                ScoringPointResult(
+                    scoring_point=sp,
+                    awarded=awarded,
+                    evidence=evidence,
+                )
+            )
+
         return scoring_point_results
-    
+
     def generate_scoring_point_summary(
         self,
         scoring_point_results: List[ScoringPointResult],
     ) -> str:
         """
         生成得分点明细摘要 (Requirement 1.2)
-        
+
         Args:
             scoring_point_results: 得分点明细列表
-            
+
         Returns:
             str: 得分点明细摘要文本
         """
         if not scoring_point_results:
             return "无得分点明细"
-        
+
         lines = ["得分点明细:"]
         total_awarded = 0
         total_max = 0
-        
+
         for i, spr in enumerate(scoring_point_results, 1):
             sp = spr.scoring_point
             status = "✓" if spr.awarded >= sp.score else ("△" if spr.awarded > 0 else "✗")
             required_mark = "【必须】" if sp.is_required else "【可选】"
-            
+
             lines.append(
-                f"  {i}. {status} {required_mark} {sp.description}: "
-                f"{spr.awarded}/{sp.score}分"
+                f"  {i}. {status} {required_mark} {sp.description}: " f"{spr.awarded}/{sp.score}分"
             )
             if spr.evidence:
                 lines.append(f"      证据: {spr.evidence[:100]}...")
-            
+
             total_awarded += spr.awarded
             total_max += sp.score
-        
+
         lines.append(f"  总计: {total_awarded}/{total_max}分")
-        
+
         return "\n".join(lines)
-    
+
     async def grade_with_detailed_scoring_points(
         self,
         image: bytes,
@@ -2934,18 +3004,18 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
     ) -> QuestionResult:
         """
         使用详细得分点核对方式评分 (Requirement 1.2)
-        
+
         这是一个完整的评分流程：
         1. 视觉分析提取学生答案
         2. 动态获取评分标准
         3. 逐一核对每个得分点
         4. 生成详细的得分点明细
-        
+
         Args:
             image: 题目图像
             question_id: 题目编号
             page_index: 页码索引
-            
+
         Returns:
             QuestionResult: 包含详细得分点明细的评分结果
         """
@@ -2963,10 +3033,10 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
                 is_cross_page=False,
                 student_answer="",
             )
-        
+
         # 2. 视觉分析提取学生答案
-        img_b64 = base64.b64encode(image).decode('utf-8') if isinstance(image, bytes) else image
-        
+        img_b64 = base64.b64encode(image).decode("utf-8") if isinstance(image, bytes) else image
+
         extraction_prompt = f"""请分析这张学生答题图像，提取第{question_id}题的学生答案。
 
 任务：
@@ -2983,7 +3053,7 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
     "content_type": "计算/文字/图表/混合"
 }}
 ```"""
-        
+
         try:
             extraction_response = await self._call_vision_api(img_b64, extraction_prompt)
             extraction_json = self._extract_json_from_text(extraction_response)
@@ -2992,26 +3062,28 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
         except Exception as e:
             logger.warning(f"学生答案提取失败: {e}")
             student_answer = "无法提取学生答案"
-        
+
         # 3. 构建得分点核对提示词
-        prompt = self._build_scoring_point_prompt(rubric, student_answer, reviewer_notes=reviewer_notes)
-        
+        prompt = self._build_scoring_point_prompt(
+            rubric, student_answer, reviewer_notes=reviewer_notes
+        )
+
         # 4. 调用 LLM 进行得分点核对
         try:
             response_text = await self._call_vision_api(img_b64, prompt)
             json_text = self._extract_json_from_text(response_text)
             result_data = json.loads(json_text)
-            
+
             # 5. 创建得分点明细
             scoring_point_results = self._create_scoring_point_results_from_response(
                 result_data, rubric
             )
-            
+
             # 6. 生成反馈
             feedback = result_data.get("feedback", "")
             scoring_summary = self.generate_scoring_point_summary(scoring_point_results)
             full_feedback = f"{feedback}\n\n{scoring_summary}"
-            
+
             return QuestionResult(
                 question_id=question_id,
                 score=result_data.get("total_score", 0),
@@ -3023,7 +3095,7 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
                 is_cross_page=False,
                 student_answer=student_answer,
             )
-            
+
         except Exception as e:
             logger.error(f"详细得分点评分失败: {e}", exc_info=True)
             return QuestionResult(
@@ -3038,9 +3110,8 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
                 student_answer=student_answer,
             )
 
-
     # ==================== 另类解法支持 (Requirement 1.3) ====================
-    
+
     def _build_alternative_solution_prompt(
         self,
         rubric: QuestionRubric,
@@ -3048,17 +3119,17 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
     ) -> str:
         """
         构建另类解法检测提示词 (Requirement 1.3)
-        
+
         Args:
             rubric: 评分标准
             student_answer: 学生答案描述
-            
+
         Returns:
             str: 另类解法检测提示词
         """
         if not rubric.alternative_solutions:
             return ""
-        
+
         alt_solutions_text = ""
         for i, alt in enumerate(rubric.alternative_solutions, 1):
             alt_solutions_text += f"""
@@ -3067,7 +3138,7 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
 - 评分条件: {alt.scoring_conditions}
 - 最高分: {alt.max_score}分
 """
-        
+
         return f"""请判断学生是否使用了另类解法。
 
 ## 题目信息
@@ -3109,12 +3180,12 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
     ) -> Dict[str, Any]:
         """
         检测学生是否使用了另类解法 (Requirement 1.3)
-        
+
         Args:
             question_id: 题目编号
             student_answer: 学生答案描述
             image: 可选的题目图像
-            
+
         Returns:
             Dict: 另类解法检测结果
         """
@@ -3130,29 +3201,31 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
                 "condition_analysis": "无另类解法可检测",
                 "recommended_max_score": rubric.max_score if rubric else 0,
             }
-        
+
         # 构建检测提示词
         prompt = self._build_alternative_solution_prompt(rubric, student_answer)
-        
+
         try:
             if image:
-                img_b64 = base64.b64encode(image).decode('utf-8') if isinstance(image, bytes) else image
+                img_b64 = (
+                    base64.b64encode(image).decode("utf-8") if isinstance(image, bytes) else image
+                )
                 response_text = await self._call_vision_api(img_b64, prompt)
             else:
                 response = await self.llm.ainvoke([HumanMessage(content=prompt)])
                 response_text = self._extract_text_from_response(response.content)
-            
+
             json_text = self._extract_json_from_text(response_text)
             result = json.loads(json_text)
-            
+
             logger.info(
                 f"题目 {question_id} 另类解法检测: "
                 f"标准解法={result.get('uses_standard_solution')}, "
                 f"另类解法={result.get('uses_alternative_solution')}"
             )
-            
+
             return result
-            
+
         except Exception as e:
             logger.error(f"另类解法检测失败: {e}")
             return {
@@ -3173,19 +3246,19 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
     ) -> QuestionResult:
         """
         支持另类解法的完整评分流程 (Requirement 1.3)
-        
+
         这是一个增强的评分流程：
         1. 视觉分析提取学生答案
         2. 检测是否使用另类解法
         3. 根据解法类型选择评分标准
         4. 逐一核对得分点
         5. 生成详细的评分结果
-        
+
         Args:
             image: 题目图像
             question_id: 题目编号
             page_index: 页码索引
-            
+
         Returns:
             QuestionResult: 包含另类解法信息的评分结果
         """
@@ -3203,10 +3276,10 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
                 is_cross_page=False,
                 student_answer="",
             )
-        
+
         # 2. 视觉分析提取学生答案
-        img_b64 = base64.b64encode(image).decode('utf-8') if isinstance(image, bytes) else image
-        
+        img_b64 = base64.b64encode(image).decode("utf-8") if isinstance(image, bytes) else image
+
         extraction_prompt = f"""请分析这张学生答题图像，提取第{question_id}题的学生答案。
 
 任务：
@@ -3223,7 +3296,7 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
     "has_content": true
 }}
 ```"""
-        
+
         try:
             extraction_response = await self._call_vision_api(img_b64, extraction_prompt)
             extraction_json = self._extract_json_from_text(extraction_response)
@@ -3234,16 +3307,18 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
             logger.warning(f"学生答案提取失败: {e}")
             student_answer = "无法提取学生答案"
             solution_method = ""
-        
+
         # 3. 检测另类解法
         alt_detection = await self.detect_alternative_solution(
             question_id=question_id,
             student_answer=f"{student_answer}\n解题方法: {solution_method}",
             image=image,
         )
-        
+
         # 4. 根据解法类型构建评分提示词
-        if alt_detection.get("uses_alternative_solution") and alt_detection.get("meets_scoring_conditions"):
+        if alt_detection.get("uses_alternative_solution") and alt_detection.get(
+            "meets_scoring_conditions"
+        ):
             # 使用另类解法的评分标准
             alt_index = alt_detection.get("alternative_solution_index", 1) - 1
             if 0 <= alt_index < len(rubric.alternative_solutions):
@@ -3263,26 +3338,26 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
         else:
             scoring_context = ""
             effective_max_score = rubric.max_score
-        
+
         # 5. 构建完整的评分提示词
         prompt = self._build_scoring_point_prompt(rubric, student_answer)
         if scoring_context:
             prompt = prompt.replace("## 学生答案", f"{scoring_context}\n## 学生答案")
-        
+
         # 6. 调用 LLM 进行评分
         try:
             response_text = await self._call_vision_api(img_b64, prompt)
             json_text = self._extract_json_from_text(response_text)
             result_data = json.loads(json_text)
-            
+
             # 7. 创建得分点明细
             scoring_point_results = self._create_scoring_point_results_from_response(
                 result_data, rubric
             )
-            
+
             # 8. 生成反馈（包含另类解法信息）
             feedback_parts = [result_data.get("feedback", "")]
-            
+
             if alt_detection.get("uses_alternative_solution"):
                 if alt_detection.get("meets_scoring_conditions"):
                     feedback_parts.append(
@@ -3294,15 +3369,15 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
                         f"\n【另类解法】学生尝试使用另类解法，但未满足评分条件: "
                         f"{alt_detection.get('condition_analysis', '')}"
                     )
-            
+
             scoring_summary = self.generate_scoring_point_summary(scoring_point_results)
             feedback_parts.append(f"\n{scoring_summary}")
-            
+
             full_feedback = "\n".join(feedback_parts)
-            
+
             # 9. 确保分数不超过有效最高分
             final_score = min(result_data.get("total_score", 0), effective_max_score)
-            
+
             return QuestionResult(
                 question_id=question_id,
                 score=final_score,
@@ -3314,7 +3389,7 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
                 is_cross_page=False,
                 student_answer=student_answer,
             )
-            
+
         except Exception as e:
             logger.error(f"另类解法评分失败: {e}", exc_info=True)
             return QuestionResult(
@@ -3329,7 +3404,6 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
                 student_answer=student_answer,
             )
 
-
     # ==================== grade_student 方法 ====================
 
     async def grade_student(
@@ -3343,10 +3417,10 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
     ) -> Dict[str, Any]:
         """
         一次性批改整个学生的所有页面
-        
+
         将学生的所有答题页面作为一个整体发送给 LLM，获取完整的批改结果。
         这种方式可以更好地处理跨页题目，并减少 API 调用次数。
-        
+
         Args:
             images: 学生所有答题页面的图像字节列表
             student_key: 学生标识（如姓名、学号）
@@ -3354,7 +3428,7 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
             page_indices: 页面索引列表（可选）
             page_contexts: 页面索引上下文（可选）
             stream_callback: 流式回调函数 (stream_type, chunk) -> None
-            
+
         Returns:
             Dict: 包含学生完整批改结果
                 - status: "completed" | "failed"
@@ -3375,9 +3449,7 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
                 "question_details": [],
             }
 
-        logger.info(
-            f"[grade_student] 开始批改学生 {student_key}，共 {len(images)} 页"
-        )
+        logger.info(f"[grade_student] 开始批改学生 {student_key}，共 {len(images)} 页")
 
         # 构建评分标准上下文
         rubric_context = ""
@@ -3420,9 +3492,7 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
                 q_nums = ctx.get("question_numbers", [])
                 student_info = ctx.get("student_info")
                 is_first = ctx.get("is_first_page", False)
-                context_lines.append(
-                    f"  - 页面 {idx}: 题目={q_nums}, 首页={is_first}"
-                )
+                context_lines.append(f"  - 页面 {idx}: 题目={q_nums}, 首页={is_first}")
                 if student_info:
                     context_lines.append(
                         f"    学生: {student_info.get('name', '未知')}, "
@@ -3648,13 +3718,12 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
             content = [{"type": "text", "text": prompt}]
             for idx, img_bytes in enumerate(images):
                 if isinstance(img_bytes, bytes):
-                    img_b64 = base64.b64encode(img_bytes).decode('utf-8')
+                    img_b64 = base64.b64encode(img_bytes).decode("utf-8")
                 else:
                     img_b64 = img_bytes
-                content.append({
-                    "type": "image_url",
-                    "image_url": f"data:image/jpeg;base64,{img_b64}"
-                })
+                content.append(
+                    {"type": "image_url", "image_url": f"data:image/jpeg;base64,{img_b64}"}
+                )
 
             message = HumanMessage(content=content)
 
@@ -3742,8 +3811,7 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
             normalized_details = []
             for detail in result.get("question_details", []):
                 normalized = self._normalize_question_detail(
-                    detail,
-                    page_indices[0] if page_indices else 0
+                    detail, page_indices[0] if page_indices else 0
                 )
                 normalized_details.append(normalized)
             result["question_details"] = normalized_details

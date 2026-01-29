@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Wand2, Loader2, Check, ArrowRight, ScanLine, Crop, Sparkles } from 'lucide-react';
+import { X, Wand2, Loader2, Check, ScanLine, Crop, Sparkles } from 'lucide-react';
 import { ScannedImage } from './types';
 import { editImage, optimizeDocument } from './llmService';
 
@@ -26,8 +26,9 @@ export default function ImageEditor({ image, onClose, onSave }: ImageEditorProps
 
       const newImageUrl = await editImage(base64Data, prompt, mimeType);
       setResultUrl(newImageUrl);
-    } catch (err: any) {
-      setError(err.message || "Failed to edit image.");
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : "Failed to edit image.";
+      setError(errorMessage);
     } finally {
       setIsProcessing(false);
     }
@@ -43,8 +44,9 @@ export default function ImageEditor({ image, onClose, onSave }: ImageEditorProps
       const newImageUrl = await optimizeDocument(image.url);
       setResultUrl(newImageUrl);
       setPrompt("");
-    } catch (err: any) {
-      setError(err.message || "TextIn Optimization Failed.");
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : "TextIn Optimization Failed.";
+      setError(errorMessage);
       setPrompt("");
     } finally {
       setIsProcessing(false);

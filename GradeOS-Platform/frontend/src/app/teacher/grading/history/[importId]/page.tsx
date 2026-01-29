@@ -32,10 +32,10 @@ export default function GradingHistoryDetailPage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    let active = true;
     if (!importId) return;
-    setLoading(true);
+    let active = true;
     let resolvedBatchId = '';
+    setLoading(true);
     gradingApi
       .getGradingHistoryDetail(importId)
       .then((detail) => {

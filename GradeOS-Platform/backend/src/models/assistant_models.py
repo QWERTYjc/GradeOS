@@ -14,6 +14,7 @@ from enum import Enum
 
 class ErrorType(str, Enum):
     """错误类型"""
+
     CALCULATION = "calculation"
     LOGIC = "logic"
     CONCEPT = "concept"
@@ -22,6 +23,7 @@ class ErrorType(str, Enum):
 
 class Severity(str, Enum):
     """严重程度"""
+
     HIGH = "high"
     MEDIUM = "medium"
     LOW = "low"
@@ -29,6 +31,7 @@ class Severity(str, Enum):
 
 class SuggestionType(str, Enum):
     """建议类型"""
+
     CORRECTION = "correction"
     IMPROVEMENT = "improvement"
     ALTERNATIVE = "alternative"
@@ -36,6 +39,7 @@ class SuggestionType(str, Enum):
 
 class DifficultyLevel(str, Enum):
     """难度等级"""
+
     EASY = "easy"
     MEDIUM = "medium"
     HARD = "hard"
@@ -46,23 +50,21 @@ class DifficultyLevel(str, Enum):
 
 class KnowledgePoint(BaseModel):
     """知识点"""
+
     name: str = Field(..., description="知识点名称")
     category: str = Field(..., description="分类")
     confidence: float = Field(0.0, ge=0.0, le=1.0, description="置信度")
-    
+
     model_config = {
         "json_schema_extra": {
-            "example": {
-                "name": "极限的定义",
-                "category": "微积分",
-                "confidence": 0.95
-            }
+            "example": {"name": "极限的定义", "category": "微积分", "confidence": 0.95}
         }
     }
 
 
 class UnderstandingResult(BaseModel):
     """理解分析结果"""
+
     knowledge_points: List[KnowledgePoint] = Field(default_factory=list)
     question_types: List[str] = Field(default_factory=list)
     solution_approaches: List[str] = Field(default_factory=list)
@@ -76,6 +78,7 @@ class UnderstandingResult(BaseModel):
 
 class ErrorLocation(BaseModel):
     """错误位置"""
+
     page: int = Field(..., description="页码")
     region: Optional[str] = Field(None, description="区域描述")
     step_number: Optional[int] = Field(None, description="步骤号")
@@ -84,6 +87,7 @@ class ErrorLocation(BaseModel):
 
 class ErrorRecord(BaseModel):
     """错误记录"""
+
     error_id: str
     error_type: ErrorType
     description: str
@@ -92,7 +96,7 @@ class ErrorRecord(BaseModel):
     affected_steps: List[str] = Field(default_factory=list)
     correct_approach: Optional[str] = None
     context: Optional[str] = None
-    
+
     model_config = {
         "json_schema_extra": {
             "example": {
@@ -102,7 +106,7 @@ class ErrorRecord(BaseModel):
                 "severity": "high",
                 "location": {"page": 0, "region": "middle", "step_number": 3},
                 "affected_steps": ["步骤3", "步骤4"],
-                "correct_approach": "应用求导法则时，分母应该是 (x-1)²"
+                "correct_approach": "应用求导法则时，分母应该是 (x-1)²",
             }
         }
     }
@@ -113,6 +117,7 @@ class ErrorRecord(BaseModel):
 
 class Suggestion(BaseModel):
     """改进建议"""
+
     suggestion_id: str
     related_error_id: Optional[str] = None
     suggestion_type: SuggestionType
@@ -128,6 +133,7 @@ class Suggestion(BaseModel):
 
 class LearningRecommendation(BaseModel):
     """学习建议"""
+
     category: str = Field(..., description="建议类别")
     description: str = Field(..., description="建议描述")
     action_items: List[str] = Field(default_factory=list, description="行动项")
@@ -135,6 +141,7 @@ class LearningRecommendation(BaseModel):
 
 class DeepAnalysisResult(BaseModel):
     """深度分析结果"""
+
     understanding_score: float = Field(..., ge=0.0, le=100.0)
     understanding_score_reasoning: str
     logic_coherence: float = Field(..., ge=0.0, le=100.0)
@@ -154,6 +161,7 @@ class DeepAnalysisResult(BaseModel):
 
 class ReportMetadata(BaseModel):
     """报告元数据"""
+
     analysis_id: str
     submission_id: Optional[str] = None
     student_id: Optional[str] = None
@@ -165,6 +173,7 @@ class ReportMetadata(BaseModel):
 
 class ReportSummary(BaseModel):
     """报告摘要"""
+
     overall_score: float
     total_errors: int
     high_severity_errors: int
@@ -175,6 +184,7 @@ class ReportSummary(BaseModel):
 
 class ActionPlan(BaseModel):
     """行动计划"""
+
     immediate_actions: List[str] = Field(default_factory=list)
     short_term_goals: List[str] = Field(default_factory=list)
     long_term_goals: List[str] = Field(default_factory=list)
@@ -182,6 +192,7 @@ class ActionPlan(BaseModel):
 
 class AnalysisReport(BaseModel):
     """分析报告"""
+
     metadata: ReportMetadata
     summary: ReportSummary
     understanding: UnderstandingResult
@@ -190,7 +201,7 @@ class AnalysisReport(BaseModel):
     deep_analysis: DeepAnalysisResult
     action_plan: Optional[ActionPlan] = None
     visualizations: Optional[Dict[str, str]] = None
-    
+
     model_config = {
         "json_schema_extra": {
             "example": {
@@ -199,7 +210,7 @@ class AnalysisReport(BaseModel):
                     "student_id": "stu_67890",
                     "subject": "mathematics",
                     "created_at": "2026-01-28T10:00:00Z",
-                    "version": "1.0"
+                    "version": "1.0",
                 },
                 "summary": {
                     "overall_score": 75.0,
@@ -207,8 +218,8 @@ class AnalysisReport(BaseModel):
                     "high_severity_errors": 1,
                     "total_suggestions": 5,
                     "estimated_completion_time_minutes": 20,
-                    "actual_difficulty": "medium"
-                }
+                    "actual_difficulty": "medium",
+                },
             }
         }
     }
@@ -219,13 +230,14 @@ class AnalysisReport(BaseModel):
 
 class AnalyzeRequest(BaseModel):
     """分析请求"""
+
     images: List[str] = Field(..., description="作业图片 Base64 列表")
     submission_id: Optional[str] = Field(None, description="关联提交 ID")
     student_id: Optional[str] = Field(None, description="学生 ID")
     subject: Optional[str] = Field(None, description="科目")
     context_info: Optional[Dict[str, Any]] = Field(None, description="上下文信息")
-    
-    @field_validator('images')
+
+    @field_validator("images")
     @classmethod
     def validate_images(cls, v: List[str]) -> List[str]:
         if not v:
@@ -237,6 +249,7 @@ class AnalyzeRequest(BaseModel):
 
 class AnalyzeResponse(BaseModel):
     """分析响应"""
+
     analysis_id: str
     status: str
     message: str
@@ -245,6 +258,7 @@ class AnalyzeResponse(BaseModel):
 
 class ReportResponse(BaseModel):
     """报告响应"""
+
     analysis_id: str
     status: str
     report: Optional[AnalysisReport] = None
@@ -254,9 +268,10 @@ class ReportResponse(BaseModel):
 
 class BatchAnalyzeRequest(BaseModel):
     """批量分析请求"""
+
     analyses: List[AnalyzeRequest] = Field(..., description="分析任务列表")
-    
-    @field_validator('analyses')
+
+    @field_validator("analyses")
     @classmethod
     def validate_analyses(cls, v: List[AnalyzeRequest]) -> List[AnalyzeRequest]:
         if not v:
@@ -268,6 +283,7 @@ class BatchAnalyzeRequest(BaseModel):
 
 class BatchAnalyzeResponse(BaseModel):
     """批量分析响应"""
+
     batch_id: str
     total_count: int
     analysis_ids: List[str]

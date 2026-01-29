@@ -30,8 +30,6 @@ interface ClassStats {
   score_distribution: Record<string, number>;
 }
 
-const COLORS = ['#22c55e', '#3b82f6', '#f59e0b', '#ef4444', '#6b7280'];
-
 export default function TeacherStatisticsPage() {
   const [stats, setStats] = useState<ClassStats | null>(null);
   const [loading, setLoading] = useState(true);
@@ -63,6 +61,7 @@ export default function TeacherStatisticsPage() {
   useEffect(() => {
     if (!selectedClass) return;
     let active = true;
+    
     setLoading(true);
     statisticsApi.getClassStatistics(selectedClass)
       .then((data) => {

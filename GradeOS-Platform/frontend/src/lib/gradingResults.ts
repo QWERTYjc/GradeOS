@@ -1,27 +1,30 @@
 import { StudentResult, SelfAudit } from '@/store/consoleStore';
 
-type RawObject = Record<string, any>;
+type RawObject = Record<string, unknown>;
 
-const normalizeSelfAudit = (audit: any): SelfAudit | undefined => {
+const normalizeSelfAudit = (audit: unknown): SelfAudit | undefined => {
   if (!audit || typeof audit !== 'object') return undefined;
-  const rawIssues = audit.issues || [];
+  const auditObj = audit as RawObject;
+  const rawIssues = auditObj.issues || [];
   const issues = Array.isArray(rawIssues)
-    ? rawIssues.map((issue: any) => ({
-      issueType: issue.issueType || issue.issue_type,
-      message: issue.message,
-      questionId: issue.questionId || issue.question_id,
-    }))
+    ? rawIssues.map((issue: unknown) => {
+      const issueObj = issue as RawObject;
+      return {
+      issueType: (issueObj.issueType || issueObj.issue_type) as string,
+      message: issueObj.message as string,
+      questionId: (issueObj.questionId || issueObj.question_id) as string,
+    };})
     : [];
 
   return {
-    summary: audit.summary,
-    confidence: audit.confidence,
+    summary: auditObj.summary as string,
+    confidence: auditObj.confidence as number,
     issues,
-    complianceAnalysis: audit.complianceAnalysis || audit.compliance_analysis || [],
-    uncertaintiesAndConflicts: audit.uncertaintiesAndConflicts || audit.uncertainties_and_conflicts || [],
-    overallComplianceGrade: audit.overallComplianceGrade ?? audit.overall_compliance_grade,
-    honestyNote: audit.honestyNote || audit.honesty_note,
-    generatedAt: audit.generatedAt || audit.generated_at,
+    complianceAnalysis: (auditObj.complianceAnalysis || auditObj.compliance_analysis || []) as string[],
+    uncertaintiesAndConflicts: (auditObj.uncertaintiesAndConflicts || auditObj.uncertainties_and_conflicts || []) as string[],
+    overallComplianceGrade: (auditObj.overallComplianceGrade ?? auditObj.overall_compliance_grade) as string,
+    honestyNote: (auditObj.honestyNote || auditObj.honesty_note) as string,
+    generatedAt: (auditObj.generatedAt || auditObj.generated_at) as string,
   };
 };
 

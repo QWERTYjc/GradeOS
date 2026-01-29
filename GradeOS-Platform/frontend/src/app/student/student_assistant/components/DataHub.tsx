@@ -173,7 +173,7 @@ const DataHub: React.FC<Props> = ({ lang }) => {
                   </div>
                   <h4 className="font-bold text-black mb-1">{m.topic}</h4>
                   <div className="bg-gray-50 rounded-lg p-3 mb-2 border border-gray-100">
-                    <p className="text-xs text-gray-600 italic">"{m.description}"</p>
+                    <p className="text-xs text-gray-600 italic">&ldquo;{m.description}&rdquo;</p>
                   </div>
                   {m.correction && (
                     <div className="flex gap-2 items-start">

@@ -31,8 +31,10 @@ router = APIRouter(prefix="/memory", tags=["memory"])
 
 # ==================== 请求/响应模型 ====================
 
+
 class MemoryStatsResponse(BaseModel):
     """记忆统计响应"""
+
     total_count: int = Field(..., description="总记忆数")
     by_status: dict = Field(..., description="按验证状态统计")
     by_subject: dict = Field(..., description="按科目统计")
@@ -42,6 +44,7 @@ class MemoryStatsResponse(BaseModel):
 
 class MemoryEntryResponse(BaseModel):
     """记忆条目响应"""
+
     memory_id: str
     memory_type: str
     importance: str
@@ -62,6 +65,7 @@ class MemoryEntryResponse(BaseModel):
 
 class MemoryListResponse(BaseModel):
     """记忆列表响应"""
+
     total: int
     items: List[MemoryEntryResponse]
     page: int
@@ -70,6 +74,7 @@ class MemoryListResponse(BaseModel):
 
 class VerifyMemoryRequest(BaseModel):
     """验证记忆请求"""
+
     action: str = Field(..., description="操作类型: verify, reject, promote_to_core")
     reason: str = Field("", description="操作原因")
     verified_by: str = Field("api_user", description="操作者标识")
@@ -77,18 +82,21 @@ class VerifyMemoryRequest(BaseModel):
 
 class DeleteMemoryRequest(BaseModel):
     """删除记忆请求"""
+
     reason: str = Field(..., description="删除原因")
     deleted_by: str = Field("api_user", description="删除者标识")
 
 
 class RollbackMemoryRequest(BaseModel):
     """回滚记忆请求"""
+
     reason: str = Field("", description="回滚原因")
     rollback_by: str = Field("api_user", description="回滚者标识")
 
 
 class OperationResponse(BaseModel):
     """操作响应"""
+
     success: bool
     message: str
     memory_id: str
@@ -96,11 +104,12 @@ class OperationResponse(BaseModel):
 
 # ==================== API 端点 ====================
 
+
 @router.get("/stats", response_model=MemoryStatsResponse)
 async def get_memory_stats():
     """
     获取记忆统计信息
-    
+
     返回记忆系统的整体统计，包括：
     - 总记忆数
     - 按验证状态分布
@@ -111,7 +120,7 @@ async def get_memory_stats():
     try:
         memory_service = get_memory_service()
         stats = memory_service.get_stats()
-        
+
         # 计算平均置信度
         total_confidence = 0.0
         count = 0
@@ -119,9 +128,9 @@ async def get_memory_stats():
             if not entry.is_soft_deleted:
                 total_confidence += entry.confidence
                 count += 1
-        
+
         avg_confidence = total_confidence / count if count > 0 else 0.0
-        
+
         return MemoryStatsResponse(
             total_count=stats.get("total_memories", 0),
             by_status=stats.get("memory_by_verification_status", {}),
@@ -145,23 +154,20 @@ async def list_memories(
 ):
     """
     查询记忆列表
-    
+
     支持按科目、验证状态、记忆类型过滤。
     """
     try:
         memory_service = get_memory_service()
-        
+
         # 构建过滤条件
         memory_types = None
         if memory_type:
             try:
                 memory_types = [MemoryType(memory_type)]
             except ValueError:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"无效的记忆类型: {memory_type}"
-                )
-        
+                raise HTTPException(status_code=400, detail=f"无效的记忆类型: {memory_type}")
+
         # 检索记忆
         memories = memory_service.retrieve_relevant_memories(
             memory_types=memory_types,
@@ -169,24 +175,21 @@ async def list_memories(
             include_deleted=include_deleted,
             max_results=1000,  # 获取所有，然后在内存中过滤
         )
-        
+
         # 按验证状态过滤
         if status:
             try:
                 target_status = MemoryVerificationStatus(status)
                 memories = [m for m in memories if m.verification_status == target_status]
             except ValueError:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"无效的验证状态: {status}"
-                )
-        
+                raise HTTPException(status_code=400, detail=f"无效的验证状态: {status}")
+
         # 分页
         total = len(memories)
         start = (page - 1) * page_size
         end = start + page_size
         page_memories = memories[start:end]
-        
+
         # 转换为响应格式
         items = [
             MemoryEntryResponse(
@@ -209,7 +212,7 @@ async def list_memories(
             )
             for m in page_memories
         ]
-        
+
         return MemoryListResponse(
             total=total,
             items=items,
@@ -231,10 +234,10 @@ async def get_memory(memory_id: str):
     try:
         memory_service = get_memory_service()
         entry = memory_service.get_memory_by_id(memory_id)
-        
+
         if not entry:
             raise HTTPException(status_code=404, detail=f"记忆 {memory_id} 不存在")
-        
+
         return MemoryEntryResponse(
             memory_id=entry.memory_id,
             memory_type=entry.memory_type.value,
@@ -264,7 +267,7 @@ async def get_memory(memory_id: str):
 async def verify_memory(memory_id: str, request: VerifyMemoryRequest):
     """
     验证记忆
-    
+
     支持的操作：
     - verify: 从 PENDING 转为 VERIFIED
     - reject: 标记为 SUSPICIOUS
@@ -272,7 +275,7 @@ async def verify_memory(memory_id: str, request: VerifyMemoryRequest):
     """
     try:
         memory_service = get_memory_service()
-        
+
         if request.action == "verify":
             success = memory_service.verify_memory(
                 memory_id=memory_id,
@@ -295,14 +298,11 @@ async def verify_memory(memory_id: str, request: VerifyMemoryRequest):
             )
             message = "记忆已提升为核心" if success else "提升失败"
         else:
-            raise HTTPException(
-                status_code=400,
-                detail=f"无效的操作类型: {request.action}"
-            )
-        
+            raise HTTPException(status_code=400, detail=f"无效的操作类型: {request.action}")
+
         if not success:
             raise HTTPException(status_code=400, detail=message)
-        
+
         return OperationResponse(
             success=success,
             message=message,
@@ -319,21 +319,21 @@ async def verify_memory(memory_id: str, request: VerifyMemoryRequest):
 async def delete_memory(memory_id: str, request: DeleteMemoryRequest):
     """
     软删除记忆
-    
+
     软删除不会真正删除记忆，可以通过 rollback 恢复。
     """
     try:
         memory_service = get_memory_service()
-        
+
         success = memory_service.soft_delete_memory(
             memory_id=memory_id,
             deleted_by=request.deleted_by,
             reason=request.reason,
         )
-        
+
         if not success:
             raise HTTPException(status_code=400, detail="删除失败")
-        
+
         return OperationResponse(
             success=success,
             message="记忆已软删除",
@@ -350,21 +350,21 @@ async def delete_memory(memory_id: str, request: DeleteMemoryRequest):
 async def rollback_memory(memory_id: str, request: RollbackMemoryRequest):
     """
     回滚记忆
-    
+
     将已软删除的记忆恢复到删除前的状态。
     """
     try:
         memory_service = get_memory_service()
-        
+
         success = memory_service.rollback_memory(
             memory_id=memory_id,
             rollback_by=request.rollback_by,
             reason=request.reason,
         )
-        
+
         if not success:
             raise HTTPException(status_code=400, detail="回滚失败")
-        
+
         return OperationResponse(
             success=success,
             message="记忆已回滚",

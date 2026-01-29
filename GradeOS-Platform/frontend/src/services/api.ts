@@ -448,7 +448,7 @@ export interface ConfirmBoundaryRequest {
 export interface RubricReviewRequest {
   batch_id: string;
   action: string;
-  parsed_rubric?: Record<string, any>;
+  parsed_rubric?: Record<string, unknown>;
   selected_question_ids?: string[];
   notes?: string;
 }
@@ -456,8 +456,8 @@ export interface RubricReviewRequest {
 export interface ResultsReviewRequest {
   batch_id: string;
   action: string;
-  results?: Array<Record<string, any>>;
-  regrade_items?: Array<Record<string, any>>;
+  results?: Array<Record<string, unknown>>;
+  regrade_items?: Array<Record<string, unknown>>;
   notes?: string;
 }
 
@@ -496,7 +496,7 @@ export interface GradingImportItem {
   status: string;
   created_at: string;
   revoked_at?: string;
-  result?: Record<string, any>;
+  result?: Record<string, unknown>;
 }
 
 export interface GradingHistoryResponse {
@@ -512,7 +512,7 @@ export interface RubricReviewContext {
   batch_id: string;
   status?: string;
   current_stage?: string;
-  parsed_rubric?: Record<string, any>;
+  parsed_rubric?: Record<string, unknown>;
   rubric_images: string[];
 }
 
@@ -520,7 +520,7 @@ export interface ResultsReviewContext {
   batch_id: string;
   status?: string;
   current_stage?: string;
-  student_results: Array<Record<string, any>>;
+  student_results: Array<Record<string, unknown>>;
   answer_images: string[];
 }
 

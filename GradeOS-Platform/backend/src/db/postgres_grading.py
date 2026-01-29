@@ -1,7 +1,5 @@
 """PostgreSQL grading history storage."""
 
-
-
 import uuid
 import json
 import logging
@@ -18,6 +16,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class GradingHistory:
     """批改历史"""
+
     id: str
     batch_id: str
     status: str = "pending"  # pending, completed, imported, revoked
@@ -32,6 +31,7 @@ class GradingHistory:
 @dataclass
 class StudentGradingResult:
     """学生批改结果"""
+
     id: str
     grading_history_id: str
     student_key: str
@@ -50,7 +50,7 @@ async def save_grading_history(history: GradingHistory) -> None:
     """保存批改历史到 PostgreSQL"""
     if not history.created_at:
         history.created_at = datetime.now().isoformat()
-    
+
     try:
         async with db.connection() as conn:
             await conn.execute(
@@ -77,7 +77,7 @@ async def save_grading_history(history: GradingHistory) -> None:
                     history.total_students,
                     history.average_score,
                     json.dumps(history.result_data) if history.result_data else None,
-                )
+                ),
             )
             await conn.commit()
         logger.info(f"批改历史已保存到 PostgreSQL: batch_id={history.batch_id}")
@@ -92,35 +92,33 @@ async def get_grading_history(batch_id_or_id: str) -> Optional[GradingHistory]:
         async with db.connection() as conn:
             # 先尝试通过 batch_id 查询
             cursor = await conn.execute(
-                "SELECT * FROM grading_history WHERE batch_id = %s",
-                (batch_id_or_id,)
+                "SELECT * FROM grading_history WHERE batch_id = %s", (batch_id_or_id,)
             )
             row = await cursor.fetchone()
-            
+
             # 如果没找到，尝试通过 id 查询
             if not row:
                 cursor = await conn.execute(
-                    "SELECT * FROM grading_history WHERE id::text = %s",
-                    (batch_id_or_id,)
+                    "SELECT * FROM grading_history WHERE id::text = %s", (batch_id_or_id,)
                 )
                 row = await cursor.fetchone()
-            
+
             if not row:
                 return None
-            
+
             # JSONB 字段可能已经是 dict，也可能是 str（取决于驱动）
             raw_class_ids = row["class_ids"]
             if isinstance(raw_class_ids, str):
                 class_ids = json.loads(raw_class_ids) if raw_class_ids else None
             else:
                 class_ids = raw_class_ids
-            
+
             raw_result_data = row["result_data"]
             if isinstance(raw_result_data, str):
                 result_data = json.loads(raw_result_data) if raw_result_data else None
             else:
                 result_data = raw_result_data
-            
+
             return GradingHistory(
                 id=str(row["id"]),
                 batch_id=row["batch_id"],
@@ -130,14 +128,16 @@ async def get_grading_history(batch_id_or_id: str) -> Optional[GradingHistory]:
                 completed_at=row["completed_at"].isoformat() if row["completed_at"] else None,
                 total_students=row["total_students"] or 0,
                 average_score=float(row["average_score"]) if row["average_score"] else None,
-                result_data=result_data
+                result_data=result_data,
             )
     except Exception as e:
         logger.error(f"从 PostgreSQL 获取批改历史失败: {e}")
         return None
 
 
-async def list_grading_history(class_id: Optional[str] = None, limit: int = 50) -> List[GradingHistory]:
+async def list_grading_history(
+    class_id: Optional[str] = None, limit: int = 50
+) -> List[GradingHistory]:
     """列出批改历史"""
     try:
         async with db.connection() as conn:
@@ -150,16 +150,15 @@ async def list_grading_history(class_id: Optional[str] = None, limit: int = 50) 
                     ORDER BY created_at DESC 
                     LIMIT %s
                     """,
-                    (json.dumps([class_id]), limit)
+                    (json.dumps([class_id]), limit),
                 )
             else:
                 cursor = await conn.execute(
-                    "SELECT * FROM grading_history ORDER BY created_at DESC LIMIT %s",
-                    (limit,)
+                    "SELECT * FROM grading_history ORDER BY created_at DESC LIMIT %s", (limit,)
                 )
-            
+
             rows = await cursor.fetchall()
-            
+
             histories = []
             for row in rows:
                 # JSONB 字段可能已经是 dict，也可能是 str（取决于驱动）
@@ -168,25 +167,29 @@ async def list_grading_history(class_id: Optional[str] = None, limit: int = 50) 
                     class_ids = json.loads(raw_class_ids) if raw_class_ids else None
                 else:
                     class_ids = raw_class_ids  # 已经是 list/dict
-                
+
                 raw_result_data = row["result_data"]
                 if isinstance(raw_result_data, str):
                     result_data = json.loads(raw_result_data) if raw_result_data else None
                 else:
                     result_data = raw_result_data  # 已经是 dict
-                
-                histories.append(GradingHistory(
-                    id=str(row["id"]),
-                    batch_id=row["batch_id"],
-                    status=row["status"],
-                    class_ids=class_ids,
-                    created_at=row["created_at"].isoformat() if row["created_at"] else "",
-                    completed_at=row["completed_at"].isoformat() if row["completed_at"] else None,
-                    total_students=row["total_students"] or 0,
-                    average_score=float(row["average_score"]) if row["average_score"] else None,
-                    result_data=result_data
-                ))
-            
+
+                histories.append(
+                    GradingHistory(
+                        id=str(row["id"]),
+                        batch_id=row["batch_id"],
+                        status=row["status"],
+                        class_ids=class_ids,
+                        created_at=row["created_at"].isoformat() if row["created_at"] else "",
+                        completed_at=(
+                            row["completed_at"].isoformat() if row["completed_at"] else None
+                        ),
+                        total_students=row["total_students"] or 0,
+                        average_score=float(row["average_score"]) if row["average_score"] else None,
+                        result_data=result_data,
+                    )
+                )
+
             return histories
     except Exception as e:
         logger.error(f"列出批改历史失败: {e}")
@@ -226,7 +229,7 @@ async def save_student_result(result: StudentGradingResult) -> None:
                     json.dumps(result.result_data) if result.result_data else None,
                     result.imported_at,
                     result.revoked_at,
-                )
+                ),
             )
             await conn.commit()
         logger.debug(f"学生结果已保存: student_key={result.student_key}")
@@ -241,10 +244,10 @@ async def get_student_results(grading_history_id: str) -> List[StudentGradingRes
         async with db.connection() as conn:
             cursor = await conn.execute(
                 "SELECT * FROM student_grading_results WHERE grading_history_id = %s",
-                (grading_history_id,)
+                (grading_history_id,),
             )
             rows = await cursor.fetchall()
-            
+
             results = []
             for row in rows:
                 # JSONB 字段可能已经是 dict，也可能是 str（取决于驱动）
@@ -253,22 +256,24 @@ async def get_student_results(grading_history_id: str) -> List[StudentGradingRes
                     result_data = json.loads(raw_result_data) if raw_result_data else None
                 else:
                     result_data = raw_result_data
-                
-                results.append(StudentGradingResult(
-                    id=str(row["id"]),
-                    grading_history_id=str(row["grading_history_id"]),
-                    student_key=row["student_key"],
-                    class_id=row["class_id"],
-                    student_id=row["student_id"],
-                    score=float(row["score"]) if row["score"] else None,
-                    max_score=float(row["max_score"]) if row["max_score"] else None,
-                    summary=row["summary"],
-                    self_report=row["self_report"],
-                    result_data=result_data,
-                    imported_at=row["imported_at"].isoformat() if row["imported_at"] else None,
-                    revoked_at=row["revoked_at"].isoformat() if row["revoked_at"] else None,
-                ))
-            
+
+                results.append(
+                    StudentGradingResult(
+                        id=str(row["id"]),
+                        grading_history_id=str(row["grading_history_id"]),
+                        student_key=row["student_key"],
+                        class_id=row["class_id"],
+                        student_id=row["student_id"],
+                        score=float(row["score"]) if row["score"] else None,
+                        max_score=float(row["max_score"]) if row["max_score"] else None,
+                        summary=row["summary"],
+                        self_report=row["self_report"],
+                        result_data=result_data,
+                        imported_at=row["imported_at"].isoformat() if row["imported_at"] else None,
+                        revoked_at=row["revoked_at"].isoformat() if row["revoked_at"] else None,
+                    )
+                )
+
             return results
     except Exception as e:
         logger.error(f"获取学生结果失败: {e}")

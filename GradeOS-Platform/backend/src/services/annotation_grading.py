@@ -28,11 +28,15 @@ from src.models.annotation import (
     PageAnnotations,
     GradingAnnotationResult,
 )
-from src.models.grading_models import QuestionRubric, QuestionResult, ScoringPointResult, ScoringPoint
+from src.models.grading_models import (
+    QuestionRubric,
+    QuestionResult,
+    ScoringPointResult,
+    ScoringPoint,
+)
 
 
 logger = logging.getLogger(__name__)
-
 
 
 # 批注批改提示词模板
@@ -241,6 +245,7 @@ ANNOTATION_GRADING_PROMPT = """你是一位专业的阅卷老师，请对学生�
 @dataclass
 class AnnotationGradingConfig:
     """批注批改配置"""
+
     model_name: Optional[str] = None
     temperature: float = 0.1
     enable_thinking: bool = True
@@ -251,10 +256,10 @@ class AnnotationGradingConfig:
 class AnnotationGradingService:
     """
     批注批改服务
-    
+
     让 AI 批改时输出带坐标的批注信息
     """
-    
+
     def __init__(
         self,
         api_key: Optional[str] = None,
@@ -262,7 +267,7 @@ class AnnotationGradingService:
     ):
         self.config = config or AnnotationGradingConfig()
         model_name = self.config.model_name or get_default_model()
-        
+
         self.llm = get_chat_model(
             api_key=api_key,
             model_name=model_name,
@@ -271,7 +276,7 @@ class AnnotationGradingService:
             enable_thinking=self.config.enable_thinking,
             streaming=True,
         )
-    
+
     def _format_rubric_context(
         self,
         rubrics: List[QuestionRubric],
@@ -284,19 +289,21 @@ class AnnotationGradingService:
                 lines.append(f"题目：{rubric.question_text}")
             if rubric.standard_answer:
                 lines.append(f"标准答案：{rubric.standard_answer}")
-            
+
             if rubric.scoring_points:
                 lines.append("得分点：")
                 for sp in rubric.scoring_points:
-                    point_id = sp.point_id or f"{rubric.question_id}.{rubric.scoring_points.index(sp)+1}"
+                    point_id = (
+                        sp.point_id or f"{rubric.question_id}.{rubric.scoring_points.index(sp)+1}"
+                    )
                     lines.append(f"  - [{point_id}] ({sp.score}分) {sp.description}")
-            
+
             if rubric.grading_notes:
                 lines.append(f"批改注意：{rubric.grading_notes}")
             lines.append("")
-        
+
         return "\n".join(lines)
-    
+
     def _extract_json_from_response(self, text: str) -> str:
         """从响应中提取 JSON"""
         # 尝试提取 ```json ... ``` 块
@@ -305,22 +312,22 @@ class AnnotationGradingService:
             end = text.find("```", start)
             if end > start:
                 return text[start:end].strip()
-        
+
         # 尝试提取 ``` ... ``` 块
         if "```" in text:
             start = text.find("```") + 3
             end = text.find("```", start)
             if end > start:
                 return text[start:end].strip()
-        
+
         # 尝试找到 JSON 对象
         start = text.find("{")
         end = text.rfind("}") + 1
         if start >= 0 and end > start:
             return text[start:end]
-        
+
         return text
-    
+
     def _parse_grading_response(
         self,
         response_text: str,
@@ -328,33 +335,33 @@ class AnnotationGradingService:
     ) -> PageAnnotations:
         """解析批改响应"""
         json_text = self._extract_json_from_response(response_text)
-        
+
         try:
             data = json.loads(json_text)
         except json.JSONDecodeError as e:
             logger.error(f"JSON 解析失败: {e}")
             # 尝试修复常见错误
-            json_text = re.sub(r',\s*}', '}', json_text)
-            json_text = re.sub(r',\s*]', ']', json_text)
+            json_text = re.sub(r",\s*}", "}", json_text)
+            json_text = re.sub(r",\s*]", "]", json_text)
             data = json.loads(json_text)
-        
+
         # 构建 PageAnnotations
         page_annotations = PageAnnotations(
             page_index=page_index,
             total_score=float(data.get("total_score") or 0),
             max_score=float(data.get("max_score") or 0),
         )
-        
+
         # 解析每道题的批注
         for q_data in data.get("questions") or []:
             question_id = str(q_data.get("question_id") or "")
-            
+
             # 解析题目级别的批注
             for ann_data in q_data.get("annotations") or []:
                 annotation = self._parse_annotation(ann_data, question_id)
                 if annotation:
                     page_annotations.annotations.append(annotation)
-            
+
             # 解析得分点级别的错误区域
             for sp_data in q_data.get("scoring_details") or []:
                 if not sp_data.get("is_correct") and sp_data.get("error_region"):
@@ -367,9 +374,9 @@ class AnnotationGradingService:
                         scoring_point_id=sp_data.get("point_id") or "",
                     )
                     page_annotations.annotations.append(error_ann)
-        
+
         return page_annotations
-    
+
     def _parse_annotation(
         self,
         data: Dict[str, Any],
@@ -382,11 +389,11 @@ class AnnotationGradingService:
                 ann_type = AnnotationType(ann_type_str)
             except ValueError:
                 ann_type = AnnotationType.COMMENT
-            
+
             bbox_data = data.get("bounding_box") or data.get("boundingBox") or {}
             if not bbox_data:
                 return None
-            
+
             return VisualAnnotation(
                 annotation_type=ann_type,
                 bounding_box=BoundingBox.from_dict(bbox_data),
@@ -397,7 +404,7 @@ class AnnotationGradingService:
         except Exception as e:
             logger.warning(f"解析批注失败: {e}")
             return None
-    
+
     async def grade_page_with_annotations(
         self,
         image_data: bytes,
@@ -407,38 +414,35 @@ class AnnotationGradingService:
     ) -> PageAnnotations:
         """
         批改单页并输出带坐标的批注
-        
+
         Args:
             image_data: 页面图像数据 (bytes)
             rubrics: 该页涉及的评分标准列表
             page_index: 页码
             stream_callback: 流式回调函数
-            
+
         Returns:
             PageAnnotations: 包含所有批注的结果
         """
         # 编码图像
-        image_b64 = base64.b64encode(image_data).decode('utf-8')
-        
+        image_b64 = base64.b64encode(image_data).decode("utf-8")
+
         # 构建提示词
         rubric_context = self._format_rubric_context(rubrics)
         prompt = ANNOTATION_GRADING_PROMPT.format(rubric_context=rubric_context)
-        
+
         # 构建消息
         message = HumanMessage(
             content=[
                 {"type": "text", "text": prompt},
-                {
-                    "type": "image_url",
-                    "image_url": f"data:image/png;base64,{image_b64}"
-                }
+                {"type": "image_url", "image_url": f"data:image/png;base64,{image_b64}"},
             ]
         )
-        
+
         # 调用 LLM（流式）
         full_response = ""
         retry_count = 0
-        
+
         while retry_count < self.config.max_retries:
             try:
                 async for chunk in self.llm.astream([message]):
@@ -465,12 +469,13 @@ class AnnotationGradingService:
                 if retry_count >= self.config.max_retries:
                     raise
                 import asyncio
+
                 await asyncio.sleep(self.config.retry_delay * retry_count)
                 full_response = ""
-        
+
         # 解析响应
         return self._parse_grading_response(full_response, page_index)
-    
+
     async def grade_submission_with_annotations(
         self,
         pages: List[bytes],
@@ -480,32 +485,32 @@ class AnnotationGradingService:
     ) -> GradingAnnotationResult:
         """
         批改整份提交并输出带坐标的批注
-        
+
         Args:
             pages: 所有页面的图像数据列表
             rubrics: 评分标准列表
             submission_id: 提交 ID
             stream_callback: 流式回调函数
-            
+
         Returns:
             GradingAnnotationResult: 完整的批改批注结果
         """
         result = GradingAnnotationResult(submission_id=submission_id)
-        
+
         for page_index, page_data in enumerate(pages):
             logger.info(f"批改第 {page_index + 1}/{len(pages)} 页")
-            
+
             page_annotations = await self.grade_page_with_annotations(
                 image_data=page_data,
                 rubrics=rubrics,
                 page_index=page_index,
                 stream_callback=stream_callback,
             )
-            
+
             result.pages.append(page_annotations)
             result.total_score += page_annotations.total_score
             result.max_total_score += page_annotations.max_score
-        
+
         return result
 
 
@@ -518,36 +523,36 @@ def update_annotations_after_review(
 ) -> List[Dict[str, Any]]:
     """
     复核后增量修正批注
-    
+
     当教师复核修改分数后，只更新分数相关的批注，保留其他批注不变。
     这是一种低成本的增量修正方案。
-    
+
     Args:
         original_annotations: 原始批注列表
         original_score: 原始分数
         new_score: 复核后的新分数
         max_score: 满分
         question_id: 题目 ID
-        
+
     Returns:
         List[Dict[str, Any]]: 更新后的批注列表
     """
     if original_score == new_score:
         # 分数没变，不需要修改
         return original_annotations
-    
+
     updated_annotations = []
     score_annotation_found = False
-    
+
     for ann in original_annotations:
         ann_type = ann.get("type") or ann.get("annotation_type")
-        
+
         if ann_type == "score" and ann.get("question_id") == question_id:
             # 更新分数批注的文字
             score_annotation_found = True
             updated_ann = ann.copy()
             updated_ann["text"] = f"{new_score}/{max_score}"
-            
+
             # 根据新分数更新颜色
             if new_score >= max_score * 0.8:
                 updated_ann["color"] = AnnotationColor.GREEN.value
@@ -555,12 +560,12 @@ def update_annotations_after_review(
                 updated_ann["color"] = AnnotationColor.ORANGE.value
             else:
                 updated_ann["color"] = AnnotationColor.RED.value
-            
+
             updated_annotations.append(updated_ann)
         else:
             # 保留其他批注不变
             updated_annotations.append(ann)
-    
+
     # 如果没有找到分数批注，添加一个新的
     if not score_annotation_found:
         # 尝试找到该题目的答案区域位置
@@ -571,12 +576,12 @@ def update_annotations_after_review(
                 if bbox:
                     answer_region = bbox
                     break
-        
+
         # 如果找到了答案区域，在其右上角添加分数批注
         if answer_region:
             x_max = answer_region.get("x_max", 0.9)
             y_min = answer_region.get("y_min", 0.1)
-            
+
             new_score_ann = {
                 "type": "score",
                 "annotation_type": "score",
@@ -589,13 +594,17 @@ def update_annotations_after_review(
                 },
                 "text": f"{new_score}/{max_score}",
                 "color": (
-                    AnnotationColor.GREEN.value if new_score >= max_score * 0.8
-                    else AnnotationColor.ORANGE.value if new_score >= max_score * 0.5
-                    else AnnotationColor.RED.value
+                    AnnotationColor.GREEN.value
+                    if new_score >= max_score * 0.8
+                    else (
+                        AnnotationColor.ORANGE.value
+                        if new_score >= max_score * 0.5
+                        else AnnotationColor.RED.value
+                    )
                 ),
             }
             updated_annotations.append(new_score_ann)
-    
+
     return updated_annotations
 
 
@@ -610,10 +619,10 @@ async def regenerate_annotations_for_question(
 ) -> List[Dict[str, Any]]:
     """
     为单道题目重新生成批注（用于分数变化较大的情况）
-    
+
     当复核后分数变化较大时，可能需要重新生成该题的批注。
     这是一种中等成本的方案，只对分数变化的题目重新调用 LLM。
-    
+
     Args:
         service: 批注批改服务实例
         image_data: 页面图像数据
@@ -622,7 +631,7 @@ async def regenerate_annotations_for_question(
         max_score: 满分
         feedback: 复核反馈
         page_index: 页码
-        
+
     Returns:
         List[Dict[str, Any]]: 新生成的批注列表
     """
@@ -632,7 +641,7 @@ async def regenerate_annotations_for_question(
         max_score=max_score,
         grading_notes=f"复核后分数: {new_score}/{max_score}。反馈: {feedback}",
     )
-    
+
     # 构建提示词
     prompt = f"""请为以下已批改的题目生成批注坐标。
 
@@ -661,21 +670,18 @@ async def regenerate_annotations_for_question(
 }}
 ```
 """
-    
+
     # 编码图像
-    image_b64 = base64.b64encode(image_data).decode('utf-8')
-    
+    image_b64 = base64.b64encode(image_data).decode("utf-8")
+
     # 构建消息
     message = HumanMessage(
         content=[
             {"type": "text", "text": prompt},
-            {
-                "type": "image_url",
-                "image_url": f"data:image/png;base64,{image_b64}"
-            }
+            {"type": "image_url", "image_url": f"data:image/png;base64,{image_b64}"},
         ]
     )
-    
+
     # 调用 LLM
     try:
         full_response = ""
@@ -690,39 +696,45 @@ async def regenerate_annotations_for_question(
                             full_response += part
                         elif isinstance(part, dict) and "text" in part:
                             full_response += part["text"]
-        
+
         # 解析响应
         json_text = service._extract_json_from_response(full_response)
         data = json.loads(json_text)
-        
+
         annotations = []
         for ann_data in data.get("annotations", []):
             ann_data["question_id"] = question_id
             ann_data["page_index"] = page_index
             annotations.append(ann_data)
-        
+
         return annotations
     except Exception as e:
         logger.error(f"重新生成批注失败: {e}")
         # 返回一个基本的分数批注
-        return [{
-            "type": "score",
-            "annotation_type": "score",
-            "question_id": question_id,
-            "page_index": page_index,
-            "bounding_box": {
-                "x_min": 0.85,
-                "y_min": 0.1,
-                "x_max": 0.95,
-                "y_max": 0.15,
-            },
-            "text": f"{new_score}/{max_score}",
-            "color": (
-                AnnotationColor.GREEN.value if new_score >= max_score * 0.8
-                else AnnotationColor.ORANGE.value if new_score >= max_score * 0.5
-                else AnnotationColor.RED.value
-            ),
-        }]
+        return [
+            {
+                "type": "score",
+                "annotation_type": "score",
+                "question_id": question_id,
+                "page_index": page_index,
+                "bounding_box": {
+                    "x_min": 0.85,
+                    "y_min": 0.1,
+                    "x_max": 0.95,
+                    "y_max": 0.15,
+                },
+                "text": f"{new_score}/{max_score}",
+                "color": (
+                    AnnotationColor.GREEN.value
+                    if new_score >= max_score * 0.8
+                    else (
+                        AnnotationColor.ORANGE.value
+                        if new_score >= max_score * 0.5
+                        else AnnotationColor.RED.value
+                    )
+                ),
+            }
+        ]
 
 
 # 导出

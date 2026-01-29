@@ -2,8 +2,6 @@ import { create } from 'zustand';
 import { wsClient, buildWsUrl } from '@/services/ws';
 import { GradingAnnotationResult } from '@/types/annotation';
 
-let wsHandlersBound = false;
-
 export type WorkflowStatus = 'IDLE' | 'UPLOADING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'REVIEWING';
 export type NodeStatus = 'pending' | 'running' | 'completed' | 'failed';
 export type ConsoleTab = 'process' | 'results';
@@ -723,7 +721,11 @@ const normalizeClassReport = (report: any): ClassReport | null => {
 
 
 
-export const useConsoleStore = create<ConsoleState>((set, get) => ({
+export const useConsoleStore = create<ConsoleState>((set, get) => {
+    // Store 内部的 WebSocket 处理器注册标志
+    let handlersRegistered = false;
+    
+    return {
     view: 'LANDING',
     currentTab: 'process',
     status: 'IDLE',
@@ -1148,10 +1150,11 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
 
     connectWs: (batchId) => {
         wsClient.connect(buildWsUrl(`/api/batch/ws/${batchId}`));
-        if (wsHandlersBound) {
+        // 使用 store 内部状态而不是全局变量，避免 SSR 环境中的状态污染
+        if (handlersRegistered) {
             return;
         }
-        wsHandlersBound = true;
+        handlersRegistered = true;
 
         // 处理工作流节点更新
         wsClient.on('workflow_update', (data) => {
@@ -1322,7 +1325,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
         // 处理单页完成事件（对应设计文档 EventType.PAGE_COMPLETE）
         wsClient.on('page_complete', (data) => {
             console.log('Page Complete:', data);
-            const { pageIndex, success, batchIndex, totalBatches, revisionCount } = data;
+            const { pageIndex, success, batchIndex, revisionCount } = data;
             const currentProgress = get().batchProgress;
 
             // 更新批次进度
@@ -1681,7 +1684,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
         // 处理单页批改完成事件
         wsClient.on('page_graded', (data) => {
             console.log('Page Graded:', data);
-            const { pageIndex, score, maxScore, feedback, questionNumbers, questionDetails } = data;
+            const { pageIndex, score, maxScore, questionNumbers } = data;
             get().addLog(
                 `页面 ${pageIndex} 批改完成: ${score}/${maxScore} 分，题目: ${questionNumbers?.join(', ') || '未识别'}`,
                 'INFO'
@@ -1754,7 +1757,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
         // 处理批次完成事件
         wsClient.on('batch_completed', (data) => {
             console.log('Batch Completed:', data);
-            const { batchSize, successCount, totalScore, pages } = data;
+            const { batchSize, successCount, totalScore } = data;
             get().addLog(`Run completed: ${successCount}/${batchSize} pages succeeded, total ${totalScore}`, 'INFO');
         });
 
@@ -1780,4 +1783,4 @@ export const useConsoleStore = create<ConsoleState>((set, get) => ({
             get().addLog(`Error: ${data.message}`, 'ERROR');
         });
     }
-}));
+};});

@@ -77,7 +77,7 @@ def _extract_json_block(text: str) -> Optional[str]:
     end = text.rfind("}")
     if start == -1 or end <= start:
         return None
-    return text[start:end + 1]
+    return text[start : end + 1]
 
 
 def _load_json_with_repair(text: str) -> Optional[Dict[str, Any]]:
@@ -103,10 +103,11 @@ def _load_json_with_repair(text: str) -> Optional[Dict[str, Any]]:
 @dataclass
 class ScoringPoint:
     """得分点"""
-    description: str          # 得分点描述
-    score: float              # 该得分点的分值
+
+    description: str  # 得分点描述
+    score: float  # 该得分点的分值
     is_required: bool = True  # 是否必须（部分分数可能是可选的）
-    point_id: str = ""        # 得分点编号
+    point_id: str = ""  # 得分点编号
     keywords: List[str] = field(default_factory=list)  # 关键词
     expected_value: str = ""  # 期望值
 
@@ -114,33 +115,36 @@ class ScoringPoint:
 @dataclass
 class AlternativeSolution:
     """另类解法"""
-    description: str          # 解法描述
-    scoring_criteria: str     # 得分条件
-    note: str = ""            # 备注
+
+    description: str  # 解法描述
+    scoring_criteria: str  # 得分条件
+    note: str = ""  # 备注
 
 
 @dataclass
 class DeductionRule:
     """扣分规则"""
-    description: str          # 典型错误/扣分条件描述
-    deduction: float          # 扣分分值
-    conditions: str = ""      # 扣分条件表达
-    rule_id: str = ""         # 扣分规则编号
+
+    description: str  # 典型错误/扣分条件描述
+    deduction: float  # 扣分分值
+    conditions: str = ""  # 扣分条件表达
+    rule_id: str = ""  # 扣分规则编号
 
 
 @dataclass
 class QuestionRubric:
     """单题评分标准"""
-    question_id: str                              # 题号
-    max_score: float                              # 满分
-    question_text: str = ""                       # 题目内容（如果有）
-    standard_answer: str = ""                     # 标准答案
+
+    question_id: str  # 题号
+    max_score: float  # 满分
+    question_text: str = ""  # 题目内容（如果有）
+    standard_answer: str = ""  # 标准答案
     scoring_points: List[ScoringPoint] = field(default_factory=list)  # 得分点列表
     alternative_solutions: List[AlternativeSolution] = field(default_factory=list)  # 另类解法
     deduction_rules: List[DeductionRule] = field(default_factory=list)  # 扣分规则
-    grading_notes: str = ""                       # 批改注意事项
+    grading_notes: str = ""  # 批改注意事项
     # 解析自白字段
-    parse_confidence: float = 1.0                 # 解析置信度 (0.0-1.0)
+    parse_confidence: float = 1.0  # 解析置信度 (0.0-1.0)
     parse_uncertainties: List[str] = field(default_factory=list)  # 不确定性列表
     parse_quality_issues: List[str] = field(default_factory=list)  # 质量问题
 
@@ -148,31 +152,32 @@ class QuestionRubric:
 @dataclass
 class ParsedRubric:
     """解析后的完整评分标准"""
-    total_questions: int                          # 总题数
-    total_score: float                            # 总分
-    questions: List[QuestionRubric]               # 各题评分标准
-    general_notes: str = ""                       # 通用批改说明
-    rubric_format: str = "standard"               # 格式类型: standard/embedded
+
+    total_questions: int  # 总题数
+    total_score: float  # 总分
+    questions: List[QuestionRubric]  # 各题评分标准
+    general_notes: str = ""  # 通用批改说明
+    rubric_format: str = "standard"  # 格式类型: standard/embedded
     # 解析自白字段
-    overall_parse_confidence: float = 1.0         # 整体解析置信度 (0.0-1.0)
+    overall_parse_confidence: float = 1.0  # 整体解析置信度 (0.0-1.0)
     parse_self_report: Dict[str, Any] = field(default_factory=dict)  # 完整自白报告
 
 
 class RubricParserService:
     """
     批改标准解析服务
-    
+
     支持两种格式：
     1. 标准格式：独立的评分标准文档
     2. 嵌入格式：题目上直接标注答案的格式
-    
+
     支持 OpenRouter API 和直连 LLM API。
     """
-    
+
     def __init__(self, api_key: str = None, model_name: Optional[str] = None):
         """
         初始化服务
-        
+
         Args:
             api_key: API 密钥（可选，默认从环境变量获取）
             model_name: 模型名称（可选，使用环境变量配置）
@@ -180,101 +185,114 @@ class RubricParserService:
         # 使用 LLMReasoningClient（与批改流程一致）
         self.api_key = api_key or os.getenv("LLM_API_KEY") or os.getenv("OPENROUTER_API_KEY", "")
         self.model_name = model_name or get_default_model()
-        
+
         # 移除 token 限制：设置为 0 表示不限制输出长度
         # 这样可以确保 LLM 能完整输出所有题目的解析结果
         os.environ["GRADING_MAX_OUTPUT_TOKENS"] = "0"
-        
+
         self.reasoning_client = LLMReasoningClient(api_key=self.api_key, model_name=self.model_name)
-    
+
     async def parse_rubric(
-        self,
-        rubric_images: List[bytes],
-        progress_callback=None,
-        stream_callback=None
+        self, rubric_images: List[bytes], progress_callback=None, stream_callback=None
     ) -> ParsedRubric:
         """
         解析批改标准
-        
+
         Args:
             rubric_images: 批改标准页面图像列表
             progress_callback: 进度回调 (batch_index, total_batches, status, message)
             stream_callback: 流式输出回调 (stream_type, chunk)
-            
+
         Returns:
             ParsedRubric: 解析后的评分标准
         """
         logger.info(f"[rubric_parse] received {len(rubric_images)} pages")
-        
+
         # Max images per LLM call for rubric parsing.
         MAX_PAGES_PER_BATCH = max(1, int(os.getenv("RUBRIC_PARSE_MAX_PAGES", "14")))
         all_questions = []
         general_notes = ""
         rubric_format = "standard"
         total_batches = 0
-        
+
         for batch_start in range(0, len(rubric_images), MAX_PAGES_PER_BATCH):
             batch_end = min(batch_start + MAX_PAGES_PER_BATCH, len(rubric_images))
             batch_images = rubric_images[batch_start:batch_end]
             batch_num = batch_start // MAX_PAGES_PER_BATCH + 1
             total_batches = (len(rubric_images) + MAX_PAGES_PER_BATCH - 1) // MAX_PAGES_PER_BATCH
-            
-            logger.info(f"[rubric_parse] batch {batch_num}/{total_batches} pages {batch_start+1}-{batch_end}")
-            
+
+            logger.info(
+                f"[rubric_parse] batch {batch_num}/{total_batches} pages {batch_start+1}-{batch_end}"
+            )
+
             # 进度回调
             if progress_callback:
                 try:
                     import asyncio
+
                     if asyncio.iscoroutinefunction(progress_callback):
-                        await progress_callback(batch_num - 1, total_batches, "parsing", f"Parsing batch {batch_num}/{total_batches}")
+                        await progress_callback(
+                            batch_num - 1,
+                            total_batches,
+                            "parsing",
+                            f"Parsing batch {batch_num}/{total_batches}",
+                        )
                     else:
-                        progress_callback(batch_num - 1, total_batches, "parsing", f"Parsing batch {batch_num}/{total_batches}")
+                        progress_callback(
+                            batch_num - 1,
+                            total_batches,
+                            "parsing",
+                            f"Parsing batch {batch_num}/{total_batches}",
+                        )
                 except Exception as e:
                     logger.debug(f"[rubric_parse] progress_callback error: {e}")
-            
+
             batch_result = await self._parse_rubric_batch(
                 batch_images,
                 batch_num,
                 total_batches,
                 stream_callback,
             )
-            
+
             all_questions.extend(batch_result.questions)
             if batch_result.general_notes:
                 general_notes = batch_result.general_notes
             if batch_result.rubric_format != "standard":
                 rubric_format = batch_result.rubric_format
-        
+
         # 计算解析出的总分
         calculated_total = sum(q.max_score for q in all_questions)
-        
+
         # 合并结果
         parsed = ParsedRubric(
             total_questions=len(all_questions),
             total_score=calculated_total,
             questions=all_questions,
             general_notes=general_notes,
-            rubric_format=rubric_format
+            rubric_format=rubric_format,
         )
 
         if progress_callback and total_batches > 0:
             try:
                 import asyncio
+
                 if asyncio.iscoroutinefunction(progress_callback):
-                    await progress_callback(total_batches - 1, total_batches, "completed", "Parsing completed")
+                    await progress_callback(
+                        total_batches - 1, total_batches, "completed", "Parsing completed"
+                    )
                 else:
-                    progress_callback(total_batches - 1, total_batches, "completed", "Parsing completed")
+                    progress_callback(
+                        total_batches - 1, total_batches, "completed", "Parsing completed"
+                    )
             except Exception as e:
                 logger.debug(f"[rubric_parse] progress_callback error: {e}")
-        
+
         logger.info(
-            f"批改标准解析完成: "
-            f"{parsed.total_questions} 题, "
-            f"总分 {parsed.total_score}"
+            f"批改标准解析完成: " f"{parsed.total_questions} 题, " f"总分 {parsed.total_score}"
         )
-        
+
         return parsed
-    
+
     async def _parse_rubric_batch(
         self,
         rubric_images: List[bytes],
@@ -284,7 +302,7 @@ class RubricParserService:
     ) -> ParsedRubric:
         """解析单批评分标准页面"""
         batch_info = f"（第 {batch_num}/{total_batches} 批）" if total_batches > 1 else ""
-        
+
         prompt_template = """你是一位专业的评分标准分析专家。请仔细分析这些评分标准/答案页面{batch_info}。
 
 ## 重要：你正在分析的是一份完整的评分标准文档
@@ -360,7 +378,7 @@ class RubricParserService:
             max_retries = 3
             retry_delay = 5  # 秒
             last_error = None
-            
+
             for attempt in range(max_retries):
                 try:
                     # 使用 LLMReasoningClient 的 analyze_with_vision 方法
@@ -374,17 +392,24 @@ class RubricParserService:
                 except Exception as e:
                     last_error = e
                     error_str = str(e)
-                    if "503" in error_str or "overloaded" in error_str.lower() or "429" in error_str:
+                    if (
+                        "503" in error_str
+                        or "overloaded" in error_str.lower()
+                        or "429" in error_str
+                    ):
                         if attempt < max_retries - 1:
-                            logger.warning(f"API 过载，{retry_delay}秒后重试 ({attempt + 1}/{max_retries})")
+                            logger.warning(
+                                f"API 过载，{retry_delay}秒后重试 ({attempt + 1}/{max_retries})"
+                            )
                             import asyncio
+
                             await asyncio.sleep(retry_delay)
                             retry_delay *= 2  # 指数退避
                             continue
                     raise
             else:
                 raise last_error
-            
+
             # 检查响应是否为空
             if not result_text or not result_text.strip():
                 logger.warning(f"LLM 返回空响应，使用空结果")
@@ -393,18 +418,18 @@ class RubricParserService:
                     total_score=0,
                     questions=[],
                     general_notes="",
-                    rubric_format="standard"
+                    rubric_format="standard",
                 )
-            
+
             logger.debug(f"LLM 原始响应: {result_text[:500]}...")
-            
+
             # 🔍 诊断日志：输出完整响应以便调试
             logger.info(f"[rubric_parse] LLM 响应长度: {len(result_text)} 字符")
             if len(result_text) < 2000:
                 logger.info(f"[rubric_parse] LLM 完整响应: {result_text}")
             else:
                 logger.info(f"[rubric_parse] LLM 响应前 2000 字符: {result_text[:2000]}...")
-            
+
             # 提取 JSON
             json_text = result_text
             if "```json" in result_text:
@@ -417,14 +442,14 @@ class RubricParserService:
                 json_end = result_text.find("```", json_start)
                 if json_end > json_start:
                     json_text = result_text[json_start:json_end].strip()
-            
+
             # 尝试找到 JSON 对象
             if not json_text.startswith("{"):
-                # 尝试找到第一个 { 
+                # 尝试找到第一个 {
                 brace_start = json_text.find("{")
                 if brace_start >= 0:
                     json_text = json_text[brace_start:]
-            
+
             if not json_text or not json_text.strip().startswith("{"):
                 logger.warning(f"无法从响应中提取 JSON: {result_text[:200]}...")
                 return ParsedRubric(
@@ -432,9 +457,9 @@ class RubricParserService:
                     total_score=0,
                     questions=[],
                     general_notes="",
-                    rubric_format="standard"
+                    rubric_format="standard",
                 )
-            
+
             data = _load_json_with_repair(json_text)
             if data is None:
                 logger.warning(
@@ -445,8 +470,9 @@ class RubricParserService:
                     total_score=0,
                     questions=[],
                     general_notes="",
-                    rubric_format="standard"
+                    rubric_format="standard",
                 )
+
             def ensure_string(value, default=""):
                 """确保值是字符串类型"""
                 if value is None:
@@ -456,15 +482,16 @@ class RubricParserService:
                 if not isinstance(value, str):
                     return str(value)
                 return value
-            
+
             def normalize_question_id(qid: str) -> str:
                 """标准化题目编号，将子题合并到主题"""
                 if not qid:
                     return qid
-                
+
                 # 移除括号内容，如 "7(a)" -> "7", "15(1)" -> "15"
                 import re
-                main_id = re.sub(r'\([^)]*\)', '', str(qid)).strip()
+
+                main_id = re.sub(r"\([^)]*\)", "", str(qid)).strip()
                 return main_id
 
             def _assign_point_ids(question_id: str, scoring_points: List[ScoringPoint]) -> None:
@@ -485,7 +512,9 @@ class RubricParserService:
                     rule.rule_id = rule_id
                     seen.add(rule_id)
 
-            def _dedupe_deduction_rules(deduction_rules: List[DeductionRule]) -> List[DeductionRule]:
+            def _dedupe_deduction_rules(
+                deduction_rules: List[DeductionRule],
+            ) -> List[DeductionRule]:
                 unique = []
                 seen = set()
                 for rule in deduction_rules:
@@ -495,7 +524,7 @@ class RubricParserService:
                     seen.add(key)
                     unique.append(rule)
                 return unique
-            
+
             # 先收集所有题目，然后按主题编号合并
             raw_questions = []
             for q in data.get("questions", []):
@@ -504,81 +533,101 @@ class RubricParserService:
                 scoring_points = []
                 for sp in raw_scoring_points:
                     if isinstance(sp, dict):
-                        scoring_points.append(ScoringPoint(
-                            description=ensure_string(sp.get("description", "")),
-                            score=float(sp.get("score", 0)),
-                            is_required=sp.get("is_required", True),
-                            point_id=ensure_string(sp.get("point_id") or sp.get("pointId") or sp.get("id") or ""),
-                            keywords=[
-                                str(item) for item in (sp.get("keywords") or [])
-                            ] if isinstance(sp.get("keywords"), list) else (
-                                [str(sp.get("keywords"))] if sp.get("keywords") else []
-                            ),
-                            expected_value=ensure_string(sp.get("expected_value") or sp.get("expectedValue") or "")
-                        ))
+                        scoring_points.append(
+                            ScoringPoint(
+                                description=ensure_string(sp.get("description", "")),
+                                score=float(sp.get("score", 0)),
+                                is_required=sp.get("is_required", True),
+                                point_id=ensure_string(
+                                    sp.get("point_id") or sp.get("pointId") or sp.get("id") or ""
+                                ),
+                                keywords=(
+                                    [str(item) for item in (sp.get("keywords") or [])]
+                                    if isinstance(sp.get("keywords"), list)
+                                    else ([str(sp.get("keywords"))] if sp.get("keywords") else [])
+                                ),
+                                expected_value=ensure_string(
+                                    sp.get("expected_value") or sp.get("expectedValue") or ""
+                                ),
+                            )
+                        )
                     elif isinstance(sp, str):
                         # 如果是字符串，将其作为描述，分数设为 0
-                        scoring_points.append(ScoringPoint(
-                            description=sp,
-                            score=0,
-                            is_required=True,
-                            point_id="",
-                            keywords=[],
-                            expected_value="",
-                        ))
-                
+                        scoring_points.append(
+                            ScoringPoint(
+                                description=sp,
+                                score=0,
+                                is_required=True,
+                                point_id="",
+                                keywords=[],
+                                expected_value="",
+                            )
+                        )
+
                 # 处理 alternative_solutions，可能是字典列表或字符串列表
                 raw_alt_solutions = q.get("alternative_solutions", [])
                 alternative_solutions = []
                 for alt in raw_alt_solutions:
                     if isinstance(alt, dict):
-                        alternative_solutions.append(AlternativeSolution(
-                            description=ensure_string(alt.get("description", "")),
-                            scoring_criteria=ensure_string(alt.get("scoring_criteria", "")),
-                            note=ensure_string(alt.get("note", ""))
-                        ))
+                        alternative_solutions.append(
+                            AlternativeSolution(
+                                description=ensure_string(alt.get("description", "")),
+                                scoring_criteria=ensure_string(alt.get("scoring_criteria", "")),
+                                note=ensure_string(alt.get("note", "")),
+                            )
+                        )
                     elif isinstance(alt, str):
                         # 如果是字符串，将其作为描述
-                        alternative_solutions.append(AlternativeSolution(
-                            description=alt,
-                            scoring_criteria="",
-                            note=""
-                        ))
+                        alternative_solutions.append(
+                            AlternativeSolution(description=alt, scoring_criteria="", note="")
+                        )
 
                 raw_deductions = q.get("deduction_rules") or q.get("deductionRules") or []
                 deduction_rules = []
                 for dr in raw_deductions:
                     if isinstance(dr, dict):
-                        deduction_rules.append(DeductionRule(
-                            description=ensure_string(dr.get("description") or dr.get("rule") or ""),
-                            deduction=float(dr.get("deduction", dr.get("score", 0)) or 0),
-                            conditions=ensure_string(dr.get("conditions") or dr.get("when") or ""),
-                            rule_id=ensure_string(dr.get("rule_id") or dr.get("ruleId") or dr.get("id") or ""),
-                        ))
+                        deduction_rules.append(
+                            DeductionRule(
+                                description=ensure_string(
+                                    dr.get("description") or dr.get("rule") or ""
+                                ),
+                                deduction=float(dr.get("deduction", dr.get("score", 0)) or 0),
+                                conditions=ensure_string(
+                                    dr.get("conditions") or dr.get("when") or ""
+                                ),
+                                rule_id=ensure_string(
+                                    dr.get("rule_id") or dr.get("ruleId") or dr.get("id") or ""
+                                ),
+                            )
+                        )
                     elif isinstance(dr, str):
-                        deduction_rules.append(DeductionRule(
-                            description=dr,
-                            deduction=0.0,
-                            conditions="",
-                            rule_id="",
-                        ))
-                
-                raw_questions.append({
-                    "original_id": str(q.get("question_id", "")),
-                    "normalized_id": normalize_question_id(str(q.get("question_id", ""))),
-                    "max_score": float(q.get("max_score", 0)),
-                    "question_text": ensure_string(q.get("question_text", "")),
-                    "standard_answer": ensure_string(q.get("standard_answer", "")),
-                    "scoring_points": scoring_points,
-                    "alternative_solutions": alternative_solutions,
-                    "deduction_rules": deduction_rules,
-                    "grading_notes": ensure_string(q.get("grading_notes", "")),
-                    # LLM 输出的置信度字段
-                    "parse_confidence": float(q.get("parse_confidence", 1.0) or 1.0),
-                    "parse_uncertainties": q.get("parse_uncertainties") or [],
-                    "parse_quality_issues": q.get("parse_quality_issues") or [],
-                })
-            
+                        deduction_rules.append(
+                            DeductionRule(
+                                description=dr,
+                                deduction=0.0,
+                                conditions="",
+                                rule_id="",
+                            )
+                        )
+
+                raw_questions.append(
+                    {
+                        "original_id": str(q.get("question_id", "")),
+                        "normalized_id": normalize_question_id(str(q.get("question_id", ""))),
+                        "max_score": float(q.get("max_score", 0)),
+                        "question_text": ensure_string(q.get("question_text", "")),
+                        "standard_answer": ensure_string(q.get("standard_answer", "")),
+                        "scoring_points": scoring_points,
+                        "alternative_solutions": alternative_solutions,
+                        "deduction_rules": deduction_rules,
+                        "grading_notes": ensure_string(q.get("grading_notes", "")),
+                        # LLM 输出的置信度字段
+                        "parse_confidence": float(q.get("parse_confidence", 1.0) or 1.0),
+                        "parse_uncertainties": q.get("parse_uncertainties") or [],
+                        "parse_quality_issues": q.get("parse_quality_issues") or [],
+                    }
+                )
+
             # 按标准化题目编号合并子题
             merged_questions = {}
             for q in raw_questions:
@@ -590,55 +639,61 @@ class RubricParserService:
                     existing["scoring_points"].extend(q["scoring_points"])
                     existing["alternative_solutions"].extend(q["alternative_solutions"])
                     existing["deduction_rules"].extend(q["deduction_rules"])
-                    
+
                     # 合并文本内容
                     if q["question_text"] and q["question_text"] not in existing["question_text"]:
                         existing["question_text"] += f"\n子题: {q['question_text']}"
-                    if q["standard_answer"] and q["standard_answer"] not in existing["standard_answer"]:
+                    if (
+                        q["standard_answer"]
+                        and q["standard_answer"] not in existing["standard_answer"]
+                    ):
                         existing["standard_answer"] += f"\n子题答案: {q['standard_answer']}"
                     if q["grading_notes"] and q["grading_notes"] not in existing["grading_notes"]:
                         existing["grading_notes"] += f"\n{q['grading_notes']}"
-                    
+
                     # 合并置信度字段（取最小置信度，合并不确定性和质量问题）
                     existing["parse_confidence"] = min(
-                        existing.get("parse_confidence", 1.0),
-                        q.get("parse_confidence", 1.0)
+                        existing.get("parse_confidence", 1.0), q.get("parse_confidence", 1.0)
                     )
                     existing["parse_uncertainties"].extend(q.get("parse_uncertainties", []))
                     existing["parse_quality_issues"].extend(q.get("parse_quality_issues", []))
                 else:
                     # 新题目
                     merged_questions[norm_id] = q.copy()
-            
+
             # 转换为 QuestionRubric 对象
             questions = []
             for norm_id, q in merged_questions.items():
                 _assign_point_ids(norm_id, q["scoring_points"])
                 _assign_rule_ids(norm_id, q["deduction_rules"])
                 q["deduction_rules"] = _dedupe_deduction_rules(q["deduction_rules"])
-                questions.append(QuestionRubric(
-                    question_id=norm_id,
-                    max_score=q["max_score"],
-                    question_text=q["question_text"],
-                    standard_answer=q["standard_answer"],
-                    scoring_points=q["scoring_points"],
-                    alternative_solutions=q["alternative_solutions"],
-                    deduction_rules=q["deduction_rules"],
-                    grading_notes=q["grading_notes"],
-                    # LLM 解析置信度字段
-                    parse_confidence=q.get("parse_confidence", 1.0),
-                    parse_uncertainties=q.get("parse_uncertainties", []),
-                    parse_quality_issues=q.get("parse_quality_issues", []),
-                ))
-            
+                questions.append(
+                    QuestionRubric(
+                        question_id=norm_id,
+                        max_score=q["max_score"],
+                        question_text=q["question_text"],
+                        standard_answer=q["standard_answer"],
+                        scoring_points=q["scoring_points"],
+                        alternative_solutions=q["alternative_solutions"],
+                        deduction_rules=q["deduction_rules"],
+                        grading_notes=q["grading_notes"],
+                        # LLM 解析置信度字段
+                        parse_confidence=q.get("parse_confidence", 1.0),
+                        parse_uncertainties=q.get("parse_uncertainties", []),
+                        parse_quality_issues=q.get("parse_quality_issues", []),
+                    )
+                )
+
             # 返回批次结果（包含 LLM 输出的整体置信度）
             llm_overall_confidence = float(data.get("overall_parse_confidence", 1.0) or 1.0)
             # 如果 LLM 没有输出整体置信度，从各题置信度计算
             if llm_overall_confidence >= 1.0 and questions:
-                question_confidences = [q.parse_confidence for q in questions if q.parse_confidence < 1.0]
+                question_confidences = [
+                    q.parse_confidence for q in questions if q.parse_confidence < 1.0
+                ]
                 if question_confidences:
                     llm_overall_confidence = sum(question_confidences) / len(question_confidences)
-            
+
             batch_result = ParsedRubric(
                 total_questions=len(questions),
                 total_score=sum(q.max_score for q in questions),
@@ -648,23 +703,22 @@ class RubricParserService:
                 # LLM 解析置信度
                 overall_parse_confidence=llm_overall_confidence,
             )
-            
+
             logger.info(
-                f"批次解析完成: "
-                f"{len(questions)} 题, "
-                f"分值 {batch_result.total_score}"
+                f"批次解析完成: " f"{len(questions)} 题, " f"分值 {batch_result.total_score}"
             )
-            
+
             return batch_result
-            
+
         except Exception as e:
             logger.error(f"批改标准解析失败: {str(e)}")
             raise
-    
+
     def format_rubric_context(self, rubric: ParsedRubric) -> str:
         """
         将解析后的评分标准格式化为批改 Agent 可用的上下文
         """
+
         def ensure_str(value):
             """确保值是字符串"""
             if value is None:
@@ -672,7 +726,7 @@ class RubricParserService:
             if isinstance(value, list):
                 return " ".join(str(item) for item in value)
             return str(value)
-        
+
         lines = [
             "=" * 60,
             "评分标准（请严格遵循）",
@@ -680,27 +734,29 @@ class RubricParserService:
             f"总题数: {rubric.total_questions}",
             f"总分: {rubric.total_score}",
             f"格式: {ensure_str(rubric.rubric_format)}",
-            ""
+            "",
         ]
-        
+
         if rubric.general_notes:
             lines.append(f"通用说明: {ensure_str(rubric.general_notes)}")
             lines.append("")
-        
+
         for q in rubric.questions:
             lines.append("-" * 40)
             lines.append(f"【第 {ensure_str(q.question_id)} 题】满分: {q.max_score} 分")
-            
+
             question_text = ensure_str(q.question_text)
             if question_text:
                 text_preview = question_text[:100] if len(question_text) > 100 else question_text
                 lines.append(f"题目: {text_preview}...")
-            
+
             standard_answer = ensure_str(q.standard_answer)
             if standard_answer:
-                answer_preview = standard_answer[:200] if len(standard_answer) > 200 else standard_answer
+                answer_preview = (
+                    standard_answer[:200] if len(standard_answer) > 200 else standard_answer
+                )
                 lines.append(f"标准答案: {answer_preview}...")
-            
+
             lines.append("得分点:")
             for i, sp in enumerate(q.scoring_points, 1):
                 required = "必须" if sp.is_required else "可选"
@@ -718,217 +774,233 @@ class RubricParserService:
                     lines.append(
                         f"  [{rule_id}] -{deduction}分 {ensure_str(dr.description)}{condition_text}"
                     )
-            
+
             if q.alternative_solutions:
                 lines.append("另类解法（同样可得分）:")
                 for alt in q.alternative_solutions:
                     lines.append(f"  - {ensure_str(alt.description)}")
                     lines.append(f"    得分条件: {ensure_str(alt.scoring_criteria)}")
-            
+
             grading_notes = ensure_str(q.grading_notes)
             if grading_notes:
                 lines.append(f"批改注意: {grading_notes}")
-            
+
             lines.append("")
-        
+
         return "\n".join(lines)
-    
+
     def _generate_parse_self_report(
-        self, 
+        self,
         rubric: ParsedRubric,
         expected_question_count: Optional[int] = None,
-        expected_total_score: Optional[float] = None
+        expected_total_score: Optional[float] = None,
     ) -> Dict[str, Any]:
         """
         生成评分标准解析的自白报告
-        
+
         执行多维度质量检查：
         - 题目数量合理性检查
         - 分值一致性检查
         - 得分点完整性检查
         - 关键信息缺失检查
-        
+
         Args:
             rubric: 解析后的评分标准
             expected_question_count: 期望的题目数量（如果已知）
             expected_total_score: 期望的总分（如果已知）
-        
+
         Returns:
             自白报告字典
         """
         from datetime import datetime
-        
+
         issues = []
         uncertainties = []
         quality_checks = []
         overall_status = "ok"
-        
+
         # 1. 题目数量合理性检查
         if rubric.total_questions == 0:
-            issues.append({
-                "type": "no_questions",
-                "message": "未识别到任何题目",
-                "severity": "high"
-            })
+            issues.append(
+                {"type": "no_questions", "message": "未识别到任何题目", "severity": "high"}
+            )
             overall_status = "error"
-            quality_checks.append({
-                "check": "题目数量检查",
-                "passed": False,
-                "detail": "未识别到任何题目"
-            })
+            quality_checks.append(
+                {"check": "题目数量检查", "passed": False, "detail": "未识别到任何题目"}
+            )
         elif rubric.total_questions < 3:
-            issues.append({
-                "type": "few_questions",
-                "message": f"题目数量较少（{rubric.total_questions}题），可能存在遗漏",
-                "severity": "medium"
-            })
+            issues.append(
+                {
+                    "type": "few_questions",
+                    "message": f"题目数量较少（{rubric.total_questions}题），可能存在遗漏",
+                    "severity": "medium",
+                }
+            )
             if overall_status == "ok":
                 overall_status = "caution"
-            quality_checks.append({
-                "check": "题目数量检查",
-                "passed": False,
-                "detail": f"仅识别到 {rubric.total_questions} 题"
-            })
+            quality_checks.append(
+                {
+                    "check": "题目数量检查",
+                    "passed": False,
+                    "detail": f"仅识别到 {rubric.total_questions} 题",
+                }
+            )
         else:
-            quality_checks.append({
-                "check": "题目数量检查",
-                "passed": True,
-                "detail": f"识别到 {rubric.total_questions} 题"
-            })
-        
+            quality_checks.append(
+                {
+                    "check": "题目数量检查",
+                    "passed": True,
+                    "detail": f"识别到 {rubric.total_questions} 题",
+                }
+            )
+
         # 如果有期望题目数量，进行比对
         if expected_question_count and rubric.total_questions != expected_question_count:
-            issues.append({
-                "type": "question_count_mismatch",
-                "message": f"识别到 {rubric.total_questions} 题，但期望 {expected_question_count} 题",
-                "severity": "high"
-            })
+            issues.append(
+                {
+                    "type": "question_count_mismatch",
+                    "message": f"识别到 {rubric.total_questions} 题，但期望 {expected_question_count} 题",
+                    "severity": "high",
+                }
+            )
             overall_status = "error"
-        
+
         # 2. 分值一致性检查
         calculated_total = sum(q.max_score for q in rubric.questions)
         if abs(calculated_total - rubric.total_score) > 0.1:
-            issues.append({
-                "type": "score_mismatch",
-                "message": f"题目分值之和（{calculated_total}）与总分（{rubric.total_score}）不一致",
-                "severity": "medium"
-            })
+            issues.append(
+                {
+                    "type": "score_mismatch",
+                    "message": f"题目分值之和（{calculated_total}）与总分（{rubric.total_score}）不一致",
+                    "severity": "medium",
+                }
+            )
             if overall_status == "ok":
                 overall_status = "caution"
-            quality_checks.append({
-                "check": "分值一致性检查",
-                "passed": False,
-                "detail": f"分值差异 {abs(calculated_total - rubric.total_score):.1f} 分"
-            })
+            quality_checks.append(
+                {
+                    "check": "分值一致性检查",
+                    "passed": False,
+                    "detail": f"分值差异 {abs(calculated_total - rubric.total_score):.1f} 分",
+                }
+            )
         else:
-            quality_checks.append({
-                "check": "分值一致性检查",
-                "passed": True,
-                "detail": "分值一致"
-            })
-        
+            quality_checks.append({"check": "分值一致性检查", "passed": True, "detail": "分值一致"})
+
         # 如果有期望总分，进行比对
         if expected_total_score and abs(rubric.total_score - expected_total_score) > 0.1:
-            issues.append({
-                "type": "total_score_mismatch",
-                "message": f"总分为 {rubric.total_score}，但期望 {expected_total_score}",
-                "severity": "high"
-            })
+            issues.append(
+                {
+                    "type": "total_score_mismatch",
+                    "message": f"总分为 {rubric.total_score}，但期望 {expected_total_score}",
+                    "severity": "high",
+                }
+            )
             overall_status = "error"
-        
+
         # 3. 题目级别检查
         questions_with_issues = []
         for q in rubric.questions:
             q_issues = []
-            
+
             # 检查得分点
             if not q.scoring_points:
                 q_issues.append("缺少得分点")
-                issues.append({
-                    "type": "missing_scoring_points",
-                    "message": f"题目 {q.question_id} 缺少得分点",
-                    "questionId": q.question_id,
-                    "severity": "high"
-                })
-            
+                issues.append(
+                    {
+                        "type": "missing_scoring_points",
+                        "message": f"题目 {q.question_id} 缺少得分点",
+                        "questionId": q.question_id,
+                        "severity": "high",
+                    }
+                )
+
             # 检查分值合理性
             if q.max_score <= 0:
                 q_issues.append("分值异常")
-                issues.append({
-                    "type": "invalid_score",
-                    "message": f"题目 {q.question_id} 分值异常（{q.max_score}）",
-                    "questionId": q.question_id,
-                    "severity": "high"
-                })
+                issues.append(
+                    {
+                        "type": "invalid_score",
+                        "message": f"题目 {q.question_id} 分值异常（{q.max_score}）",
+                        "questionId": q.question_id,
+                        "severity": "high",
+                    }
+                )
             elif q.max_score > 30:
                 uncertainties.append(f"题目 {q.question_id} 分值较高（{q.max_score}分），请确认")
-            
+
             # 检查得分点分值之和
             if q.scoring_points:
                 sp_total = sum(sp.score for sp in q.scoring_points)
                 if abs(sp_total - q.max_score) > 0.1:
                     q_issues.append("得分点分值之和与题目满分不一致")
-                    issues.append({
-                        "type": "scoring_points_mismatch",
-                        "message": f"题目 {q.question_id} 得分点分值之和（{sp_total}）与满分（{q.max_score}）不一致",
-                        "questionId": q.question_id,
-                        "severity": "medium"
-                    })
-            
+                    issues.append(
+                        {
+                            "type": "scoring_points_mismatch",
+                            "message": f"题目 {q.question_id} 得分点分值之和（{sp_total}）与满分（{q.max_score}）不一致",
+                            "questionId": q.question_id,
+                            "severity": "medium",
+                        }
+                    )
+
             # 检查标准答案
             if not q.standard_answer:
                 uncertainties.append(f"题目 {q.question_id} 缺少标准答案")
-            
+
             # 检查题目置信度（如果有）
             if q.parse_confidence < 0.7:
                 q_issues.append(f"解析置信度较低（{q.parse_confidence:.2f}）")
-                issues.append({
-                    "type": "low_confidence",
-                    "message": f"题目 {q.question_id} 解析置信度较低（{q.parse_confidence:.2f}）",
-                    "questionId": q.question_id,
-                    "severity": "medium"
-                })
-            
+                issues.append(
+                    {
+                        "type": "low_confidence",
+                        "message": f"题目 {q.question_id} 解析置信度较低（{q.parse_confidence:.2f}）",
+                        "questionId": q.question_id,
+                        "severity": "medium",
+                    }
+                )
+
             # 收集题目不确定性
             if q.parse_uncertainties:
                 for unc in q.parse_uncertainties:
                     uncertainties.append(f"题目 {q.question_id}: {unc}")
-            
+
             if q_issues:
                 questions_with_issues.append(q.question_id)
-        
+
         # 4. 得分点完整性检查
         questions_without_points = [q.question_id for q in rubric.questions if not q.scoring_points]
         if questions_without_points:
-            quality_checks.append({
-                "check": "得分点完整性检查",
-                "passed": False,
-                "detail": f"{len(questions_without_points)} 题缺少得分点: {', '.join(questions_without_points)}"
-            })
+            quality_checks.append(
+                {
+                    "check": "得分点完整性检查",
+                    "passed": False,
+                    "detail": f"{len(questions_without_points)} 题缺少得分点: {', '.join(questions_without_points)}",
+                }
+            )
             if overall_status == "ok":
                 overall_status = "caution"
         else:
-            quality_checks.append({
-                "check": "得分点完整性检查",
-                "passed": True,
-                "detail": "所有题目都有得分点"
-            })
-        
+            quality_checks.append(
+                {"check": "得分点完整性检查", "passed": True, "detail": "所有题目都有得分点"}
+            )
+
         # 5. 标准答案检查
-        questions_without_answer = [q.question_id for q in rubric.questions if not q.standard_answer]
+        questions_without_answer = [
+            q.question_id for q in rubric.questions if not q.standard_answer
+        ]
         if questions_without_answer:
-            quality_checks.append({
-                "check": "标准答案完整性检查",
-                "passed": False,
-                "detail": f"{len(questions_without_answer)} 题缺少标准答案"
-            })
+            quality_checks.append(
+                {
+                    "check": "标准答案完整性检查",
+                    "passed": False,
+                    "detail": f"{len(questions_without_answer)} 题缺少标准答案",
+                }
+            )
         else:
-            quality_checks.append({
-                "check": "标准答案完整性检查",
-                "passed": True,
-                "detail": "所有题目都有标准答案"
-            })
-        
+            quality_checks.append(
+                {"check": "标准答案完整性检查", "passed": True, "detail": "所有题目都有标准答案"}
+            )
+
         # 6. 计算整体置信度
         if rubric.overall_parse_confidence < 1.0:
             # 使用 LLM 提供的置信度
@@ -936,7 +1008,7 @@ class RubricParserService:
         else:
             # 基于质量检查计算置信度
             confidence_factors = []
-            
+
             # 题目数量因素
             if rubric.total_questions == 0:
                 confidence_factors.append(0.0)
@@ -944,38 +1016,44 @@ class RubricParserService:
                 confidence_factors.append(0.6)
             else:
                 confidence_factors.append(0.9)
-            
+
             # 分值一致性因素
             if abs(calculated_total - rubric.total_score) > 0.1:
                 confidence_factors.append(0.7)
             else:
                 confidence_factors.append(1.0)
-            
+
             # 得分点完整性因素
             if questions_without_points:
                 confidence_factors.append(0.5)
             else:
                 confidence_factors.append(0.95)
-            
+
             # 题目置信度平均值
             if rubric.questions:
-                avg_q_confidence = sum(q.parse_confidence for q in rubric.questions) / len(rubric.questions)
+                avg_q_confidence = sum(q.parse_confidence for q in rubric.questions) / len(
+                    rubric.questions
+                )
                 confidence_factors.append(avg_q_confidence)
-            
-            overall_confidence = sum(confidence_factors) / len(confidence_factors) if confidence_factors else 0.5
-        
+
+            overall_confidence = (
+                sum(confidence_factors) / len(confidence_factors) if confidence_factors else 0.5
+            )
+
         # 7. 生成摘要
         if overall_status == "ok":
-            summary = f"成功解析 {rubric.total_questions} 题，总分 {rubric.total_score}，整体质量良好"
+            summary = (
+                f"成功解析 {rubric.total_questions} 题，总分 {rubric.total_score}，整体质量良好"
+            )
         elif overall_status == "caution":
             summary = f"解析 {rubric.total_questions} 题，总分 {rubric.total_score}，存在 {len(issues)} 个问题需要注意"
         else:
             summary = f"解析存在严重问题，识别到 {rubric.total_questions} 题，有 {len([i for i in issues if i['severity'] == 'high'])} 个高严重性问题"
-        
+
         # 8. 添加整体不确定性
         if rubric.parse_self_report.get("parse_uncertainties"):
             uncertainties.extend(rubric.parse_self_report["parse_uncertainties"])
-        
+
         return {
             "overallStatus": overall_status,
             "overallConfidence": round(overall_confidence, 3),
@@ -985,5 +1063,5 @@ class RubricParserService:
             "qualityChecks": quality_checks,
             "questionsWithIssues": questions_with_issues,
             "generatedAt": datetime.now().isoformat(),
-            "parseMethod": "llm_vision"
+            "parseMethod": "llm_vision",
         }

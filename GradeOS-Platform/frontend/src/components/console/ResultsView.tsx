@@ -23,11 +23,6 @@ interface ResultCardProps {
     isExpanded: boolean;
 }
 
-const normalizeEvidenceText = (text?: string) => {
-    if (!text) return '';
-    return text.replace(/^【原文引用】\s*/, '').trim();
-};
-
 const LOW_CONFIDENCE_THRESHOLD = 0.7;
 
 type ReviewQuestionDraft = {
@@ -438,7 +433,7 @@ const QuestionDetail: React.FC<{ question: QuestionResult; gradingMode?: string 
     );
 };
 
-const ResultCard: React.FC<ResultCardProps> = ({ result, rank, onExpand, isExpanded }) => {
+const ResultCard: React.FC<ResultCardProps> = ({ result, rank, onExpand }) => {
     const isAssist = (result.gradingMode || '').startsWith('assist') || result.maxScore <= 0;
     const percentage = !isAssist && result.maxScore > 0 ? (result.score / result.maxScore) * 100 : 0;
 
@@ -560,7 +555,6 @@ export const ResultsView: React.FC = () => {
         setCurrentTab,
         classReport,
         submissionId,
-        pendingReview,
         reviewFocus,
         setReviewFocus,
         setFinalResults,
@@ -1028,7 +1022,7 @@ export const ResultsView: React.FC = () => {
                 }
 
                 // 从 scoringPointResults 中提取错误区域批注
-                q.scoringPointResults?.forEach((spr: any, idx: number) => {
+                q.scoringPointResults?.forEach((spr: any) => {
                     // 如果有错误区域坐标，创建错误圈选批注
                     if (spr.errorRegion || spr.error_region) {
                         const errorRegion = spr.errorRegion || spr.error_region;

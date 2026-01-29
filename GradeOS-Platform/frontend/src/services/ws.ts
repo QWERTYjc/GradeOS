@@ -57,7 +57,7 @@ class WSClient {
     private maxReconnectAttempts = 5;
     private reconnectInterval = 1000;
     private maxReconnectInterval = 15000;
-    private listeners = new Map<string, ((data: any) => void)[]>();
+    private listeners = new Map<string, ((data: unknown) => void)[]>();
     private url: string = '';
     private statusChangeCallback: ((status: WebSocketStatus) => void) | null = null;
     private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -176,7 +176,7 @@ class WSClient {
         }
     }
 
-    send(type: string, payload: any) {
+    send(type: string, payload: Record<string, unknown>) {
         if (this.socket && this.socket.readyState === WebSocket.OPEN) {
             this.socket.send(JSON.stringify({ type, ...payload }));
         } else {
@@ -184,21 +184,21 @@ class WSClient {
         }
     }
 
-    on(type: string, callback: (data: any) => void) {
+    on(type: string, callback: (data: unknown) => void) {
         if (!this.listeners.has(type)) {
             this.listeners.set(type, []);
         }
         this.listeners.get(type)?.push(callback);
     }
 
-    off(type: string, callback: (data: any) => void) {
+    off(type: string, callback: (data: unknown) => void) {
         const callbacks = this.listeners.get(type);
         if (callbacks) {
             this.listeners.set(type, callbacks.filter(cb => cb !== callback));
         }
     }
 
-    private dispatch(type: string, payload: any) {
+    private dispatch(type: string, payload: unknown) {
         const callbacks = this.listeners.get(type);
         if (callbacks) {
             callbacks.forEach(cb => cb(payload));

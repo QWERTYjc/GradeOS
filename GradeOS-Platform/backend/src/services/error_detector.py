@@ -67,14 +67,14 @@ ERROR_DETECTION_PROMPT = """你是一位严谨的教师，需要仔细检查学�
 
 class ErrorDetector:
     """错误检测器"""
-    
+
     def __init__(self, llm_client: Optional[UnifiedLLMClient] = None):
         """
         Args:
             llm_client: LLM 客户端
         """
         self.llm_client = llm_client or UnifiedLLMClient()
-    
+
     async def detect_errors(
         self,
         images: List[str],
@@ -82,68 +82,63 @@ class ErrorDetector:
     ) -> List[ErrorRecord]:
         """
         检测错误
-        
+
         Args:
             images: 作业图片 Base64 列表
             understanding: 理解分析结果
-            
+
         Returns:
             错误记录列表
         """
         try:
             logger.info(f"[ErrorDetector] 开始检测错误: images={len(images)}")
-            
+
             # 构建消息
             messages = self._build_detection_messages(images, understanding)
-            
+
             # 调用 LLM
             response = await self.llm_client.complete(
                 messages=messages,
                 temperature=0.2,  # 低温度，确保准确性
                 max_tokens=3000,
             )
-            
+
             # 解析响应
             errors = self._parse_error_response(response.content)
-            
+
             logger.info(f"[ErrorDetector] 错误检测完成: 发现 {len(errors)} 个错误")
-            
+
             return errors
-            
+
         except Exception as e:
             logger.error(f"[ErrorDetector] 错误检测失败: {e}", exc_info=True)
             return []
-    
+
     def _build_detection_messages(
         self,
         images: List[str],
         understanding: Dict[str, Any],
     ) -> List[LLMMessage]:
         """构建检测消息"""
-        
+
         prompt = ERROR_DETECTION_PROMPT
-        
+
         # 添加理解上下文
         if understanding:
             prompt += f"\n\n**作业理解上下文**：\n{json.dumps(understanding, ensure_ascii=False, indent=2)[:500]}"
-        
+
         # 构建多模态消息
-        content_parts = [
-            {"type": "text", "text": prompt}
-        ]
-        
+        content_parts = [{"type": "text", "text": prompt}]
+
         # 添加图片
         for img_base64 in images:
             if not img_base64.startswith("data:"):
                 img_base64 = f"data:image/jpeg;base64,{img_base64}"
-            
-            content_parts.append({
-                "type": "image_url",
-                "image_url": {"url": img_base64}
-            })
-        
+
+            content_parts.append({"type": "image_url", "image_url": {"url": img_base64}})
+
         return [LLMMessage(role="user", content=content_parts)]
-    
+
     def _parse_error_response(self, response_text: str) -> List[ErrorRecord]:
         """解析错误响应"""
         try:
@@ -158,12 +153,12 @@ class ErrorDetector:
                 end = json_text.rfind("}")
                 if start != -1 and end != -1 and end > start:
                     json_text = json_text[start : end + 1]
-            
+
             data = json.loads(json_text)
             errors_data = data.get("errors", [])
             if not isinstance(errors_data, list):
                 errors_data = []
-            
+
             # 构建错误记录
             error_records = []
             for idx, err in enumerate(errors_data):
@@ -177,22 +172,16 @@ class ErrorDetector:
                         "concept": ErrorType.CONCEPT,
                         "writing": ErrorType.WRITING,
                     }
-                    error_type = error_type_map.get(
-                        err.get("error_type", "logic"),
-                        ErrorType.LOGIC
-                    )
-                    
+                    error_type = error_type_map.get(err.get("error_type", "logic"), ErrorType.LOGIC)
+
                     # 映射严重程度
                     severity_map = {
                         "high": Severity.HIGH,
                         "medium": Severity.MEDIUM,
                         "low": Severity.LOW,
                     }
-                    severity = severity_map.get(
-                        err.get("severity", "medium"),
-                        Severity.MEDIUM
-                    )
-                    
+                    severity = severity_map.get(err.get("severity", "medium"), Severity.MEDIUM)
+
                     # 构建位置
                     location_data = err.get("location", {})
                     if not isinstance(location_data, dict):
@@ -216,7 +205,7 @@ class ErrorDetector:
                         step_number=step_value,
                         coordinates=location_data.get("coordinates"),
                     )
-                    
+
                     # 构建错误记录
                     error_record = ErrorRecord(
                         error_id=f"err_{uuid.uuid4().hex[:8]}",
@@ -228,20 +217,20 @@ class ErrorDetector:
                         correct_approach=err.get("correct_approach"),
                         context=err.get("context"),
                     )
-                    
+
                     error_records.append(error_record)
-                    
+
                 except Exception as e:
                     logger.warning(f"[ErrorDetector] 解析单个错误失败: {e}")
                     continue
-            
+
             return error_records
-            
+
         except Exception as e:
             logger.error(f"[ErrorDetector] 解析错误响应失败: {e}")
             logger.debug(f"Response text: {response_text[:500]}")
             return []
-    
+
     async def close(self):
         """关闭资源"""
         if self.llm_client:
@@ -257,11 +246,11 @@ async def detect_errors(
 ) -> List[ErrorRecord]:
     """
     便捷函数：检测错误
-    
+
     Args:
         images: 作业图片 Base64 列表
         understanding: 理解分析结果
-        
+
     Returns:
         错误记录列表
     """

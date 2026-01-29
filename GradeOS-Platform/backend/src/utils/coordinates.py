@@ -11,9 +11,7 @@ def normalize_coordinates(
 ) -> BoundingBox:
     """Convert normalized coordinates (0-1000) to pixel coordinates."""
     if len(box_1000) != 4:
-        raise ValueError(
-            f"box_1000 must contain 4 elements, got {len(box_1000)}"
-        )
+        raise ValueError(f"box_1000 must contain 4 elements, got {len(box_1000)}")
 
     if img_width <= 0 or img_height <= 0:
         raise ValueError(
@@ -29,9 +27,7 @@ def normalize_coordinates(
         (xmax_norm, "xmax"),
     ]:
         if not (0 <= coord <= 1000):
-            raise ValueError(
-                f"{name} must be within 0-1000, got {coord}"
-            )
+            raise ValueError(f"{name} must be within 0-1000, got {coord}")
 
     pixel_ymin = int(ymin_norm * img_height / 1000)
     pixel_xmin = int(xmin_norm * img_width / 1000)

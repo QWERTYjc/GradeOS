@@ -11,6 +11,7 @@ from enum import Enum
 
 # ============ 枚举类型 ============
 
+
 class UserType(str, Enum):
     STUDENT = "student"
     TEACHER = "teacher"
@@ -47,8 +48,10 @@ class ErrorSeverity(str, Enum):
 
 # ============ 用户认证模块 ============
 
+
 class User(BaseModel):
     """用户表"""
+
     user_id: str
     username: str
     password_hash: str
@@ -65,6 +68,7 @@ class User(BaseModel):
 
 class UserProfile(BaseModel):
     """用户配置表"""
+
     profile_id: Optional[int] = None
     user_id: str
     grade: Optional[str] = None
@@ -80,8 +84,10 @@ class UserProfile(BaseModel):
 
 # ============ 班级管理模块 ============
 
+
 class Class(BaseModel):
     """班级表"""
+
     class_id: str
     class_name: str
     teacher_id: str
@@ -99,6 +105,7 @@ class Class(BaseModel):
 
 class StudentClassRelation(BaseModel):
     """学生班级关系表"""
+
     id: Optional[int] = None
     student_id: str
     class_id: str
@@ -109,8 +116,10 @@ class StudentClassRelation(BaseModel):
 
 # ============ 作业管理模块 ============
 
+
 class Assignment(BaseModel):
     """作业表"""
+
     assignment_id: str
     homework_id: Optional[str] = None  # 兼容 API
     class_id: str
@@ -135,6 +144,7 @@ class Assignment(BaseModel):
 
 class AssignmentSubmission(BaseModel):
     """作业提交表"""
+
     submission_id: str
     assignment_id: str
     student_id: str
@@ -158,8 +168,10 @@ class AssignmentSubmission(BaseModel):
 
 # ============ AI 批改模块 ============
 
+
 class GradingTask(BaseModel):
     """批改任务表"""
+
     task_id: str
     submission_id: str
     student_id: str
@@ -177,6 +189,7 @@ class GradingTask(BaseModel):
 
 class GradingResult(BaseModel):
     """批改结果表"""
+
     result_id: Optional[int] = None
     task_id: str
     question_id: str
@@ -197,8 +210,10 @@ class GradingResult(BaseModel):
 
 # ============ 错题分析模块 ============
 
+
 class ErrorRecord(BaseModel):
     """错题记录表"""
+
     error_id: str
     analysis_id: Optional[str] = None
     student_id: str
@@ -221,6 +236,7 @@ class ErrorRecord(BaseModel):
 
 class LearningRecommendation(BaseModel):
     """学习建议表"""
+
     recommendation_id: str
     student_id: str
     analysis_id: Optional[str] = None
@@ -241,8 +257,10 @@ class LearningRecommendation(BaseModel):
 
 # ============ 知识图谱模块 ============
 
+
 class KnowledgePoint(BaseModel):
     """知识点表"""
+
     concept_id: str
     concept_name: str
     point_name: str
@@ -259,6 +277,7 @@ class KnowledgePoint(BaseModel):
 
 class StudentKnowledgeMastery(BaseModel):
     """学生知识掌握表"""
+
     mastery_id: Optional[int] = None
     student_id: str
     concept_id: str
@@ -274,8 +293,10 @@ class StudentKnowledgeMastery(BaseModel):
 
 # ============ 统计分析模块 ============
 
+
 class ClassStatistics(BaseModel):
     """班级统计表"""
+
     stat_id: str
     class_id: str
     assignment_id: Optional[str] = None
@@ -298,6 +319,7 @@ class ClassStatistics(BaseModel):
 
 class SystemLog(BaseModel):
     """系统日志表"""
+
     log_id: Optional[int] = None
     user_id: Optional[str] = None
     action: Optional[str] = None

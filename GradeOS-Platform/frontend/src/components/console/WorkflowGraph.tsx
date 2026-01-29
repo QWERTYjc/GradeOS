@@ -273,7 +273,7 @@ const NodeCard: React.FC<{
         && node.id !== 'review'
     );
     const inferredStatus = shouldAutoComplete ? 'completed' : node.status;
-    const effectiveStatus = (node as any).isVisualCompleted ? 'completed' : inferredStatus;
+    const effectiveStatus = (node as {isVisualCompleted?: boolean}).isVisualCompleted ? 'completed' : inferredStatus;
     const styles = statusStyles[effectiveStatus] || statusStyles.pending;
     const isRunning = effectiveStatus === 'running';
     const preview = streamPreview ? formatStreamPreview(streamPreview, 80) : '';

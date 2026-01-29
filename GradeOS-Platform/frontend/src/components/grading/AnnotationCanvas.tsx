@@ -9,9 +9,6 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import type {
   VisualAnnotation,
-  PageAnnotations,
-  BoundingBox,
-  AnnotationType,
 } from '@/types/annotation';
 import { toPixelCoords, getAnnotationColor } from '@/types/annotation';
 

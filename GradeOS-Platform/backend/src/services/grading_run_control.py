@@ -20,9 +20,7 @@ RunStatus = Literal["queued", "running", "completed", "failed"]
 
 RUN_RECORD_TTL_SECONDS = int(os.getenv("GRADING_RUN_RECORD_TTL_SECONDS", "172800"))
 RUN_SLOT_TTL_SECONDS = int(os.getenv("GRADING_RUN_SLOT_TTL_SECONDS", "10800"))
-RUN_QUEUE_TTL_SECONDS = int(
-    os.getenv("GRADING_RUN_QUEUE_TTL_SECONDS", str(RUN_RECORD_TTL_SECONDS))
-)
+RUN_QUEUE_TTL_SECONDS = int(os.getenv("GRADING_RUN_QUEUE_TTL_SECONDS", str(RUN_RECORD_TTL_SECONDS)))
 RUN_KEY_PREFIX = os.getenv("GRADING_RUN_REDIS_PREFIX", "grading_run")
 
 
@@ -252,7 +250,9 @@ class RedisGradingRunController:
             return []
         records: List[GradingRunSnapshot] = []
         for run_id in run_ids:
-            run_key = self._run_key(run_id.decode("utf-8") if isinstance(run_id, (bytes, bytearray)) else str(run_id))
+            run_key = self._run_key(
+                run_id.decode("utf-8") if isinstance(run_id, (bytes, bytearray)) else str(run_id)
+            )
             try:
                 data = await self._redis.hgetall(run_key)
             except RedisError:

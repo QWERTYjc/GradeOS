@@ -30,7 +30,7 @@ export const enhanceWithTextIn = async (base64Image: string): Promise<string> =>
         'x-ti-secret-code': TEXTIN_CONFIG.SECRET_CODE,
         'Content-Type': 'application/octet-stream'
       },
-      body: binaryData as any
+      body: binaryData as BodyInit
     });
 
     if (!response.ok) {

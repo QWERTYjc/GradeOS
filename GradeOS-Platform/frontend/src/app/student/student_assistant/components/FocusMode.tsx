@@ -110,7 +110,7 @@ const FocusMode: React.FC<FocusModeProps> = ({
               onClick={() => onAnswer("I don't know yet. Please explain step-by-step, then ask a simpler question.")}
               className="transition-colors hover:text-black/70"
             >
-              I don't know
+              I don&apos;t know
             </button>
           </div>
 

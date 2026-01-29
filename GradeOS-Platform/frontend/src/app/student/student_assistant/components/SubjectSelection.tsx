@@ -47,7 +47,6 @@ const SubjectSelection: React.FC<Props> = ({ lang }) => {
 
   useEffect(() => {
     if (!user?.id) {
-      setCombos([]);
       return;
     }
     let active = true;

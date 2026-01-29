@@ -84,8 +84,10 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 # ============ 数据模型 ============
 
+
 class RegisterRequest(BaseModel):
     """用户注册"""
+
     username: str
     password: str
     role: str = "teacher"
@@ -95,6 +97,7 @@ class LoginRequest(BaseModel):
     username: str
     password: str
 
+
 class UserResponse(BaseModel):
     user_id: str
     username: str
@@ -102,9 +105,11 @@ class UserResponse(BaseModel):
     user_type: str  # student/teacher/admin
     class_ids: List[str] = []
 
+
 class ClassCreate(BaseModel):
     name: str
     teacher_id: str
+
 
 class ClassResponse(BaseModel):
     class_id: str
@@ -113,15 +118,19 @@ class ClassResponse(BaseModel):
     invite_code: str
     student_count: int
 
+
 class StudentInfo(BaseModel):
     """学生信息模型"""
+
     id: str
     name: str
     username: str
 
+
 class JoinClassRequest(BaseModel):
     code: str
     student_id: str
+
 
 class HomeworkCreate(BaseModel):
     class_id: str
@@ -129,6 +138,7 @@ class HomeworkCreate(BaseModel):
     description: str
     deadline: str
     allow_early_grading: bool = False
+
 
 class HomeworkResponse(BaseModel):
     homework_id: str
@@ -140,18 +150,22 @@ class HomeworkResponse(BaseModel):
     allow_early_grading: bool = False
     created_at: str
 
+
 class SubmissionCreate(BaseModel):
     homework_id: str
     student_id: str
     student_name: str
     content: str
 
+
 class ScanSubmissionCreate(BaseModel):
     """扫描提交请求"""
+
     homework_id: str
     student_id: str
     student_name: str
     images: List[str]  # Base64 编码的图片列表
+
 
 class SubmissionResponse(BaseModel):
     submission_id: str
@@ -198,6 +212,7 @@ class AssistantChatRequest(BaseModel):
 
 class ConceptNode(BaseModel):
     """概念分解节点（第一性原理）"""
+
     id: str
     name: str
     description: str
@@ -207,6 +222,7 @@ class ConceptNode(BaseModel):
 
 class MasteryData(BaseModel):
     """掌握度评估数据"""
+
     score: int  # 0-100
     level: str  # beginner / developing / proficient / mastery
     analysis: str  # 分析说明
@@ -225,8 +241,6 @@ class AssistantChatResponse(BaseModel):
     focus_mode: bool = False  # 是否进入专注模式
     concept_breakdown: Optional[List[ConceptNode]] = None  # 第一性原理概念分解
     response_type: str = "chat"  # chat / question / assessment / explanation
-
-
 
 
 class MasterySnapshot(BaseModel):
@@ -283,11 +297,13 @@ class GradingHistoryDetailResponse(BaseModel):
 class GradingRevokeRequest(BaseModel):
     reason: Optional[str] = None
 
+
 class ErrorAnalysisRequest(BaseModel):
     subject: str
     question: str
     student_answer: str
     student_id: Optional[str] = None
+
 
 class ErrorAnalysisResponse(BaseModel):
     analysis_id: str
@@ -297,6 +313,7 @@ class ErrorAnalysisResponse(BaseModel):
     knowledge_gaps: List[dict]
     detailed_analysis: dict
     recommendations: dict
+
 
 class DiagnosisReportResponse(BaseModel):
     student_id: str
@@ -335,7 +352,13 @@ def _get_student_map(class_id: str) -> Dict[str, str]:
 
 
 def _extract_question_results(result: Dict[str, Any]) -> List[Dict[str, Any]]:
-    for key in ("questionResults", "question_results", "questions", "questionDetails", "question_details"):
+    for key in (
+        "questionResults",
+        "question_results",
+        "questions",
+        "questionDetails",
+        "question_details",
+    ):
         values = result.get(key)
         if isinstance(values, list) and values:
             return values
@@ -351,7 +374,6 @@ def _parse_llm_json(text: str) -> Dict[str, Any]:
         if not match:
             raise
         return json.loads(match.group(0))
-
 
 
 _ASSISTANT_REDIS_CLIENT: Optional[redis.Redis] = None
@@ -387,7 +409,9 @@ async def _get_assistant_redis_client() -> Optional[redis.Redis]:
     return _ASSISTANT_REDIS_CLIENT
 
 
-async def _load_assistant_progress_cache(student_id: str, class_id: Optional[str]) -> Optional[Dict[str, Any]]:
+async def _load_assistant_progress_cache(
+    student_id: str, class_id: Optional[str]
+) -> Optional[Dict[str, Any]]:
     redis_client = await _get_assistant_redis_client()
     if not redis_client:
         return None
@@ -442,13 +466,15 @@ def _flatten_concepts(
         if not name:
             continue
         concept_key = _assistant_concept_key(name, parent_key)
-        flattened.append({
-            "concept_key": concept_key,
-            "parent_key": parent_key,
-            "name": name,
-            "description": node.description or "",
-            "understood": bool(node.understood),
-        })
+        flattened.append(
+            {
+                "concept_key": concept_key,
+                "parent_key": parent_key,
+                "name": name,
+                "description": node.description or "",
+                "understood": bool(node.understood),
+            }
+        )
         if node.children:
             flattened.extend(_flatten_concepts(node.children, concept_key))
     return flattened
@@ -505,11 +531,7 @@ def _history_from_request(
     if not history:
         return []
     items = list(history)
-    if (
-        items
-        and items[-1].role == "user"
-        and items[-1].content.strip() == current_message.strip()
-    ):
+    if items and items[-1].role == "user" and items[-1].content.strip() == current_message.strip():
         items = items[:-1]
     messages: List[BaseMessage] = []
     for item in items[-10:]:
@@ -581,25 +603,33 @@ def _build_student_context(student_id: str, class_id: Optional[str] = None) -> D
             if score < max_score:
                 total_wrong += 1
                 if len(wrong_samples) < 8:
-                    wrong_samples.append({
-                        "question_id": str(q.get("questionId") or q.get("question_id") or ""),
-                        "score": score,
-                        "max_score": max_score,
-                        "feedback": q.get("feedback") or "",
-                        "student_answer": q.get("studentAnswer") or q.get("student_answer") or "",
-                        "evidence": (q.get("scoring_point_results") or q.get("scoringPointResults") or [])[:2],
-                    })
+                    wrong_samples.append(
+                        {
+                            "question_id": str(q.get("questionId") or q.get("question_id") or ""),
+                            "score": score,
+                            "max_score": max_score,
+                            "feedback": q.get("feedback") or "",
+                            "student_answer": q.get("studentAnswer")
+                            or q.get("student_answer")
+                            or "",
+                            "evidence": (
+                                q.get("scoring_point_results") or q.get("scoringPointResults") or []
+                            )[:2],
+                        }
+                    )
 
     submissions = []
     for submission in list_student_submissions(student_id, limit=5):
         homework = get_homework(submission.homework_id)
-        submissions.append({
-            "homework_id": submission.homework_id,
-            "title": homework.title if homework else None,
-            "status": submission.status,
-            "submitted_at": submission.submitted_at,
-            "score": submission.score,
-        })
+        submissions.append(
+            {
+                "homework_id": submission.homework_id,
+                "title": homework.title if homework else None,
+                "status": submission.status,
+                "submitted_at": submission.submitted_at,
+                "score": submission.score,
+            }
+        )
 
     return {
         "student_id": student_id,
@@ -679,11 +709,13 @@ async def _trigger_homework_grading(homework_id: str, orchestrator: Orchestrator
         if not images:
             continue
         pages = list(range(page_cursor, page_cursor + len(images)))
-        manual_boundaries.append({
-            "student_id": submission.student_id,
-            "student_key": submission.student_name or submission.student_id,
-            "pages": pages,
-        })
+        manual_boundaries.append(
+            {
+                "student_id": submission.student_id,
+                "student_key": submission.student_name or submission.student_id,
+                "pages": pages,
+            }
+        )
         for img in images:
             img_data = img
             if isinstance(img_data, str):
@@ -741,7 +773,9 @@ async def _trigger_homework_grading(homework_id: str, orchestrator: Orchestrator
     return batch_id
 
 
-async def _schedule_deadline_grading(homework_id: str, deadline: datetime, orchestrator: Orchestrator) -> None:
+async def _schedule_deadline_grading(
+    homework_id: str, deadline: datetime, orchestrator: Orchestrator
+) -> None:
     delay = (deadline - datetime.utcnow()).total_seconds()
     if delay > 0:
         await asyncio.sleep(delay)
@@ -769,7 +803,9 @@ async def _maybe_trigger_grading(homework_id: str, orchestrator: Orchestrator) -
     if not allow_early and datetime.utcnow() >= deadline:
         await _trigger_homework_grading(homework_id, orchestrator)
 
+
 # ============ 认证接口 ============
+
 
 @router.post("/auth/register", response_model=UserResponse, tags=["认证"])
 async def register(request: RegisterRequest):
@@ -836,18 +872,21 @@ async def get_user_info(user_id: str):
 
 # ============ 班级管理接口 ============
 
+
 @router.get("/class/my", response_model=List[ClassResponse], tags=["班级管理"])
 async def get_my_classes(student_id: str):
     """获取学生加入的班级"""
     classes: List[ClassResponse] = []
     for class_record in list_classes_by_student(student_id):
-        classes.append(ClassResponse(
-            class_id=class_record.id,
-            class_name=class_record.name,
-            teacher_id=class_record.teacher_id,
-            invite_code=class_record.invite_code,
-            student_count=count_class_students(class_record.id),
-        ))
+        classes.append(
+            ClassResponse(
+                class_id=class_record.id,
+                class_name=class_record.name,
+                teacher_id=class_record.teacher_id,
+                invite_code=class_record.invite_code,
+                student_count=count_class_students(class_record.id),
+            )
+        )
     return classes
 
 
@@ -875,13 +914,15 @@ async def get_teacher_classes(teacher_id: str):
     """获取教师的班级列表"""
     classes: List[ClassResponse] = []
     for class_record in list_classes_by_teacher(teacher_id):
-        classes.append(ClassResponse(
-            class_id=class_record.id,
-            class_name=class_record.name,
-            teacher_id=class_record.teacher_id,
-            invite_code=class_record.invite_code,
-            student_count=count_class_students(class_record.id),
-        ))
+        classes.append(
+            ClassResponse(
+                class_id=class_record.id,
+                class_name=class_record.name,
+                teacher_id=class_record.teacher_id,
+                invite_code=class_record.invite_code,
+                student_count=count_class_students(class_record.id),
+            )
+        )
     return classes
 
 
@@ -890,8 +931,9 @@ async def create_class(request: ClassCreate):
     """创建班级"""
     import random
     import string
-    invite_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
-    
+
+    invite_code = "".join(random.choices(string.ascii_uppercase + string.digits, k=6))
+
     teacher = get_user_by_id(request.teacher_id)
     if not teacher:
         raise HTTPException(status_code=404, detail="教师不存在")
@@ -933,7 +975,9 @@ async def get_class_students(class_id: str):
             """,
             (class_id,),
         ).fetchall()
-        submission_counts = {row["student_id"]: int(row["submitted_count"]) for row in submission_rows}
+        submission_counts = {
+            row["student_id"]: int(row["submitted_count"]) for row in submission_rows
+        }
 
         score_rows = conn.execute(
             """
@@ -961,18 +1005,25 @@ async def get_class_students(class_id: str):
             "id": student.id,
             "name": student.name or student.username or student.id,
             "username": student.username,
-            "avgScore": round((score_totals.get(student.id, 0.0) / score_counts.get(student.id, 1)) * 100, 1)
-            if score_counts.get(student.id)
-            else None,
-            "submissionRate": round((submission_counts.get(student.id, 0) / total_homeworks) * 100, 1)
-            if total_homeworks > 0
-            else None,
+            "avgScore": (
+                round(
+                    (score_totals.get(student.id, 0.0) / score_counts.get(student.id, 1)) * 100, 1
+                )
+                if score_counts.get(student.id)
+                else None
+            ),
+            "submissionRate": (
+                round((submission_counts.get(student.id, 0) / total_homeworks) * 100, 1)
+                if total_homeworks > 0
+                else None
+            ),
         }
         for student in students
     ]
 
 
 # ============ 作业管理接口 ============
+
 
 @router.get("/homework/list", response_model=List[HomeworkResponse], tags=["作业管理"])
 async def get_homework_list(class_id: Optional[str] = None, student_id: Optional[str] = None):
@@ -981,16 +1032,18 @@ async def get_homework_list(class_id: Optional[str] = None, student_id: Optional
     responses = []
     for record in records:
         class_info = get_class_by_id(record.class_id)
-        responses.append(HomeworkResponse(
-            homework_id=record.id,
-            class_id=record.class_id,
-            class_name=class_info.name if class_info else None,
-            title=record.title,
-            description=record.description or "",
-            deadline=record.deadline,
-            allow_early_grading=record.allow_early_grading,
-            created_at=record.created_at,
-        ))
+        responses.append(
+            HomeworkResponse(
+                homework_id=record.id,
+                class_id=record.class_id,
+                class_name=class_info.name if class_info else None,
+                title=record.title,
+                description=record.description or "",
+                deadline=record.deadline,
+                allow_early_grading=record.allow_early_grading,
+                created_at=record.created_at,
+            )
+        )
     return responses
 
 
@@ -1037,7 +1090,9 @@ async def create_homework(
 
     deadline_dt = _parse_deadline(request.deadline)
     if orchestrator:
-        task = asyncio.create_task(_schedule_deadline_grading(homework_id, deadline_dt, orchestrator))
+        task = asyncio.create_task(
+            _schedule_deadline_grading(homework_id, deadline_dt, orchestrator)
+        )
         HOMEWORK_GRADING_TASKS[homework_id] = task
 
     return HomeworkResponse(
@@ -1093,7 +1148,7 @@ async def submit_scan_homework(
 ):
     """
     提交扫描作业（图片）
-    
+
     接收 Base64 编码的图片列表，保存到本地存储，并触发 AI 批改
     """
     homework = get_homework(request.homework_id)
@@ -1101,36 +1156,38 @@ async def submit_scan_homework(
         raise HTTPException(status_code=404, detail="作业不存在")
 
     submission_id = str(uuid.uuid4())[:8]
-    
+
     # 创建提交目录
     submission_dir = UPLOAD_DIR / submission_id
     submission_dir.mkdir(parents=True, exist_ok=True)
-    
+
     saved_paths = []
-    
+
     images_bytes: List[bytes] = []
     stored_images: List[str] = []
     # 保存图片
     for idx, img_data in enumerate(request.images):
         try:
             # 移除 data:image/xxx;base64, 前缀
-            if ',' in img_data:
-                img_data = img_data.split(',')[1]
-            
+            if "," in img_data:
+                img_data = img_data.split(",")[1]
+
             # 解码并保存
             img_bytes = base64.b64decode(img_data)
             img_bytes = to_jpeg_bytes(img_bytes)
             file_path = submission_dir / f"page_{idx + 1}.jpg"
-            
-            with open(file_path, 'wb') as f:
+
+            with open(file_path, "wb") as f:
                 f.write(img_bytes)
-            
+
             saved_paths.append(str(file_path))
             images_bytes.append(img_bytes)
-            stored_images.append(f"data:image/jpeg;base64,{base64.b64encode(img_bytes).decode('utf-8')}")
+            stored_images.append(
+                f"data:image/jpeg;base64,{base64.b64encode(img_bytes).decode('utf-8')}"
+            )
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"图片 {idx + 1} 处理失败: {str(e)}")
-    
+
     submission_record = HomeworkSubmission(
         id=submission_id,
         class_id=homework.class_id,
@@ -1186,6 +1243,7 @@ async def get_submissions(homework_id: str):
 
 
 # ============ 批改结果导入与历史 ============
+
 
 @router.post("/grading/import", response_model=GradingHistoryResponse, tags=["批改历史"])
 async def import_grading_results(
@@ -1325,9 +1383,7 @@ async def import_grading_results(
                 )
             if result:
                 score_value = (
-                    result.get("total_score")
-                    or result.get("totalScore")
-                    or result.get("score")
+                    result.get("total_score") or result.get("totalScore") or result.get("score")
                 )
                 max_score_value = (
                     result.get("max_score")
@@ -1425,18 +1481,20 @@ async def get_grading_history(
                 created_at_value = str(created_at_value)
             if not created_at_value:
                 created_at_value = ""
-            records.append({
-                "import_id": str(history.id),
-                "batch_id": history.batch_id or "",
-                "class_id": target_class_id or "",
-                "class_name": class_info.name if class_info else None,
-                "assignment_id": assignment_id_value,
-                "assignment_title": assignment_title,
-                "student_count": history.total_students or 0,
-                "status": history.status or "unknown",
-                "created_at": created_at_value,
-                "revoked_at": None,
-            })
+            records.append(
+                {
+                    "import_id": str(history.id),
+                    "batch_id": history.batch_id or "",
+                    "class_id": target_class_id or "",
+                    "class_name": class_info.name if class_info else None,
+                    "assignment_id": assignment_id_value,
+                    "assignment_title": assignment_title,
+                    "student_count": history.total_students or 0,
+                    "status": history.status or "unknown",
+                    "created_at": created_at_value,
+                    "revoked_at": None,
+                }
+            )
     except Exception as exc:
         logger.warning(f"PostgreSQL grading detail read failed: {exc}")
 
@@ -1466,18 +1524,20 @@ async def get_grading_history(
                 created_at_value = str(created_at_value)
             if not created_at_value:
                 created_at_value = ""
-            records.append({
-                "import_id": str(row["id"]),
-                "batch_id": row["batch_id"] or "",
-                "class_id": row["class_id"],
-                "class_name": class_info.name if class_info else None,
-                "assignment_id": row["assignment_id"],
-                "assignment_title": assignment_title,
-                "student_count": row["student_count"] or 0,
-                "status": row["status"] or "unknown",
-                "created_at": created_at_value,
-                "revoked_at": row["revoked_at"],
-            })
+            records.append(
+                {
+                    "import_id": str(row["id"]),
+                    "batch_id": row["batch_id"] or "",
+                    "class_id": row["class_id"],
+                    "class_name": class_info.name if class_info else None,
+                    "assignment_id": row["assignment_id"],
+                    "assignment_title": assignment_title,
+                    "student_count": row["student_count"] or 0,
+                    "status": row["status"] or "unknown",
+                    "created_at": created_at_value,
+                    "revoked_at": row["revoked_at"],
+                }
+            )
     except Exception as exc:
         logger.warning(f"grading import records read failed: {exc}")
 
@@ -1485,10 +1545,14 @@ async def get_grading_history(
     return GradingHistoryResponse(records=[GradingImportRecord(**record) for record in records])
 
 
-@router.get("/grading/history/{import_id}", response_model=GradingHistoryDetailResponse, tags=["Grading History"])
+@router.get(
+    "/grading/history/{import_id}",
+    response_model=GradingHistoryDetailResponse,
+    tags=["Grading History"],
+)
 async def get_grading_history_detail(import_id: str):
     """Get grading history detail - 优先从 PostgreSQL 读取"""
-    
+
     # 1. 优先尝试 PostgreSQL
     if db.is_available:
         try:
@@ -1501,7 +1565,9 @@ async def get_grading_history_detail(import_id: str):
                     result_data = {}
                 class_id = class_ids[0] if class_ids else ""
                 class_info = get_class_by_id(class_id) if class_id else None
-                assignment_id_value = result_data.get("homework_id") or result_data.get("assignment_id")
+                assignment_id_value = result_data.get("homework_id") or result_data.get(
+                    "assignment_id"
+                )
                 assignment_title = None
                 if assignment_id_value:
                     assignment = get_homework(assignment_id_value)
@@ -1541,19 +1607,23 @@ async def get_grading_history_detail(import_id: str):
                         or item.student_id
                         or f"Student {idx + 1}"
                     )
-                    items.append({
-                        "item_id": str(item.id),
-                        "import_id": str(pg_history.id),
-                        "batch_id": pg_history.batch_id,
-                        "class_id": class_id,
-                        "student_id": item.student_id or "",
-                        "student_name": student_name,
-                        "status": "revoked" if item.revoked_at else "imported",
-                        "created_at": item.imported_at or pg_history.created_at,
-                        "revoked_at": item.revoked_at,
-                        "result": result,
-                    })
-                logger.info(f"从 PostgreSQL 读取批改详情: import_id={import_id}, items={len(items)}")
+                    items.append(
+                        {
+                            "item_id": str(item.id),
+                            "import_id": str(pg_history.id),
+                            "batch_id": pg_history.batch_id,
+                            "class_id": class_id,
+                            "student_id": item.student_id or "",
+                            "student_name": student_name,
+                            "status": "revoked" if item.revoked_at else "imported",
+                            "created_at": item.imported_at or pg_history.created_at,
+                            "revoked_at": item.revoked_at,
+                            "result": result,
+                        }
+                    )
+                logger.info(
+                    f"从 PostgreSQL 读取批改详情: import_id={import_id}, items={len(items)}"
+                )
                 return GradingHistoryDetailResponse(
                     record=GradingImportRecord(**record),
                     items=[GradingImportItem(**item) for item in items],
@@ -1564,7 +1634,9 @@ async def get_grading_history_detail(import_id: str):
     # 2. Fallback detail
     try:
         with get_connection() as conn:
-            row = conn.execute("SELECT * FROM grading_history WHERE id = ?", (import_id,)).fetchone()
+            row = conn.execute(
+                "SELECT * FROM grading_history WHERE id = ?", (import_id,)
+            ).fetchone()
         if row:
             # 安全解析 JSON 字段（可能已经是 dict）
             raw_class_ids = row["class_ids"]
@@ -1574,7 +1646,7 @@ async def get_grading_history_detail(import_id: str):
                 class_ids = raw_class_ids
             else:
                 class_ids = []
-            
+
             raw_result_data = row["result_data"]
             if isinstance(raw_result_data, str):
                 result_data = json.loads(raw_result_data) if raw_result_data else {}
@@ -1582,7 +1654,7 @@ async def get_grading_history_detail(import_id: str):
                 result_data = raw_result_data
             else:
                 result_data = {}
-            
+
             class_id = class_ids[0] if class_ids else ""
             class_info = get_class_by_id(class_id) if class_id else None
             assignment_id_value = result_data.get("homework_id") or result_data.get("assignment_id")
@@ -1617,18 +1689,20 @@ async def get_grading_history_detail(import_id: str):
                     or item.student_id
                     or f"Student {idx + 1}"
                 )
-                items.append({
-                    "item_id": item.id,
-                    "import_id": row["id"],
-                    "batch_id": row["batch_id"],
-                    "class_id": class_id,
-                    "student_id": item.student_id or "",
-                    "student_name": student_name,
-                    "status": "revoked" if item.revoked_at else "imported",
-                    "created_at": item.imported_at or row["created_at"],
-                    "revoked_at": item.revoked_at,
-                    "result": result,
-                })
+                items.append(
+                    {
+                        "item_id": item.id,
+                        "import_id": row["id"],
+                        "batch_id": row["batch_id"],
+                        "class_id": class_id,
+                        "student_id": item.student_id or "",
+                        "student_name": student_name,
+                        "status": "revoked" if item.revoked_at else "imported",
+                        "created_at": item.imported_at or row["created_at"],
+                        "revoked_at": item.revoked_at,
+                        "result": result,
+                    }
+                )
             return GradingHistoryDetailResponse(
                 record=GradingImportRecord(**record),
                 items=[GradingImportItem(**item) for item in items],
@@ -1638,7 +1712,9 @@ async def get_grading_history_detail(import_id: str):
 
     try:
         with get_connection() as conn:
-            row = conn.execute("SELECT * FROM grading_imports WHERE id = ?", (import_id,)).fetchone()
+            row = conn.execute(
+                "SELECT * FROM grading_imports WHERE id = ?", (import_id,)
+            ).fetchone()
             if row:
                 class_info = get_class_by_id(row["class_id"])
                 assignment_title = None
@@ -1672,18 +1748,20 @@ async def get_grading_history_detail(import_id: str):
                             result = {}
                     else:
                         result = result_data or {}
-                    items.append({
-                        "item_id": item["id"],
-                        "import_id": item["import_id"],
-                        "batch_id": item["batch_id"],
-                        "class_id": item["class_id"],
-                        "student_id": item["student_id"],
-                        "student_name": item["student_name"],
-                        "status": item["status"],
-                        "created_at": item["created_at"],
-                        "revoked_at": item["revoked_at"],
-                        "result": result,
-                    })
+                    items.append(
+                        {
+                            "item_id": item["id"],
+                            "import_id": item["import_id"],
+                            "batch_id": item["batch_id"],
+                            "class_id": item["class_id"],
+                            "student_id": item["student_id"],
+                            "student_name": item["student_name"],
+                            "status": item["status"],
+                            "created_at": item["created_at"],
+                            "revoked_at": item["revoked_at"],
+                            "result": result,
+                        }
+                    )
 
                 return GradingHistoryDetailResponse(
                     record=GradingImportRecord(**record),
@@ -1695,12 +1773,18 @@ async def get_grading_history_detail(import_id: str):
     raise HTTPException(status_code=404, detail="Record not found")
 
 
-@router.post("/grading/import/{import_id}/revoke", response_model=GradingImportRecord, tags=["Grading History"])
+@router.post(
+    "/grading/import/{import_id}/revoke",
+    response_model=GradingImportRecord,
+    tags=["Grading History"],
+)
 async def revoke_grading_import(import_id: str, request: GradingRevokeRequest):
     """Revoke import record."""
     try:
         with get_connection() as conn:
-            row = conn.execute("SELECT * FROM grading_history WHERE id = ?", (import_id,)).fetchone()
+            row = conn.execute(
+                "SELECT * FROM grading_history WHERE id = ?", (import_id,)
+            ).fetchone()
         if row:
             now = datetime.utcnow().isoformat()
             with get_connection() as conn:
@@ -1708,7 +1792,9 @@ async def revoke_grading_import(import_id: str, request: GradingRevokeRequest):
                     "UPDATE student_grading_results SET revoked_at = ? WHERE grading_history_id = ? AND revoked_at IS NULL",
                     (now, import_id),
                 )
-                conn.execute("UPDATE grading_history SET status = 'revoked' WHERE id = ?", (import_id,))
+                conn.execute(
+                    "UPDATE grading_history SET status = 'revoked' WHERE id = ?", (import_id,)
+                )
             raw_class_ids = row["class_ids"]
             if isinstance(raw_class_ids, str):
                 class_ids = json.loads(raw_class_ids) if raw_class_ids else []
@@ -1748,7 +1834,9 @@ async def revoke_grading_import(import_id: str, request: GradingRevokeRequest):
 
     try:
         with get_connection() as conn:
-            row = conn.execute("SELECT * FROM grading_imports WHERE id = ?", (import_id,)).fetchone()
+            row = conn.execute(
+                "SELECT * FROM grading_imports WHERE id = ?", (import_id,)
+            ).fetchone()
             if row:
                 now = datetime.utcnow().isoformat()
                 conn.execute(
@@ -1864,9 +1952,9 @@ async def assistant_chat(request: AssistantChatRequest):
             name=node.name or "",
             description=node.description or "",
             understood=bool(node.understood),
-            children=[_convert_concept(child) for child in node.children]
-            if node.children
-            else None,
+            children=(
+                [_convert_concept(child) for child in node.children] if node.children else None
+            ),
         )
 
     concept_nodes = None
@@ -1903,7 +1991,9 @@ async def assistant_chat(request: AssistantChatRequest):
     )
 
 
-@router.get("/assistant/progress", response_model=AssistantProgressResponse, tags=["Student Assistant"])
+@router.get(
+    "/assistant/progress", response_model=AssistantProgressResponse, tags=["Student Assistant"]
+)
 async def assistant_progress(student_id: str, class_id: Optional[str] = None):
     """Fetch persisted assistant progress for a student."""
     cached = await _load_assistant_progress_cache(student_id, class_id)
@@ -1931,7 +2021,10 @@ async def assistant_progress(student_id: str, class_id: Optional[str] = None):
 
 # ============ Error Analysis (IntelliLearn) ============
 
-@router.post("/v1/analysis/submit-error", response_model=ErrorAnalysisResponse, tags=["Error Analysis"])
+
+@router.post(
+    "/v1/analysis/submit-error", response_model=ErrorAnalysisResponse, tags=["Error Analysis"]
+)
 async def analyze_error(request: ErrorAnalysisRequest):
     """Analyze a single wrong answer with LLM."""
     analysis_id = str(uuid.uuid4())[:8]
@@ -1983,7 +2076,11 @@ Use only the provided data. If data is insufficient, return empty lists where ap
         raise HTTPException(status_code=502, detail="Invalid LLM response")
 
 
-@router.get("/v1/diagnosis/report/{student_id}", response_model=DiagnosisReportResponse, tags=["Error Analysis"])
+@router.get(
+    "/v1/diagnosis/report/{student_id}",
+    response_model=DiagnosisReportResponse,
+    tags=["Error Analysis"],
+)
 async def get_diagnosis_report(student_id: str):
     """Generate a diagnosis report for a student."""
     context = _build_student_context(student_id, None)
@@ -2088,18 +2185,10 @@ async def get_class_wrong_problems(class_id: Optional[str] = None):
                 continue
             score = float(q.get("score") or 0)
             question_id = str(
-                q.get("questionId")
-                or q.get("question_id")
-                or q.get("id")
-                or q.get("qid")
-                or ""
+                q.get("questionId") or q.get("question_id") or q.get("id") or q.get("qid") or ""
             ).strip()
             question_text = (
-                q.get("questionText")
-                or q.get("question")
-                or q.get("prompt")
-                or q.get("stem")
-                or ""
+                q.get("questionText") or q.get("question") or q.get("prompt") or q.get("stem") or ""
             )
             if not question_id and question_text:
                 question_id = question_text[:32]
@@ -2121,13 +2210,15 @@ async def get_class_wrong_problems(class_id: Optional[str] = None):
         if total <= 0:
             continue
         error_rate = wrong / total
-        problems_seed.append({
-            "id": question_id,
-            "question": entry["question"],
-            "errorRate": f"{error_rate * 100:.1f}%",
-            "wrong": wrong,
-            "total": total,
-        })
+        problems_seed.append(
+            {
+                "id": question_id,
+                "question": entry["question"],
+                "errorRate": f"{error_rate * 100:.1f}%",
+                "wrong": wrong,
+                "total": total,
+            }
+        )
 
     problems_seed = sorted(
         problems_seed,
@@ -2149,7 +2240,9 @@ Do not invent new problems; only enrich the provided ones."""
     response = await client.invoke(
         messages=[
             LLMMessage(role="system", content=system_prompt),
-            LLMMessage(role="user", content=json.dumps({"problems": problems_seed}, ensure_ascii=False)),
+            LLMMessage(
+                role="user", content=json.dumps({"problems": problems_seed}, ensure_ascii=False)
+            ),
         ],
         purpose="analysis",
         temperature=0.2,
@@ -2172,6 +2265,7 @@ Do not invent new problems; only enrich the provided ones."""
 
 
 # ============ Statistics ============
+
 
 @router.get("/teacher/statistics/class/{class_id}", tags=["Statistics"])
 async def get_class_statistics(class_id: str, homework_id: Optional[str] = None):
@@ -2272,7 +2366,10 @@ async def merge_statistics(class_id: str, request: Optional[MergeStatisticsReque
         except Exception:
             external_data = None
 
-    students = {s.id: {"id": s.id, "name": s.name or s.username or s.id, "scores": {}} for s in list_class_students(class_id)}
+    students = {
+        s.id: {"id": s.id, "name": s.name or s.username or s.id, "scores": {}}
+        for s in list_class_students(class_id)
+    }
     homeworks = list_homeworks(class_id)
     homework_titles = {hw.id: hw.title for hw in homeworks}
 

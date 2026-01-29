@@ -132,8 +132,9 @@ export default function StudentScanPage() {
         score: result.score,
         feedback: result.feedback
       });
-    } catch (error: any) {
-      setSubmitResult({ success: false, feedback: error.message });
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      setSubmitResult({ success: false, feedback: errorMessage });
     } finally {
       setIsSubmitting(false);
     }

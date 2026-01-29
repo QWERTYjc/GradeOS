@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 
 class PDFProcessingError(Exception):
     """PDF 处理错误"""
+
     pass
 
 
@@ -41,14 +42,14 @@ def _convert_with_pymupdf(pdf_data: bytes, dpi: int) -> List[bytes]:
 async def convert_pdf_to_images(pdf_data: bytes, dpi: int = 300) -> List[bytes]:
     """
     将 PDF 转换为高分辨率图像
-    
+
     Args:
         pdf_data: PDF 文件的字节数据
         dpi: 分辨率，默认 300 DPI
-        
+
     Returns:
         图像字节数据列表，每页一个图像
-        
+
     Raises:
         PDFProcessingError: PDF 转换失败时抛出
     """

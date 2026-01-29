@@ -22,6 +22,7 @@ import uuid
 
 try:
     import redis.asyncio as aioredis
+
     REDIS_AVAILABLE = True
 except ImportError:
     aioredis = None  # type: ignore
@@ -32,6 +33,7 @@ logger = logging.getLogger(__name__)
 
 class TaskStatus(str, Enum):
     """任务状态"""
+
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"
@@ -42,6 +44,7 @@ class TaskStatus(str, Enum):
 @dataclass
 class TaskInfo:
     """任务信息"""
+
     task_id: str
     task_type: str
     status: TaskStatus = TaskStatus.PENDING
@@ -233,11 +236,13 @@ class RedisTaskQueue:
             # 发布进度更新
             await self._redis.publish(
                 self.PROGRESS_CHANNEL,
-                json.dumps({
-                    "task_id": task_id,
-                    "progress": progress,
-                    "message": message,
-                }),
+                json.dumps(
+                    {
+                        "task_id": task_id,
+                        "progress": progress,
+                        "message": message,
+                    }
+                ),
             )
         else:
             self._local_tasks[task_id] = task_info
@@ -254,7 +259,6 @@ class RedisTaskQueue:
                 return task_info.result
 
         return None
-
 
     async def _execute_task_local(
         self,

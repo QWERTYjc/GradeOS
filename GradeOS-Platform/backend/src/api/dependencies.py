@@ -9,6 +9,7 @@ import asyncio
 from typing import Optional, Any
 
 from langgraph.checkpoint.memory import InMemorySaver
+
 try:
     from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 except ImportError:  # pragma: no cover - optional dependency for runtime
@@ -61,9 +62,9 @@ async def _close_checkpointer_cm() -> None:
 async def init_orchestrator():
     """初始化 LangGraph 编排器（支持离线模式）"""
     global _orchestrator
-    
+
     logger.info("初始化 LangGraph 编排器")
-    
+
     try:
         await _close_checkpointer_cm()
         offline_mode = os.getenv("OFFLINE_MODE", "false").lower() == "true"
@@ -88,16 +89,16 @@ async def init_orchestrator():
             checkpointer=checkpointer,
             offline_mode=offline_mode,
         )
-        
+
         # 注册批量批改 Graph
         batch_grading_graph = create_batch_grading_graph(checkpointer=checkpointer)
         _orchestrator.register_graph("batch_grading", batch_grading_graph)
 
         asyncio.create_task(_orchestrator.recover_incomplete_runs(graph_name="batch_grading"))
-        
+
         mode_label = "offline" if offline_mode else "database"
         logger.info("LangGraph 编排器初始化成功（%s）", mode_label)
-        
+
     except Exception as e:
         logger.error(f"编排器初始化失败: {e}", exc_info=True)
         _orchestrator = None
@@ -106,7 +107,7 @@ async def init_orchestrator():
 
 async def get_orchestrator() -> Optional[LangGraphOrchestrator]:
     """获取编排器实例
-    
+
     Returns:
         LangGraphOrchestrator 实例，如果未初始化则返回 None
     """

@@ -78,5 +78,5 @@ export interface EnhancedChatMessage extends ChatMessage {
   conceptBreakdown?: ConceptNode[];
   nextQuestion?: string;
   questionOptions?: string[];
-  responseType?: 'chat' | 'question' | 'assessment' | 'explanation';
+  responseType?: 'chat' | 'question' | 'assessment' | 'explanation' | 'text' | 'diagram' | 'code';
 }

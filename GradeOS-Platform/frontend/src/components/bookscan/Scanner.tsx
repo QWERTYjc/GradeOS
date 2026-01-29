@@ -3,7 +3,6 @@ import { Camera, Upload, X, Loader2, Zap, ZapOff, Sparkles, BookOpen, Smartphone
 import { AppContext } from './AppContext';
 import { fileToDataURL } from './imageProcessing';
 import { optimizeDocument } from './llmService';
-import { COLORS } from './constants';
 
 type ScanMode = 'single' | 'book';
 
@@ -185,6 +184,8 @@ export default function Scanner() {
   }, [context, isAutoEnhance, willSplitNext]);
 
   // Auto-scan logic (Motion detection)
+  const checkStabilityRef = useRef<() => void>();
+  
   const checkStability = useCallback(() => {
     if (!videoRef.current || !canvasRef.current || !isAutoScan) return;
 
@@ -235,9 +236,13 @@ export default function Scanner() {
       }, 1500);
     }
 
-    requestRef.current = requestAnimationFrame(checkStability);
+    if (checkStabilityRef.current) {
+      requestRef.current = requestAnimationFrame(checkStabilityRef.current);
+    }
 
   }, [isAutoScan, capturePhoto]);
+  
+  checkStabilityRef.current = checkStability;
 
   useEffect(() => {
     if (isAutoScan) {
@@ -262,7 +267,7 @@ export default function Scanner() {
             for (const img of images) {
               await handleImageData(img, 'pdf');
             }
-          } catch (err) {
+          } catch {
             alert("Failed to parse PDF");
           }
         } else {

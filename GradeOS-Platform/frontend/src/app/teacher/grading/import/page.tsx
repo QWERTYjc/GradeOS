@@ -67,11 +67,11 @@ export default function GradingImportPage() {
       .catch(() => setAssignments([]));
   }, [selectedClassId]);
 
-  const normalizeResults = (payload: BatchGradingResponse | GradingResult[] | any): ResultEntry[] => {
+  const normalizeResults = (payload: BatchGradingResponse | GradingResult[] | unknown): ResultEntry[] => {
     const rawList = Array.isArray(payload)
       ? payload
-      : payload?.results || payload?.student_results || payload?.studentResults || [];
-    return (rawList as Array<Record<string, any>>).map((item, idx) => {
+      : (payload as Record<string, unknown>)?.results || (payload as Record<string, unknown>)?.student_results || (payload as Record<string, unknown>)?.studentResults || [];
+    return (rawList as Array<Record<string, unknown>>).map((item, idx) => {
       const studentKey = String(
         item.student_name ||
           item.studentName ||

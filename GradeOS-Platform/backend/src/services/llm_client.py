@@ -169,7 +169,9 @@ class UnifiedLLMClient:
             usage = data.get("usage", {}) or {}
 
             header_usage = {}
-            header_key = response.headers.get("x-openrouter-usage") or response.headers.get("x-usage")
+            header_key = response.headers.get("x-openrouter-usage") or response.headers.get(
+                "x-usage"
+            )
             if header_key:
                 try:
                     import json

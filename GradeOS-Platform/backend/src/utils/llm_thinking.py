@@ -23,8 +23,12 @@ def split_thinking_content(content: Any) -> Tuple[str, str]:
     if not text:
         return "", ""
 
-    thinking_parts = re.findall(r"<thinking>(.*?)</thinking>", text, flags=re.DOTALL | re.IGNORECASE)
-    output_text = re.sub(r"<thinking>.*?</thinking>", "", text, flags=re.DOTALL | re.IGNORECASE).strip()
+    thinking_parts = re.findall(
+        r"<thinking>(.*?)</thinking>", text, flags=re.DOTALL | re.IGNORECASE
+    )
+    output_text = re.sub(
+        r"<thinking>.*?</thinking>", "", text, flags=re.DOTALL | re.IGNORECASE
+    ).strip()
     thinking_text = "\n".join(part.strip() for part in thinking_parts if part.strip())
     return output_text, thinking_text
 

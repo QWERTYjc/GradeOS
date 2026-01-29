@@ -15,9 +15,15 @@ from src.services.distributed_transaction import (
 )
 from src.services.grading_self_report import generate_self_report, generate_student_self_report
 from src.services.student_summary import generate_student_summary, generate_class_summary
+
 # 批注批改服务
 from src.services.annotation_grading import AnnotationGradingService, AnnotationGradingConfig
-from src.services.annotation_renderer import AnnotationRenderer, RenderConfig, render_annotations_on_image
+from src.services.annotation_renderer import (
+    AnnotationRenderer,
+    RenderConfig,
+    render_annotations_on_image,
+)
+
 # 后处理批注生成器
 from src.services.post_grading_annotator import (
     PostGradingAnnotator,
@@ -25,6 +31,7 @@ from src.services.post_grading_annotator import (
     AnnotationMode,
     create_annotator_for_mode,
 )
+
 # 批改记忆系统
 from src.services.grading_memory import (
     GradingMemoryService,
@@ -35,6 +42,7 @@ from src.services.grading_memory import (
     init_memory_service_with_db,
     reset_memory_service,
 )
+
 # 记忆存储后端
 from src.services.memory_storage import (
     MemoryStorageBackend,
@@ -90,4 +98,3 @@ __all__ = [
     "MultiLayerStorageBackend",
     "create_storage_backend",
 ]
-

@@ -17,7 +17,7 @@ type NodeStatus = 'idle' | 'queued' | 'running' | 'success' | 'failed' | 'retryi
 interface NodeData {
     id: string;
     label: string;
-    icon: React.ComponentType<any>;
+    icon: React.ComponentType<{className?: string; size?: number}>;
     status: NodeStatus;
     logs: string[];
     x: number; // Relative position 0-100
@@ -54,11 +54,13 @@ const useWorkflowSimulation = () => {
     const [activePackets, setActivePackets] = useState<{ from: string, to: string, startTime: number, duration: number, id: number }[]>([]);
 
     // Simulation Loop
+    const triggerPipelineRef = useRef<() => void>();
+    
     useEffect(() => {
         const interval = setInterval(() => {
             // Randomly trigger an "Ingest" event if idle
-            if (Math.random() > 0.8) {
-                triggerPipeline();
+            if (Math.random() > 0.8 && triggerPipelineRef.current) {
+                triggerPipelineRef.current();
             }
 
             // Clean up old packets (older than duration + buffer)
@@ -124,6 +126,8 @@ const useWorkflowSimulation = () => {
             accumulatedDelay += (stepDuration + 1000); // Node time + Packet travel time
         });
     };
+    
+    triggerPipelineRef.current = triggerPipeline;
 
     return { nodes, workers, activePackets };
 };

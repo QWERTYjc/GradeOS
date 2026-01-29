@@ -52,40 +52,40 @@ const workflowSteps = [
   { id: "export", label: "Export" },
 ];
 
-const normalizeRubric = (raw: any): ParsedRubricDraft => {
-  const rawQuestions = raw?.questions || [];
-  const questions: RubricQuestionDraft[] = rawQuestions.map((q: any, idx: number) => {
+const normalizeRubric = (raw: Record<string, unknown>): ParsedRubricDraft => {
+  const rawQuestions = (raw?.questions as Array<Record<string, unknown>>) || [];
+  const questions: RubricQuestionDraft[] = rawQuestions.map((q, idx: number) => {
     const questionId = String(q.questionId || q.question_id || q.id || idx + 1);
-    const scoringPoints = (q.scoringPoints || q.scoring_points || []).map((sp: any, spIdx: number) => ({
+    const scoringPoints = ((q.scoringPoints as Array<Record<string, unknown>>) || (q.scoring_points as Array<Record<string, unknown>>) || []).map((sp, spIdx: number) => ({
       pointId: String(sp.pointId || sp.point_id || `${questionId}.${spIdx + 1}`),
-      description: sp.description || "",
-      expectedValue: sp.expectedValue || sp.expected_value || "",
+      description: String(sp.description || ""),
+      expectedValue: String(sp.expectedValue || sp.expected_value || ""),
       score: Number(sp.score ?? sp.maxScore ?? 0),
       isRequired: Boolean(sp.isRequired ?? sp.is_required ?? true),
       keywords: Array.isArray(sp.keywords)
-        ? sp.keywords
+        ? sp.keywords.map((k: unknown) => String(k))
         : typeof sp.keywords === "string"
           ? sp.keywords.split(",").map((v: string) => v.trim()).filter(Boolean)
           : [],
     }));
 
-    const alternativeSolutions = (q.alternativeSolutions || q.alternative_solutions || []).map((alt: any) => ({
-      description: alt.description || "",
-      scoringCriteria: alt.scoringCriteria || alt.scoring_criteria || "",
-      note: alt.note || "",
+    const alternativeSolutions = ((q.alternativeSolutions as Array<Record<string, unknown>>) || (q.alternative_solutions as Array<Record<string, unknown>>) || []).map((alt) => ({
+      description: (alt.description as string) || "",
+      scoringCriteria: (alt.scoringCriteria || alt.scoring_criteria) as string || "",
+      note: (alt.note as string) || "",
     }));
 
     return {
       questionId,
       maxScore: Number(q.maxScore ?? q.max_score ?? 0),
-      questionText: q.questionText || q.question_text || "",
-      standardAnswer: q.standardAnswer || q.standard_answer || "",
-      gradingNotes: q.gradingNotes || q.grading_notes || "",
-      reviewNote: q.reviewNote || q.review_note || "",
+      questionText: String(q.questionText || q.question_text || ""),
+      standardAnswer: String(q.standardAnswer || q.standard_answer || ""),
+      gradingNotes: String(q.gradingNotes || q.grading_notes || ""),
+      reviewNote: String(q.reviewNote || q.review_note || ""),
       scoringPoints,
       alternativeSolutions,
-      criteria: q.criteria || [],
-      sourcePages: q.sourcePages || q.source_pages || [],
+      criteria: Array.isArray(q.criteria) ? q.criteria : [],
+      sourcePages: Array.isArray(q.sourcePages) ? q.sourcePages : Array.isArray(q.source_pages) ? q.source_pages : [],
     };
   });
 
@@ -97,8 +97,8 @@ const normalizeRubric = (raw: any): ParsedRubricDraft => {
   return {
     totalQuestions,
     totalScore,
-    generalNotes: raw?.generalNotes || raw?.general_notes || "",
-    rubricFormat: raw?.rubricFormat || raw?.rubric_format || "standard",
+    generalNotes: String(raw?.generalNotes || raw?.general_notes || ""),
+    rubricFormat: String(raw?.rubricFormat || raw?.rubric_format || "standard"),
     questions,
   };
 };
