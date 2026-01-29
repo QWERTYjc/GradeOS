@@ -184,7 +184,7 @@ export default function Scanner() {
   }, [context, isAutoEnhance, willSplitNext]);
 
   // Auto-scan logic (Motion detection)
-  const checkStabilityRef = useRef<() => void>();
+  const checkStabilityRef = useRef<(() => void) | null>(null);
   
   const checkStability = useCallback(() => {
     if (!videoRef.current || !canvasRef.current || !isAutoScan) return;
