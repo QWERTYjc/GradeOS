@@ -182,16 +182,20 @@ export const normalizeStudentResults = (raw: RawObject[]): StudentResult[] => {
               color: ann.color as string | undefined,
             }))
             : undefined,
-          steps: (q.steps || []).map((step: RawObject) => ({
-            step_id: String(step.step_id || step.stepId || ''),
-            step_content: String(step.step_content || step.stepContent || ''),
-            step_region: (step.step_region || step.stepRegion) as any,
-            is_correct: Boolean(step.is_correct ?? step.isCorrect ?? false),
-            mark_type: String(step.mark_type || step.markType || 'M'),
-            mark_value: Number(step.mark_value ?? step.markValue ?? 0),
-            feedback: String(step.feedback || ''),
-            error_detail: String(step.error_detail || step.errorDetail || ''),
-          })),
+          steps: (() => {
+            const rawSteps = (q.steps || []) as unknown;
+            if (!Array.isArray(rawSteps)) return [];
+            return (rawSteps as RawObject[]).map((step) => ({
+              step_id: String(step.step_id || step.stepId || ''),
+              step_content: String(step.step_content || step.stepContent || ''),
+              step_region: (step.step_region || step.stepRegion) as any,
+              is_correct: Boolean(step.is_correct ?? step.isCorrect ?? false),
+              mark_type: String(step.mark_type || step.markType || 'M'),
+              mark_value: Number(step.mark_value ?? step.markValue ?? 0),
+              feedback: String(step.feedback || ''),
+              error_detail: String(step.error_detail || step.errorDetail || ''),
+            }));
+          })(),
           answerRegion: (q.answer_region || q.answerRegion) as any,
         };
       })
