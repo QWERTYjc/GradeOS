@@ -1174,9 +1174,11 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
             if (mappedNodeId === 'intake' || mappedNodeId === 'preprocess' || mappedNodeId === 'index') {
                 return;
             }
-            get().updateNodeStatus(mappedNodeId, normalizedStatus, message);
             if (message) {
+                get().updateNodeStatus(mappedNodeId, normalizedStatus, message);
                 get().addLog(message, 'INFO');
+            } else {
+                get().updateNodeStatus(mappedNodeId, normalizedStatus);
             }
         });
 

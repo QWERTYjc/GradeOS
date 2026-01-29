@@ -1,234 +1,392 @@
-import React from 'react';
-import { ArrowRight, Terminal, Sparkles, Zap } from 'lucide-react';
+'use client';
+
+import React, { useState, useEffect } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { 
+  ArrowRight, 
+  Terminal, 
+  Sparkles, 
+  Zap,
+  FileUp,
+  ScanLine,
+  BrainCircuit,
+  CheckCircle2,
+  Trophy,
+  Play,
+  Pause,
+  RotateCcw
+} from 'lucide-react';
 import Link from 'next/link';
-import { motion } from 'framer-motion';
+
+// AI批改工作流阶段
+const workflowStages = [
+  { id: 'upload', label: '试卷上传', icon: FileUp, color: 'text-blue-500', bg: 'bg-blue-500/10' },
+  { id: 'scan', label: '图像识别', icon: ScanLine, color: 'text-cyan-500', bg: 'bg-cyan-500/10' },
+  { id: 'ai', label: 'AI批改', icon: BrainCircuit, color: 'text-indigo-500', bg: 'bg-indigo-500/10' },
+  { id: 'review', label: '结果审核', icon: CheckCircle2, color: 'text-emerald-500', bg: 'bg-emerald-500/10' },
+  { id: 'export', label: '成绩导出', icon: Trophy, color: 'text-amber-500', bg: 'bg-amber-500/10' },
+];
+
+// 模拟控制台日志
+const consoleLogs = [
+  { type: 'info', text: 'Initializing GradeOS Console v3.0...', time: '09:23:14' },
+  { type: 'success', text: '✓ Connected to Gemini 3.0 Vision API', time: '09:23:15' },
+  { type: 'info', text: 'Loading rubric: midterm_math_2024.pdf', time: '09:23:16' },
+  { type: 'success', text: '✓ Rubric parsed: 10 questions, 100 points', time: '09:23:18' },
+  { type: 'processing', text: '▶ Processing batch: 32 students', time: '09:23:20' },
+  { type: 'progress', text: 'Grading student 15/32...', time: '09:24:45' },
+  { type: 'success', text: '✓ Batch completed! Avg: 78.5/100', time: '09:26:12' },
+];
 
 export const HeroSection = () => {
+  const [activeStage, setActiveStage] = useState(0);
+  const [isPlaying, setIsPlaying] = useState(true);
+  const [logs, setLogs] = useState<string[]>([]);
+  const [progress, setProgress] = useState(0);
+  const [showScore, setShowScore] = useState(false);
+
+  // 工作流动画循环
+  useEffect(() => {
+    if (!isPlaying) return;
+    
+    const interval = setInterval(() => {
+      setActiveStage((prev) => {
+        const next = (prev + 1) % workflowStages.length;
+        return next;
+      });
+    }, 2000);
+
+    return () => clearInterval(interval);
+  }, [isPlaying]);
+
+  // 进度条动画
+  useEffect(() => {
+    if (!isPlaying) return;
+    
+    const interval = setInterval(() => {
+      setProgress((prev) => {
+        if (prev >= 100) {
+          setShowScore(true);
+          setTimeout(() => {
+            setShowScore(false);
+            setProgress(0);
+          }, 2000);
+          return 100;
+        }
+        return prev + 2;
+      });
+    }, 100);
+
+    return () => clearInterval(interval);
+  }, [isPlaying]);
+
+  // 打字机效果日志
+  useEffect(() => {
+    let currentLogIndex = 0;
+    let currentCharIndex = 0;
+    
+    const typeLog = () => {
+      if (currentLogIndex >= consoleLogs.length) {
+        setTimeout(() => {
+          setLogs([]);
+          currentLogIndex = 0;
+          typeLog();
+        }, 3000);
+        return;
+      }
+
+      const log = consoleLogs[currentLogIndex];
+      
+      if (currentCharIndex === 0) {
+        setLogs(prev => [...prev, '']);
+      }
+
+      if (currentCharIndex < log.text.length) {
+        setLogs(prev => {
+          const newLogs = [...prev];
+          newLogs[newLogs.length - 1] = log.text.slice(0, currentCharIndex + 1);
+          return newLogs;
+        });
+        currentCharIndex++;
+        setTimeout(typeLog, 30);
+      } else {
+        currentCharIndex = 0;
+        currentLogIndex++;
+        setTimeout(typeLog, 500);
+      }
+    };
+
+    if (isPlaying) {
+      typeLog();
+    }
+
+    return () => {
+      setLogs([]);
+    };
+  }, [isPlaying]);
+
+  const getLogColor = (log: string) => {
+    if (log.includes('✓')) return 'text-emerald-400';
+    if (log.includes('▶')) return 'text-blue-400';
+    if (log.includes('Processing')) return 'text-cyan-400';
+    if (log.includes('completed')) return 'text-amber-400';
+    return 'text-slate-400';
+  };
+
   return (
-    <section className="relative min-h-[90vh] flex items-center justify-center overflow-hidden bg-slate-950">
-      {/* Background Elements */}
-      <div className="absolute inset-0 pointer-events-none">
-        {/* 网格 */}
-        <div 
-          className="absolute inset-0 opacity-20"
-          style={{
-            backgroundImage: `
-              linear-gradient(to right, rgba(59, 130, 246, 0.1) 1px, transparent 1px),
-              linear-gradient(to bottom, rgba(59, 130, 246, 0.1) 1px, transparent 1px)
-            `,
-            backgroundSize: '80px 80px'
-          }}
-        />
-        
-        {/* 发光球 */}
-        <motion.div
-          animate={{
-            scale: [1, 1.2, 1],
-            opacity: [0.3, 0.5, 0.3]
-          }}
-          transition={{ duration: 10, repeat: Infinity }}
-          className="absolute top-1/4 left-1/4 w-96 h-96 bg-blue-500/30 rounded-full blur-[120px]"
-        />
-        <motion.div
-          animate={{
-            scale: [1, 1.3, 1],
-            opacity: [0.2, 0.4, 0.2]
-          }}
-          transition={{ duration: 12, repeat: Infinity, delay: 3 }}
-          className="absolute bottom-1/4 right-1/4 w-80 h-80 bg-cyan-500/30 rounded-full blur-[100px]"
-        />
-      </div>
+    <section className="hero-section">
+      {/* 背景网格 */}
+      <div className="hero-grid" />
+      
+      {/* 浮动光球 */}
+      <div className="hero-orb hero-orb-1" />
+      <div className="hero-orb hero-orb-2" />
 
-      <div className="landing-container relative z-10 grid lg:grid-cols-2 gap-12 items-center">
-        {/* Left Content */}
-        <div className="space-y-8 text-center lg:text-left">
-          <motion.div 
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.6 }}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-blue-500/10 border border-blue-500/20"
-          >
-            <span className="relative flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500"></span>
-            </span>
-            <span className="text-sm font-semibold tracking-wider text-blue-400 uppercase">AI Grading System</span>
-          </motion.div>
-
-          <motion.h1 
-            initial={{ opacity: 0, y: 30 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.6, delay: 0.1 }}
-            className="text-5xl lg:text-7xl font-bold leading-tight text-white"
-          >
-            智能批改
-            <br />
-            <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 via-cyan-400 to-teal-400">
-              新范式
-            </span>
-          </motion.h1>
-
-          <motion.p 
-            initial={{ opacity: 0, y: 30 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.6, delay: 0.2 }}
-            className="text-lg text-slate-400 max-w-xl mx-auto lg:mx-0 leading-relaxed"
-          >
-            基于 Gemini 3.0 Vision 和 LangGraph 工作流编排，
-            实现试卷自动识别、智能批改、结果导出的全流程自动化
-          </motion.p>
-
-          <motion.div 
-            initial={{ opacity: 0, y: 30 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.6, delay: 0.3 }}
-            className="flex flex-col sm:flex-row items-center gap-4 justify-center lg:justify-start"
-          >
-            <Link href="/console" className="group px-8 py-4 rounded-full bg-gradient-to-r from-blue-600 to-cyan-500 text-white font-semibold transition-all hover:shadow-lg hover:shadow-blue-500/30 hover:scale-105 flex items-center gap-2">
-              <span>立即体验</span>
-              <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
-            </Link>
-
-            <Link href="#workflow" className="px-8 py-4 rounded-full border border-slate-700 text-slate-300 font-semibold hover:border-blue-500/50 hover:text-white transition-all flex items-center gap-2">
-              <Terminal className="w-4 h-4" />
-              <span>了解工作流</span>
-            </Link>
-          </motion.div>
-
-          {/* 技术标签 */}
-          <motion.div 
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ duration: 0.6, delay: 0.5 }}
-            className="pt-8 flex flex-wrap items-center gap-3 justify-center lg:justify-start"
-          >
-            {['LangGraph', 'Gemini 3.0', 'Vision AI', '多智能体'].map((tag, i) => (
-              <span 
-                key={i}
-                className="px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-xs text-slate-400"
-              >
-                {tag}
-              </span>
-            ))}
-          </motion.div>
-        </div>
-
-        {/* Right Visual - AI Grading Preview */}
-        <motion.div 
-          initial={{ opacity: 0, x: 50 }}
-          animate={{ opacity: 1, x: 0 }}
-          transition={{ duration: 0.8, delay: 0.3 }}
-          className="relative hidden lg:block"
-        >
-          <div className="relative">
-            {/* 主面板 */}
+      <div className="landing-container relative z-10 py-20 lg:py-0 min-h-screen flex items-center">
+        <div className="grid lg:grid-cols-2 gap-12 lg:gap-20 items-center w-full">
+          {/* 左侧内容 */}
+          <div className="space-y-8">
+            {/* 标签 */}
             <motion.div
-              animate={{ y: [0, -10, 0] }}
-              transition={{ duration: 6, repeat: Infinity, ease: "easeInOut" }}
-              className="relative bg-slate-900/80 backdrop-blur-xl border border-slate-800 rounded-2xl p-6 shadow-2xl"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.5 }}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-blue-500/10 border border-blue-500/20"
             >
-              {/* 标题栏 */}
-              <div className="flex items-center gap-3 mb-6 pb-4 border-b border-slate-800">
-                <div className="flex gap-2">
-                  <div className="w-3 h-3 rounded-full bg-red-500/80" />
-                  <div className="w-3 h-3 rounded-full bg-yellow-500/80" />
-                  <div className="w-3 h-3 rounded-full bg-green-500/80" />
-                </div>
-                <div className="flex items-center gap-2 px-3 py-1 rounded-md bg-slate-800/50">
-                  <Sparkles className="w-3 h-3 text-blue-400" />
-                  <span className="text-xs text-slate-400 font-mono">AI Grading Console</span>
-                </div>
-              </div>
-
-              {/* 内容 */}
-              <div className="space-y-4 font-mono text-sm">
-                <div className="flex items-center gap-3 text-slate-300">
-                  <span className="text-blue-400">➜</span>
-                  <span className="text-cyan-400">gradeos</span>
-                  <span className="text-slate-400">batch submit</span>
-                  <span className="text-amber-400">--files=midterm.pdf</span>
-                </div>
-                
-                <div className="pl-6 space-y-2">
-                  <motion.div 
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    transition={{ delay: 0.5 }}
-                    className="flex items-center gap-2 text-emerald-400/90"
-                  >
-                    <span className="text-xs">✓</span>
-                    <span>已识别 32 份试卷，共 128 页</span>
-                  </motion.div>
-                  
-                  <motion.div 
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    transition={{ delay: 0.8 }}
-                    className="flex items-center gap-2 text-blue-400/90"
-                  >
-                    <Zap className="w-3 h-3" />
-                    <span>评分标准解析完成：10 道题目</span>
-                  </motion.div>
-                  
-                  <motion.div 
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    transition={{ delay: 1.1 }}
-                    className="flex items-center gap-2 text-purple-400/90"
-                  >
-                    <span className="animate-pulse">●</span>
-                    <span>正在批改：学生 15/32...</span>
-                  </motion.div>
-                </div>
-
-                {/* 进度条 */}
-                <div className="pt-4">
-                  <div className="flex justify-between text-xs text-slate-500 mb-2">
-                    <span>Batch Progress</span>
-                    <span>47%</span>
-                  </div>
-                  <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
-                    <motion.div
-                      initial={{ width: 0 }}
-                      animate={{ width: '47%' }}
-                      transition={{ duration: 2, delay: 0.5 }}
-                      className="h-full bg-gradient-to-r from-blue-500 to-cyan-500 rounded-full"
-                    />
-                  </div>
-                </div>
-              </div>
+              <div className="pulse-dot" />
+              <span className="text-sm font-medium text-blue-600">AI-Powered Grading System</span>
             </motion.div>
 
-            {/* 浮动卡片 - 最近完成 */}
+            {/* 标题 */}
+            <motion.h1
+              initial={{ opacity: 0, y: 30 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.6, delay: 0.1 }}
+              className="text-5xl lg:text-6xl xl:text-7xl font-bold text-gray-900 leading-tight"
+            >
+              智能批改
+              <br />
+              <span className="gradient-text-animated">从此可视化</span>
+            </motion.h1>
+
+            {/* 描述 */}
+            <motion.p
+              initial={{ opacity: 0, y: 30 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.6, delay: 0.2 }}
+              className="text-lg text-gray-600 max-w-xl leading-relaxed"
+            >
+              不只是打分，而是完整的批改控制台。实时追踪每一次识别、每一次评分、
+              每一次修正的来龙去脉，让AI批改过程全透明。
+            </motion.p>
+
+            {/* CTA按钮 */}
             <motion.div
-              animate={{ y: [0, -15, 0] }}
-              transition={{ duration: 5, repeat: Infinity, ease: "easeInOut", delay: 0.5 }}
-              className="absolute -right-8 -bottom-4 p-4 bg-slate-900/90 backdrop-blur-xl border border-slate-800 rounded-xl shadow-xl"
+              initial={{ opacity: 0, y: 30 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.6, delay: 0.3 }}
+              className="flex flex-col sm:flex-row items-center gap-4"
+            >
+              <Link 
+                href="/console" 
+                className="btn-primary group flex items-center gap-2"
+              >
+                <span>开始体验</span>
+                <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+              </Link>
+              
+              <button 
+                onClick={() => setIsPlaying(!isPlaying)}
+                className="btn-secondary flex items-center gap-2"
+              >
+                {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+                <span>{isPlaying ? '暂停演示' : '播放演示'}</span>
+              </button>
+            </motion.div>
+
+            {/* 技术标签 */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ duration: 0.6, delay: 0.5 }}
+              className="flex flex-wrap items-center gap-3 pt-4"
+            >
+              {['Gemini 3.0', 'LangGraph', 'Vision AI', '多智能体'].map((tag, i) => (
+                <span 
+                  key={i}
+                  className="px-3 py-1.5 rounded-lg bg-white border border-gray-200 text-xs text-gray-600 shadow-sm"
+                >
+                  {tag}
+                </span>
+              ))}
+            </motion.div>
+
+            {/* 统计数据 */}
+            <motion.div
+              initial={{ opacity: 0, y: 30 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.6, delay: 0.6 }}
+              className="grid grid-cols-3 gap-6 pt-8"
+            >
+              {[
+                { value: '90s', label: '平均批改' },
+                { value: '98%', label: '准确率' },
+                { value: '32+', label: '并行处理' },
+              ].map((stat, i) => (
+                <div key={i} className="text-center sm:text-left">
+                  <div className="text-2xl sm:text-3xl font-bold text-gray-900">{stat.value}</div>
+                  <div className="text-sm text-gray-500">{stat.label}</div>
+                </div>
+              ))}
+            </motion.div>
+          </div>
+
+          {/* 右侧 - 控制台预览 */}
+          <motion.div
+            initial={{ opacity: 0, x: 50 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ duration: 0.8, delay: 0.3 }}
+            className="relative"
+          >
+            {/* 主控制台窗口 */}
+            <div className="console-preview rounded-2xl p-6 relative overflow-hidden">
+              {/* 扫描线效果 */}
+              <div className="scan-line" />
+              
+              {/* 窗口标题栏 */}
+              <div className="flex items-center justify-between mb-6 border-b border-slate-700/50 pb-4">
+                <div className="flex items-center gap-3">
+                  <div className="flex gap-2">
+                    <div className="w-3 h-3 rounded-full bg-red-500/80" />
+                    <div className="w-3 h-3 rounded-full bg-yellow-500/80" />
+                    <div className="w-3 h-3 rounded-full bg-green-500/80" />
+                  </div>
+                  <span className="text-slate-400 text-sm font-mono ml-3">GradeOS Console</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                  <span className="text-xs text-emerald-400 font-mono">LIVE</span>
+                </div>
+              </div>
+
+              {/* 工作流阶段指示器 */}
+              <div className="flex items-center justify-between mb-6">
+                {workflowStages.map((stage, index) => {
+                  const Icon = stage.icon;
+                  const isActive = index === activeStage;
+                  const isCompleted = index < activeStage;
+                  
+                  return (
+                    <motion.div
+                      key={stage.id}
+                      className="flex flex-col items-center gap-2"
+                      animate={{
+                        scale: isActive ? 1.1 : 1,
+                        opacity: isActive || isCompleted ? 1 : 0.5,
+                      }}
+                    >
+                      <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all duration-300 ${
+                        isActive 
+                          ? `${stage.bg} ${stage.color} ring-2 ring-offset-2 ring-offset-slate-900 ring-current` 
+                          : isCompleted 
+                            ? 'bg-emerald-500/20 text-emerald-400' 
+                            : 'bg-slate-800 text-slate-500'
+                      }`}>
+                        <Icon className="w-5 h-5" />
+                      </div>
+                      <span className={`text-xs ${isActive ? stage.color : 'text-slate-500'}`}>
+                        {stage.label}
+                      </span>
+                    </motion.div>
+                  );
+                })}
+              </div>
+
+              {/* 进度条 */}
+              <div className="mb-6">
+                <div className="flex justify-between text-xs text-slate-400 mb-2">
+                  <span>Processing</span>
+                  <span>{progress}%</span>
+                </div>
+                <div className="progress-bar h-2">
+                  <motion.div 
+                    className="progress-bar-fill"
+                    style={{ width: `${progress}%` }}
+                  />
+                </div>
+              </div>
+
+              {/* 控制台日志 */}
+              <div className="bg-slate-900/50 rounded-lg p-4 h-48 overflow-hidden font-mono text-xs">
+                <div className="space-y-1">
+                  {logs.map((log, i) => (
+                    <motion.div
+                      key={i}
+                      initial={{ opacity: 0, x: -10 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      className={`${getLogColor(log)}`}
+                    >
+                      <span className="text-slate-600 mr-2">[{consoleLogs[i]?.time || '00:00:00'}]</span>
+                      {log}
+                      {i === logs.length - 1 && <span className="writing-cursor" />}
+                    </motion.div>
+                  ))}
+                </div>
+              </div>
+
+              {/* 分数飞入动画 */}
+              <AnimatePresence>
+                {showScore && (
+                  <motion.div
+                    initial={{ opacity: 0, scale: 0.5, y: 20 }}
+                    animate={{ opacity: 1, scale: 1, y: 0 }}
+                    exit={{ opacity: 0, scale: 1.2, y: -20 }}
+                    className="absolute inset-0 flex items-center justify-center bg-slate-900/80 backdrop-blur-sm"
+                  >
+                    <div className="text-center">
+                      <div className="text-6xl font-bold gradient-text mb-2">92</div>
+                      <div className="text-slate-400 text-sm">Average Score</div>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+
+            {/* 浮动装饰卡片 */}
+            <motion.div
+              animate={{ y: [0, -10, 0] }}
+              transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
+              className="absolute -right-4 -bottom-4 glass-card rounded-xl p-4 shadow-xl"
             >
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-emerald-500 to-teal-500 flex items-center justify-center text-white font-bold">
+                <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-emerald-400 to-teal-500 flex items-center justify-center text-white font-bold">
                   A
                 </div>
                 <div>
-                  <div className="text-xs text-slate-500">最新批改</div>
-                  <div className="text-sm font-semibold text-white">张三 - 92分</div>
+                  <div className="text-xs text-gray-500">最新完成</div>
+                  <div className="text-sm font-semibold text-gray-900">张三 - 95分</div>
                 </div>
               </div>
             </motion.div>
 
-            {/* 浮动卡片 - 系统状态 */}
+            {/* 系统状态卡片 */}
             <motion.div
               animate={{ y: [0, 10, 0] }}
-              transition={{ duration: 4, repeat: Infinity, ease: "easeInOut", delay: 1 }}
-              className="absolute -left-8 top-1/2 p-3 bg-slate-900/90 backdrop-blur-xl border border-slate-800 rounded-xl shadow-xl"
+              transition={{ duration: 3, repeat: Infinity, ease: "easeInOut", delay: 0.5 }}
+              className="absolute -left-4 top-1/2 glass-card rounded-lg px-4 py-2 shadow-xl"
             >
               <div className="flex items-center gap-2">
                 <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                <span className="text-xs font-mono text-emerald-400">System Online</span>
+                <span className="text-xs font-medium text-gray-600">System Online</span>
               </div>
             </motion.div>
-          </div>
-        </motion.div>
+          </motion.div>
+        </div>
+      </div>
+
+      {/* 滚动指示器 */}
+      <div className="scroll-indicator">
+        <span>SCROLL</span>
       </div>
     </section>
   );

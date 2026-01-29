@@ -1,533 +1,524 @@
 'use client';
 
-import React, { useEffect, useRef, useState } from 'react';
-import { motion, useScroll, useTransform, useSpring, useMotionValue } from 'framer-motion';
+import React, { useRef, useState, useEffect } from 'react';
+import { motion, useScroll, useTransform, useInView } from 'framer-motion';
 import { 
   FileUp, 
   ScanLine, 
   BrainCircuit, 
   CheckCircle2, 
   Zap,
-  ArrowRight,
-  Sparkles
+  ChevronLeft,
+  ChevronRight,
+  Eye,
+  FileText,
+  Users,
+  Clock,
+  BarChart3
 } from 'lucide-react';
 
-// AI批改工作流阶段定义
+// 工作流阶段详细定义
 const workflowStages = [
   {
-    id: 'intake',
+    id: 'upload',
+    step: 1,
     title: '智能接收',
-    subtitle: 'Intake',
-    description: '自动识别并接收多种格式的试卷文件，支持PDF、图片批量上传',
+    subtitle: 'Smart Intake',
+    description: '支持多种格式批量上传，自动识别试卷结构',
     icon: FileUp,
-    color: 'from-blue-500 to-cyan-500',
-    details: [
-      '支持 PDF/JPG/PNG 多种格式',
-      '批量文件并行处理',
-      '自动文件完整性校验'
-    ]
+    color: '#3b82f6',
+    gradient: 'from-blue-500 to-blue-600',
+    stats: { label: '支持格式', value: 'PDF/JPG/PNG' },
+    features: ['批量文件并行处理', '自动文件完整性校验', '智能页面分割检测'],
+    preview: {
+      title: '试卷上传中...',
+      items: [
+        { name: '期中考试_数学_A卷.pdf', status: 'completed', progress: 100 },
+        { name: '期中考试_数学_B卷.pdf', status: 'processing', progress: 67 },
+        { name: '答题卡_001.jpg', status: 'pending', progress: 0 },
+      ]
+    }
   },
   {
-    id: 'preprocess',
+    id: 'scan',
+    step: 2,
     title: '图像预处理',
-    subtitle: 'Preprocess',
-    description: '图像增强、去噪、旋转校正，确保最佳识别效果',
+    subtitle: 'Image Preprocessing',
+    description: '基于 Gemini 3.0 Vision 的图像增强与识别',
     icon: ScanLine,
-    color: 'from-cyan-500 to-teal-500',
-    details: [
-      '智能图像增强算法',
-      '手写文字区域检测',
-      '几何畸变自动校正'
-    ]
+    color: '#06b6d4',
+    gradient: 'from-cyan-500 to-cyan-600',
+    stats: { label: '识别精度', value: '99.2%' },
+    features: ['手写文字精准识别', '几何畸变自动校正', '数学公式结构化提取'],
+    preview: {
+      title: '正在识别...',
+      scanning: true,
+      detectedText: ['解：设x为未知数', '∵ a² + b² = c²', '∴ x = 5']
+    }
   },
   {
-    id: 'rubric_parse',
+    id: 'rubric',
+    step: 3,
     title: '评分标准解析',
-    subtitle: 'Rubric Parse',
-    description: 'AI自动解析评分标准，提取题目结构和分值分布',
-    icon: Sparkles,
-    color: 'from-teal-500 to-emerald-500',
-    details: [
-      '自动识别评分细则',
-      '题目结构智能解析',
-      '分值权重自动计算'
-    ]
+    subtitle: 'Rubric Analysis',
+    description: 'AI自动解析评分细则，建立评分框架',
+    icon: FileText,
+    color: '#8b5cf6',
+    gradient: 'from-violet-500 to-violet-600',
+    stats: { label: '解析速度', value: '< 3s' },
+    features: ['评分细则自动提取', '题目结构智能解析', '分值权重自动计算'],
+    preview: {
+      title: '评分标准已解析',
+      rubric: [
+        { q: 'Q1', points: 10, criteria: '解题思路清晰' },
+        { q: 'Q2', points: 15, criteria: '计算过程完整' },
+        { q: 'Q3', points: 20, criteria: '答案准确无误' },
+      ]
+    }
   },
   {
-    id: 'grade_batch',
+    id: 'grade',
+    step: 4,
     title: 'AI智能批改',
-    subtitle: 'Grading',
-    description: '多智能体并行批改，逐题分析并给出详细评分理由',
+    subtitle: 'AI Grading',
+    description: '多智能体并行处理，逐题深度分析',
     icon: BrainCircuit,
-    color: 'from-emerald-500 to-amber-500',
-    details: [
-      '多智能体并行处理',
-      '逐题深度分析',
-      '评分理由自动生成'
-    ]
+    color: '#10b981',
+    gradient: 'from-emerald-500 to-emerald-600',
+    stats: { label: '平均用时', value: '90s/份' },
+    features: ['多智能体并行批改', '逐题评分理由生成', '置信度自动评估'],
+    preview: {
+      title: '批改中...',
+      workers: [
+        { id: 1, status: 'grading', student: '张三', progress: 80 },
+        { id: 2, status: 'reviewing', student: '李四', progress: 100 },
+        { id: 3, status: 'grading', student: '王五', progress: 45 },
+      ]
+    }
   },
   {
     id: 'review',
+    step: 5,
     title: '结果审核',
-    subtitle: 'Review',
-    description: '人工介入审核低置信度结果，确保评分准确性',
-    icon: CheckCircle2,
-    color: 'from-amber-500 to-orange-500',
-    details: [
-      '低置信度自动标记',
-      '人工介入审核界面',
-      '一键确认或修改分数'
-    ]
+    subtitle: 'Human Review',
+    description: '低置信度结果自动标记，人工介入审核',
+    icon: Eye,
+    color: '#f59e0b',
+    gradient: 'from-amber-500 to-amber-600',
+    stats: { label: '待审核', value: '12项' },
+    features: ['低置信度自动标记', '一键确认或修改', '审核历史记录'],
+    preview: {
+      title: '待审核项目',
+      flagged: [
+        { student: '赵六', question: 'Q2', confidence: 0.65, reason: '步骤不完整' },
+        { student: '钱七', question: 'Q5', confidence: 0.72, reason: '答案模糊' },
+      ]
+    }
   },
   {
     id: 'export',
+    step: 6,
     title: '结果导出',
-    subtitle: 'Export',
-    description: '生成详细的成绩报告和分析统计，支持多种格式导出',
+    subtitle: 'Export Results',
+    description: '生成详细报告，支持多种格式导出',
     icon: Zap,
-    color: 'from-orange-500 to-red-500',
-    details: [
-      '成绩单自动生成',
-      '统计分析报表',
-      'Excel/PDF 格式导出'
-    ]
-  }
+    color: '#ef4444',
+    gradient: 'from-red-500 to-red-600',
+    stats: { label: '导出格式', value: 'Excel/PDF' },
+    features: ['成绩单自动生成', '统计分析报表', '多格式一键导出'],
+    preview: {
+      title: '成绩单预览',
+      stats: { avg: 78.5, max: 98, min: 52, count: 32 },
+      topStudents: ['张三 - 98', '李四 - 95', '王五 - 92']
+    }
+  },
 ];
 
-// 粒子背景组件
-const ParticleBackground = () => {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    
-    let animationId: number;
-    let particles: Array<{
-      x: number;
-      y: number;
-      vx: number;
-      vy: number;
-      size: number;
-      opacity: number;
-    }> = [];
-    
-    const resize = () => {
-      canvas.width = window.innerWidth;
-      canvas.height = window.innerHeight;
-    };
-    
-    const createParticles = () => {
-      particles = [];
-      for (let i = 0; i < 50; i++) {
-        particles.push({
-          x: Math.random() * canvas.width,
-          y: Math.random() * canvas.height,
-          vx: (Math.random() - 0.5) * 0.5,
-          vy: (Math.random() - 0.5) * 0.5,
-          size: Math.random() * 2 + 1,
-          opacity: Math.random() * 0.5 + 0.2
-        });
-      }
-    };
-    
-    const draw = () => {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      
-      particles.forEach((p, i) => {
-        p.x += p.vx;
-        p.y += p.vy;
-        
-        if (p.x < 0 || p.x > canvas.width) p.vx *= -1;
-        if (p.y < 0 || p.y > canvas.height) p.vy *= -1;
-        
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(59, 130, 246, ${p.opacity})`;
-        ctx.fill();
-        
-        // 连接线
-        particles.slice(i + 1).forEach(p2 => {
-          const dx = p.x - p2.x;
-          const dy = p.y - p2.y;
-          const dist = Math.sqrt(dx * dx + dy * dy);
-          
-          if (dist < 150) {
-            ctx.beginPath();
-            ctx.moveTo(p.x, p.y);
-            ctx.lineTo(p2.x, p2.y);
-            ctx.strokeStyle = `rgba(59, 130, 246, ${0.1 * (1 - dist / 150)})`;
-            ctx.stroke();
-          }
-        });
-      });
-      
-      animationId = requestAnimationFrame(draw);
-    };
-    
-    resize();
-    createParticles();
-    draw();
-    
-    window.addEventListener('resize', () => {
-      resize();
-      createParticles();
-    });
-    
-    return () => {
-      cancelAnimationFrame(animationId);
-    };
-  }, []);
-  
-  return (
-    <canvas
-      ref={canvasRef}
-      className="absolute inset-0 pointer-events-none"
-      style={{ opacity: 0.6 }}
-    />
-  );
-};
-
-// 工作流程节点组件
-const WorkflowNode = ({ 
-  stage, 
-  index, 
-  progress 
-}: { 
+// 单个工作流卡片组件
+const WorkflowCard = ({ stage, isActive, onClick }: { 
   stage: typeof workflowStages[0]; 
-  index: number;
-  progress: number;
+  isActive: boolean;
+  onClick: () => void;
 }) => {
-  const nodeRef = useRef<HTMLDivElement>(null);
   const Icon = stage.icon;
-  const isActive = progress >= index / workflowStages.length;
-  const isCompleted = progress >= (index + 1) / workflowStages.length;
-  
-  // 对角线偏移计算
-  const diagonalOffset = index * 80;
-  
+  const cardRef = useRef(null);
+  const isInView = useInView(cardRef, { once: true, margin: "-100px" });
+
   return (
     <motion.div
-      ref={nodeRef}
-      initial={{ opacity: 0, x: -100, y: 50, rotateY: -30 }}
-      whileInView={{ opacity: 1, x: 0, y: 0, rotateY: 0 }}
-      viewport={{ once: true, margin: "-100px" }}
-      transition={{ 
-        duration: 0.8, 
-        delay: index * 0.15,
-        type: "spring",
-        stiffness: 100
-      }}
-      style={{
-        marginLeft: `${diagonalOffset}px`,
-      }}
-      className="relative"
+      ref={cardRef}
+      initial={{ opacity: 0, y: 50 }}
+      animate={isInView ? { opacity: 1, y: 0 } : {}}
+      transition={{ duration: 0.6 }}
+      onClick={onClick}
+      className={`relative flex-shrink-0 w-[350px] md:w-[400px] cursor-pointer group ${
+        isActive ? 'z-10' : 'z-0'
+      }`}
     >
-      {/* 连接线 */}
-      {index < workflowStages.length - 1 && (
-        <motion.div
-          className="absolute top-1/2 left-full w-32 h-0.5 bg-gradient-to-r from-blue-500/50 to-transparent"
-          initial={{ scaleX: 0 }}
-          whileInView={{ scaleX: 1 }}
-          viewport={{ once: true }}
-          transition={{ duration: 0.6, delay: index * 0.15 + 0.3 }}
-          style={{ 
-            transformOrigin: 'left',
-            transform: 'rotate(25deg)',
-            marginTop: '60px',
-            marginLeft: '20px'
-          }}
-        />
-      )}
-      
-      {/* 节点卡片 */}
       <motion.div
-        whileHover={{ 
-          scale: 1.05, 
-          rotateX: 5,
-          z: 50,
-          transition: { duration: 0.3 }
+        animate={{
+          scale: isActive ? 1.05 : 1,
+          y: isActive ? -10 : 0,
         }}
-        className={`
-          relative w-[380px] p-6 rounded-2xl backdrop-blur-xl
-          border transition-all duration-500
-          ${isCompleted 
-            ? 'border-emerald-500/50 bg-emerald-500/10' 
-            : isActive 
-              ? 'border-blue-500/50 bg-blue-500/10 shadow-[0_0_30px_rgba(59,130,246,0.3)]' 
-              : 'border-slate-700/50 bg-slate-900/40'
-          }
-        `}
+        transition={{ type: "spring", stiffness: 300, damping: 30 }}
+        className={`relative bg-white rounded-2xl p-6 border-2 transition-all duration-300 ${
+          isActive 
+            ? `border-[${stage.color}] shadow-2xl` 
+            : 'border-gray-100 shadow-lg hover:border-gray-200'
+        }`}
         style={{
-          transformStyle: 'preserve-3d',
-          perspective: '1000px'
+          boxShadow: isActive ? `0 25px 50px -12px ${stage.color}20` : undefined
         }}
       >
-        {/* 状态指示器 */}
-        <div className="absolute -left-3 top-1/2 -translate-y-1/2">
-          <motion.div
-            animate={isActive ? {
-              scale: [1, 1.2, 1],
-              opacity: [0.5, 1, 0.5]
-            } : {}}
-            transition={{ duration: 2, repeat: Infinity }}
-            className={`
-              w-6 h-6 rounded-full border-2 flex items-center justify-center
-              ${isCompleted 
-                ? 'bg-emerald-500 border-emerald-400' 
-                : isActive 
-                  ? 'bg-blue-500 border-blue-400' 
-                  : 'bg-slate-700 border-slate-600'
-              }
-            `}
-          >
-            {isCompleted && <CheckCircle2 className="w-4 h-4 text-white" />}
-            {isActive && !isCompleted && <motion.div 
-              className="w-2 h-2 bg-white rounded-full"
-              animate={{ scale: [1, 1.5, 1] }}
-              transition={{ duration: 1, repeat: Infinity }}
-            />}
-          </motion.div>
+        {/* 步骤编号 */}
+        <div className="absolute -top-4 -right-4 w-12 h-12 rounded-full bg-gradient-to-br from-gray-900 to-gray-700 text-white flex items-center justify-center font-bold text-lg shadow-lg">
+          {stage.step}
         </div>
-        
+
         {/* 头部 */}
         <div className="flex items-start gap-4 mb-4">
-          <motion.div
-            whileHover={{ rotate: 360 }}
-            transition={{ duration: 0.6 }}
-            className={`
-              w-14 h-14 rounded-xl flex items-center justify-center
-              bg-gradient-to-br ${stage.color}
-              shadow-lg
-            `}
+          <div 
+            className="w-14 h-14 rounded-xl flex items-center justify-center transition-transform group-hover:scale-110"
+            style={{ background: `${stage.color}15` }}
           >
-            <Icon className="w-7 h-7 text-white" />
-          </motion.div>
-          
-          <div className="flex-1">
-            <div className="text-xs font-mono text-slate-500 uppercase tracking-wider mb-1">
+            <Icon className="w-7 h-7" style={{ color: stage.color }} />
+          </div>
+          <div>
+            <div className="text-xs font-medium text-gray-400 uppercase tracking-wider">
               {stage.subtitle}
             </div>
-            <h3 className="text-xl font-bold text-white">{stage.title}</h3>
-          </div>
-          
-          {/* 序号 */}
-          <div className="text-4xl font-bold text-slate-700/50 font-mono">
-            {String(index + 1).padStart(2, '0')}
+            <h3 className="text-xl font-bold text-gray-900">{stage.title}</h3>
           </div>
         </div>
-        
+
         {/* 描述 */}
-        <p className="text-slate-400 text-sm leading-relaxed mb-4">
+        <p className="text-gray-600 text-sm mb-4 leading-relaxed">
           {stage.description}
         </p>
-        
-        {/* 详情列表 */}
-        <ul className="space-y-2">
-          {stage.details.map((detail, i) => (
-            <motion.li
-              key={i}
-              initial={{ opacity: 0, x: -10 }}
-              whileInView={{ opacity: 1, x: 0 }}
-              viewport={{ once: true }}
-              transition={{ delay: index * 0.15 + i * 0.1 + 0.3 }}
-              className="flex items-center gap-2 text-xs text-slate-500"
-            >
-              <div className={`w-1.5 h-1.5 rounded-full bg-gradient-to-r ${stage.color}`} />
-              {detail}
-            </motion.li>
+
+        {/* 特性列表 */}
+        <ul className="space-y-2 mb-4">
+          {stage.features.map((feature, i) => (
+            <li key={i} className="flex items-center gap-2 text-sm text-gray-500">
+              <div 
+                className="w-1.5 h-1.5 rounded-full"
+                style={{ background: stage.color }}
+              />
+              {feature}
+            </li>
           ))}
         </ul>
-        
-        {/* 进度条 */}
-        {isActive && !isCompleted && (
-          <motion.div
-            className="absolute bottom-0 left-0 right-0 h-1 bg-slate-800 rounded-b-2xl overflow-hidden"
-          >
-            <motion.div
-              className={`h-full bg-gradient-to-r ${stage.color}`}
-              animate={{ x: ["-100%", "100%"] }}
-              transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
-            />
-          </motion.div>
+
+        {/* 统计 */}
+        <div 
+          className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium"
+          style={{ background: `${stage.color}10`, color: stage.color }}
+        >
+          <BarChart3 className="w-4 h-4" />
+          <span>{stage.stats.label}: {stage.stats.value}</span>
+        </div>
+
+        {/* 连接线 */}
+        {stage.step < workflowStages.length && (
+          <div className="absolute top-1/2 -right-8 w-8 h-0.5 bg-gradient-to-r from-gray-300 to-transparent hidden lg:block" />
         )}
       </motion.div>
     </motion.div>
   );
 };
 
-// 主组件
-export const AIWorkflowShowcase = () => {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [currentStage, setCurrentStage] = useState(0);
-  
-  const { scrollYProgress } = useScroll({
-    target: containerRef,
-    offset: ["start start", "end end"]
-  });
-  
-  const smoothProgress = useSpring(scrollYProgress, {
-    stiffness: 100,
-    damping: 30,
-    restDelta: 0.001
-  });
-  
-  // 视差效果
-  const backgroundY = useTransform(smoothProgress, [0, 1], ["0%", "30%"]);
-  const textY = useTransform(smoothProgress, [0, 1], ["0%", "-20%"]);
-  
-  // 计算当前阶段
-  useEffect(() => {
-    const unsubscribe = smoothProgress.on("change", (v) => {
-      const stage = Math.floor(v * workflowStages.length);
-      setCurrentStage(Math.min(stage, workflowStages.length - 1));
-    });
-    return () => unsubscribe();
-  }, [smoothProgress]);
-  
+// 预览面板组件
+const PreviewPanel = ({ stage }: { stage: typeof workflowStages[0] }) => {
   return (
-    <section 
-      ref={containerRef}
-      className="relative min-h-[300vh] bg-slate-950"
+    <motion.div
+      key={stage.id}
+      initial={{ opacity: 0, scale: 0.95 }}
+      animate={{ opacity: 1, scale: 1 }}
+      exit={{ opacity: 0, scale: 0.95 }}
+      transition={{ duration: 0.3 }}
+      className="bg-white rounded-2xl border border-gray-200 shadow-xl overflow-hidden"
     >
-      {/* 固定内容区 */}
-      <div className="sticky top-0 h-screen overflow-hidden">
-        {/* 动态背景 */}
-        <motion.div 
-          className="absolute inset-0"
-          style={{ y: backgroundY }}
-        >
-          {/* 渐变背景 */}
-          <div className="absolute inset-0 bg-gradient-to-br from-slate-950 via-slate-900 to-blue-950" />
-          
-          {/* 网格 */}
+      {/* 面板头部 */}
+      <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+        <div className="flex items-center gap-3">
           <div 
-            className="absolute inset-0 opacity-20"
-            style={{
-              backgroundImage: `
-                linear-gradient(to right, rgba(59, 130, 246, 0.1) 1px, transparent 1px),
-                linear-gradient(to bottom, rgba(59, 130, 246, 0.1) 1px, transparent 1px)
-              `,
-              backgroundSize: '60px 60px'
-            }}
-          />
-          
-          {/* 粒子效果 */}
-          <ParticleBackground />
-          
-          {/* 发光球体 */}
-          <motion.div
-            animate={{
-              scale: [1, 1.2, 1],
-              opacity: [0.3, 0.5, 0.3]
-            }}
-            transition={{ duration: 8, repeat: Infinity }}
-            className="absolute top-1/4 right-1/4 w-96 h-96 bg-blue-500/20 rounded-full blur-[100px]"
-          />
-          <motion.div
-            animate={{
-              scale: [1, 1.3, 1],
-              opacity: [0.2, 0.4, 0.2]
-            }}
-            transition={{ duration: 10, repeat: Infinity, delay: 2 }}
-            className="absolute bottom-1/4 left-1/4 w-80 h-80 bg-cyan-500/20 rounded-full blur-[80px]"
-          />
-        </motion.div>
-        
-        {/* 内容 */}
-        <div className="relative z-10 h-full flex">
-          {/* 左侧标题区 */}
-          <motion.div 
-            className="w-1/3 h-full flex flex-col justify-center px-12"
-            style={{ y: textY }}
+            className="w-8 h-8 rounded-lg flex items-center justify-center"
+            style={{ background: `${stage.color}15` }}
           >
-            <motion.div
-              initial={{ opacity: 0, x: -50 }}
-              whileInView={{ opacity: 1, x: 0 }}
-              viewport={{ once: true }}
-              className="space-y-6"
-            >
-              <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-blue-500/10 border border-blue-500/20">
-                <Sparkles className="w-4 h-4 text-blue-400" />
-                <span className="text-sm text-blue-400 font-medium">AI-Powered</span>
-              </div>
-              
-              <h2 className="text-5xl font-bold text-white leading-tight">
-                智能批改
-                <br />
-                <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-cyan-400">
-                  工作流
+            <stage.icon className="w-4 h-4" style={{ color: stage.color }} />
+          </div>
+          <span className="font-semibold text-gray-900">{stage.preview.title}</span>
+        </div>
+        <div className="flex gap-1.5">
+          <div className="w-2.5 h-2.5 rounded-full bg-red-400" />
+          <div className="w-2.5 h-2.5 rounded-full bg-yellow-400" />
+          <div className="w-2.5 h-2.5 rounded-full bg-green-400" />
+        </div>
+      </div>
+
+      {/* 面板内容 */}
+      <div className="p-6">
+        {stage.id === 'upload' && (
+          <div className="space-y-3">
+            {stage.preview.items?.map((item, i) => (
+              <div key={i} className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
+                <FileText className="w-5 h-5 text-gray-400" />
+                <div className="flex-1">
+                  <div className="text-sm text-gray-700">{item.name}</div>
+                  <div className="progress-bar h-1.5 mt-2">
+                    <div 
+                      className="progress-bar-fill transition-all duration-500"
+                      style={{ width: `${item.progress}%` }}
+                    />
+                  </div>
+                </div>
+                <span className={`text-xs ${
+                  item.status === 'completed' ? 'text-emerald-500' :
+                  item.status === 'processing' ? 'text-blue-500' : 'text-gray-400'
+                }`}>
+                  {item.status === 'completed' ? '✓' : item.status === 'processing' ? '...' : '○'}
                 </span>
-              </h2>
-              
-              <p className="text-slate-400 text-lg leading-relaxed">
-                基于 LangGraph 的多智能体编排系统，
-                实现从试卷接收到结果导出的全流程自动化
-              </p>
-              
-              {/* 阶段指示器 */}
-              <div className="flex items-center gap-3 pt-4">
-                {workflowStages.map((_, i) => (
-                  <motion.div
-                    key={i}
-                    className={`h-1 rounded-full transition-all duration-300 ${
-                      i <= currentStage 
-                        ? 'w-8 bg-blue-500' 
-                        : 'w-2 bg-slate-700'
-                    }`}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {stage.id === 'scan' && (
+          <div className="relative h-48 bg-gray-900 rounded-lg overflow-hidden">
+            <div className="scan-line" />
+            <div className="absolute inset-0 flex items-center justify-center">
+              <div className="text-center">
+                <ScanLine className="w-12 h-12 text-cyan-400 mx-auto mb-4 animate-pulse" />
+                <p className="text-cyan-400 font-mono text-sm">正在扫描识别...</p>
+              </div>
+            </div>
+            <div className="absolute bottom-4 left-4 right-4 space-y-1">
+              {stage.preview.detectedText?.map((text, i) => (
+                <motion.div
+                  key={i}
+                  initial={{ opacity: 0, x: -10 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: i * 0.3 }}
+                  className="text-xs font-mono text-emerald-400 bg-emerald-400/10 px-2 py-1 rounded"
+                >
+                  {text}
+                </motion.div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {stage.id === 'rubric' && (
+          <div className="space-y-3">
+            {stage.preview.rubric?.map((item, i) => (
+              <div key={i} className="flex items-center justify-between p-3 bg-violet-50 rounded-lg border border-violet-100">
+                <div className="flex items-center gap-3">
+                  <span className="w-8 h-8 rounded-lg bg-violet-500 text-white flex items-center justify-center text-sm font-bold">
+                    {item.q}
+                  </span>
+                  <span className="text-sm text-gray-700">{item.criteria}</span>
+                </div>
+                <span className="text-violet-600 font-semibold">{item.points}分</span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {stage.id === 'grade' && (
+          <div className="space-y-3">
+            {stage.preview.workers?.map((worker) => (
+              <div key={worker.id} className="p-3 bg-gray-50 rounded-lg">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    <div className="w-6 h-6 rounded-full bg-gradient-to-br from-emerald-400 to-teal-500 flex items-center justify-center text-white text-xs font-bold">
+                      W{worker.id}
+                    </div>
+                    <span className="text-sm text-gray-700">{worker.student}</span>
+                  </div>
+                  <span className={`text-xs ${
+                    worker.status === 'grading' ? 'text-emerald-500' : 'text-blue-500'
+                  }`}>
+                    {worker.status === 'grading' ? '批改中' : '审核中'}
+                  </span>
+                </div>
+                <div className="progress-bar h-1.5">
+                  <div 
+                    className="progress-bar-fill transition-all duration-1000"
+                    style={{ width: `${worker.progress}%` }}
                   />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {stage.id === 'review' && (
+          <div className="space-y-3">
+            {stage.preview.flagged?.map((item, i) => (
+              <div key={i} className="p-3 bg-amber-50 rounded-lg border border-amber-200">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="font-medium text-gray-900">{item.student} - {item.question}</span>
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-amber-200 text-amber-800">
+                    置信度 {(item.confidence * 100).toFixed(0)}%
+                  </span>
+                </div>
+                <p className="text-sm text-gray-600">{item.reason}</p>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {stage.id === 'export' && (
+          <div className="space-y-4">
+            <div className="grid grid-cols-4 gap-3">
+              {[
+                { label: '平均分', value: stage.preview.stats?.avg },
+                { label: '最高分', value: stage.preview.stats?.max },
+                { label: '最低分', value: stage.preview.stats?.min },
+                { label: '人数', value: stage.preview.stats?.count },
+              ].map((stat, i) => (
+                <div key={i} className="text-center p-3 bg-red-50 rounded-lg">
+                  <div className="text-lg font-bold text-red-600">{stat.value}</div>
+                  <div className="text-xs text-gray-500">{stat.label}</div>
+                </div>
+              ))}
+            </div>
+            <div className="p-3 bg-gray-50 rounded-lg">
+              <div className="text-sm font-medium text-gray-700 mb-2">前三名</div>
+              <div className="space-y-1">
+                {stage.preview.topStudents?.map((student, i) => (
+                  <div key={i} className="flex items-center gap-2 text-sm">
+                    <span className="w-5 h-5 rounded-full bg-yellow-400 text-white flex items-center justify-center text-xs font-bold">
+                      {i + 1}
+                    </span>
+                    <span className="text-gray-600">{student}</span>
+                  </div>
                 ))}
               </div>
-              
-              <div className="text-sm text-slate-500">
-                阶段 {currentStage + 1} / {workflowStages.length}
-              </div>
-            </motion.div>
-          </motion.div>
+            </div>
+          </div>
+        )}
+      </div>
+    </motion.div>
+  );
+};
+
+export const AIWorkflowVisualization = () => {
+  const [activeStage, setActiveStage] = useState(0);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const sectionRef = useRef<HTMLDivElement>(null);
+  const isInView = useInView(sectionRef, { once: true, margin: "-200px" });
+
+  const { scrollYProgress } = useScroll({
+    target: sectionRef,
+    offset: ["start end", "end start"]
+  });
+
+  const backgroundY = useTransform(scrollYProgress, [0, 1], ["0%", "20%"]);
+
+  const scrollToCard = (index: number) => {
+    if (scrollContainerRef.current) {
+      const cards = scrollContainerRef.current.children;
+      if (cards[index]) {
+        const card = cards[index] as HTMLElement;
+        scrollContainerRef.current.scrollTo({
+          left: card.offsetLeft - 50,
+          behavior: 'smooth'
+        });
+      }
+    }
+    setActiveStage(index);
+  };
+
+  return (
+    <section ref={sectionRef} className="py-24 relative overflow-hidden bg-gradient-to-b from-white via-blue-50/50 to-white">
+      {/* 背景装饰 */}
+      <motion.div 
+        className="absolute inset-0 pointer-events-none"
+        style={{ y: backgroundY }}
+      >
+        <div className="absolute top-0 left-1/4 w-96 h-96 bg-blue-200/30 rounded-full blur-[100px]" />
+        <div className="absolute bottom-0 right-1/4 w-80 h-80 bg-cyan-200/20 rounded-full blur-[80px]" />
+      </motion.div>
+
+      <div className="landing-container relative z-10">
+        {/* 标题区 */}
+        <motion.div
+          initial={{ opacity: 0, y: 30 }}
+          animate={isInView ? { opacity: 1, y: 0 } : {}}
+          className="text-center max-w-3xl mx-auto mb-16"
+        >
+          <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-blue-500/10 border border-blue-500/20 mb-6">
+            <BrainCircuit className="w-4 h-4 text-blue-500" />
+            <span className="text-sm text-blue-600 font-medium">AI Workflow</span>
+          </div>
           
-          {/* 右侧工作流展示 */}
-          <div className="w-2/3 h-full flex items-center overflow-hidden">
-            <motion.div 
-              className="pl-20 pr-10"
-              style={{
-                y: useTransform(smoothProgress, [0, 1], [0, -200])
-              }}
-            >
-              <div className="space-y-12 py-20">
-                {workflowStages.map((stage, index) => (
-                  <WorkflowNode
-                    key={stage.id}
-                    stage={stage}
-                    index={index}
-                    progress={smoothProgress.get()}
-                  />
-                ))}
-              </div>
-            </motion.div>
+          <h2 className="text-4xl md:text-5xl font-bold text-gray-900 mb-6">
+            智能批改
+            <span className="gradient-text">全流程可视化</span>
+          </h2>
+          
+          <p className="text-lg text-gray-600">
+            从试卷上传到成绩导出，每一步都清晰可见。基于 LangGraph 的多智能体编排系统，
+            让复杂的批改流程变得简单透明。
+          </p>
+        </motion.div>
+
+        {/* 水平滚动工作流卡片 */}
+        <div className="relative mb-12">
+          {/* 滚动按钮 */}
+          <button
+            onClick={() => scrollToCard(Math.max(0, activeStage - 1))}
+            className="absolute left-0 top-1/2 -translate-y-1/2 z-20 w-12 h-12 rounded-full bg-white shadow-lg border border-gray-200 flex items-center justify-center text-gray-600 hover:text-blue-600 hover:border-blue-300 transition-all hidden lg:flex"
+          >
+            <ChevronLeft className="w-6 h-6" />
+          </button>
+          
+          <button
+            onClick={() => scrollToCard(Math.min(workflowStages.length - 1, activeStage + 1))}
+            className="absolute right-0 top-1/2 -translate-y-1/2 z-20 w-12 h-12 rounded-full bg-white shadow-lg border border-gray-200 flex items-center justify-center text-gray-600 hover:text-blue-600 hover:border-blue-300 transition-all hidden lg:flex"
+          >
+            <ChevronRight className="w-6 h-6" />
+          </button>
+
+          {/* 卡片容器 */}
+          <div 
+            ref={scrollContainerRef}
+            className="horizontal-scroll-section gap-6 px-4 lg:px-16 pb-4"
+          >
+            {workflowStages.map((stage, index) => (
+              <WorkflowCard
+                key={stage.id}
+                stage={stage}
+                isActive={index === activeStage}
+                onClick={() => setActiveStage(index)}
+              />
+            ))}
           </div>
         </div>
-        
-        {/* 滚动提示 */}
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 1 }}
-          className="absolute bottom-8 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2"
-        >
-          <span className="text-xs text-slate-500 uppercase tracking-widest">Scroll</span>
-          <motion.div
-            animate={{ y: [0, 8, 0] }}
-            transition={{ duration: 1.5, repeat: Infinity }}
-          >
-            <ArrowRight className="w-5 h-5 text-slate-500 rotate-90" />
-          </motion.div>
-        </motion.div>
+
+        {/* 预览面板 */}
+        <div className="max-w-3xl mx-auto">
+          <PreviewPanel stage={workflowStages[activeStage]} />
+        </div>
+
+        {/* 阶段指示器 */}
+        <div className="flex justify-center gap-2 mt-8">
+          {workflowStages.map((_, index) => (
+            <button
+              key={index}
+              onClick={() => scrollToCard(index)}
+              className={`h-2 rounded-full transition-all duration-300 ${
+                index === activeStage 
+                  ? 'w-8 bg-blue-500' 
+                  : 'w-2 bg-gray-300 hover:bg-gray-400'
+              }`}
+            />
+          ))}
+        </div>
       </div>
     </section>
   );
 };
 
-export default AIWorkflowShowcase;
+export default AIWorkflowVisualization;
