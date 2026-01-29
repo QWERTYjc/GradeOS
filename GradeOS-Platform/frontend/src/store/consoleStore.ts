@@ -57,7 +57,7 @@ export interface WorkflowNode {
 }
 
 export interface ScoringPoint {
-    pointId?: string;           // 评分点编号 (e.g., "1.1", "1.2")
+    pointId?: string;           // 评分点编�?(e.g., "1.1", "1.2")
     description: string;
     score: number;
     maxScore: number;
@@ -92,10 +92,7 @@ export interface QuestionResult {
     scoringPoints?: ScoringPoint[];
     /** 得分点明细列表（新格式） */
     scoringPointResults?: Array<{
-        pointId?: string;       // 评分点编号
-        scoringPoint?: ScoringPoint;  // 旧格式兼容
-        description?: string;   // 评分点描述
-        awarded: number;        // 实际得分
+        pointId?: string;       // 评分点编�?        scoringPoint?: ScoringPoint;  // 旧格式兼�?        description?: string;   // 评分点描�?        awarded: number;        // 实际得分
         maxPoints?: number;     // 满分
         evidence: string;       // 评分依据/证据
         rubricReference?: string;
@@ -119,11 +116,11 @@ export interface QuestionResult {
             y_max: number;
         };
     }>;
-    /** 出现在哪些页面 - 新增 */
+    /** 出现在哪些页�?- 新增 */
     pageIndices?: number[];
     /** 是否跨页题目 - 新增 */
     isCrossPage?: boolean;
-    /** 合并来源（如果是合并结果）- 新增 */
+    /** 合并来源（如果是合并结果�? 新增 */
     mergeSource?: string[];
     /** 批注坐标列表 */
     annotations?: Array<{
@@ -163,8 +160,7 @@ export interface QuestionResult {
     };
 }
 
-// LLM 流式思考输出
-export interface LLMThought {
+// LLM 流式思考输�?export interface LLMThought {
     id: string;
     nodeId: string;
     nodeName: string;
@@ -187,13 +183,13 @@ export interface StudentResult {
     questionResults?: QuestionResult[];
     studentSummary?: StudentSummary;
     selfAudit?: SelfAudit;
-    /** 起始页 */
+    /** 起始�?*/
     startPage?: number;
-    /** 结束页 */
+    /** 结束�?*/
     endPage?: number;
-    /** 置信度 */
+    /** 置信�?*/
     confidence?: number;
-    /** 是否需要人工确认 */
+    /** 是否需要人工确�?*/
     needsConfirmation?: boolean;
     /** 自白报告 */
     selfReport?: {
@@ -206,15 +202,15 @@ export interface StudentResult {
         generatedAt?: string;
         source?: string;
     };
-    /** 第一次批改记录（逻辑复核前的原始结果）*/
+    /** 第一次批改记录（逻辑复核前的原始结果�?/
     draftQuestionDetails?: QuestionResult[];
     /** 第一次批改总分 */
     draftTotalScore?: number;
-    /** 第一次批改满分 */
+    /** 第一次批改满�?*/
     draftMaxScore?: number;
     /** 逻辑复核时间 */
     logicReviewedAt?: string;
-    /** 页面范围（显示用）*/
+    /** 页面范围（显示用�?/
     pageRange?: string;
     /** 页面列表 */
     pages?: string;
@@ -289,16 +285,14 @@ export interface PendingReview {
     payload: any;
 }
 
-// 跨页题目信息（对应设计文档 CrossPageQuestion）
-export interface CrossPageQuestion {
+// 跨页题目信息（对应设计文�?CrossPageQuestion�?export interface CrossPageQuestion {
     questionId: string;
     pageIndices: number[];
     confidence: number;
     mergeReason: string;
 }
 
-// 学生边界信息（对应设计文档 StudentBoundary）
-export interface StudentBoundary {
+// 学生边界信息（对应设计文�?StudentBoundary�?export interface StudentBoundary {
     studentKey: string;
     startPage: number;
     endPage: number;
@@ -306,8 +300,7 @@ export interface StudentBoundary {
     needsConfirmation: boolean;
 }
 
-// 批次处理状态（对应设计文档 BatchResult）
-export interface BatchProgress {
+// 批次处理状态（对应设计文档 BatchResult�?export interface BatchProgress {
     batchIndex: number;
     totalBatches: number;
     successCount: number;
@@ -315,8 +308,7 @@ export interface BatchProgress {
     processingTimeMs?: number;
 }
 
-// 解析的评分标准 - 得分点详情
-export interface RubricScoringPoint {
+// 解析的评分标�?- 得分点详�?export interface RubricScoringPoint {
     pointId?: string;
     description: string;
     expectedValue?: string;
@@ -325,14 +317,14 @@ export interface RubricScoringPoint {
     keywords?: string[];
 }
 
-// 解析的评分标准 - 另类解法
+// 解析的评分标�?- 另类解法
 export interface RubricAlternativeSolution {
     description: string;
     scoringCriteria: string;
     note?: string;
 }
 
-// 解析的评分标准 - 单题详情
+// 解析的评分标�?- 单题详情
 export interface RubricQuestion {
     questionId: string;
     maxScore: number;
@@ -407,11 +399,10 @@ export interface PatchInfo {
 export interface SelfEvolvingState {
     calibration: CalibrationInfo | null;
     activePatches: PatchInfo[];
-    // 判例信息通常与特定 Agent/Page 关联，这里存储最近检索到的判例用于展示
-    recentExemplars: ExemplarInfo[];
+    // 判例信息通常与特�?Agent/Page 关联，这里存储最近检索到的判例用于展�?    recentExemplars: ExemplarInfo[];
 }
 
-// === 班级批改上下文 ===
+// === 班级批改上下�?===
 
 export interface ClassStudent {
     id: string;
@@ -451,17 +442,14 @@ export interface ConsoleState {
     nodeStatusTimestamps: Record<string, number>;
     nodeStatusTimers: Record<string, ReturnType<typeof setTimeout>>;
 
-    // 新增：自我成长系统状态
-    parsedRubric: ParsedRubric | null;
+    // 新增：自我成长系统状�?    parsedRubric: ParsedRubric | null;
     batchProgress: BatchProgress | null;
     studentBoundaries: StudentBoundary[];
     selfEvolving: SelfEvolvingState;
-    // 新增：跨页题目信息
-    crossPageQuestions: CrossPageQuestion[];
-    // 新增：LLM 思考过程
-    llmThoughts: LLMThought[];
-    // 新增：上传的图片 (用于结果页展示)
-    uploadedImages: string[];  // base64 或 URL
+    // 新增：跨页题目信�?    crossPageQuestions: CrossPageQuestion[];
+    // 新增：LLM 思考过�?    llmThoughts: LLMThought[];
+    // 新增：上传的图片 (用于结果页展�?
+    uploadedImages: string[];  // base64 �?URL
     rubricImages: string[];
     pendingReview: PendingReview | null;
     classReport: ClassReport | null;
@@ -495,15 +483,12 @@ export interface ConsoleState {
     toggleMonitor: () => void;
     connectWs: (batchId: string) => void;
 
-    // 新增：自我成长系统方法
-    setParsedRubric: (rubric: ParsedRubric) => void;
+    // 新增：自我成长系统方�?    setParsedRubric: (rubric: ParsedRubric) => void;
     setBatchProgress: (progress: BatchProgress) => void;
     setStudentBoundaries: (boundaries: StudentBoundary[]) => void;
     updateSelfEvolving: (update: Partial<SelfEvolvingState>) => void;
-    // 新增：跨页题目方法
-    setCrossPageQuestions: (questions: CrossPageQuestion[]) => void;
-    // 新增：LLM 思考方法
-    appendLLMThought: (
+    // 新增：跨页题目方�?    setCrossPageQuestions: (questions: CrossPageQuestion[]) => void;
+    // 新增：LLM 思考方�?    appendLLMThought: (
         nodeId: string,
         nodeName: string,
         chunk: any,
@@ -514,8 +499,7 @@ export interface ConsoleState {
     ) => void;
     completeLLMThought: (nodeId: string, pageIndex?: number, streamType?: 'thinking' | 'output', agentId?: string) => void;
     clearLLMThoughts: () => void;
-    // 新增：图片方法
-    setUploadedImages: (images: string[]) => void;
+    // 新增：图片方�?    setUploadedImages: (images: string[]) => void;
     setRubricImages: (images: string[]) => void;
     setPendingReview: (review: PendingReview | null) => void;
     setClassReport: (report: ClassReport | null) => void;
@@ -560,13 +544,11 @@ const normalizeNodeId = (value: string) => {
 };
 
 /**
- * 工作流节点配置
- * 
+ * 工作流节点配�? * 
  * 基于 LangGraph 架构的前端展示流程（隐藏内部 merge 节点）：
  * 1. rubric_parse - 解析评分标准
  * 2. rubric_review - 评分标准人工交互（可选）
- * 3. grade_batch - 按学生批次并行批改
- * 4. logic_review - 批改逻辑复核
+ * 3. grade_batch - 按学生批次并行批�? * 4. logic_review - 批改逻辑复核
  * 5. review - 批改结果人工交互（可选）
  * 6. export - 导出结果
  * 
@@ -643,8 +625,7 @@ const normalizeParsedRubricPayload = (data: any): ParsedRubric | null => {
         }))
         : undefined;
 
-    // 规范化自白报告
-    const rawSelfReport = data.parseSelfReport || data.parse_self_report;
+    // 规范化自白报�?    const rawSelfReport = data.parseSelfReport || data.parse_self_report;
     const parseSelfReport = rawSelfReport ? {
         overallStatus: rawSelfReport.overallStatus || rawSelfReport.overall_status || 'ok',
         overallConfidence: rawSelfReport.overallConfidence ?? rawSelfReport.overall_confidence ?? 1.0,
@@ -725,8 +706,7 @@ const normalizeClassReport = (report: any): ClassReport | null => {
 
 
 export const useConsoleStore = create<ConsoleState>((set, get) => {
-    // Store 内部的 WebSocket 处理器注册标志
-    let handlersRegistered = false;
+    // Store 内部�?WebSocket 处理器注册标�?    let handlersRegistered = false;
     
     return {
     view: 'LANDING',
@@ -744,8 +724,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
     nodeStatusTimestamps: {},
     nodeStatusTimers: {},
 
-    // 自我成长系统状态初始值
-    parsedRubric: null,
+    // 自我成长系统状态初始�?    parsedRubric: null,
     batchProgress: null,
     studentBoundaries: [],
     selfEvolving: {
@@ -753,17 +732,13 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
         activePatches: [],
         recentExemplars: []
     },
-    // 跨页题目信息初始值
-    crossPageQuestions: [],
-    // LLM 思考过程初始值
-    llmThoughts: [],
-    // 上传的图片初始值
-    uploadedImages: [],
+    // 跨页题目信息初始�?    crossPageQuestions: [],
+    // LLM 思考过程初始�?    llmThoughts: [],
+    // 上传的图片初始�?    uploadedImages: [],
     rubricImages: [],
     pendingReview: null,
     classReport: null,
-    // 班级批改上下文初始值
-    classContext: {
+    // 班级批改上下文初始�?    classContext: {
         classId: null,
         homeworkId: null,
         className: null,
@@ -967,8 +942,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
             })),
             nodeStatusTimestamps: {},
             nodeStatusTimers: {},
-            // 重置自我成长系统状态
-            parsedRubric: null,
+            // 重置自我成长系统状�?            parsedRubric: null,
             batchProgress: null,
             studentBoundaries: [],
             // 重置跨页题目信息
@@ -1010,8 +984,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
     // 跨页题目方法
     setCrossPageQuestions: (questions) => set({ crossPageQuestions: questions }),
 
-    // LLM 思考方法
-    appendLLMThought: (nodeId, nodeName, chunk, pageIndex, streamType, agentId, agentLabel) => set((state) => {
+    // LLM 思考方�?    appendLLMThought: (nodeId, nodeName, chunk, pageIndex, streamType, agentId, agentLabel) => set((state) => {
         // 防御性处理：确保 chunk 是字符串
         let contentStr = '';
         let shouldAppend = true;
@@ -1032,8 +1005,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
             shouldAppend = Boolean(contentStr);
         } else if (typeof chunk === 'string') {
             let processedChunk = chunk;
-            // 移除可能存在的 markdown 代码块包裹
-            if (processedChunk.startsWith('```json')) {
+            // 移除可能存在�?markdown 代码块包�?            if (processedChunk.startsWith('```json')) {
                 processedChunk = processedChunk.replace(/^```json\s*/, '').replace(/\s*```$/, '');
             } else if (processedChunk.startsWith('```')) {
                 processedChunk = processedChunk.replace(/^```\s*/, '').replace(/\s*```$/, '');
@@ -1041,7 +1013,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
             contentStr = processedChunk;
             shouldAppend = contentStr !== '';
         } else if (chunk && typeof chunk === 'object') {
-            // 对象类型，尝试提取 text/content
+            // 对象类型，尝试提�?text/content
             const obj = chunk as any;
             contentStr = obj.text || obj.content || obj.thought || obj.summary || JSON.stringify(obj, null, 2);
             shouldAppend = contentStr !== '';
@@ -1051,8 +1023,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
         }
 
         if (!shouldAppend || !contentStr) {
-            return state; // 不更新状态
-        }
+            return state; // 不更新状�?        }
 
         const normalizedNodeId = normalizeNodeId(nodeId);
         if (normalizedNodeId === 'index') {
@@ -1070,8 +1041,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
         const existingIdx = state.llmThoughts.findIndex(t => t.id === thoughtId && !t.isComplete);
 
         if (existingIdx >= 0) {
-            // 追加到现有思考
-            const updated = [...state.llmThoughts];
+            // 追加到现有思�?            const updated = [...state.llmThoughts];
             const combined = updated[existingIdx].content + contentStr;
             updated[existingIdx] = {
                 ...updated[existingIdx],
@@ -1079,8 +1049,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
             };
             return { llmThoughts: updated };
         } else {
-            // 创建新思考
-            const truncated = contentStr.length > maxChars ? contentStr.slice(-maxChars) : contentStr;
+            // 创建新思�?            const truncated = contentStr.length > maxChars ? contentStr.slice(-maxChars) : contentStr;
             return {
                 llmThoughts: [...state.llmThoughts, {
                     id: thoughtId,
@@ -1136,8 +1105,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
     setPendingReview: (review) => set({ pendingReview: review }),
     setClassReport: (report) => set({ classReport: report }),
 
-    // 班级批改上下文方法
-    setClassContext: (context) => set((state) => ({
+    // 班级批改上下文方�?    setClassContext: (context) => set((state) => ({
         classContext: { ...state.classContext, ...context }
     })),
     clearClassContext: () => set({
@@ -1153,14 +1121,12 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
 
     connectWs: (batchId) => {
         wsClient.connect(buildWsUrl(`/api/batch/ws/${batchId}`));
-        // 使用 store 内部状态而不是全局变量，避免 SSR 环境中的状态污染
-        if (handlersRegistered) {
+        // 使用 store 内部状态而不是全局变量，避�?SSR 环境中的状态污�?        if (handlersRegistered) {
             return;
         }
         handlersRegistered = true;
 
-        // 处理工作流节点更新
-        wsClient.on('workflow_update', (data) => {
+        // 处理工作流节点更�?        wsClient.on('workflow_update', (data) => {
             console.log('Workflow Update:', data);
             const { nodeId, status, message } = data as {
                 nodeId?: string;
@@ -1185,9 +1151,14 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
         // 处理并行 Agent 创建
         wsClient.on('parallel_agents_created', (data) => {
             console.log('Parallel Agents Created:', data);
-            const { parentNodeId, agents } = data;
-            // 后端节点 ID 映射到前端
-            const mappedNodeId = parentNodeId === 'grading' ? 'grade_batch' : parentNodeId;
+            const { parentNodeId, agents } = data as {
+                parentNodeId?: string;
+                agents?: GradingAgent[];
+            };
+            if (!parentNodeId || !Array.isArray(agents)) {
+                return;
+            }
+            // 后端节点 ID 映射到前�?            const mappedNodeId = parentNodeId === 'grading' ? 'grade_batch' : parentNodeId;
             get().setParallelAgents(mappedNodeId, agents);
             get().addLog(`Created ${agents.length} grading agents`, 'INFO');
         });
@@ -1195,7 +1166,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
         // 处理单个 Agent 更新
         wsClient.on('agent_update', (data) => {
             console.log('Agent Update:', data);
-            const { agentId, status, progress, message, output, logs, error } = data;
+            const { agentId, status, progress, message, output, logs, error } = data as any;
             const label = data.agentLabel || data.agent_label || data.agentName || data.agent_name;
             const parentNodeId = data.parentNodeId || data.nodeId;
             get().updateAgentStatus(agentId, { status, progress, output, error, label }, parentNodeId);
@@ -1282,10 +1253,9 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
             get().addLog(message, 'ERROR');
         });
 
-        // 🔥 处理图片预处理完成事件 - 用于结果页显示答题图片
-        wsClient.on('images_ready', (data) => {
+        // 🔥 处理图片预处理完成事�?- 用于结果页显示答题图�?        wsClient.on('images_ready', (data) => {
             console.log('Images Ready:', data);
-            const { images, totalCount } = data;
+            const { images, totalCount } = data as any;
             if (images && Array.isArray(images)) {
                 get().setUploadedImages(images);
                 get().addLog(`Loaded ${images.length}/${totalCount} answer images`, 'INFO');
@@ -1294,17 +1264,16 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
 
         wsClient.on('rubric_images_ready', (data) => {
             console.log('Rubric Images Ready:', data);
-            const { images } = data;
+            const { images } = data as any;
             if (images && Array.isArray(images)) {
                 get().setRubricImages(images);
                 get().addLog(`Loaded ${images.length} rubric images`, 'INFO');
             }
         });
 
-        // 处理批次开始事件（对应设计文档 EventType.BATCH_START）
-        wsClient.on('batch_start', (data) => {
+        // 处理批次开始事件（对应设计文档 EventType.BATCH_START�?        wsClient.on('batch_start', (data) => {
             console.log('Batch Start:', data);
-            const { batchIndex, totalBatches } = data;
+            const { batchIndex, totalBatches } = data as any;
             if (typeof batchIndex === 'number' && typeof totalBatches === 'number') {
                 get().setBatchProgress({
                     batchIndex,
@@ -1316,8 +1285,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
             }
         });
 
-        // 处理批次进度事件（后端 state_update -> batch_progress）
-        wsClient.on('batch_progress', (data) => {
+        // 处理批次进度事件（后�?state_update -> batch_progress�?        wsClient.on('batch_progress', (data) => {
             console.log('Batch Progress:', data);
             const batchIndex = data.batchIndex ?? data.batch_index;
             const totalBatches = data.totalBatches ?? data.total_batches;
@@ -1333,10 +1301,9 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
             }
         });
 
-        // 处理单页完成事件（对应设计文档 EventType.PAGE_COMPLETE）
-        wsClient.on('page_complete', (data) => {
+        // 处理单页完成事件（对应设计文�?EventType.PAGE_COMPLETE�?        wsClient.on('page_complete', (data) => {
             console.log('Page Complete:', data);
-            const { pageIndex, success, batchIndex, revisionCount } = data;
+            const { pageIndex, success, batchIndex, revisionCount } = data as any;
             const currentProgress = get().batchProgress;
 
             // 更新批次进度
@@ -1348,8 +1315,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                 });
             }
 
-            // 更新对应 Agent 的自我修正次数
-            if (revisionCount && revisionCount > 0) {
+            // 更新对应 Agent 的自我修正次�?            if (revisionCount && revisionCount > 0) {
                 const agentId = `batch_${batchIndex}`;
                 const nodes = get().workflowNodes;
                 const gradingNode = nodes.find(n => n.id === 'grade_batch');
@@ -1375,7 +1341,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
             const rawNodeId = data.nodeId || data.node || 'unknown';
             const normalizedNodeId = normalizeNodeId(rawNodeId);
             const nodeName = data.nodeName;
-            const { pageIndex, chunk } = data;
+            const { pageIndex, chunk } = data as any;
             const agentId = data.agentId || data.agent_id;
             const agentLabel = data.agentLabel || data.agent_label;
             const rawStreamType = data.streamType || data.stream_type;
@@ -1391,8 +1357,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                 contentStr = String(chunk || '');
             }
 
-            // 使用统一的 LLM 思考追加方法
-            const displayNodeName = nodeName || (
+            // 使用统一�?LLM 思考追加方�?            const displayNodeName = nodeName || (
                 normalizedNodeId === 'rubric_parse' ? 'Rubric Parse' :
                     normalizedNodeId === 'rubric_review' ? 'Rubric Review' :
                         normalizedNodeId === 'logic_review' ? 'Logic Review' :
@@ -1405,8 +1370,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                 get().updateNodeStatus(normalizedNodeId, 'running');
             }
 
-            // 同时更新 Agent 状态（兼容旧逻辑）
-            if (streamType !== 'thinking' && normalizedNodeId === 'grade_batch') {
+            // 同时更新 Agent 状态（兼容旧逻辑�?            if (streamType !== 'thinking' && normalizedNodeId === 'grade_batch') {
                 const nodes = get().workflowNodes;
                 const gradingNode = nodes.find(n => n.id === 'grade_batch');
                 if (gradingNode && gradingNode.children) {
@@ -1430,18 +1394,16 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
             }
         });
 
-        // 处理 LLM 思考完成事件
-        wsClient.on('llm_thought_complete', (data) => {
-            const { nodeId, pageIndex, agentId } = data;
+        // 处理 LLM 思考完成事�?        wsClient.on('llm_thought_complete', (data) => {
+            const { nodeId, pageIndex, agentId } = data as any;
             const rawStreamType = data.streamType || data.stream_type;
             const streamType = rawStreamType === 'thinking' ? 'thinking' : 'output';
             get().completeLLMThought(nodeId || "unknown", pageIndex, streamType, agentId);
         });
 
-        // 处理批次完成事件（对应设计文档 EventType.BATCH_COMPLETE）
-        wsClient.on('batch_complete', (data) => {
+        // 处理批次完成事件（对应设计文�?EventType.BATCH_COMPLETE�?        wsClient.on('batch_complete', (data) => {
             console.log('Batch Complete:', data);
-            const { batchIndex, successCount, failureCount, processingTimeMs, totalScore, totalBatches } = data;
+            const { batchIndex, successCount, failureCount, processingTimeMs, totalScore, totalBatches } = data as any;
             const resolvedBatchIndex = typeof batchIndex === 'number'
                 ? batchIndex
                 : get().batchProgress?.batchIndex;
@@ -1464,10 +1426,9 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
             }
         });
 
-        // 处理学生识别事件（对应设计文档 EventType.STUDENT_IDENTIFIED）
-        wsClient.on('students_identified', (data) => {
+        // 处理学生识别事件（对应设计文�?EventType.STUDENT_IDENTIFIED�?        wsClient.on('students_identified', (data) => {
             console.log('Students Identified:', data);
-            const { students, studentCount } = data;
+            const { students, studentCount } = data as any;
             if (students && Array.isArray(students)) {
                 get().setStudentBoundaries(students.map((s: any) => ({
                     studentKey: s.studentKey,
@@ -1488,8 +1449,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                     }));
                     get().setParallelAgents('grade_batch', placeholders);
                 }
-                // 统计待确认边界
-                const needsConfirm = students.filter((s: any) => s.needsConfirmation).length;
+                // 统计待确认边�?                const needsConfirm = students.filter((s: any) => s.needsConfirmation).length;
                 if (needsConfirm > 0) {
                     get().addLog(`Identified ${studentCount} students, ${needsConfirm} boundaries need confirmation`, 'WARNING');
                 } else {
@@ -1508,7 +1468,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                 message: data.message,
                 requestedAt: data.requestedAt || data.requested_at,
                 parsedRubric: normalizeParsedRubricPayload(data.payload?.parsed_rubric || data.parsedRubric),
-                // 如果是结果审核，可能需要 studentResults
+                // 如果是结果审核，可能需�?studentResults
                 studentResults: data.payload?.student_results || data.studentResults,
             };
             get().setPendingReview({
@@ -1521,18 +1481,16 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                     student_results: reviewData.studentResults
                 }
             });
-            // 同时更新状态提示
-            get().setStatus('REVIEWING');
+            // 同时更新状态提�?            get().setStatus('REVIEWING');
             const reviewNodeId = (reviewData.type || '').includes('rubric') ? 'rubric_review' : 'review';
             get().updateNodeStatus(reviewNodeId, 'running', 'Waiting for interaction');
             get().setReviewFocus((reviewData.type || '').includes('rubric') ? 'rubric' : 'results');
             get().addLog(`Review required: ${reviewData.type}`, 'WARNING');
         });
 
-        // 处理跨页题目检测事件
-        wsClient.on('cross_page_detected', (data) => {
+        // 处理跨页题目检测事�?        wsClient.on('cross_page_detected', (data) => {
             console.log('Cross Page Questions Detected:', data);
-            const { questions, mergedCount, crossPageCount } = data;
+            const { questions, mergedCount, crossPageCount } = data as any;
             if (questions && Array.isArray(questions)) {
                 get().setCrossPageQuestions(questions.map((q: any) => ({
                     questionId: q.question_id || q.questionId,
@@ -1544,8 +1502,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
             }
         });
 
-        // 处理工作流完成
-        wsClient.on('workflow_completed', (data) => {
+        // 处理工作流完�?        wsClient.on('workflow_completed', (data) => {
             console.log('Workflow Completed:', data);
             // #region agent log - 假设E: 前端收到 workflow_completed
             fetch('http://127.0.0.1:7242/ingest/58ab5b36-845e-4544-9ec4-a0b6e7a57748', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'consoleStore.ts:workflow_completed', message: '前端收到workflow_completed', data: { resultsCount: data.results?.length, students: data.results?.map((r: any) => ({ name: r.studentName, score: r.score })) }, timestamp: Date.now(), sessionId: 'debug-session', hypothesisId: 'E' }) }).catch(() => { });
@@ -1568,10 +1525,8 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                 })));
             }
 
-            // 保存最终结果
-            if (data.results && Array.isArray(data.results)) {
-                // 转换后端格式到前端格式
-                const formattedResults: StudentResult[] = data.results.map((r: any) => {
+            // 保存最终结�?            if (data.results && Array.isArray(data.results)) {
+                // 转换后端格式到前端格�?                const formattedResults: StudentResult[] = data.results.map((r: any) => {
                     // 处理 draftQuestionDetails
                     const draftDetails = r.draftQuestionDetails || r.draft_question_details;
                     const draftQuestionDetails = Array.isArray(draftDetails)
@@ -1603,8 +1558,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                         needsConfirmation: r.needs_confirmation || r.needsConfirmation,
                         studentSummary: normalizeStudentSummary(r.studentSummary || r.student_summary),
                         selfAudit: normalizeSelfAudit(r.selfAudit || r.self_audit),
-                        // 🔥 新增：批改透明度字段
-                        selfReport: r.selfReport || r.self_report,
+                        // 🔥 新增：批改透明度字�?                        selfReport: r.selfReport || r.self_report,
                         draftQuestionDetails,
                         draftTotalScore: r.draftTotalScore || r.draft_total_score,
                         draftMaxScore: r.draftMaxScore || r.draft_max_score,
@@ -1680,13 +1634,12 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                 });
 
                 // #region agent log - 假设E: 前端 setFinalResults
-                fetch('http://127.0.0.1:7242/ingest/58ab5b36-845e-4544-9ec4-a0b6e7a57748', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'consoleStore.ts:setFinalResults', message: '前端设置最终结果', data: { count: formattedResults.length, students: formattedResults.map((r: any) => ({ name: r.studentName, score: r.score })) }, timestamp: Date.now(), sessionId: 'debug-session', hypothesisId: 'E' }) }).catch(() => { });
+                fetch('http://127.0.0.1:7242/ingest/58ab5b36-845e-4544-9ec4-a0b6e7a57748', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'consoleStore.ts:setFinalResults', message: '前端设置最终结�?, data: { count: formattedResults.length, students: formattedResults.map((r: any) => ({ name: r.studentName, score: r.score })) }, timestamp: Date.now(), sessionId: 'debug-session', hypothesisId: 'E' }) }).catch(() => { });
                 // #endregion
                 get().setFinalResults(formattedResults);
                 get().addLog(`Saved results for ${formattedResults.length} students`, 'SUCCESS');
 
-                // 延迟切换到结果页，让用户看到完成状态
-                setTimeout(() => {
+                // 延迟切换到结果页，让用户看到完成状�?                setTimeout(() => {
                     set({ currentTab: 'results' });
                 }, 1500);
             }
@@ -1695,9 +1648,9 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
         // 处理单页批改完成事件
         wsClient.on('page_graded', (data) => {
             console.log('Page Graded:', data);
-            const { pageIndex, score, maxScore, questionNumbers } = data;
+            const { pageIndex, score, maxScore, questionNumbers } = data as any;
             get().addLog(
-                `页面 ${pageIndex} 批改完成: ${score}/${maxScore} 分，题目: ${questionNumbers?.join(', ') || '未识别'}`,
+                `页面 ${pageIndex} 批改完成: ${score}/${maxScore} 分，题目: ${questionNumbers?.join(', ') || '未识�?}`,
                 'INFO'
             );
         });
@@ -1705,9 +1658,8 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
         // 处理批改进度事件
         wsClient.on('grading_progress', (data) => {
             console.log('Grading Progress:', data);
-            const { completedPages, totalPages, percentage } = data;
-            // 更新 grading 节点的进度
-            const nodes = get().workflowNodes;
+            const { completedPages, totalPages, percentage } = data as any;
+            // 更新 grading 节点的进�?            const nodes = get().workflowNodes;
             const gradingNode = nodes.find(n => n.id === 'grade_batch');
             if (gradingNode) {
                 get().updateNodeStatus('grade_batch', 'running', `Grading progress: ${completedPages}/${totalPages} (${percentage}%)`);
@@ -1768,14 +1720,14 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
         // 处理批次完成事件
         wsClient.on('batch_completed', (data) => {
             console.log('Batch Completed:', data);
-            const { batchSize, successCount, totalScore } = data;
+            const { batchSize, successCount, totalScore } = data as any;
             get().addLog(`Run completed: ${successCount}/${batchSize} pages succeeded, total ${totalScore}`, 'INFO');
         });
 
         // 处理审核完成事件
         wsClient.on('review_completed', (data) => {
             console.log('Review Completed:', data);
-            const { summary } = data;
+            const { summary } = data as any;
             if (summary) {
                 get().addLog(`Review completed: ${summary.total_students} students, ${summary.low_confidence_count} low-confidence results`, 'INFO');
             }
@@ -1784,8 +1736,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
             get().setReviewFocus(null);
         });
 
-        // 处理工作流错误（对应设计文档 EventType.ERROR）
-        wsClient.on('workflow_error', (data) => {
+        // 处理工作流错误（对应设计文档 EventType.ERROR�?        wsClient.on('workflow_error', (data) => {
             console.log('Workflow Error:', data);
             if (get().rubricScoreMismatch || get().rubricParseError) {
                 return;
