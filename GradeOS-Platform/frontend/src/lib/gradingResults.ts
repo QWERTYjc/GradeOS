@@ -105,46 +105,57 @@ export const normalizeStudentResults = (raw: RawObject[]): StudentResult[] => {
           }))
           : [];
 
+        const questionIdRaw = q.questionId || q.question_id || '';
+        const scoreRaw = q.score ?? 0;
+        const maxScoreRaw = q.maxScore ?? q.max_score ?? 0;
         return {
-          questionId: q.questionId || q.question_id || '',
-          score: q.score || 0,
-          maxScore: q.maxScore || q.max_score || 0,
-          feedback: q.feedback || '',
-          studentAnswer: q.studentAnswer || q.student_answer || '',
-          questionType: q.questionType || q.question_type || '',
-          confidence: q.confidence,
-          confidenceReason: q.confidence_reason || q.confidenceReason,
-          selfCritique: q.self_critique || q.selfCritique,
-          selfCritiqueConfidence: q.self_critique_confidence || q.selfCritiqueConfidence,
-          rubricRefs: q.rubric_refs || q.rubricRefs,
-          typoNotes: q.typo_notes || q.typoNotes,
-          reviewSummary: q.review_summary || q.reviewSummary,
+          questionId: typeof questionIdRaw === 'string' ? questionIdRaw : String(questionIdRaw),
+          score: Number(scoreRaw),
+          maxScore: Number(maxScoreRaw),
+          feedback: (q.feedback ?? '') as string,
+          studentAnswer: (q.studentAnswer ?? q.student_answer ?? '') as string,
+          questionType: (q.questionType ?? q.question_type ?? '') as string,
+          confidence: q.confidence as number | undefined,
+          confidenceReason: (q.confidence_reason || q.confidenceReason) as string | undefined,
+          selfCritique: (q.self_critique || q.selfCritique) as string | undefined,
+          selfCritiqueConfidence: (q.self_critique_confidence || q.selfCritiqueConfidence) as number | undefined,
+          rubricRefs: (q.rubric_refs || q.rubricRefs) as string[] | undefined,
+          typoNotes: (q.typo_notes || q.typoNotes) as string[] | undefined,
+          reviewSummary: (q.review_summary || q.reviewSummary) as string | undefined,
           reviewCorrections: (q.review_corrections || q.reviewCorrections || []).map((c: RawObject) => ({
-            pointId: c.point_id || c.pointId || '',
-            reviewReason: c.review_reason || c.reviewReason,
+            pointId: String(c.point_id || c.pointId || ''),
+            reviewReason: (c.review_reason || c.reviewReason) as string | undefined,
           })),
-          needsReview: q.needsReview ?? q.needs_review ?? false,
-          reviewReasons: q.reviewReasons || q.review_reasons || [],
-          auditFlags: q.auditFlags || q.audit_flags || [],
-          honestyNote: q.honestyNote || q.honesty_note,
-          pageIndices: q.page_indices || q.pageIndices,
-          isCrossPage: q.is_cross_page || q.isCrossPage,
-          mergeSource: q.merge_source || q.mergeSource,
-          scoringPoints: q.scoringPoints || q.scoring_points,
+          needsReview: (q.needsReview ?? q.needs_review ?? false) as boolean,
+          reviewReasons: Array.isArray(q.reviewReasons || q.review_reasons)
+            ? (q.reviewReasons || q.review_reasons).map((v: unknown) => String(v))
+            : [],
+          auditFlags: Array.isArray(q.auditFlags || q.audit_flags)
+            ? (q.auditFlags || q.audit_flags).map((v: unknown) => String(v))
+            : [],
+          honestyNote: (q.honestyNote || q.honesty_note) as string | undefined,
+          pageIndices: Array.isArray(q.page_indices || q.pageIndices)
+            ? (q.page_indices || q.pageIndices).map((v: unknown) => Number(v))
+            : undefined,
+          isCrossPage: (q.is_cross_page || q.isCrossPage) as boolean | undefined,
+          mergeSource: Array.isArray(q.merge_source || q.mergeSource)
+            ? (q.merge_source || q.mergeSource).map((v: unknown) => String(v))
+            : undefined,
+          scoringPoints: (q.scoringPoints || q.scoring_points) as any,
           scoringPointResults: pointResults,
           // 🔥 新增：批注坐标和步骤信息
           annotations: q.annotations || [],
           steps: (q.steps || []).map((step: RawObject) => ({
-            step_id: step.step_id || step.stepId || '',
-            step_content: step.step_content || step.stepContent || '',
-            step_region: step.step_region || step.stepRegion,
-            is_correct: step.is_correct ?? step.isCorrect ?? false,
-            mark_type: step.mark_type || step.markType || 'M',
-            mark_value: step.mark_value ?? step.markValue ?? 0,
-            feedback: step.feedback || '',
-            error_detail: step.error_detail || step.errorDetail || '',
+            step_id: String(step.step_id || step.stepId || ''),
+            step_content: String(step.step_content || step.stepContent || ''),
+            step_region: (step.step_region || step.stepRegion) as any,
+            is_correct: Boolean(step.is_correct ?? step.isCorrect ?? false),
+            mark_type: String(step.mark_type || step.markType || 'M'),
+            mark_value: Number(step.mark_value ?? step.markValue ?? 0),
+            feedback: String(step.feedback || ''),
+            error_detail: String(step.error_detail || step.errorDetail || ''),
           })),
-          answerRegion: q.answer_region || q.answerRegion,
+          answerRegion: (q.answer_region || q.answerRegion) as any,
         };
       })
       : [];
