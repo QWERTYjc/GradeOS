@@ -286,14 +286,16 @@ export interface PendingReview {
     payload: any;
 }
 
-// 跨页题目信息（对应设计文�?CrossPageQuestion�?export interface CrossPageQuestion {
+// Interface definition
+export interface CrossPageQuestion {
     questionId: string;
     pageIndices: number[];
     confidence: number;
     mergeReason: string;
 }
 
-// 学生边界信息（对应设计文�?StudentBoundary�?export interface StudentBoundary {
+// Interface definition
+export interface StudentBoundary {
     studentKey: string;
     startPage: number;
     endPage: number;
@@ -301,7 +303,8 @@ export interface PendingReview {
     needsConfirmation: boolean;
 }
 
-// 批次处理状态（对应设计文档 BatchResult�?export interface BatchProgress {
+// Interface definition
+export interface BatchProgress {
     batchIndex: number;
     totalBatches: number;
     successCount: number;
@@ -309,7 +312,8 @@ export interface PendingReview {
     processingTimeMs?: number;
 }
 
-// 解析的评分标�?- 得分点详�?export interface RubricScoringPoint {
+// Interface definition
+export interface RubricScoringPoint {
     pointId?: string;
     description: string;
     expectedValue?: string;
