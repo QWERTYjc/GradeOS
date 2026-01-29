@@ -31,6 +31,7 @@ from src.api.dependencies import get_orchestrator
 from src.utils.image import to_jpeg_bytes, pil_to_jpeg_bytes
 from src.utils.pool_manager import UnifiedPoolManager, PoolNotInitializedError
 from src.services.grading_run_control import GradingRunSnapshot, get_run_controller
+from src.services.annotation_grading import update_annotations_after_review
 
 # PostgreSQL 作为主存储
 from src.db import (
@@ -1369,6 +1370,25 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
         return default
 
 
+def _normalize_annotation_payload(value: Any) -> Optional[Dict[str, Any]]:
+    if not value:
+        return None
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, (bytes, bytearray)):
+        try:
+            value = value.decode("utf-8")
+        except Exception:
+            return None
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            return parsed if isinstance(parsed, dict) else None
+        except Exception:
+            return None
+    return None
+
+
 def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
     """格式化批改结果为前端格式"""
     # #region agent log - 假设D: _format_results_for_frontend 输入
@@ -1683,6 +1703,12 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
             "draftTotalScore": r.get("draft_total_score") or r.get("draftTotalScore"),
             "draftMaxScore": r.get("draft_max_score") or r.get("draftMaxScore"),
             "logicReviewedAt": r.get("logic_reviewed_at") or r.get("logicReviewedAt"),
+            "gradingAnnotations": _normalize_annotation_payload(
+                r.get("annotations")
+                or r.get("grading_annotations")
+                or r.get("gradingAnnotations")
+                or r.get("annotation_result")
+            ),
         })
     # #region agent log - 假设D: _format_results_for_frontend 输出
     _write_debug_log({
@@ -2011,14 +2037,45 @@ async def get_results_review_context(
     orchestrator: Orchestrator = Depends(get_orchestrator)
 ):
     """获取 results review 页面上下文"""
+    def _load_from_db() -> ResultsReviewContextResponse:
+        history = get_grading_history(batch_id)
+        if not history:
+            raise HTTPException(status_code=404, detail="批次不存在")
+
+        raw_results: List[Dict[str, Any]] = []
+        for row in get_student_results(history.id):
+            data = row.result_data
+            if isinstance(data, str):
+                try:
+                    data = json.loads(data)
+                except Exception:
+                    data = {}
+            if not isinstance(data, dict):
+                data = {}
+            if not data:
+                data = {
+                    "studentName": row.student_key,
+                    "score": row.score,
+                    "maxScore": row.max_score,
+                }
+            raw_results.append(data)
+
+        return ResultsReviewContextResponse(
+            batch_id=batch_id,
+            status=history.status,
+            current_stage=None,
+            student_results=_format_results_for_frontend(raw_results),
+            answer_images=[],
+        )
+
     try:
         if not orchestrator:
-            raise HTTPException(status_code=503, detail="编排器未初始化")
+            return _load_from_db()
 
         run_id = f"batch_grading_{batch_id}"
         run_info = await orchestrator.get_run_info(run_id)
         if not run_info:
-            raise HTTPException(status_code=404, detail="批次不存在")
+            return _load_from_db()
 
         state = run_info.state or {}
         student_results = state.get("student_results", [])
@@ -2034,6 +2091,11 @@ async def get_results_review_context(
             export_students = (state.get("export_data") or {}).get("students", [])
             if export_students:
                 student_results = export_students
+            else:
+                try:
+                    return _load_from_db()
+                except HTTPException:
+                    student_results = []
 
         cached = batch_image_cache.get(batch_id, {})
         cached_images = cached.get("images_ready", {}).get("images") if cached else None
@@ -2361,14 +2423,196 @@ async def submit_results_review(
             payload["notes"] = request.notes
 
         success = await orchestrator.send_event(run_id, "review_signal", payload)
-        if not success:
+        if not success and not request.results:
             raise HTTPException(status_code=409, detail="批次未处于可复核状态")
 
         cached = batch_image_cache.get(request.batch_id)
         if cached and "review_required" in cached:
             cached.pop("review_required", None)
 
-        return {"success": True, "message": "批改结果复核已提交"}
+        if request.results:
+            try:
+                history = get_grading_history(request.batch_id)
+                if history:
+                    raw_history_data = history.result_data
+                    history_data: Dict[str, Any] = {}
+                    if isinstance(raw_history_data, dict):
+                        history_data = raw_history_data
+                    elif isinstance(raw_history_data, str):
+                        try:
+                            parsed_history = json.loads(raw_history_data)
+                            if isinstance(parsed_history, dict):
+                                history_data = parsed_history
+                        except Exception:
+                            history_data = {}
+
+                    class_id = history_data.get("class_id") if history_data else None
+                    homework_id = history_data.get("homework_id") if history_data else None
+
+                    existing_results = {
+                        row.student_key: row for row in get_student_results(history.id)
+                    }
+
+                    updated_scores: List[float] = []
+                    updated_keys: set[str] = set()
+
+                    for incoming in request.results:
+                        student_key = (
+                            incoming.get("studentKey")
+                            or incoming.get("student_key")
+                            or incoming.get("studentName")
+                            or incoming.get("student_name")
+                        )
+                        if not student_key:
+                            continue
+
+                        existing_row = existing_results.get(student_key)
+                        existing_data = existing_row.result_data if existing_row else None
+                        if isinstance(existing_data, str):
+                            try:
+                                existing_data = json.loads(existing_data)
+                            except Exception:
+                                existing_data = {}
+                        if not isinstance(existing_data, dict):
+                            existing_data = {}
+
+                        question_results = existing_data.get("questionResults") or existing_data.get("question_results") or []
+                        if not isinstance(question_results, list):
+                            question_results = []
+                        original_scores = {
+                            str(q.get("questionId") or q.get("question_id")): _safe_float(q.get("score"))
+                            for q in question_results
+                            if q.get("questionId") or q.get("question_id")
+                        }
+
+                        updates = incoming.get("questionResults") or incoming.get("question_results") or []
+                        if not isinstance(updates, list):
+                            updates = []
+
+                        for update in updates:
+                            question_id = str(update.get("questionId") or update.get("question_id") or "")
+                            if not question_id:
+                                continue
+                            updated_score = update.get("score")
+                            updated_feedback = update.get("feedback")
+                            target = next(
+                                (q for q in question_results if str(q.get("questionId") or q.get("question_id")) == question_id),
+                                None,
+                            )
+                            if not target:
+                                target = {
+                                    "questionId": question_id,
+                                    "score": updated_score or 0,
+                                    "feedback": updated_feedback or "",
+                                }
+                                question_results.append(target)
+                                continue
+                            original_score = original_scores.get(question_id, target.get("score") or 0)
+                            target["score"] = updated_score if updated_score is not None else original_score
+                            if updated_feedback is not None:
+                                target["feedback"] = updated_feedback
+
+                            max_score = target.get("maxScore") or target.get("max_score") or 0
+                            annotations = target.get("annotations")
+                            if annotations and isinstance(annotations, list):
+                                target["annotations"] = update_annotations_after_review(
+                                    annotations,
+                                    float(original_score or 0),
+                                    float(target.get("score") or 0),
+                                    float(max_score or 0),
+                                    question_id,
+                                )
+
+                        existing_data["questionResults"] = question_results
+
+                        total_score = sum(_safe_float(q.get("score")) for q in question_results)
+                        total_max = sum(_safe_float(q.get("maxScore") or q.get("max_score")) for q in question_results)
+                        existing_data["score"] = total_score
+                        if total_max > 0:
+                            existing_data["maxScore"] = total_max
+
+                        grading_annotations = _normalize_annotation_payload(
+                            existing_data.get("gradingAnnotations")
+                            or existing_data.get("grading_annotations")
+                            or existing_data.get("annotations")
+                        )
+                        if grading_annotations and isinstance(grading_annotations.get("pages"), list):
+                            for page in grading_annotations["pages"]:
+                                page_annotations = page.get("annotations") or []
+                                for update in updates:
+                                    question_id = str(update.get("questionId") or update.get("question_id") or "")
+                                    if not question_id:
+                                        continue
+                                    original_score = original_scores.get(question_id, 0)
+                                    max_score = next(
+                                        (q.get("maxScore") or q.get("max_score") or 0 for q in question_results if str(q.get("questionId") or q.get("question_id")) == question_id),
+                                        0,
+                                    )
+                                    updated_score = next(
+                                        (u.get("score") for u in updates if str(u.get("questionId") or u.get("question_id")) == question_id),
+                                        original_score,
+                                    )
+                                    page_annotations = update_annotations_after_review(
+                                        page_annotations,
+                                        float(original_score or 0),
+                                        float(updated_score or 0),
+                                        float(max_score or 0),
+                                        question_id,
+                                    )
+                                page["annotations"] = page_annotations
+                            existing_data["gradingAnnotations"] = grading_annotations
+
+                        updated_scores.append(total_score)
+                        updated_keys.add(student_key)
+
+                        student_result = StudentGradingResult(
+                            id=existing_row.id if existing_row else str(uuid.uuid4()),
+                            grading_history_id=history.id,
+                            student_key=student_key,
+                            score=total_score,
+                            max_score=total_max or None,
+                            class_id=existing_row.class_id if existing_row else None,
+                            student_id=existing_row.student_id if existing_row else None,
+                            summary=existing_row.summary if existing_row else None,
+                            self_report=existing_row.self_report if existing_row else None,
+                            result_data=existing_data,
+                        )
+                        save_student_result(student_result)
+
+                        if class_id and homework_id and student_result.student_id:
+                            upsert_homework_submission_grade(
+                                class_id=class_id,
+                                homework_id=homework_id,
+                                student_id=student_result.student_id,
+                                student_name=student_key,
+                                score=total_score,
+                                feedback=existing_data.get("studentSummary", {}).get("overall")
+                                if isinstance(existing_data.get("studentSummary"), dict)
+                                else None,
+                                grading_batch_id=request.batch_id,
+                            )
+
+                    if updated_scores:
+                        remaining_scores = [
+                            row.score or 0
+                            for key, row in existing_results.items()
+                            if key not in updated_keys
+                        ]
+                        all_scores = [*updated_scores, *remaining_scores]
+                        history.average_score = round(sum(all_scores) / len(all_scores), 2) if all_scores else None
+                        history.total_students = len(all_scores)
+                        if history_data:
+                            summary = history_data.get("summary")
+                            if isinstance(summary, dict):
+                                summary["average_score"] = history.average_score
+                            history.result_data = history_data
+                        save_grading_history(history)
+            except Exception as exc:
+                logger.error("保存复核结果失败: %s", exc, exc_info=True)
+
+        if success:
+            return {"success": True, "message": "批改结果复核已提交"}
+        return {"success": True, "message": "批改结果已保存，流程未恢复"}
     except HTTPException:
         raise
     except Exception as e:

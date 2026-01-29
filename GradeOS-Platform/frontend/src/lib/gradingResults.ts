@@ -129,6 +129,7 @@ export const normalizeStudentResults = (raw: RawObject[]): StudentResult[] => {
       needsConfirmation: r.needsConfirmation ?? r.needs_confirmation,
       studentSummary: r.studentSummary || r.student_summary,
       selfAudit: normalizeSelfAudit(r.selfAudit || r.self_audit),
+      gradingAnnotations: r.gradingAnnotations || r.grading_annotations || r.annotations || r.annotation_result,
       questionResults,
     };
   });

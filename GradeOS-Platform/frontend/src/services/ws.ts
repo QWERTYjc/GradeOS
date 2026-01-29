@@ -95,8 +95,13 @@ class WSClient {
     }
 
     connect(url: string) {
-        if (this.socket && (this.socket.readyState === WebSocket.OPEN || this.socket.readyState === WebSocket.CONNECTING)) {
+        const hasActiveSocket = this.socket
+            && (this.socket.readyState === WebSocket.OPEN || this.socket.readyState === WebSocket.CONNECTING);
+        if (hasActiveSocket && url === this.url) {
             return;
+        }
+        if (hasActiveSocket && url !== this.url) {
+            this.disconnect();
         }
 
         this.url = url;
