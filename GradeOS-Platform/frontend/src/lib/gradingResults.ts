@@ -71,38 +71,43 @@ export const normalizeStudentResults = (raw: RawObject[]): StudentResult[] => {
           q.scoringResults ||
           [];
         const pointResults = Array.isArray(rawPointResults)
-          ? rawPointResults.map((spr: RawObject) => ({
-            pointId: spr.point_id || spr.pointId || spr.scoring_point?.point_id || spr.scoringPoint?.pointId,
-            description:
-              spr.description ||
-              spr.scoring_point?.description ||
-              spr.scoringPoint?.description ||
-              '',
-            awarded: spr.awarded ?? spr.score ?? 0,
-            maxPoints:
+          ? rawPointResults.map((spr: RawObject) => {
+            const awardedRaw = spr.awarded ?? spr.score ?? 0;
+            const maxPointsRaw =
               spr.max_points ??
               spr.maxPoints ??
               spr.scoring_point?.score ??
               spr.scoringPoint?.score ??
-              0,
-            evidence: spr.evidence || '',
-            rubricReference: spr.rubric_reference || spr.rubricReference || spr.rubricRef || '',
-            rubricReferenceSource: spr.rubric_reference_source || spr.rubricReferenceSource,
-            decision: spr.decision || spr.result || spr.judgement || spr.judgment,
-            reason: spr.reason || spr.rationale || spr.explanation,
-            reviewAdjusted: spr.review_adjusted || spr.reviewAdjusted,
-            reviewBefore: spr.review_before || spr.reviewBefore,
-            reviewReason: spr.review_reason || spr.reviewReason,
-            reviewBy: spr.review_by || spr.reviewBy,
-            scoringPoint: {
-              description: spr.scoring_point?.description || spr.scoringPoint?.description || '',
-              score: spr.scoring_point?.score || spr.scoringPoint?.score || 0,
-              maxScore: spr.scoring_point?.score || spr.scoringPoint?.score || 0,
-              isCorrect: (spr.awarded ?? spr.score ?? 0) > 0,
-              isRequired: spr.scoring_point?.is_required || spr.scoringPoint?.isRequired,
-              explanation: '',
-            },
-          }))
+              0;
+            return {
+              pointId: String(spr.point_id || spr.pointId || spr.scoring_point?.point_id || spr.scoringPoint?.pointId || ''),
+              description: String(
+                spr.description ||
+                spr.scoring_point?.description ||
+                spr.scoringPoint?.description ||
+                ''
+              ),
+              awarded: Number(awardedRaw),
+              maxPoints: Number(maxPointsRaw),
+              evidence: String(spr.evidence || ''),
+              rubricReference: String(spr.rubric_reference || spr.rubricReference || spr.rubricRef || ''),
+              rubricReferenceSource: (spr.rubric_reference_source || spr.rubricReferenceSource) as string | undefined,
+              decision: (spr.decision || spr.result || spr.judgement || spr.judgment) as string | undefined,
+              reason: (spr.reason || spr.rationale || spr.explanation) as string | undefined,
+              reviewAdjusted: (spr.review_adjusted || spr.reviewAdjusted) as boolean | undefined,
+              reviewBefore: (spr.review_before || spr.reviewBefore) as any,
+              reviewReason: (spr.review_reason || spr.reviewReason) as string | undefined,
+              reviewBy: (spr.review_by || spr.reviewBy) as string | undefined,
+              scoringPoint: {
+                description: String(spr.scoring_point?.description || spr.scoringPoint?.description || ''),
+                score: Number(spr.scoring_point?.score || spr.scoringPoint?.score || 0),
+                maxScore: Number(spr.scoring_point?.score || spr.scoringPoint?.score || 0),
+                isCorrect: Number(awardedRaw) > 0,
+                isRequired: (spr.scoring_point?.is_required || spr.scoringPoint?.isRequired) as boolean | undefined,
+                explanation: '',
+              },
+            };
+          })
           : [];
 
         const questionIdRaw = q.questionId || q.question_id || '';
