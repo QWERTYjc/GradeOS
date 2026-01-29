@@ -48,13 +48,9 @@ export default function LandingPage() {
       >
         <div className="landing-container">
           <div className="flex items-center justify-between">
-            {/* Logo */}
-            <Link href="/" className="flex items-center gap-3">
-              <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center text-white font-bold shadow-lg shadow-blue-500/20">
-                G
-              </div>
-              <span className="font-bold text-xl text-gray-900 hidden sm:block">GradeOS</span>
-            </Link>
+            {/* Logo - Removed as per request */}
+            <div />
+
 
             {/* Desktop Navigation */}
             <div className="hidden md:flex items-center gap-8">

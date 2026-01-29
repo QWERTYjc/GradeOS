@@ -151,7 +151,7 @@ const WorkflowCard = ({ stage, isActive, onClick }: {
       animate={isInView ? { opacity: 1, y: 0 } : {}}
       transition={{ duration: 0.6 }}
       onClick={onClick}
-      className={`relative flex-shrink-0 w-[280px] md:w-[320px] cursor-pointer group ${isActive ? 'z-10' : 'z-0'
+      className={`relative flex-shrink-0 w-[280px] md:w-[320px] cursor-pointer group snap-center ${isActive ? 'z-10' : 'z-0'
         }`}
     >
       <motion.div
@@ -161,8 +161,8 @@ const WorkflowCard = ({ stage, isActive, onClick }: {
         }}
         transition={{ type: "spring", stiffness: 300, damping: 30 }}
         className={`relative bg-white rounded-2xl p-6 border-2 transition-all duration-300 ${isActive
-            ? `border-[${stage.color}] shadow-2xl`
-            : 'border-gray-100 shadow-lg hover:border-gray-200'
+          ? `border-[${stage.color}] shadow-2xl`
+          : 'border-gray-100 shadow-lg hover:border-gray-200'
           }`}
         style={{
           boxShadow: isActive ? `0 25px 50px -12px ${stage.color}20` : undefined
@@ -271,7 +271,7 @@ const PreviewPanel = ({ stage }: { stage: typeof workflowStages[0] }) => {
                   </div>
                 </div>
                 <span className={`text-xs ${item.status === 'completed' ? 'text-emerald-500' :
-                    item.status === 'processing' ? 'text-blue-500' : 'text-gray-400'
+                  item.status === 'processing' ? 'text-blue-500' : 'text-gray-400'
                   }`}>
                   {item.status === 'completed' ? '✓' : item.status === 'processing' ? '...' : '○'}
                 </span>
@@ -480,7 +480,11 @@ export const AIWorkflowVisualization = () => {
           {/* 卡片容器 */}
           <div
             ref={scrollContainerRef}
-            className="horizontal-scroll-section gap-6 px-4 lg:px-8 pb-4"
+            className="flex overflow-x-auto gap-6 px-4 lg:px-8 py-16 snap-x snap-mandatory scrollbar-hide w-full"
+            style={{
+              scrollbarWidth: 'none',
+              msOverflowStyle: 'none'
+            }}
           >
             {workflowStages.map((stage, index) => (
               <WorkflowCard
@@ -505,8 +509,8 @@ export const AIWorkflowVisualization = () => {
               key={index}
               onClick={() => scrollToCard(index)}
               className={`h-2 rounded-full transition-all duration-300 ${index === activeStage
-                  ? 'w-8 bg-blue-500'
-                  : 'w-2 bg-gray-300 hover:bg-gray-400'
+                ? 'w-8 bg-blue-500'
+                : 'w-2 bg-gray-300 hover:bg-gray-400'
                 }`}
             />
           ))}

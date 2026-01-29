@@ -769,6 +769,8 @@ async def submit_batch(
 
         # 📁 持久化存储原始文件（可选，通过环境变量 ENABLE_FILE_STORAGE 控制）
         stored_files: List[StoredFile] = []
+        # 📁 持久化存储原始文件（可选，通过环境变量 ENABLE_FILE_STORAGE 控制）
+        stored_files: List[StoredFile] = []
         if os.getenv("ENABLE_FILE_STORAGE", "false").lower() == "true":
             try:
                 file_storage = get_file_storage_service()

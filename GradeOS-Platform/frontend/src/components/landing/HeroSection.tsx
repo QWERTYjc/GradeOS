@@ -146,16 +146,7 @@ export const HeroSection = () => {
         <div className="grid lg:grid-cols-2 gap-12 lg:gap-20 items-center w-full">
           {/* 左侧内容 */}
           <div className="space-y-8">
-            {/* 标签 */}
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.5 }}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-blue-500/10 border border-blue-500/20"
-            >
-              <div className="pulse-dot" />
-              <span className="text-sm font-medium text-blue-600">AI-Powered Grading System</span>
-            </motion.div>
+
 
             {/* 标题 */}
             <motion.h1
@@ -286,10 +277,10 @@ export const HeroSection = () => {
                       }}
                     >
                       <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all duration-300 ${isActive
-                          ? `${stage.bg} ${stage.color} ring-2 ring-offset-2 ring-offset-slate-900 ring-current`
-                          : isCompleted
-                            ? 'bg-emerald-500/20 text-emerald-400'
-                            : 'bg-slate-800 text-slate-500'
+                        ? `${stage.bg} ${stage.color} ring-2 ring-offset-2 ring-offset-slate-900 ring-current`
+                        : isCompleted
+                          ? 'bg-emerald-500/20 text-emerald-400'
+                          : 'bg-slate-800 text-slate-500'
                         }`}>
                         <Icon className="w-5 h-5" />
                       </div>

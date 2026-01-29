@@ -92,9 +92,34 @@ class LocalFileStorage(FileStorageBackend):
     def __init__(self, base_path: str = "./uploads"):
         self.base_path = Path(base_path)
         self.base_path.mkdir(parents=True, exist_ok=True)
+        self.index_file = self.base_path / "index.json"
         self._file_index: Dict[str, StoredFile] = {}
+        self._load_index()
         logger.info(f"[FileStorage] 使用本地存储: {self.base_path.absolute()}")
     
+    def _load_index(self):
+        """加载文件索引"""
+        if self.index_file.exists():
+            try:
+                import json
+                with open(self.index_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    for file_id, info in data.items():
+                        self._file_index[file_id] = StoredFile(**info)
+                logger.info(f"[FileStorage] 已加载 {len(self._file_index)} 条文件索引")
+            except Exception as e:
+                logger.error(f"[FileStorage] 加载索引失败: {e}")
+    
+    def _save_index(self):
+        """保存文件索引"""
+        try:
+            import json
+            data = {fid: f.to_dict() for fid, f in self._file_index.items()}
+            with open(self.index_file, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.error(f"[FileStorage] 保存索引失败: {e}")
+
     def _generate_file_id(self, file_data: bytes, filename: str) -> str:
         """生成唯一文件 ID"""
         content_hash = hashlib.md5(file_data).hexdigest()[:8]
@@ -116,32 +141,37 @@ class LocalFileStorage(FileStorageBackend):
         metadata: Optional[Dict[str, Any]] = None,
     ) -> StoredFile:
         """保存文件到本地"""
-        file_id = self._generate_file_id(file_data, filename)
-        batch_path = self._get_batch_path(batch_id)
-        
-        # 保留原始文件扩展名
-        ext = Path(filename).suffix or self._guess_extension(content_type)
-        storage_filename = f"{file_id}{ext}"
-        storage_path = batch_path / storage_filename
-        
-        # 写入文件
-        with open(storage_path, "wb") as f:
-            f.write(file_data)
-        
-        stored_file = StoredFile(
-            file_id=file_id,
-            filename=filename,
-            content_type=content_type,
-            size=len(file_data),
-            storage_path=str(storage_path),
-            batch_id=batch_id,
-            metadata=metadata or {},
-        )
-        
-        self._file_index[file_id] = stored_file
-        logger.info(f"[FileStorage] 保存文件: {filename} -> {storage_path} ({len(file_data)} bytes)")
-        
-        return stored_file
+        try:
+            file_id = self._generate_file_id(file_data, filename)
+            batch_path = self._get_batch_path(batch_id)
+            
+            # 保留原始文件扩展名
+            ext = Path(filename).suffix or self._guess_extension(content_type)
+            storage_filename = f"{file_id}{ext}"
+            storage_path = batch_path / storage_filename
+            
+            # 写入文件
+            with open(storage_path, "wb") as f:
+                f.write(file_data)
+            
+            stored_file = StoredFile(
+                file_id=file_id,
+                filename=filename,
+                content_type=content_type,
+                size=len(file_data),
+                storage_path=str(storage_path),
+                batch_id=batch_id,
+                metadata=metadata or {},
+            )
+            
+            self._file_index[file_id] = stored_file
+            self._save_index() # 持久化索引
+            
+            logger.info(f"[FileStorage] 保存文件: {filename} -> {storage_path} ({len(file_data)} bytes)")
+            return stored_file
+        except Exception as e:
+            logger.error(f"[FileStorage] 本地保存失败: {e}")
+            raise
     
     def _guess_extension(self, content_type: str) -> str:
         """根据 MIME 类型猜测扩展名"""
@@ -183,6 +213,8 @@ class LocalFileStorage(FileStorageBackend):
             storage_path.unlink()
         
         del self._file_index[file_id]
+        self._save_index() # 持久化索引
+        
         logger.info(f"[FileStorage] 删除文件: {file_id}")
         return True
     
