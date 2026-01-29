@@ -149,20 +149,23 @@ export const normalizeStudentResults = (raw: RawObject[]): StudentResult[] => {
       })
       : [];
 
+    const studentNameRaw = r.studentName || r.student_name || r.student_key || 'Unknown';
+    const scoreRaw = r.score ?? r.total_score ?? 0;
+    const maxScoreRaw = r.maxScore ?? r.max_score ?? r.max_total_score ?? 100;
     return {
-      studentName: r.studentName || r.student_name || r.student_key || 'Unknown',
-      score: r.score || r.total_score || 0,
-      maxScore: r.maxScore || r.max_score || r.max_total_score || 100,
-      gradingMode: r.gradingMode || r.grading_mode,
-      percentage: r.percentage,
-      totalRevisions: r.totalRevisions ?? r.total_revisions,
-      startPage: r.startPage || r.start_page,
-      endPage: r.endPage || r.end_page,
-      confidence: r.confidence,
-      needsConfirmation: r.needsConfirmation ?? r.needs_confirmation,
-      studentSummary: r.studentSummary || r.student_summary,
+      studentName: typeof studentNameRaw === 'string' ? studentNameRaw : String(studentNameRaw),
+      score: Number(scoreRaw),
+      maxScore: Number(maxScoreRaw),
+      gradingMode: (r.gradingMode || r.grading_mode) as string | undefined,
+      percentage: r.percentage as number | undefined,
+      totalRevisions: (r.totalRevisions ?? r.total_revisions) as number | undefined,
+      startPage: (r.startPage || r.start_page) as number | undefined,
+      endPage: (r.endPage || r.end_page) as number | undefined,
+      confidence: r.confidence as number | undefined,
+      needsConfirmation: (r.needsConfirmation ?? r.needs_confirmation) as boolean | undefined,
+      studentSummary: (r.studentSummary || r.student_summary) as any,
       selfAudit: normalizeSelfAudit(r.selfAudit || r.self_audit),
-      gradingAnnotations: r.gradingAnnotations || r.grading_annotations || r.annotations || r.annotation_result,
+      gradingAnnotations: (r.gradingAnnotations || r.grading_annotations || r.annotations || r.annotation_result) as any,
       questionResults,
     };
   });
