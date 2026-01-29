@@ -123,8 +123,16 @@ export const normalizeStudentResults = (raw: RawObject[]): StudentResult[] => {
           confidenceReason: (q.confidence_reason || q.confidenceReason) as string | undefined,
           selfCritique: (q.self_critique || q.selfCritique) as string | undefined,
           selfCritiqueConfidence: (q.self_critique_confidence || q.selfCritiqueConfidence) as number | undefined,
-          rubricRefs: (q.rubric_refs || q.rubricRefs) as string[] | undefined,
-          typoNotes: (q.typo_notes || q.typoNotes) as string[] | undefined,
+          rubricRefs: (() => {
+            const rawRefs = (q.rubric_refs || q.rubricRefs) as unknown;
+            if (!Array.isArray(rawRefs)) return undefined;
+            return (rawRefs as unknown[]).map((v) => String(v));
+          })(),
+          typoNotes: (() => {
+            const rawTypos = (q.typo_notes || q.typoNotes) as unknown;
+            if (!Array.isArray(rawTypos)) return undefined;
+            return (rawTypos as unknown[]).map((v) => String(v));
+          })(),
           reviewSummary: (q.review_summary || q.reviewSummary) as string | undefined,
           reviewCorrections: (() => {
             const rawCorrections = (q.review_corrections || q.reviewCorrections) as unknown;
@@ -135,20 +143,28 @@ export const normalizeStudentResults = (raw: RawObject[]): StudentResult[] => {
             }));
           })(),
           needsReview: (q.needsReview ?? q.needs_review ?? false) as boolean,
-          reviewReasons: Array.isArray(q.reviewReasons || q.review_reasons)
-            ? (q.reviewReasons || q.review_reasons).map((v: unknown) => String(v))
-            : [],
-          auditFlags: Array.isArray(q.auditFlags || q.audit_flags)
-            ? (q.auditFlags || q.audit_flags).map((v: unknown) => String(v))
-            : [],
+          reviewReasons: (() => {
+            const rawReasons = (q.reviewReasons || q.review_reasons) as unknown;
+            if (!Array.isArray(rawReasons)) return [];
+            return (rawReasons as unknown[]).map((v) => String(v));
+          })(),
+          auditFlags: (() => {
+            const rawFlags = (q.auditFlags || q.audit_flags) as unknown;
+            if (!Array.isArray(rawFlags)) return [];
+            return (rawFlags as unknown[]).map((v) => String(v));
+          })(),
           honestyNote: (q.honestyNote || q.honesty_note) as string | undefined,
-          pageIndices: Array.isArray(q.page_indices || q.pageIndices)
-            ? (q.page_indices || q.pageIndices).map((v: unknown) => Number(v))
-            : undefined,
+          pageIndices: (() => {
+            const rawPages = (q.page_indices || q.pageIndices) as unknown;
+            if (!Array.isArray(rawPages)) return undefined;
+            return (rawPages as unknown[]).map((v) => Number(v));
+          })(),
           isCrossPage: (q.is_cross_page || q.isCrossPage) as boolean | undefined,
-          mergeSource: Array.isArray(q.merge_source || q.mergeSource)
-            ? (q.merge_source || q.mergeSource).map((v: unknown) => String(v))
-            : undefined,
+          mergeSource: (() => {
+            const rawMerge = (q.merge_source || q.mergeSource) as unknown;
+            if (!Array.isArray(rawMerge)) return undefined;
+            return (rawMerge as unknown[]).map((v) => String(v));
+          })(),
           scoringPoints: (q.scoringPoints || q.scoring_points) as any,
           scoringPointResults: pointResults,
           // 🔥 新增：批注坐标和步骤信息
