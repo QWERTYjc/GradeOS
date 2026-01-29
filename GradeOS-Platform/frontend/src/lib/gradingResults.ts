@@ -126,12 +126,14 @@ export const normalizeStudentResults = (raw: RawObject[]): StudentResult[] => {
           rubricRefs: (q.rubric_refs || q.rubricRefs) as string[] | undefined,
           typoNotes: (q.typo_notes || q.typoNotes) as string[] | undefined,
           reviewSummary: (q.review_summary || q.reviewSummary) as string | undefined,
-          reviewCorrections: Array.isArray(q.review_corrections || q.reviewCorrections)
-            ? (q.review_corrections || q.reviewCorrections).map((c: RawObject) => ({
+          reviewCorrections: (() => {
+            const rawCorrections = (q.review_corrections || q.reviewCorrections) as unknown;
+            if (!Array.isArray(rawCorrections)) return [];
+            return (rawCorrections as RawObject[]).map((c) => ({
               pointId: String(c.point_id || c.pointId || ''),
               reviewReason: (c.review_reason || c.reviewReason) as string | undefined,
-            }))
-            : [],
+            }));
+          })(),
           needsReview: (q.needsReview ?? q.needs_review ?? false) as boolean,
           reviewReasons: Array.isArray(q.reviewReasons || q.review_reasons)
             ? (q.reviewReasons || q.review_reasons).map((v: unknown) => String(v))
