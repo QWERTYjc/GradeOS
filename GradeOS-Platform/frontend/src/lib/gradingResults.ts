@@ -15,14 +15,44 @@ const normalizeSelfAudit = (audit: unknown): SelfAudit | undefined => {
       questionId: (issueObj.questionId || issueObj.question_id) as string,
     };})
     : [];
+  const rawCompliance = auditObj.complianceAnalysis || auditObj.compliance_analysis || [];
+  const complianceAnalysis = Array.isArray(rawCompliance)
+    ? rawCompliance.map((item: unknown) => {
+      if (typeof item === 'string') {
+        return { notes: item };
+      }
+      const obj = item as RawObject;
+      return {
+        goal: obj.goal as string,
+        tag: obj.tag as string,
+        notes: obj.notes as string,
+        evidence: obj.evidence as string,
+      };
+    })
+    : [];
+  const rawUncertainties = auditObj.uncertaintiesAndConflicts || auditObj.uncertainties_and_conflicts || [];
+  const uncertaintiesAndConflicts = Array.isArray(rawUncertainties)
+    ? rawUncertainties.map((item: unknown) => {
+      if (typeof item === 'string') {
+        return { issue: item };
+      }
+      const obj = item as RawObject;
+      return {
+        issue: obj.issue as string,
+        impact: obj.impact as string,
+        questionIds: (obj.questionIds ?? obj.question_ids) as string[],
+        reportedToUser: (obj.reportedToUser ?? obj.reported_to_user) as boolean,
+      };
+    })
+    : [];
 
   return {
     summary: auditObj.summary as string,
     confidence: auditObj.confidence as number,
     issues,
-    complianceAnalysis: (auditObj.complianceAnalysis || auditObj.compliance_analysis || []) as string[],
-    uncertaintiesAndConflicts: (auditObj.uncertaintiesAndConflicts || auditObj.uncertainties_and_conflicts || []) as string[],
-    overallComplianceGrade: (auditObj.overallComplianceGrade ?? auditObj.overall_compliance_grade) as string,
+    complianceAnalysis,
+    uncertaintiesAndConflicts,
+    overallComplianceGrade: (auditObj.overallComplianceGrade ?? auditObj.overall_compliance_grade) as number,
     honestyNote: (auditObj.honestyNote || auditObj.honesty_note) as string,
     generatedAt: (auditObj.generatedAt || auditObj.generated_at) as string,
   };
