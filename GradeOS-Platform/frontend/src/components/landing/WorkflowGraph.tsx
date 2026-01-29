@@ -54,7 +54,7 @@ const useWorkflowSimulation = () => {
     const [activePackets, setActivePackets] = useState<{ from: string, to: string, startTime: number, duration: number, id: number }[]>([]);
 
     // Simulation Loop
-    const triggerPipelineRef = useRef<() => void>();
+    const triggerPipelineRef = useRef<(() => void) | null>(null);
     
     useEffect(() => {
         const interval = setInterval(() => {
