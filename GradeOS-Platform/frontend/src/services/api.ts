@@ -552,7 +552,7 @@ export const gradingApi = {
     classContext?: {
       classId?: string;
       homeworkId?: string;
-      studentMapping?: Array<{ studentId: string; studentName: string; startIndex: number; endIndex: number }>;
+      studentMapping?: Array<{ studentId?: string; studentName?: string; studentKey?: string; startIndex: number; endIndex: number }>;
     },
     enableReview: boolean = true,
     gradingMode?: string,
@@ -712,7 +712,7 @@ export const api = {
     classContext?: {
       classId?: string;
       homeworkId?: string;
-      studentMapping?: Array<{ studentId: string; studentName: string; startIndex: number; endIndex: number }>;
+      studentMapping?: Array<{ studentId?: string; studentName?: string; studentKey?: string; startIndex: number; endIndex: number }>;
     },
     enableReview: boolean = true,
     gradingMode?: string,

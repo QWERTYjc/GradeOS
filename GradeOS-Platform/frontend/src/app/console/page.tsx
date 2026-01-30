@@ -54,7 +54,11 @@ interface ScannerContainerProps {
     rubricSessionId: string | null;
 
     // Actions
-    onSubmitBatch: (images: ScannedImage[], boundaries: number[]) => Promise<void>;
+    onSubmitBatch: (
+        images: ScannedImage[],
+        boundaries: number[],
+        studentMapping?: Array<{ studentId?: string; studentName?: string; studentKey?: string; startIndex: number; endIndex: number }>
+    ) => Promise<void>;
     interactionEnabled: boolean;
     onInteractionToggle: (enabled: boolean) => void;
     gradingMode: string;
@@ -63,7 +67,7 @@ interface ScannerContainerProps {
     onExpectedTotalScoreChange: (score: number | null) => void;
 
     // 班级批改模式下的学生映射
-    studentNameMapping?: Array<{ studentId: string; studentName: string; startIndex: number; endIndex: number }>;
+    studentNameMapping?: Array<{ studentId?: string; studentName?: string; studentKey?: string; startIndex: number; endIndex: number }>;
 }
 
 const ScannerContainer = ({
@@ -83,6 +87,7 @@ const ScannerContainer = ({
     const { setCurrentSessionId, sessions } = useContext(AppContext)!;
     const [viewMode, setViewMode] = useState<ScanViewMode>('exams');
     const [studentBoundaries, setStudentBoundaries] = useState<number[]>([]);
+    const [studentInfos, setStudentInfos] = useState<Array<{ studentName: string; studentId: string }>>([]);
 
     console.log('ScannerContainer Render:', { viewMode, hasHandler: !!onSubmitBatch });
 
@@ -97,9 +102,86 @@ const ScannerContainer = ({
     const currentSession = sessions.find(s => s.id === (viewMode === 'exams' ? examSessionId : rubricSessionId));
     const imageCount = currentSession?.images.length || 0;
 
-    const handleSubmit = async (images: ScannedImage[]) => {
-        await onSubmitBatch(images, studentBoundaries);
+    const normalizeBoundaries = (boundaries: number[], total: number) => {
+        const normalized = Array.from(
+            new Set(
+                boundaries
+                    .map((value) => Number(value))
+                    .filter((value) => Number.isFinite(value) && value >= 0 && value < total)
+            )
+        ).sort((a, b) => a - b);
+
+        if (total > 0) {
+            if (normalized.length === 0 || normalized[0] !== 0) {
+                normalized.unshift(0);
+            }
+        }
+        return normalized;
     };
+
+    const syncStudentInfos = (count: number) => {
+        setStudentInfos((prev) => {
+            const next = [];
+            for (let i = 0; i < count; i += 1) {
+                const existing = prev[i];
+                const seeded = studentNameMapping[i];
+                next.push({
+                    studentName: (existing?.studentName ?? seeded?.studentName ?? '').toString(),
+                    studentId: (existing?.studentId ?? seeded?.studentId ?? '').toString(),
+                });
+            }
+            return next;
+        });
+    };
+
+    const handleBoundariesChange = (boundaries: number[]) => {
+        const normalized = normalizeBoundaries(boundaries, imageCount);
+        setStudentBoundaries(normalized);
+        syncStudentInfos(normalized.length);
+    };
+
+    useEffect(() => {
+        if (studentBoundaries.length > 0 && studentNameMapping.length > 0) {
+            syncStudentInfos(studentBoundaries.length);
+        }
+    }, [studentBoundaries.length, studentNameMapping, syncStudentInfos]);
+
+    const buildStudentMapping = (
+        boundaries: number[],
+        total: number,
+        options: { fillDefaults?: boolean } = {}
+    ) => {
+        if (!total) return [];
+        const normalized = normalizeBoundaries(boundaries, total);
+        const fillDefaults = options.fillDefaults ?? false;
+        return normalized.map((startIndex, idx) => {
+            const endIndex = idx + 1 < normalized.length ? normalized[idx + 1] - 1 : total - 1;
+            const info = studentInfos[idx] || { studentName: '', studentId: '' };
+            const trimmedName = info.studentName.trim();
+            const trimmedId = info.studentId.trim();
+            const labelCandidate = trimmedName || trimmedId;
+            const studentKey = fillDefaults
+                ? (labelCandidate || `学生${idx + 1}`)
+                : labelCandidate || undefined;
+            return {
+                studentId: trimmedId || undefined,
+                studentName: trimmedName || undefined,
+                studentKey,
+                startIndex,
+                endIndex,
+            };
+        }).filter(item => item.startIndex <= item.endIndex);
+    };
+
+    const handleSubmit = async (images: ScannedImage[]) => {
+        const normalized = normalizeBoundaries(studentBoundaries, images.length);
+        const mapping = buildStudentMapping(normalized, images.length, { fillDefaults: true });
+        await onSubmitBatch(images, normalized, mapping);
+    };
+
+    const displayStudentMapping = viewMode === 'exams'
+        ? buildStudentMapping(studentBoundaries, imageCount)
+        : [];
 
     // Allow access without login for demo purposes
     // if (!user) {
@@ -199,9 +281,20 @@ const ScannerContainer = ({
                         session={currentSession} // Direct pass to avoid context lag
                         onSubmitBatch={handleSubmit}
                         submitLabel={viewMode === 'exams' ? "Start Grading" : undefined}
-                        onBoundariesChange={viewMode === 'exams' ? setStudentBoundaries : undefined}
+                        onBoundariesChange={viewMode === 'exams' ? handleBoundariesChange : undefined}
                         isRubricMode={viewMode === 'rubrics'}
-                        studentNameMapping={viewMode === 'exams' ? studentNameMapping : undefined}
+                        studentNameMapping={viewMode === 'exams' ? displayStudentMapping : undefined}
+                        onStudentInfoChange={viewMode === 'exams' ? (index, info) => {
+                            setStudentInfos((prev) => {
+                                const next = [...prev];
+                                const current = next[index] || { studentName: '', studentId: '' };
+                                next[index] = {
+                                    studentName: info.studentName ?? current.studentName,
+                                    studentId: info.studentId ?? current.studentId,
+                                };
+                                return next;
+                            });
+                        } : undefined}
                         interactionEnabled={interactionEnabled}
                         onInteractionToggle={onInteractionToggle}
                         gradingMode={gradingMode}
@@ -227,6 +320,7 @@ export default function ConsolePage() {
     const setGradingMode = useConsoleStore((state) => state.setGradingMode);
     const expectedTotalScore = useConsoleStore((state) => state.expectedTotalScore);
     const setExpectedTotalScore = useConsoleStore((state) => state.setExpectedTotalScore);
+    const classContext = useConsoleStore((state) => state.classContext);
     const rubricScoreMismatch = useConsoleStore((state) => state.rubricScoreMismatch);
     const setRubricScoreMismatch = useConsoleStore((state) => state.setRubricScoreMismatch);
     const rubricParseError = useConsoleStore((state) => state.rubricParseError);
@@ -520,7 +614,11 @@ export default function ConsolePage() {
     };
 
     // Batch Submission
-    const handleSubmitBatch = async (images: ScannedImage[], boundaries: number[]) => {
+    const handleSubmitBatch = async (
+        images: ScannedImage[],
+        boundaries: number[],
+        studentMapping?: Array<{ studentId?: string; studentName?: string; studentKey?: string; startIndex: number; endIndex: number }>
+    ) => {
         try {
             const rubricSession = sessions.find(s => s.id === rubricSessionId);
             if (!rubricSession || rubricSession.images.length === 0) {
@@ -533,11 +631,13 @@ export default function ConsolePage() {
             const rubricFiles = rubricSession ? rubricSession.images.map(img => dataUrlToFile(img.url, img.name)) : [];
 
             // 获取班级批改上下文（如果存在）
-            const { classContext } = useConsoleStore.getState();
-            const classContextPayload = classContext.classId ? {
-                classId: classContext.classId,
+            const studentMappingPayload = (studentMapping && studentMapping.length > 0)
+                ? studentMapping
+                : undefined;
+            const classContextPayload = (classContext.classId || studentMappingPayload) ? {
+                classId: classContext.classId || undefined,
                 homeworkId: classContext.homeworkId || undefined,
-                studentMapping: classContext.studentImageMapping,
+                studentMapping: studentMappingPayload,
             } : undefined;
 
             // 2. Upload to backend with optional class context
@@ -677,7 +777,7 @@ export default function ConsolePage() {
                                     onGradingModeChange={setGradingMode}
                                     expectedTotalScore={expectedTotalScore}
                                     onExpectedTotalScoreChange={setExpectedTotalScore}
-                                    studentNameMapping={useConsoleStore.getState().classContext.studentImageMapping}
+                                    studentNameMapping={classContext.studentImageMapping}
                                 />
                             </motion.div>
                         )}

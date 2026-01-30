@@ -8,10 +8,11 @@ import { submitToGradingSystem, SubmissionResponse } from './submissionService';
 import { ScannedImage, Session } from './types';
 
 interface StudentNameMapping {
-  studentId: string;
-  studentName: string;
-  startIndex: number;
-  endIndex: number;
+  studentId?: string;
+  studentName?: string;
+  studentKey?: string;
+  startIndex?: number;
+  endIndex?: number;
 }
 
 interface GalleryProps {
@@ -21,6 +22,7 @@ interface GalleryProps {
   onBoundariesChange?: (boundaries: number[]) => void;
   isRubricMode?: boolean;
   studentNameMapping?: StudentNameMapping[]; // 班级批改模式下的学生名称映射
+  onStudentInfoChange?: (index: number, info: { studentName?: string; studentId?: string }) => void;
   interactionEnabled?: boolean;
   onInteractionToggle?: (enabled: boolean) => void;
   gradingMode?: string;
@@ -70,6 +72,7 @@ export default function Gallery({
   onBoundariesChange,
   isRubricMode = false,
   studentNameMapping = [],
+  onStudentInfoChange,
   interactionEnabled = false,
   onInteractionToggle,
   gradingMode = 'auto',
@@ -333,8 +336,39 @@ export default function Gallery({
                   {!isRubricMode && (
                     <div className="flex items-center gap-2 mb-3">
                       <div className="bg-slate-900 text-white text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider shadow-sm">
-                        {studentNameMapping[groupIdx]?.studentName || `Student ${groupIdx + 1}`}
+                        {studentNameMapping[groupIdx]?.studentName
+                          || studentNameMapping[groupIdx]?.studentId
+                          || studentNameMapping[groupIdx]?.studentKey
+                          || `Student ${groupIdx + 1}`}
                       </div>
+                      {onStudentInfoChange && (
+                        <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
+                          <input
+                            type="text"
+                            placeholder="姓名"
+                            value={studentNameMapping[groupIdx]?.studentName || ''}
+                            onChange={(event) => {
+                              onStudentInfoChange(groupIdx, {
+                                studentName: event.target.value,
+                                studentId: studentNameMapping[groupIdx]?.studentId,
+                              });
+                            }}
+                            className="h-7 w-28 rounded-full border border-slate-200 bg-white px-3 text-[11px] font-medium text-slate-700 shadow-sm outline-none focus:border-slate-400"
+                          />
+                          <input
+                            type="text"
+                            placeholder="学号"
+                            value={studentNameMapping[groupIdx]?.studentId || ''}
+                            onChange={(event) => {
+                              onStudentInfoChange(groupIdx, {
+                                studentName: studentNameMapping[groupIdx]?.studentName,
+                                studentId: event.target.value,
+                              });
+                            }}
+                            className="h-7 w-24 rounded-full border border-slate-200 bg-white px-3 text-[11px] font-medium text-slate-700 shadow-sm outline-none focus:border-slate-400"
+                          />
+                        </div>
+                      )}
                       <div className="h-px bg-slate-200 flex-1 border-t border-dashed border-slate-300"></div>
                     </div>
                   )}

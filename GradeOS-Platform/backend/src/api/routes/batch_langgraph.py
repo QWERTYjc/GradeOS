@@ -1271,7 +1271,7 @@ async def stream_langgraph_progress(
                             else None
                         ),
                     )
-                    await save_grading_history(history)
+                    await _maybe_await(save_grading_history(history))
 
                     student_map_by_index = {}
                     student_map_by_name = {}
@@ -1342,7 +1342,7 @@ async def stream_langgraph_progress(
                             ),
                             result_data=result,
                         )
-                        await save_student_result(student_result)
+                        await _maybe_await(save_student_result(student_result))
 
                         if class_id and homework_id and student_id:
                             feedback = None

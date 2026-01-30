@@ -2579,51 +2579,11 @@ async def _grade_batch_node_impl(state: Dict[str, Any]) -> Dict[str, Any]:
     )
 
     # ===== 直接构建 student_results 格式（移除 simple_aggregate_node 的需要）=====
-    student_results = []
-    for result in page_results:
-        if result.get("status") == "completed":
-            result_page_indices = result.get("page_indices", [])
-            pages_sorted = (
-                sorted(result_page_indices)
-                if result_page_indices
-                else [result.get("page_index", 0)]
-            )
-
-            student_results.append(
-                {
-                    "student_key": result.get("student_key", batch_student_key),
-                    "student_id": None,
-                    "student_name": None,
-                    "start_page": pages_sorted[0] if pages_sorted else 0,
-                    "end_page": pages_sorted[-1] if pages_sorted else 0,
-                    "total_score": result.get("score", 0.0),
-                    "max_total_score": result.get("max_score", 0.0),
-                    "question_details": result.get("question_details", []),
-                    "grading_mode": grading_mode,
-                    "confidence": result.get("confidence", 0.8),
-                    "feedback": result.get("feedback", ""),
-                }
-            )
-        else:
-            # 失败的结果也要记录
-            result_page_indices = result.get("page_indices", [result.get("page_index", 0)])
-            pages_sorted = sorted(result_page_indices) if result_page_indices else [0]
-
-            student_results.append(
-                {
-                    "student_key": result.get("student_key", batch_student_key),
-                    "student_id": None,
-                    "student_name": None,
-                    "start_page": pages_sorted[0] if pages_sorted else 0,
-                    "end_page": pages_sorted[-1] if pages_sorted else 0,
-                    "total_score": 0.0,
-                    "max_total_score": 0.0,
-                    "question_details": [],
-                    "grading_mode": grading_mode,
-                    "status": "failed",
-                    "error": result.get("error", "Unknown error"),
-                }
-            )
+    student_results = _build_student_results_from_page_results(
+        page_results,
+        default_student_key=batch_student_key,
+        grading_mode=grading_mode,
+    )
 
     # 返回结果（使用 add reducer 聚合，直接输出 student_results）
     return {
@@ -2708,6 +2668,106 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _build_student_results_from_page_results(
+    page_results: List[Dict[str, Any]],
+    *,
+    default_student_key: Optional[str] = None,
+    grading_mode: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    if not page_results:
+        return []
+
+    grouped: Dict[str, Dict[str, Any]] = {}
+    for result in page_results:
+        student_key = result.get("student_key") or default_student_key or "Student"
+        entry = grouped.get(student_key)
+        if not entry:
+            entry = {
+                "student_key": student_key,
+                "student_id": None,
+                "student_name": None,
+                "start_page": None,
+                "end_page": None,
+                "total_score": 0.0,
+                "max_total_score": 0.0,
+                "question_details": [],
+                "page_results": [],
+                "grading_mode": grading_mode,
+                "feedback": "",
+                "confidence": 0.0,
+                "_confidence_sum": 0.0,
+                "_confidence_count": 0,
+                "_has_completed": False,
+                "_has_failed": False,
+                "_errors": [],
+            }
+            grouped[student_key] = entry
+
+        entry["page_results"].append(result)
+        if result.get("grading_mode"):
+            entry["grading_mode"] = result.get("grading_mode")
+
+        if not entry["feedback"] and result.get("feedback"):
+            entry["feedback"] = result.get("feedback")
+
+        if result.get("question_details"):
+            entry["question_details"].extend(result.get("question_details", []))
+
+        page_indices = result.get("page_indices")
+        if not page_indices:
+            page_index = result.get("page_index")
+            if page_index is not None:
+                page_indices = [page_index]
+
+        if page_indices:
+            start_page = min(page_indices)
+            end_page = max(page_indices)
+            entry["start_page"] = (
+                start_page if entry["start_page"] is None else min(entry["start_page"], start_page)
+            )
+            entry["end_page"] = (
+                end_page if entry["end_page"] is None else max(entry["end_page"], end_page)
+            )
+
+        entry["total_score"] += _safe_float(result.get("score", 0))
+        entry["max_total_score"] += _safe_float(result.get("max_score", 0))
+
+        if result.get("status") == "completed":
+            entry["_has_completed"] = True
+        if result.get("status") == "failed":
+            entry["_has_failed"] = True
+            if result.get("error"):
+                entry["_errors"].append(result.get("error"))
+
+        confidence = result.get("confidence")
+        if confidence is not None:
+            entry["_confidence_sum"] += _safe_float(confidence)
+            entry["_confidence_count"] += 1
+
+    student_results: List[Dict[str, Any]] = []
+    for entry in grouped.values():
+        if entry["start_page"] is None:
+            entry["start_page"] = 0
+        if entry["end_page"] is None:
+            entry["end_page"] = entry["start_page"]
+        if entry["_confidence_count"]:
+            entry["confidence"] = entry["_confidence_sum"] / entry["_confidence_count"]
+        if entry["_has_failed"] and not entry["_has_completed"]:
+            entry["status"] = "failed"
+        elif entry["_has_failed"] and entry["_has_completed"]:
+            entry["status"] = "partial"
+        if entry["_errors"]:
+            entry["error"] = entry["_errors"][0]
+        entry.pop("_confidence_sum", None)
+        entry.pop("_confidence_count", None)
+        entry.pop("_has_completed", None)
+        entry.pop("_has_failed", None)
+        entry.pop("_errors", None)
+        student_results.append(entry)
+
+    return student_results
 
 
 def _recompute_student_totals(student: Dict[str, Any]) -> None:
