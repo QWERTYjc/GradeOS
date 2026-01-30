@@ -930,7 +930,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
     const parsedRubric = useConsoleStore((state) => state.parsedRubric);
 
     // 批注渲染函数 - 调用后端 API 生成带批注的图片
-    const renderAnnotationsForPage = useCallback(async (pageIdx: number, imageUrl: string, studentKey: string) => {
+    const renderAnnotationsForPage = useCallback(async (pageIdx: number, imageUrl: string, studentKey: string, studentData: StudentResult | null) => {
         // 使用 studentKey + pageIdx 作为唯一标识，避免重复渲染
         const renderKey = `${studentKey}-${pageIdx}`;
 
@@ -944,8 +944,8 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
         setAnnotationLoading(prev => new Set(prev).add(pageIdx));
 
         try {
-            // 从当前学生的批改结果中提取该页的批注
-            const student = detailViewStudent;
+            // 从传入的学生数据中提取该页的批注（避免闭包问题）
+            const student = studentData;
             if (!student) return;
 
             // 收集该页的所有批注
@@ -1193,7 +1193,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                 return next;
             });
         }
-    }, [detailViewStudent, parsedRubric]);
+    }, [parsedRubric]);
 
     // 当开启批注显示时，渲染当前学生的所有页面
     useEffect(() => {
@@ -1201,6 +1201,8 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
 
         // 获取学生唯一标识
         const studentKey = detailViewStudent.studentName || `student-${detailViewIndex}`;
+        // 保存当前学生数据的引用，避免闭包问题
+        const currentStudent = detailViewStudent;
 
         const pages = new Set<number>();
         if (detailViewStudent.startPage !== undefined) {
@@ -1222,7 +1224,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
         uniquePages.forEach(pageIdx => {
             const imageUrl = uploadedImages[pageIdx] || currentSession?.images[pageIdx]?.url;
             if (imageUrl) {
-                renderAnnotationsForPage(pageIdx, imageUrl, studentKey);
+                renderAnnotationsForPage(pageIdx, imageUrl, studentKey, currentStudent);
             }
         });
     }, [showAnnotations, detailViewStudent, detailViewIndex, uploadedImages, currentSession, renderAnnotationsForPage]);
@@ -2640,7 +2642,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                                     <h3 className="text-sm font-semibold text-slate-700">Analysis Detail</h3>
                                 </div>
                                 {detailViewStudent.questionResults?.map((q, idx) => (
-                                    <div key={idx} className="border-b border-slate-100 pb-4 last:border-b-0">
+                                    <div key={`question-${q.questionId || 'unknown'}-${detailViewStudent.studentName}-${idx}`} className="border-b border-slate-100 pb-4 last:border-b-0">
                                         <QuestionDetail question={q} gradingMode={detailViewStudent.gradingMode} defaultExpanded={defaultExpandDetails} />
                                     </div>
                                 ))}
