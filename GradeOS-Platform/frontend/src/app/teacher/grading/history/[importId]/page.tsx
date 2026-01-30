@@ -48,7 +48,20 @@ export default function GradingHistoryDetailPage() {
         if (!active || !data) return;
         setSubmissionId(data.batch_id || resolvedBatchId || importId);
         setFinalResults(normalizeStudentResults(data.student_results || []));
-        setUploadedImages(data.answer_images || []);
+        const normalizedImages = (data.answer_images || []).map((img) => {
+          if (!img) return img;
+          const trimmed = img.trim();
+          if (
+            trimmed.startsWith('data:') ||
+            trimmed.startsWith('http://') ||
+            trimmed.startsWith('https://') ||
+            trimmed.startsWith('blob:')
+          ) {
+            return trimmed;
+          }
+          return `data:image/jpeg;base64,${trimmed}`;
+        });
+        setUploadedImages(normalizedImages);
         setStatus('COMPLETED');
         setCurrentTab('results');
         setError(null);

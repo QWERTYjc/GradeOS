@@ -3,9 +3,10 @@
 import React, { useEffect, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { useRouter, useParams } from 'next/navigation';
-import { gradingApi } from '@/services/api';
+import { gradingApi, ActiveRunItem } from '@/services/api';
 import { useConsoleStore } from '@/store/consoleStore';
 import { normalizeStudentResults } from '@/lib/gradingResults';
+import { useAuthStore } from '@/store/authStore';
 
 const ResultsView = dynamic(() => import('@/components/console/ResultsView'), { ssr: false });
 
@@ -21,6 +22,7 @@ export default function ResultsReviewPage() {
   const router = useRouter();
   const params = useParams();
   const batchId = params?.batchId as string;
+  const { user } = useAuthStore();
   const setFinalResults = useConsoleStore((state) => state.setFinalResults);
   const setUploadedImages = useConsoleStore((state) => state.setUploadedImages);
   const setSubmissionId = useConsoleStore((state) => state.setSubmissionId);
@@ -31,6 +33,57 @@ export default function ResultsReviewPage() {
 
   useEffect(() => {
     let active = true;
+
+    const pickLatestRun = (runs: ActiveRunItem[], preferCompleted: boolean) => {
+      if (!runs.length) return null;
+      const candidates = preferCompleted ? runs.filter((run) => run.status === 'completed') : runs;
+      const pool = candidates.length > 0 ? candidates : runs;
+      const parseTime = (value?: string) => {
+        const ts = Date.parse(value || '');
+        return Number.isNaN(ts) ? 0 : ts;
+      };
+      return pool.reduce<ActiveRunItem | null>((latest, run) => {
+        const latestTime = latest
+          ? parseTime(latest.updated_at || latest.completed_at || latest.started_at || latest.created_at)
+          : 0;
+        const runTime = parseTime(
+          run.updated_at || run.completed_at || run.started_at || run.created_at
+        );
+        return runTime >= latestTime ? run : latest;
+      }, null);
+    };
+
+    const resolveLastBatch = async () => {
+      try {
+        const response = await gradingApi.getActiveRuns(user?.id);
+        const latest = pickLatestRun(response.runs || [], true);
+        if (!latest) {
+          if (active) {
+            setError('No grading runs found yet.');
+            setLoading(false);
+          }
+          return;
+        }
+        if (latest.status === 'completed') {
+          router.replace(`/grading/results-review/${latest.batch_id}`);
+        } else {
+          router.replace(`/console?batchId=${latest.batch_id}`);
+        }
+      } catch (err) {
+        if (!active) return;
+        setError(err instanceof Error ? err.message : 'Failed to resolve latest run.');
+        setLoading(false);
+      }
+    };
+
+    if (batchId === 'last') {
+      setLoading(true);
+      resolveLastBatch();
+      return () => {
+        active = false;
+      };
+    }
+
     gradingApi
       .getResultsReviewContext(batchId)
       .then((data: ResultsReviewContext) => {
@@ -65,7 +118,7 @@ export default function ResultsReviewPage() {
     return () => {
       active = false;
     };
-  }, [batchId, setFinalResults, setUploadedImages, setSubmissionId, setStatus, setCurrentTab]);
+  }, [batchId, setFinalResults, setUploadedImages, setSubmissionId, setStatus, setCurrentTab, router, user?.id]);
 
   return (
     <div className="h-screen bg-white flex flex-col">

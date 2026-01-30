@@ -3,9 +3,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useParams } from "next/navigation";
 import clsx from "clsx";
-import { gradingApi } from "@/services/api";
+import { gradingApi, ActiveRunItem } from "@/services/api";
 import { buildWsUrl } from "@/services/ws";
 import { MathText } from "@/components/common/MathText";
+import { useAuthStore } from "@/store/authStore";
 
 type RubricScoringPointDraft = {
   pointId: string;
@@ -136,6 +137,7 @@ export default function RubricReviewPage() {
   const router = useRouter();
   const params = useParams();
   const batchId = params?.batchId as string;
+  const { user } = useAuthStore();
   const [rubricImages, setRubricImages] = useState<string[]>([]);
   const [rubricDraft, setRubricDraft] = useState<ParsedRubricDraft | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -154,7 +156,55 @@ export default function RubricReviewPage() {
 
   useEffect(() => {
     let active = true;
+
+    const pickLatestRun = (runs: ActiveRunItem[], preferActive: boolean) => {
+      if (!runs.length) return null;
+      const candidates = preferActive ? runs.filter((run) => run.status !== "completed") : runs;
+      const pool = candidates.length > 0 ? candidates : runs;
+      const parseTime = (value?: string) => {
+        const ts = Date.parse(value || "");
+        return Number.isNaN(ts) ? 0 : ts;
+      };
+      return pool.reduce<ActiveRunItem | null>((latest, run) => {
+        const latestTime = latest
+          ? parseTime(
+              latest.updated_at || latest.completed_at || latest.started_at || latest.created_at
+            )
+          : 0;
+        const runTime = parseTime(
+          run.updated_at || run.completed_at || run.started_at || run.created_at
+        );
+        return runTime >= latestTime ? run : latest;
+      }, null);
+    };
+
+    const resolveLastBatch = async () => {
+      try {
+        const response = await gradingApi.getActiveRuns(user?.id);
+        const latest = pickLatestRun(response.runs || [], true);
+        if (!latest) {
+          if (active) {
+            setError("No grading runs found yet.");
+            setIsLoading(false);
+          }
+          return;
+        }
+        router.replace(`/grading/rubric-review/${latest.batch_id}`);
+      } catch (err) {
+        if (!active) return;
+        setError(err instanceof Error ? err.message : "Failed to resolve latest run.");
+        setIsLoading(false);
+      }
+    };
+
     setIsLoading(true);
+    if (batchId === "last") {
+      resolveLastBatch();
+      return () => {
+        active = false;
+      };
+    }
+
     gradingApi
       .getRubricReviewContext(batchId)
       .then((data) => {
@@ -179,9 +229,12 @@ export default function RubricReviewPage() {
     return () => {
       active = false;
     };
-  }, [batchId]);
+  }, [batchId, router, user?.id]);
 
   useEffect(() => {
+    if (batchId === "last") {
+      return;
+    }
     streamBufferRef.current = "";
     setStreamText("");
     if (streamFlushTimerRef.current) {

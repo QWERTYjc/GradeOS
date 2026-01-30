@@ -816,6 +816,15 @@ async def submit_batch(
             except Exception as e:
                 logger.debug(f"解析学生映射失败: {e}")
 
+        resolved_expected_students = expected_students or 0
+        if resolved_expected_students <= 0:
+            if student_mapping:
+                resolved_expected_students = len(student_mapping)
+            elif parsed_boundaries:
+                resolved_expected_students = len(parsed_boundaries)
+            else:
+                resolved_expected_students = 1
+
         payload = {
             "batch_id": batch_id,
             "exam_id": exam_id,
@@ -831,9 +840,7 @@ async def submit_batch(
                 "rubric": "rubric_content",  # TODO: 解析 rubric
                 "auto_identify": auto_identify,
                 "manual_boundaries": parsed_boundaries,  # 传递人工边界
-                "expected_students": (
-                    expected_students if expected_students else 2
-                ),  # 🔥 默认 2 名学生
+                "expected_students": resolved_expected_students,
                 "expected_total_score": expected_total_score,
                 "enable_review": enable_review,
                 "grading_mode": grading_mode or "auto",
@@ -1043,8 +1050,8 @@ async def stream_langgraph_progress(
                             },
                         )
 
-                    # 索引完成（学生识别）
-                    if node_name == "index" and output.get("student_boundaries"):
+                    # 学生识别完成
+                    if output.get("student_boundaries"):
                         boundaries = output["student_boundaries"]
                         await broadcast_progress(
                             batch_id,
@@ -1527,7 +1534,17 @@ def _map_node_to_frontend(node_name: str) -> str:
         "batch_persist": "export",
         "batch_notify": "export",
     }
-    return mapping.get(node_name, node_name)
+    if node_name in mapping:
+        return mapping[node_name]
+    if ":" in node_name:
+        base = node_name.split(":", 1)[0]
+        if base in mapping:
+            return mapping[base]
+    if "." in node_name:
+        base = node_name.split(".", 1)[0]
+        if base in mapping:
+            return mapping[base]
+    return node_name
 
 
 def _get_node_display_name(node_name: str) -> str:
@@ -1547,7 +1564,17 @@ def _get_node_display_name(node_name: str) -> str:
         "review": "Final Review",
         "export": "Export",
     }
-    return display_names.get(node_name, node_name)
+    if node_name in display_names:
+        return display_names[node_name]
+    if ":" in node_name:
+        base = node_name.split(":", 1)[0]
+        if base in display_names:
+            return display_names[base]
+    if "." in node_name:
+        base = node_name.split(".", 1)[0]
+        if base in display_names:
+            return display_names[base]
+    return node_name
 
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
@@ -1607,6 +1634,28 @@ def _resolve_page_indices(question: Dict[str, Any], fallback_page_index: Optiona
         return []
 
 
+def _resolve_question_max_score(
+    question: Dict[str, Any], scoring_results: List[Dict[str, Any]]
+) -> float:
+    max_score = _safe_float(
+        question.get("max_score")
+        or question.get("maxScore")
+        or question.get("max_points")
+        or question.get("maxPoints"),
+        default=0.0,
+    )
+    if max_score > 0:
+        return max_score
+    total_points = 0.0
+    for item in scoring_results or []:
+        max_points = item.get("max_points") or item.get("maxPoints")
+        if max_points is None:
+            scoring_point = item.get("scoring_point") or item.get("scoringPoint") or {}
+            max_points = scoring_point.get("score") or scoring_point.get("points")
+        total_points += _safe_float(max_points, default=0.0)
+    return total_points
+
+
 def _resolve_question_confidence(
     question: Dict[str, Any],
     scoring_results: List[Dict[str, Any]],
@@ -1645,6 +1694,8 @@ def _resolve_question_confidence(
                 awarded_points += _safe_float(item.get("awarded") or item.get("score"), default=0.0)
             if total_points > 0:
                 confidence = max(0.1, min(1.0, awarded_points / total_points))
+    if confidence <= 0 and has_signal:
+        confidence = 0.6 if score > 0 else 0.35
     return max(0.0, min(1.0, confidence))
 
 
@@ -1780,7 +1831,7 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
             for q in r.get("question_details", []):
                 scoring_results = q.get("scoring_point_results") or q.get("scoring_results") or []
                 score_value = _safe_float(q.get("score", 0))
-                max_score_value = _safe_float(q.get("max_score", 0))
+                max_score_value = _resolve_question_max_score(q, scoring_results)
                 page_indices = _resolve_page_indices(q)
                 confidence = _resolve_question_confidence(
                     q,
@@ -1839,7 +1890,7 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
             for q in r.get("grading_results", []):
                 scoring_results = q.get("scoring_point_results") or q.get("scoring_results") or []
                 score_value = _safe_float(q.get("score", 0))
-                max_score_value = _safe_float(q.get("max_score", 0))
+                max_score_value = _resolve_question_max_score(q, scoring_results)
                 page_indices = _resolve_page_indices(q)
                 confidence = _resolve_question_confidence(
                     q,
@@ -1897,7 +1948,7 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
             for q in r.get("question_results", []):
                 scoring_results = q.get("scoring_point_results") or q.get("scoring_results") or []
                 score_value = _safe_float(q.get("score", 0))
-                max_score_value = _safe_float(q.get("max_score", 0))
+                max_score_value = _resolve_question_max_score(q, scoring_results)
                 page_indices = _resolve_page_indices(q)
                 confidence = _resolve_question_confidence(
                     q,
@@ -1961,7 +2012,7 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
                             q.get("scoring_point_results") or q.get("scoring_results") or []
                         )
                         score_value = _safe_float(q.get("score", 0))
-                        max_score_value = _safe_float(q.get("max_score", 0))
+                        max_score_value = _resolve_question_max_score(q, scoring_results)
                         page_indices = _resolve_page_indices(q, page.get("page_index"))
                         confidence = _resolve_question_confidence(
                             q,
@@ -2090,7 +2141,9 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
                     dq.get("scoring_point_results") or dq.get("scoring_results") or []
                 )
                 draft_score_value = _safe_float(dq.get("score", 0))
-                draft_max_score_value = _safe_float(dq.get("max_score", 0))
+                draft_max_score_value = _resolve_question_max_score(
+                    dq, draft_scoring_results
+                )
                 draft_page_indices = _resolve_page_indices(dq)
                 draft_confidence = _resolve_question_confidence(
                     dq,

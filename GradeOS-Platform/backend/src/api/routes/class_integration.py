@@ -477,7 +477,7 @@ async def grade_homework(
             "rubric": "",
             "auto_identify": False,
             "manual_boundaries": manual_boundaries,
-            "expected_students": len(CLASS_STUDENTS.get(class_id, [])) or len(manual_boundaries),
+            "expected_students": len(manual_boundaries) or len(CLASS_STUDENTS.get(class_id, [])),
         },
     }
 

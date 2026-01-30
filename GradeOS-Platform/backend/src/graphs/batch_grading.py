@@ -290,8 +290,11 @@ async def preprocess_node(state: BatchGradingGraphState) -> Dict[str, Any]:
         f"[preprocess] 图像预处理完成: batch_id={batch_id}, JPEG转换={len(processed_images)}/{len(answer_images)}"
     )
 
+    student_boundaries = _build_student_boundaries(state, len(processed_images))
+
     return {
         "processed_images": processed_images,
+        "student_boundaries": student_boundaries,
         "current_stage": "preprocess_completed",
         "percentage": 10.0,
         "timestamps": {**state.get("timestamps", {}), "preprocess_at": datetime.now().isoformat()},
@@ -411,6 +414,93 @@ def _normalize_manual_boundaries(raw: Any, total_pages: int) -> List[Dict[str, A
         groups.append(group)
 
     return groups
+
+
+def _build_student_boundaries(
+    state: BatchGradingGraphState, total_pages: int
+) -> List[Dict[str, Any]]:
+    inputs = state.get("inputs", {})
+    manual_boundaries = _normalize_manual_boundaries(inputs.get("manual_boundaries"), total_pages)
+    student_mapping = state.get("student_mapping") or inputs.get("student_mapping")
+    student_boundaries: List[Dict[str, Any]] = []
+
+    if student_mapping and isinstance(student_mapping, list):
+        for idx, mapping in enumerate(student_mapping):
+            pages = (
+                mapping.get("pages") or mapping.get("page_indices") or mapping.get("pageIndices")
+            )
+            pages = _sanitize_pages(pages, total_pages) if pages is not None else []
+            if not pages:
+                start_idx = _first_not_none(
+                    mapping.get("start_index"),
+                    mapping.get("startIndex"),
+                    mapping.get("start_page"),
+                    mapping.get("startPage"),
+                )
+                end_idx = _first_not_none(
+                    mapping.get("end_index"),
+                    mapping.get("endIndex"),
+                    mapping.get("end_page"),
+                    mapping.get("endPage"),
+                )
+                start_page = _coerce_int(start_idx) if start_idx is not None else None
+                end_page = _coerce_int(end_idx) if end_idx is not None else None
+                if start_page is not None and end_page is not None:
+                    pages = _sanitize_pages(list(range(start_page, end_page + 1)), total_pages)
+            if not pages:
+                continue
+
+            student_name = mapping.get("student_name") or mapping.get("studentName")
+            student_id = mapping.get("student_id") or mapping.get("studentId")
+            student_key = (
+                mapping.get("student_key")
+                or mapping.get("studentKey")
+                or student_name
+                or student_id
+                or f"学生{idx + 1}"
+            )
+            student_boundaries.append(
+                {
+                    "student_key": student_key,
+                    "student_id": student_id,
+                    "student_name": student_name,
+                    "start_page": min(pages),
+                    "end_page": max(pages),
+                    "pages": sorted(pages),
+                }
+            )
+    if not student_boundaries and manual_boundaries:
+        for idx, boundary in enumerate(manual_boundaries):
+            pages = boundary.get("pages") or boundary.get("page_indices") or boundary.get(
+                "pageIndices"
+            )
+            pages = _sanitize_pages(pages, total_pages) if pages is not None else []
+            if not pages:
+                start_page = _first_not_none(
+                    boundary.get("start_page"),
+                    boundary.get("startPage"),
+                    boundary.get("start"),
+                )
+                end_page = _first_not_none(
+                    boundary.get("end_page"),
+                    boundary.get("endPage"),
+                    boundary.get("end"),
+                )
+                start_idx = _coerce_int(start_page) if start_page is not None else None
+                end_idx = _coerce_int(end_page) if end_page is not None else None
+                if start_idx is not None and end_idx is not None:
+                    pages = _sanitize_pages(list(range(start_idx, end_idx + 1)), total_pages)
+            if not pages:
+                continue
+            merged = dict(boundary)
+            merged["pages"] = sorted(pages)
+            merged.setdefault("start_page", pages[0])
+            merged.setdefault("end_page", pages[-1])
+            if "student_key" not in merged:
+                merged["student_key"] = f"学生{idx + 1}"
+            student_boundaries.append(merged)
+
+    return student_boundaries
 
 
 async def rubric_parse_node(state: BatchGradingGraphState) -> Dict[str, Any]:
@@ -964,68 +1054,11 @@ def grading_fanout_router(state: BatchGradingGraphState) -> List[Send]:
     rubric = state.get("rubric", "")
     parsed_rubric = state.get("parsed_rubric", {})
     api_key = state.get("api_key", "")
-    inputs = state.get("inputs", {})
-    manual_boundaries = _normalize_manual_boundaries(
-        inputs.get("manual_boundaries"),
-        len(processed_images),
-    )
-
-    # 从前端获取 student_mapping
-    student_mapping = state.get("student_mapping") or inputs.get("student_mapping")
-    student_boundaries = []
-
-    # 如果前端提供了 student_mapping，转换为 student_boundaries
-    if student_mapping and isinstance(student_mapping, list):
-        for idx, mapping in enumerate(student_mapping):
-            pages = (
-                mapping.get("pages") or mapping.get("page_indices") or mapping.get("pageIndices")
-            )
-            if pages is None:
-                start_idx = _first_not_none(
-                    mapping.get("start_index"),
-                    mapping.get("startIndex"),
-                    mapping.get("start_page"),
-                    mapping.get("startPage"),
-                )
-                end_idx = _first_not_none(
-                    mapping.get("end_index"),
-                    mapping.get("endIndex"),
-                    mapping.get("end_page"),
-                    mapping.get("endPage"),
-                )
-                start_page = _coerce_int(start_idx) if start_idx is not None else None
-                end_page = _coerce_int(end_idx) if end_idx is not None else None
-                if start_page is not None and end_page is not None:
-                    pages = list(range(start_page, end_page + 1))
-            if pages:
-                pages_list = list(pages) if not isinstance(pages, list) else pages
-                if pages_list:
-                    student_name = mapping.get("student_name") or mapping.get("studentName")
-                    student_id = mapping.get("student_id") or mapping.get("studentId")
-                    student_key = (
-                        mapping.get("student_key")
-                        or mapping.get("studentKey")
-                        or student_name
-                        or student_id
-                        or f"学生{idx+1}"
-                    )
-                    student_boundaries.append(
-                        {
-                            "student_key": student_key,
-                            "student_id": student_id,
-                            "student_name": student_name,
-                            "start_page": min(pages_list),
-                            "end_page": max(pages_list),
-                            "pages": sorted(pages_list),
-                        }
-                    )
-        logger.info(f"[grading_fanout] 从前端获取 {len(student_boundaries)} 个学生映射")
-    elif manual_boundaries:
-        for idx, boundary in enumerate(manual_boundaries):
-            if "student_key" not in boundary:
-                boundary["student_key"] = f"学生{idx+1}"
-            student_boundaries.append(boundary)
-        logger.info(f"[grading_fanout] 从前端手动边界创建 {len(student_boundaries)} 个学生")
+    student_boundaries = state.get("student_boundaries")
+    if not student_boundaries:
+        student_boundaries = _build_student_boundaries(state, len(processed_images))
+        if student_boundaries:
+            logger.info(f"[grading_fanout] 生成 {len(student_boundaries)} 个学生边界")
 
     if not processed_images:
         logger.warning(f"[grading_fanout] 没有待批改的图像: batch_id={batch_id}")

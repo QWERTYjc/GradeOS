@@ -185,6 +185,44 @@ export default function GlobalNavLauncher() {
     }
   }, [user?.id]);
 
+  const resolveLatestRun = useCallback(
+    async (target: 'results' | 'rubric') => {
+      let runs = activeRuns;
+      if (runs.length === 0 && user?.id) {
+        try {
+          const response = await gradingApi.getActiveRuns(user.id);
+          runs = response.runs || [];
+        } catch {
+          return null;
+        }
+      }
+      if (runs.length === 0) return null;
+
+      const preferCompleted = target === 'results';
+      const filtered = preferCompleted
+        ? runs.filter((run) => run.status === 'completed')
+        : runs.filter((run) => run.status !== 'completed');
+      const pool = filtered.length > 0 ? filtered : runs;
+
+      const parseTime = (value?: string) => {
+        const ts = Date.parse(value || '');
+        return Number.isNaN(ts) ? 0 : ts;
+      };
+      return pool.reduce<ActiveRunItem | null>((latest, run) => {
+        const latestTime = latest
+          ? parseTime(
+              latest.updated_at || latest.completed_at || latest.started_at || latest.created_at
+            )
+          : 0;
+        const runTime = parseTime(
+          run.updated_at || run.completed_at || run.started_at || run.created_at
+        );
+        return runTime >= latestTime ? run : latest;
+      }, null);
+    },
+    [activeRuns, user?.id]
+  );
+
   const formatStageLabel = (stage?: string) => {
     if (!stage) return 'pending';
     return stage.replace(/_/g, ' ');
@@ -194,9 +232,33 @@ export default function GlobalNavLauncher() {
     return null;
   }
 
-  const handleJump = (href: string) => {
+  const handleJump = async (href: string) => {
     setOpen(false);
     if (href.endsWith('/last')) {
+      const isResults = href.includes('/grading/results-review');
+      const isRubric = href.includes('/grading/rubric-review');
+      const target = isResults ? 'results' : 'rubric';
+      const latest = await resolveLatestRun(target);
+      if (!latest) {
+        router.push('/console');
+        return;
+      }
+      if (isResults) {
+        if (latest.status === 'completed') {
+          router.push(`/grading/results-review/${latest.batch_id}`);
+        } else {
+          router.push(`/console?batchId=${latest.batch_id}`);
+        }
+        return;
+      }
+      if (isRubric) {
+        if (latest.status !== 'completed') {
+          router.push(`/grading/rubric-review/${latest.batch_id}`);
+        } else {
+          router.push(`/grading/results-review/${latest.batch_id}`);
+        }
+        return;
+      }
       router.push('/console');
       return;
     }

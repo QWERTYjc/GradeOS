@@ -759,7 +759,7 @@ async def _trigger_homework_grading(homework_id: str, orchestrator: Orchestrator
             "rubric": "rubric_content",
             "auto_identify": False,
             "manual_boundaries": manual_boundaries,
-            "expected_students": count_class_students(class_id) or len(manual_boundaries),
+            "expected_students": len(manual_boundaries) or count_class_students(class_id),
         },
     }
 
