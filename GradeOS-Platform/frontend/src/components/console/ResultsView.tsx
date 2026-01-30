@@ -1658,6 +1658,149 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
         }
     };
 
+    // === Helper Functions (定义在所有早期返回之前，避免 React Error #300) ===
+    const handleSelectStudent = useCallback((index: number) => setDetailViewIndex(index), []);
+    const handleViewDetail = useCallback((student: StudentResult) => {
+        const index = sortedResults.findIndex(r => r.studentName === student.studentName);
+        setDetailViewIndex(index >= 0 ? index : 0);
+    }, [sortedResults]);
+    
+    // 手动重试获取结果
+    const handleRetryFetch = useCallback(async () => {
+        if (!submissionId) return;
+        
+        // 清除已尝试标记，允许重试
+        apiFallbackAttemptedRef.current.delete(submissionId);
+        setApiFallbackLoading(true);
+        setApiFallbackError(null);
+        
+        try {
+            console.log('[Manual Retry] Fetching results for batch:', submissionId);
+            const response = await gradingApi.getBatchResults(submissionId);
+            
+            // 后端可能返回 results（camelCase）或 student_results（snake_case）
+            const rawResults = (response as any).results || response.student_results || [];
+            console.log('[Manual Retry] Raw results:', rawResults.length, 'items');
+            
+            if (rawResults.length > 0) {
+                // 检测数据格式（camelCase 或 snake_case）
+                const firstResult = rawResults[0];
+                const isCamelCase = 'studentName' in firstResult;
+                console.log('[Manual Retry] Data format:', isCamelCase ? 'camelCase' : 'snake_case');
+                
+                // 转换 API 响应格式到前端格式
+                const formattedResults: StudentResult[] = rawResults.map((r: any) => {
+                    if (isCamelCase) {
+                        return {
+                            studentName: r.studentName || 'Unknown',
+                            score: r.score || 0,
+                            maxScore: r.maxScore || 100,
+                            startPage: r.startPage,
+                            endPage: r.endPage,
+                            pageRange: r.pageRange,
+                            confidence: r.confidence,
+                            needsConfirmation: r.needsConfirmation,
+                            gradingMode: r.gradingMode,
+                            studentSummary: r.studentSummary,
+                            selfAudit: r.selfAudit,
+                            selfReport: r.selfReport,
+                            questionResults: (r.questionResults || []).map((q: any) => ({
+                                questionId: q.questionId || '',
+                                score: q.score || 0,
+                                maxScore: q.maxScore || 0,
+                                feedback: q.feedback || '',
+                                confidence: q.confidence,
+                                confidenceReason: q.confidenceReason,
+                                selfCritique: q.selfCritique,
+                                selfCritiqueConfidence: q.selfCritiqueConfidence,
+                                rubricRefs: q.rubricRefs,
+                                typoNotes: q.typoNotes,
+                                pageIndices: q.pageIndices,
+                                isCrossPage: q.isCrossPage,
+                                mergeSource: q.mergeSource,
+                                scoringPointResults: (q.scoringPointResults || []).map((spr: any) => ({
+                                    pointId: spr.pointId || spr.scoringPoint?.pointId,
+                                    description: spr.description || spr.scoringPoint?.description || '',
+                                    awarded: spr.awarded ?? 0,
+                                    maxPoints: spr.maxPoints ?? spr.scoringPoint?.score ?? 0,
+                                    evidence: spr.evidence || '',
+                                    rubricReference: spr.rubricReference,
+                                    rubricReferenceSource: spr.rubricReferenceSource,
+                                    decision: spr.decision,
+                                    reason: spr.reason,
+                                    scoringPoint: spr.scoringPoint ? {
+                                        description: spr.scoringPoint.description || '',
+                                        score: spr.scoringPoint.score || 0,
+                                        maxScore: spr.scoringPoint.score || 0,
+                                        isCorrect: (spr.awarded ?? 0) > 0,
+                                        isRequired: spr.scoringPoint.isRequired,
+                                        explanation: spr.reason || spr.evidence || '',
+                                    } : undefined,
+                                })),
+                            })),
+                        };
+                    } else {
+                        return {
+                            studentName: r.student_name || 'Unknown',
+                            score: r.total_score || 0,
+                            maxScore: r.max_score || 100,
+                            startPage: r.start_page,
+                            endPage: r.end_page,
+                            confidence: r.confidence,
+                            needsConfirmation: r.needs_confirmation,
+                            questionResults: (r.questions || []).map((q: any) => ({
+                                questionId: q.question_id || '',
+                                score: q.score || 0,
+                                maxScore: q.max_score || 0,
+                                feedback: q.feedback || '',
+                                confidence: q.confidence,
+                                confidenceReason: q.confidence_reason,
+                                selfCritique: q.self_critique,
+                                selfCritiqueConfidence: q.self_critique_confidence,
+                                rubricRefs: q.rubric_refs,
+                                typoNotes: q.typo_notes,
+                                pageIndices: q.page_indices,
+                                isCrossPage: q.is_cross_page,
+                                mergeSource: q.merge_source,
+                                scoringPointResults: (q.scoring_point_results || []).map((spr: any) => ({
+                                    pointId: spr.point_id || spr.scoring_point?.point_id,
+                                    description: spr.description || spr.scoring_point?.description || '',
+                                    awarded: spr.awarded ?? 0,
+                                    maxPoints: spr.max_points ?? spr.scoring_point?.score ?? 0,
+                                    evidence: spr.evidence || '',
+                                    rubricReference: spr.rubric_reference,
+                                    rubricReferenceSource: spr.rubric_reference_source,
+                                    decision: spr.decision,
+                                    reason: spr.reason,
+                                    scoringPoint: spr.scoring_point ? {
+                                        description: spr.scoring_point.description || '',
+                                        score: spr.scoring_point.score || 0,
+                                        maxScore: spr.scoring_point.score || 0,
+                                        isCorrect: (spr.awarded ?? 0) > 0,
+                                        isRequired: spr.scoring_point.is_required,
+                                        explanation: spr.reason || spr.evidence || '',
+                                    } : undefined,
+                                })),
+                            })),
+                        };
+                    }
+                });
+                
+                console.log('[Manual Retry] Successfully fetched', formattedResults.length, 'results');
+                setFinalResults(formattedResults);
+            } else {
+                setApiFallbackError('API 返回空结果');
+            }
+        } catch (error) {
+            console.error('[Manual Retry] Failed:', error);
+            setApiFallbackError(error instanceof Error ? error.message : '获取结果失败');
+        } finally {
+            setApiFallbackLoading(false);
+        }
+    }, [submissionId, setFinalResults]);
+
+    // === Conditional Returns (所有 hooks 必须在这些返回之前定义) ===
+
     if (rubricOpen) {
         return (
             <div className="h-full min-h-0 flex flex-col bg-white">
@@ -2653,149 +2796,6 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
             </div>
         );
     }
-
-    // === Helpers ===
-    const handleSelectStudent = (index: number) => setDetailViewIndex(index);
-    const handleViewDetail = (student: StudentResult) => {
-        const index = sortedResults.findIndex(r => r.studentName === student.studentName);
-        setDetailViewIndex(index >= 0 ? index : 0);
-    };
-    
-    // 手动重试获取结果
-    const handleRetryFetch = useCallback(async () => {
-        if (!submissionId) return;
-        
-        // 清除已尝试标记，允许重试
-        apiFallbackAttemptedRef.current.delete(submissionId);
-        setApiFallbackLoading(true);
-        setApiFallbackError(null);
-        
-        try {
-            console.log('[Manual Retry] Fetching results for batch:', submissionId);
-            const response = await gradingApi.getBatchResults(submissionId);
-            
-            // 后端可能返回 results（camelCase）或 student_results（snake_case）
-            const rawResults = (response as any).results || response.student_results || [];
-            console.log('[Manual Retry] Raw results:', rawResults.length, 'items');
-            
-            if (rawResults.length > 0) {
-                // 检测数据格式（camelCase 或 snake_case）
-                const firstResult = rawResults[0];
-                const isCamelCase = 'studentName' in firstResult;
-                console.log('[Manual Retry] Data format:', isCamelCase ? 'camelCase' : 'snake_case');
-                
-                // 转换 API 响应格式到前端格式
-                const formattedResults: StudentResult[] = rawResults.map((r: any) => {
-                    if (isCamelCase) {
-                        // 数据已经是 camelCase 格式，直接使用
-                        return {
-                            studentName: r.studentName || 'Unknown',
-                            score: r.score || 0,
-                            maxScore: r.maxScore || 100,
-                            startPage: r.startPage,
-                            endPage: r.endPage,
-                            pageRange: r.pageRange,
-                            confidence: r.confidence,
-                            needsConfirmation: r.needsConfirmation,
-                            gradingMode: r.gradingMode,
-                            studentSummary: r.studentSummary,
-                            selfAudit: r.selfAudit,
-                            selfReport: r.selfReport,
-                            questionResults: (r.questionResults || []).map((q: any) => ({
-                                questionId: q.questionId || '',
-                                score: q.score || 0,
-                                maxScore: q.maxScore || 0,
-                                feedback: q.feedback || '',
-                                confidence: q.confidence,
-                                confidenceReason: q.confidenceReason,
-                                selfCritique: q.selfCritique,
-                                selfCritiqueConfidence: q.selfCritiqueConfidence,
-                                rubricRefs: q.rubricRefs,
-                                typoNotes: q.typoNotes,
-                                pageIndices: q.pageIndices,
-                                isCrossPage: q.isCrossPage,
-                                mergeSource: q.mergeSource,
-                                scoringPointResults: (q.scoringPointResults || []).map((spr: any) => ({
-                                    pointId: spr.pointId || spr.scoringPoint?.pointId,
-                                    description: spr.description || spr.scoringPoint?.description || '',
-                                    awarded: spr.awarded ?? 0,
-                                    maxPoints: spr.maxPoints ?? spr.scoringPoint?.score ?? 0,
-                                    evidence: spr.evidence || '',
-                                    rubricReference: spr.rubricReference,
-                                    rubricReferenceSource: spr.rubricReferenceSource,
-                                    decision: spr.decision,
-                                    reason: spr.reason,
-                                    scoringPoint: spr.scoringPoint ? {
-                                        description: spr.scoringPoint.description || '',
-                                        score: spr.scoringPoint.score || 0,
-                                        maxScore: spr.scoringPoint.score || 0,
-                                        isCorrect: (spr.awarded ?? 0) > 0,
-                                        isRequired: spr.scoringPoint.isRequired,
-                                        explanation: spr.reason || spr.evidence || '',
-                                    } : undefined,
-                                })),
-                            })),
-                        };
-                    } else {
-                        // snake_case 格式，需要转换
-                        return {
-                            studentName: r.student_name || 'Unknown',
-                            score: r.total_score || 0,
-                            maxScore: r.max_score || 100,
-                            startPage: r.start_page,
-                            endPage: r.end_page,
-                            confidence: r.confidence,
-                            needsConfirmation: r.needs_confirmation,
-                            questionResults: (r.questions || []).map((q: any) => ({
-                                questionId: q.question_id || '',
-                                score: q.score || 0,
-                                maxScore: q.max_score || 0,
-                                feedback: q.feedback || '',
-                                confidence: q.confidence,
-                                confidenceReason: q.confidence_reason,
-                                selfCritique: q.self_critique,
-                                selfCritiqueConfidence: q.self_critique_confidence,
-                                rubricRefs: q.rubric_refs,
-                                typoNotes: q.typo_notes,
-                                pageIndices: q.page_indices,
-                                isCrossPage: q.is_cross_page,
-                                mergeSource: q.merge_source,
-                                scoringPointResults: (q.scoring_point_results || []).map((spr: any) => ({
-                                    pointId: spr.point_id || spr.scoring_point?.point_id,
-                                    description: spr.description || spr.scoring_point?.description || '',
-                                    awarded: spr.awarded ?? 0,
-                                    maxPoints: spr.max_points ?? spr.scoring_point?.score ?? 0,
-                                    evidence: spr.evidence || '',
-                                    rubricReference: spr.rubric_reference,
-                                    rubricReferenceSource: spr.rubric_reference_source,
-                                    decision: spr.decision,
-                                    reason: spr.reason,
-                                    scoringPoint: spr.scoring_point ? {
-                                        description: spr.scoring_point.description || '',
-                                        score: spr.scoring_point.score || 0,
-                                        maxScore: spr.scoring_point.score || 0,
-                                        isCorrect: (spr.awarded ?? 0) > 0,
-                                        isRequired: spr.scoring_point.is_required,
-                                        explanation: spr.reason || spr.evidence || '',
-                                    } : undefined,
-                                })),
-                            })),
-                        };
-                    }
-                });
-                
-                console.log('[Manual Retry] Successfully fetched', formattedResults.length, 'results');
-                setFinalResults(formattedResults);
-            } else {
-                setApiFallbackError('API 返回空结果');
-            }
-        } catch (error) {
-            console.error('[Manual Retry] Failed:', error);
-            setApiFallbackError(error instanceof Error ? error.message : '获取结果失败');
-        } finally {
-            setApiFallbackLoading(false);
-        }
-    }, [submissionId, setFinalResults]);
 
     // === Dashboard View ===
     if (results.length === 0) {
