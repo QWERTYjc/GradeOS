@@ -36,7 +36,7 @@ from src.db import (
     save_grading_history,
     StudentGradingResult,
     save_student_result,
-    get_student_results,
+    get_student_results,  # 同步版本 (SQLite fallback)
     get_connection,
     UserRecord,
     ClassRecord,
@@ -73,6 +73,13 @@ from src.services.student_assistant_agent import (
 )
 from src.utils.image import to_jpeg_bytes
 from src.utils.auth import hash_password, verify_password
+
+# 导入异步版本的 PostgreSQL 函数
+from src.db.postgres_grading import (
+    get_student_results as get_student_results_async,
+    get_grading_history as get_grading_history_async,
+    list_grading_history as list_grading_history_async,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1455,7 +1462,8 @@ async def get_grading_history(
     records: List[Dict[str, Any]] = []
 
     try:
-        histories = list_grading_history(class_id=class_id, limit=50)
+        # 使用异步版本获取批改历史
+        histories = await list_grading_history_async(class_id=class_id, limit=50)
         for history in histories:
             class_ids = history.class_ids or []
             if isinstance(class_ids, str):
@@ -1553,11 +1561,11 @@ async def get_grading_history(
 async def get_grading_history_detail(import_id: str):
     """Get grading history detail - 优先从 PostgreSQL 读取"""
 
-    # 1. 优先尝试 PostgreSQL
+    # 1. 优先尝试 PostgreSQL (使用异步版本)
     if db.is_available:
         try:
             # 尝试通过 batch_id 查找（import_id 可能是 history.id 或 batch_id）
-            pg_history = get_grading_history_record(import_id)
+            pg_history = await get_grading_history_async(import_id)
             if pg_history:
                 class_ids = pg_history.class_ids or []
                 result_data = pg_history.result_data or {}
@@ -1592,7 +1600,8 @@ async def get_grading_history_detail(import_id: str):
                     "revoked_at": None,
                 }
                 items = []
-                pg_results = get_student_results(pg_history.id)
+                # 使用异步版本获取学生结果
+                pg_results = await get_student_results_async(pg_history.id)
                 for idx, item in enumerate(pg_results):
                     result = item.result_data or {}
                     if isinstance(result, str):
