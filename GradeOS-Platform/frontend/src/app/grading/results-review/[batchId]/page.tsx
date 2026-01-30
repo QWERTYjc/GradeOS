@@ -58,11 +58,42 @@ export default function ResultsReviewPage() {
         const response = await gradingApi.getActiveRuns(user?.id);
         const latest = pickLatestRun(response.runs || [], true);
         if (!latest) {
-          if (active) {
-            setError('No grading runs found yet.');
-            setLoading(false);
+          try {
+            const history = await gradingApi.getGradingHistory();
+            const records = history.records || [];
+            if (records.length === 0) {
+              if (active) {
+                setError('No grading runs found yet.');
+                setLoading(false);
+              }
+              return;
+            }
+            const parseTime = (value?: string) => {
+              const ts = Date.parse(value || '');
+              return Number.isNaN(ts) ? 0 : ts;
+            };
+            const latestRecord = records.reduce((current, record) => {
+              const currentTime = parseTime(current?.created_at);
+              const recordTime = parseTime(record.created_at);
+              return recordTime >= currentTime ? record : current;
+            }, records[0]);
+            const resolvedBatchId = latestRecord.batch_id || latestRecord.import_id;
+            if (!resolvedBatchId) {
+              if (active) {
+                setError('No grading runs found yet.');
+                setLoading(false);
+              }
+              return;
+            }
+            router.replace(`/grading/results-review/${resolvedBatchId}`);
+            return;
+          } catch (historyError) {
+            if (active) {
+              setError(historyError instanceof Error ? historyError.message : 'Failed to resolve latest run.');
+              setLoading(false);
+            }
+            return;
           }
-          return;
         }
         if (latest.status === 'completed') {
           router.replace(`/grading/results-review/${latest.batch_id}`);

@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
@@ -33,7 +33,7 @@ export default function GradingHistoryPage() {
         setError('');
       })
       .catch((err) => {
-        setError(err instanceof Error ? err.message : '加载批改历史失败');
+        setError(err instanceof Error ? err.message : '鍔犺浇鎵规敼鍘嗗彶澶辫触');
       })
       .finally(() => setLoading(false));
   };
@@ -48,14 +48,14 @@ export default function GradingHistoryPage() {
       await gradingApi.revokeGradingImport(importId);
       fetchHistory(filterClass);
     } catch (err) {
-      setError(err instanceof Error ? err.message : '撤回失败');
+      setError(err instanceof Error ? err.message : '鎾ゅ洖澶辫触');
     } finally {
       setRevokingId(null);
     }
   };
 
   const statusLabel = (record: GradingImportRecord) => {
-    return record.status === 'revoked' ? '已撤回' : '已导入';
+    return record.status === 'revoked' ? '宸叉挙鍥? : '宸插鍏?;
   };
 
   const filteredRecords = useMemo(() => records, [records]);
@@ -67,17 +67,16 @@ export default function GradingHistoryPage() {
           <div className="flex flex-col gap-2">
             <p className="text-xs uppercase tracking-[0.3em] text-slate-400">History</p>
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <h1 className="text-2xl font-semibold text-slate-800">批改历史</h1>
+              <h1 className="text-2xl font-semibold text-slate-800">鎵规敼鍘嗗彶</h1>
               <button
                 onClick={() => router.push('/teacher/grading/import')}
                 className="rounded-full bg-slate-900 px-5 py-2 text-sm font-semibold text-white shadow hover:bg-slate-800"
               >
-                导入批改结果
+                瀵煎叆鎵规敼缁撴灉
               </button>
             </div>
             <p className="text-sm text-slate-500">
-              查看已导入的批改记录，支持按班级筛选与撤回记录。
-            </p>
+              鏌ョ湅宸插鍏ョ殑鎵规敼璁板綍锛屾敮鎸佹寜鐝骇绛涢€変笌鎾ゅ洖璁板綍銆?            </p>
           </div>
           <div className="flex flex-wrap gap-2">
             <button
@@ -86,7 +85,7 @@ export default function GradingHistoryPage() {
                 !filterClass ? 'bg-emerald-500 text-white' : 'border border-slate-200 text-slate-600'
               }`}
             >
-              全部班级
+              鍏ㄩ儴鐝骇
             </button>
             {classes.map((cls) => (
               <button
@@ -115,25 +114,25 @@ export default function GradingHistoryPage() {
             <table className="w-full text-sm">
               <thead className="border-b border-slate-200 bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
                 <tr>
-                  <th className="px-4 py-3">批改时间</th>
-                  <th className="px-4 py-3">班级 / 作业</th>
-                  <th className="px-4 py-3">涉及学生</th>
-                  <th className="px-4 py-3">状态</th>
-                  <th className="px-4 py-3 text-right">操作</th>
+                  <th className="px-4 py-3">鎵规敼鏃堕棿</th>
+                  <th className="px-4 py-3">鐝骇 / 浣滀笟</th>
+                  <th className="px-4 py-3">娑夊強瀛︾敓</th>
+                  <th className="px-4 py-3">鐘舵€?/th>
+                  <th className="px-4 py-3 text-right">鎿嶄綔</th>
                 </tr>
               </thead>
               <tbody>
                 {loading && (
                   <tr>
                     <td className="px-4 py-4 text-slate-500" colSpan={5}>
-                      加载中...
+                      鍔犺浇涓?..
                     </td>
                   </tr>
                 )}
                 {!loading && filteredRecords.length === 0 && (
                   <tr>
                     <td className="px-4 py-6 text-center text-slate-400" colSpan={5}>
-                      暂无批改记录
+                      鏆傛棤鎵规敼璁板綍
                     </td>
                   </tr>
                 )}
@@ -142,7 +141,7 @@ export default function GradingHistoryPage() {
                     <td className="px-4 py-4 text-slate-700">{record.created_at}</td>
                     <td className="px-4 py-4 text-slate-700">
                       <div className="font-semibold">{record.class_name || record.class_id}</div>
-                      <div className="text-xs text-slate-400">{record.assignment_title || '未绑定作业'}</div>
+                      <div className="text-xs text-slate-400">{record.assignment_title || '鏈粦瀹氫綔涓?}</div>
                     </td>
                     <td className="px-4 py-4 text-slate-700">{record.student_count}</td>
                     <td className="px-4 py-4 text-slate-700">{statusLabel(record)}</td>
@@ -152,13 +151,13 @@ export default function GradingHistoryPage() {
                           onClick={() => router.push(`/teacher/grading/history/${record.import_id}`)}
                           className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600 hover:border-slate-300"
                         >
-                          查看详情
+                          鏌ョ湅璇︽儏
                         </button>
                         <button
-                          onClick={() => router.push(`/grading/results-review/${record.batch_id}`)}
+                          onClick={() => router.push(`/grading/results-review/${record.batch_id || record.import_id}`)}
                           className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600 hover:border-slate-300"
                         >
-                          人工确认
+                          浜哄伐纭
                         </button>
                         {record.status !== 'revoked' && (
                           <button
@@ -166,7 +165,7 @@ export default function GradingHistoryPage() {
                             disabled={revokingId === record.import_id}
                             className="rounded-full border border-rose-200 bg-rose-50 px-3 py-1 text-xs font-semibold text-rose-600 hover:border-rose-300 disabled:opacity-60"
                           >
-                            {revokingId === record.import_id ? '撤回中...' : '撤回'}
+                            {revokingId === record.import_id ? '鎾ゅ洖涓?..' : '鎾ゅ洖'}
                           </button>
                         )}
                       </div>
@@ -181,3 +180,4 @@ export default function GradingHistoryPage() {
     </DashboardLayout>
   );
 }
+

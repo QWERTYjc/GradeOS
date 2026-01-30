@@ -1235,6 +1235,21 @@ async def stream_langgraph_progress(
                     except Exception as e:
                         logger.debug(f"获取最终输出失败: {e}")
 
+                if not student_results:
+                    grading_results = final_state.get("grading_results") or []
+                    if not grading_results:
+                        try:
+                            final_output = await orchestrator.get_final_output(run_id)
+                            if final_output:
+                                grading_results = final_output.get("grading_results") or []
+                        except Exception as e:
+                            logger.debug(f"鑾峰彇 grading_results 澶辫触: {e}")
+                    if grading_results:
+                        student_results = _build_student_results_from_grading_results(grading_results)
+                        logger.info(
+                            f"浠?grading_results 鎭㈠ {len(student_results)} 涓鐢熺粨鏋?"
+                        )
+
                 formatted_results = _format_results_for_frontend(student_results)
                 class_report = final_state.get("class_report")
                 if not class_report and final_state.get("export_data"):
@@ -1699,6 +1714,20 @@ def _resolve_question_confidence(
     return max(0.0, min(1.0, confidence))
 
 
+def _build_student_results_from_grading_results(
+    grading_results: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    if not grading_results:
+        return []
+    try:
+        from src.graphs.batch_grading import _build_student_results_from_page_results
+
+        return _build_student_results_from_page_results(grading_results)
+    except Exception as exc:
+        logger.debug(f"Failed to rebuild student_results from grading_results: {exc}")
+        return []
+
+
 def _merge_question_results(existing: Dict[str, Any], incoming: Dict[str, Any]) -> Dict[str, Any]:
     merged = existing.copy()
     merged["score"] = max(_safe_float(existing.get("score", 0)), _safe_float(incoming.get("score", 0)))
@@ -1944,9 +1973,15 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
                     }
                 )
         # å…¼å®¹ export_data çš„ question_results
-        elif r.get("question_results"):
-            for q in r.get("question_results", []):
-                scoring_results = q.get("scoring_point_results") or q.get("scoring_results") or []
+        elif r.get("question_results") or r.get("questionResults"):
+            raw_question_results = r.get("question_results") or r.get("questionResults") or []
+            for q in raw_question_results:
+                scoring_results = (
+                    q.get("scoring_point_results")
+                    or q.get("scoring_results")
+                    or q.get("scoringPointResults")
+                    or []
+                )
                 score_value = _safe_float(q.get("score", 0))
                 max_score_value = _resolve_question_max_score(q, scoring_results)
                 page_indices = _resolve_page_indices(q)
@@ -1958,7 +1993,7 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
                 )
                 question_results.append(
                     {
-                        "questionId": str(q.get("question_id", "")),
+                        "questionId": str(q.get("question_id") or q.get("questionId") or ""),
                         "score": score_value,
                         "maxScore": max_score_value,
                         "feedback": q.get("feedback", ""),
@@ -1989,7 +2024,7 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
                         ),
                         "honesty_note": q.get("honesty_note") or q.get("honestyNote"),
                         "typo_notes": q.get("typo_notes") or q.get("typoNotes"),
-                        "studentAnswer": q.get("student_answer", ""),
+                        "studentAnswer": q.get("student_answer") or q.get("studentAnswer") or "",
                         "question_type": q.get("question_type") or q.get("questionType"),
                         "isCorrect": q.get("is_correct", False),
                         "scoring_point_results": scoring_results,
@@ -2649,10 +2684,21 @@ async def get_results_review_context(
             if export_students:
                 student_results = export_students
             else:
-                try:
-                    return await _load_from_db()
-                except HTTPException:
-                    student_results = []
+                grading_results = state.get("grading_results") or []
+                if not grading_results:
+                    try:
+                        final_output = await orchestrator.get_final_output(run_id)
+                        if final_output:
+                            grading_results = final_output.get("grading_results") or []
+                    except Exception as exc:
+                        logger.debug(f"Failed to load grading_results from orchestrator: {exc}")
+                if grading_results:
+                    student_results = _build_student_results_from_grading_results(grading_results)
+                if not student_results:
+                    try:
+                        return await _load_from_db()
+                    except HTTPException:
+                        student_results = []
 
         cached = batch_image_cache.get(batch_id, {})
         cached_images = cached.get("images_ready", {}).get("images") if cached else None
@@ -2820,6 +2866,7 @@ async def get_full_batch_results(
         cross_page_questions = state.get("cross_page_questions", []) or []
         parsed_rubric = state.get("parsed_rubric", {}) or {}
         class_report = state.get("class_report") or state.get("export_data", {}).get("class_report")
+        final_output: Optional[Dict[str, Any]] = None
         if not student_results or not parsed_rubric:
             final_output = await orchestrator.get_final_output(run_id)
             if final_output:
@@ -2828,6 +2875,13 @@ async def get_full_batch_results(
                 ) or []
                 parsed_rubric = parsed_rubric or final_output.get("parsed_rubric", {}) or {}
                 cross_page_questions = cross_page_questions or final_output.get("cross_page_questions", []) or []
+
+        if not student_results:
+            grading_results = state.get("grading_results") or []
+            if not grading_results and final_output:
+                grading_results = final_output.get("grading_results") or []
+            if grading_results:
+                student_results = _build_student_results_from_grading_results(grading_results)
 
         # 如果 orchestrator 返回空结果，回退到数据库查询
         if not student_results:

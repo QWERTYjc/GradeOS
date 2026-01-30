@@ -196,7 +196,34 @@ export default function GlobalNavLauncher() {
           return null;
         }
       }
-      if (runs.length === 0) return null;
+      if (runs.length === 0) {
+        try {
+          const history = await gradingApi.getGradingHistory();
+          const records = history.records || [];
+          if (records.length === 0) return null;
+          const parseTime = (value?: string) => {
+            const ts = Date.parse(value || '');
+            return Number.isNaN(ts) ? 0 : ts;
+          };
+          const latestRecord = records.reduce((latest, record) => {
+            const latestTime = latest ? parseTime(latest.created_at) : 0;
+            const recordTime = parseTime(record.created_at);
+            return recordTime >= latestTime ? record : latest;
+          }, records[0]);
+          const resolvedBatchId = latestRecord.batch_id || latestRecord.import_id;
+          if (!resolvedBatchId) return null;
+          return {
+            batch_id: resolvedBatchId,
+            status: latestRecord.status || 'completed',
+            class_id: latestRecord.class_id || undefined,
+            homework_id: latestRecord.assignment_id || undefined,
+            created_at: latestRecord.created_at,
+            completed_at: latestRecord.created_at,
+          } as ActiveRunItem;
+        } catch {
+          return null;
+        }
+      }
 
       const preferCompleted = target === 'results';
       const filtered = preferCompleted
