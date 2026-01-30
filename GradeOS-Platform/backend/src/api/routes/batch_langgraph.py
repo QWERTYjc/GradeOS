@@ -2522,6 +2522,11 @@ async def get_full_batch_results(
                 parsed_rubric = parsed_rubric or final_output.get("parsed_rubric", {}) or {}
                 cross_page_questions = cross_page_questions or final_output.get("cross_page_questions", []) or []
 
+        # 如果 orchestrator 返回空结果，回退到数据库查询
+        if not student_results:
+            logger.info(f"Orchestrator 返回空结果，回退到数据库查询: batch_id={batch_id}")
+            return _load_from_db()
+
         return {
             "batch_id": batch_id,
             "status": run_info.status.value,
