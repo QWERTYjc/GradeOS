@@ -1324,14 +1324,15 @@ async def stream_langgraph_progress(
                             result.get("studentSummary") or result.get("student_summary") or {}
                         )
                         self_audit = result.get("selfAudit") or result.get("self_audit") or {}
+                        student_id_value = student_id if class_id else None
                         student_result = StudentGradingResult(
-                            id=str(uuid.uuid4()),
+                            id=_make_student_result_id(history_id, student_name, student_id_value),
                             grading_history_id=history_id,
                             student_key=student_name,
                             score=result.get("score"),
                             max_score=result.get("maxScore") or result.get("max_score"),
                             class_id=class_id,
-                            student_id=student_id if class_id else None,
+                            student_id=student_id_value,
                             summary=(
                                 student_summary.get("overall")
                                 if isinstance(student_summary, dict)
@@ -1558,6 +1559,15 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
         return default
 
 
+def _make_student_result_id(
+    grading_history_id: str,
+    student_key: Optional[str],
+    student_id: Optional[str] = None,
+) -> str:
+    seed = student_id or student_key or "unknown"
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"{grading_history_id}:{seed}"))
+
+
 def _normalize_annotation_payload(value: Any) -> Optional[Dict[str, Any]]:
     if not value:
         return None
@@ -1575,6 +1585,170 @@ def _normalize_annotation_payload(value: Any) -> Optional[Dict[str, Any]]:
         except Exception:
             return None
     return None
+
+
+def _resolve_page_indices(question: Dict[str, Any], fallback_page_index: Optional[int] = None) -> List[int]:
+    pages = question.get("page_indices") or question.get("pageIndices")
+    if not pages:
+        page_index = question.get("page_index")
+        if page_index is None:
+            page_index = question.get("pageIndex")
+        if page_index is None:
+            page_index = fallback_page_index
+        if page_index is not None:
+            pages = [page_index]
+    if isinstance(pages, (list, tuple)):
+        return [int(p) for p in pages if isinstance(p, (int, float, str)) and str(p).strip() != ""]
+    if pages is None:
+        return []
+    try:
+        return [int(pages)]
+    except (TypeError, ValueError):
+        return []
+
+
+def _resolve_question_confidence(
+    question: Dict[str, Any],
+    scoring_results: List[Dict[str, Any]],
+    *,
+    score: float,
+    max_score: float,
+) -> float:
+    raw_confidence = question.get("confidence")
+    if raw_confidence is None:
+        raw_confidence = question.get("confidence_score")
+        if raw_confidence is None:
+            raw_confidence = question.get("confidenceScore")
+        if raw_confidence is None:
+            raw_confidence = question.get("self_critique_confidence")
+        if raw_confidence is None:
+            raw_confidence = question.get("selfCritiqueConfidence")
+    confidence = _safe_float(raw_confidence, default=0.0)
+    has_signal = bool(
+        scoring_results
+        or question.get("student_answer")
+        or question.get("studentAnswer")
+        or question.get("feedback")
+    )
+    if confidence <= 0 and has_signal:
+        if max_score > 0:
+            confidence = max(0.1, min(1.0, score / max_score))
+        elif scoring_results:
+            total_points = 0.0
+            awarded_points = 0.0
+            for item in scoring_results:
+                max_points = item.get("max_points") or item.get("maxPoints")
+                if max_points is None:
+                    scoring_point = item.get("scoring_point") or item.get("scoringPoint") or {}
+                    max_points = scoring_point.get("score")
+                total_points += _safe_float(max_points, default=0.0)
+                awarded_points += _safe_float(item.get("awarded") or item.get("score"), default=0.0)
+            if total_points > 0:
+                confidence = max(0.1, min(1.0, awarded_points / total_points))
+    return max(0.0, min(1.0, confidence))
+
+
+def _merge_question_results(existing: Dict[str, Any], incoming: Dict[str, Any]) -> Dict[str, Any]:
+    merged = existing.copy()
+    merged["score"] = max(_safe_float(existing.get("score", 0)), _safe_float(incoming.get("score", 0)))
+    merged["maxScore"] = max(
+        _safe_float(existing.get("maxScore", 0)),
+        _safe_float(incoming.get("maxScore", 0)),
+    )
+    if not merged.get("feedback") and incoming.get("feedback"):
+        merged["feedback"] = incoming.get("feedback")
+    if not merged.get("studentAnswer") and incoming.get("studentAnswer"):
+        merged["studentAnswer"] = incoming.get("studentAnswer")
+    merged_conf = _safe_float(existing.get("confidence", 0))
+    incoming_conf = _safe_float(incoming.get("confidence", 0))
+    merged["confidence"] = max(merged_conf, incoming_conf)
+    pages = set(existing.get("page_indices") or existing.get("pageIndices") or [])
+    pages.update(incoming.get("page_indices") or incoming.get("pageIndices") or [])
+    if pages:
+        merged["page_indices"] = sorted(pages)
+        merged["pageIndices"] = sorted(pages)
+    if not merged.get("scoring_point_results") and incoming.get("scoring_point_results"):
+        merged["scoring_point_results"] = incoming.get("scoring_point_results")
+    if not merged.get("annotations") and incoming.get("annotations"):
+        merged["annotations"] = incoming.get("annotations")
+    if not merged.get("steps") and incoming.get("steps"):
+        merged["steps"] = incoming.get("steps")
+    return merged
+
+
+def _dedupe_formatted_results(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    grouped: Dict[str, Dict[str, Any]] = {}
+    for result in results:
+        student_id = result.get("studentId") or result.get("student_id")
+        student_name = result.get("studentName") or result.get("student_name") or ""
+        student_key = result.get("studentKey") or result.get("student_key")
+        start_page = result.get("startPage")
+        end_page = result.get("endPage")
+        key: Optional[str] = None
+        if student_id:
+            key = f"id:{student_id}"
+        elif student_name and (start_page is not None or end_page is not None):
+            key = f"name:{student_name}:{start_page}-{end_page}"
+        elif student_name:
+            key = f"name:{student_name}"
+        elif student_key:
+            key = f"key:{student_key}"
+        if not key:
+            key = str(len(grouped))
+        entry = grouped.get(key)
+        if not entry:
+            grouped[key] = result
+            continue
+
+        merged = entry.copy()
+        merged_questions: Dict[str, Dict[str, Any]] = {}
+        for q in entry.get("questionResults", []) or []:
+            qid = str(q.get("questionId") or q.get("question_id") or "")
+            if not qid:
+                qid = f"idx:{len(merged_questions)}"
+            merged_questions[qid] = q
+        for q in result.get("questionResults", []) or []:
+            qid = str(q.get("questionId") or q.get("question_id") or "")
+            if not qid:
+                qid = f"idx:{len(merged_questions)}"
+            if qid in merged_questions:
+                merged_questions[qid] = _merge_question_results(merged_questions[qid], q)
+            else:
+                merged_questions[qid] = q
+        merged["questionResults"] = list(merged_questions.values())
+
+        merged_start = merged.get("startPage")
+        merged_end = merged.get("endPage")
+        candidate_start = result.get("startPage")
+        candidate_end = result.get("endPage")
+        if merged_start is not None and candidate_start is not None:
+            merged["startPage"] = min(merged_start, candidate_start)
+        elif merged_start is None and candidate_start is not None:
+            merged["startPage"] = candidate_start
+        if merged_end is not None and candidate_end is not None:
+            merged["endPage"] = max(merged_end, candidate_end)
+        elif merged_end is None and candidate_end is not None:
+            merged["endPage"] = candidate_end
+
+        if merged.get("startPage") is not None:
+            if merged.get("endPage") is not None and merged["endPage"] != merged["startPage"]:
+                merged["pageRange"] = f"{merged['startPage'] + 1}-{merged['endPage'] + 1}"
+            else:
+                merged["pageRange"] = str(merged["startPage"] + 1)
+
+        question_scores = [
+            _safe_float(q.get("score", 0)) for q in merged.get("questionResults", []) or []
+        ]
+        question_max = [
+            _safe_float(q.get("maxScore", 0)) for q in merged.get("questionResults", []) or []
+        ]
+        if question_scores:
+            merged["score"] = sum(question_scores)
+        if question_max:
+            merged["maxScore"] = sum(question_max)
+
+        grouped[key] = merged
+    return list(grouped.values())
 
 
 def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
@@ -1605,13 +1779,22 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
         if r.get("question_details"):
             for q in r.get("question_details", []):
                 scoring_results = q.get("scoring_point_results") or q.get("scoring_results") or []
+                score_value = _safe_float(q.get("score", 0))
+                max_score_value = _safe_float(q.get("max_score", 0))
+                page_indices = _resolve_page_indices(q)
+                confidence = _resolve_question_confidence(
+                    q,
+                    scoring_results,
+                    score=score_value,
+                    max_score=max_score_value,
+                )
                 question_results.append(
                     {
                         "questionId": str(q.get("question_id", "")),
-                        "score": q.get("score", 0),
-                        "maxScore": q.get("max_score", 0),
+                        "score": score_value,
+                        "maxScore": max_score_value,
                         "feedback": q.get("feedback", ""),
-                        "confidence": q.get("confidence", 0),
+                        "confidence": confidence,
                         "confidence_reason": q.get("confidence_reason")
                         or q.get("confidenceReason"),
                         "self_critique": q.get("self_critique") or q.get("selfCritique"),
@@ -1642,7 +1825,7 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
                         "question_type": q.get("question_type") or q.get("questionType"),
                         "isCorrect": q.get("is_correct", False),
                         "scoring_point_results": scoring_results,
-                        "page_indices": q.get("page_indices", []),
+                        "page_indices": page_indices,
                         "is_cross_page": q.get("is_cross_page", False),
                         "merge_source": q.get("merge_source"),
                         # 🔥 批注坐标字段
@@ -1655,13 +1838,22 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
         elif r.get("grading_results"):
             for q in r.get("grading_results", []):
                 scoring_results = q.get("scoring_point_results") or q.get("scoring_results") or []
+                score_value = _safe_float(q.get("score", 0))
+                max_score_value = _safe_float(q.get("max_score", 0))
+                page_indices = _resolve_page_indices(q)
+                confidence = _resolve_question_confidence(
+                    q,
+                    scoring_results,
+                    score=score_value,
+                    max_score=max_score_value,
+                )
                 question_results.append(
                     {
                         "questionId": str(q.get("question_id", "")),
-                        "score": q.get("score", 0),
-                        "maxScore": q.get("max_score", 0),
+                        "score": score_value,
+                        "maxScore": max_score_value,
                         "feedback": q.get("feedback", ""),
-                        "confidence": q.get("confidence", 0),
+                        "confidence": confidence,
                         "confidence_reason": q.get("confidence_reason")
                         or q.get("confidenceReason"),
                         "self_critique": q.get("self_critique") or q.get("selfCritique"),
@@ -1691,7 +1883,7 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
                         "studentAnswer": q.get("student_answer", ""),
                         "question_type": q.get("question_type") or q.get("questionType"),
                         "scoring_point_results": scoring_results,
-                        "page_indices": q.get("page_indices", []),
+                        "page_indices": page_indices,
                         "is_cross_page": q.get("is_cross_page", False),
                         "merge_source": q.get("merge_source"),
                         # 🔥 批注坐标字段
@@ -1704,13 +1896,22 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
         elif r.get("question_results"):
             for q in r.get("question_results", []):
                 scoring_results = q.get("scoring_point_results") or q.get("scoring_results") or []
+                score_value = _safe_float(q.get("score", 0))
+                max_score_value = _safe_float(q.get("max_score", 0))
+                page_indices = _resolve_page_indices(q)
+                confidence = _resolve_question_confidence(
+                    q,
+                    scoring_results,
+                    score=score_value,
+                    max_score=max_score_value,
+                )
                 question_results.append(
                     {
                         "questionId": str(q.get("question_id", "")),
-                        "score": q.get("score", 0),
-                        "maxScore": q.get("max_score", 0),
+                        "score": score_value,
+                        "maxScore": max_score_value,
                         "feedback": q.get("feedback", ""),
-                        "confidence": q.get("confidence", 0),
+                        "confidence": confidence,
                         "confidence_reason": q.get("confidence_reason")
                         or q.get("confidenceReason"),
                         "self_critique": q.get("self_critique") or q.get("selfCritique"),
@@ -1741,7 +1942,7 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
                         "question_type": q.get("question_type") or q.get("questionType"),
                         "isCorrect": q.get("is_correct", False),
                         "scoring_point_results": scoring_results,
-                        "page_indices": q.get("page_indices", []),
+                        "page_indices": page_indices,
                         "is_cross_page": q.get("is_cross_page", False),
                         "merge_source": q.get("merge_source"),
                         # 🔥 批注坐标字段
@@ -1759,16 +1960,22 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
                         scoring_results = (
                             q.get("scoring_point_results") or q.get("scoring_results") or []
                         )
-                        page_indices = q.get("page_indices")
-                        if not page_indices and page.get("page_index") is not None:
-                            page_indices = [page.get("page_index")]
+                        score_value = _safe_float(q.get("score", 0))
+                        max_score_value = _safe_float(q.get("max_score", 0))
+                        page_indices = _resolve_page_indices(q, page.get("page_index"))
+                        confidence = _resolve_question_confidence(
+                            q,
+                            scoring_results,
+                            score=score_value,
+                            max_score=max_score_value,
+                        )
                         question_results.append(
                             {
                                 "questionId": str(q.get("question_id", "")),
-                                "score": q.get("score", 0),
-                                "maxScore": q.get("max_score", 0),
+                                "score": score_value,
+                                "maxScore": max_score_value,
                                 "feedback": q.get("feedback", ""),
-                                "confidence": q.get("confidence", 0),
+                                "confidence": confidence,
                                 "confidence_reason": q.get("confidence_reason")
                                 or q.get("confidenceReason"),
                                 "self_critique": q.get("self_critique") or q.get("selfCritique"),
@@ -1882,26 +2089,35 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
                 draft_scoring_results = (
                     dq.get("scoring_point_results") or dq.get("scoring_results") or []
                 )
+                draft_score_value = _safe_float(dq.get("score", 0))
+                draft_max_score_value = _safe_float(dq.get("max_score", 0))
+                draft_page_indices = _resolve_page_indices(dq)
+                draft_confidence = _resolve_question_confidence(
+                    dq,
+                    draft_scoring_results,
+                    score=draft_score_value,
+                    max_score=draft_max_score_value,
+                )
                 draft_question_results.append(
                     {
                         "questionId": str(dq.get("question_id", "")),
-                        "score": dq.get("score", 0),
-                        "maxScore": dq.get("max_score", 0),
+                        "score": draft_score_value,
+                        "maxScore": draft_max_score_value,
                         "feedback": dq.get("feedback", ""),
-                        "confidence": dq.get("confidence", 0),
+                        "confidence": draft_confidence,
                         "self_critique": dq.get("self_critique") or dq.get("selfCritique"),
                         "self_critique_confidence": dq.get("self_critique_confidence")
                         or dq.get("selfCritiqueConfidence"),
                         "studentAnswer": dq.get("student_answer", ""),
                         "question_type": dq.get("question_type") or dq.get("questionType"),
                         "scoring_point_results": draft_scoring_results,
-                        "page_indices": dq.get("page_indices", []),
+                        "page_indices": draft_page_indices,
                     }
                 )
 
         # 计算页面范围显示字符串
-        start_page = r.get("start_page")
-        end_page = r.get("end_page")
+        start_page = r.get("start_page") if r.get("start_page") is not None else r.get("startPage")
+        end_page = r.get("end_page") if r.get("end_page") is not None else r.get("endPage")
         page_range = ""
         if start_page is not None:
             if end_page is not None and end_page != start_page:
@@ -1909,11 +2125,17 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
             else:
                 page_range = str(start_page + 1)
 
+        student_id = r.get("student_id") or r.get("studentId")
+        student_key = r.get("student_key") or r.get("studentKey")
         formatted.append(
             {
-                "studentName": r.get("student_key")
-                or r.get("student_name")
-                or r.get("student_id", "Unknown"),
+                "studentName": r.get("student_name")
+                or r.get("studentName")
+                or student_key
+                or student_id
+                or "Unknown",
+                "studentId": student_id,
+                "studentKey": student_key,
                 "score": final_score,
                 "maxScore": final_max if final_max > 0 else 0,
                 "startPage": start_page,
@@ -1956,6 +2178,7 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
         }
     )
     # #endregion
+    formatted = _dedupe_formatted_results(formatted)
     return formatted
 
 
@@ -2287,6 +2510,34 @@ async def get_results_review_context(
 ):
     """获取 results review 页面上下文"""
 
+    async def _load_answer_images_from_storage() -> List[str]:
+        if os.getenv("ENABLE_FILE_STORAGE", "false").lower() != "true":
+            return []
+        try:
+            file_storage = get_file_storage_service()
+            stored_files = await file_storage.list_batch_files(batch_id)
+            if not stored_files:
+                return []
+            answer_files = [
+                item
+                for item in stored_files
+                if item.metadata.get("type") == "answer"
+                or item.filename.startswith("answer_page")
+            ]
+            if not answer_files:
+                return []
+            answer_files.sort(key=lambda f: f.filename)
+            images: List[str] = []
+            for item in answer_files:
+                data = await file_storage.get_file(item.file_id)
+                if not data:
+                    continue
+                images.append(base64.b64encode(data).decode("utf-8"))
+            return images
+        except Exception as exc:
+            logger.debug(f"Failed to load answer images from storage: {exc}")
+            return []
+
     async def _load_from_db() -> ResultsReviewContextResponse:
         """从数据库加载批改结果"""
         history = await _maybe_await(get_grading_history(batch_id))
@@ -2312,12 +2563,13 @@ async def get_results_review_context(
                 }
             raw_results.append(data)
 
+        answer_images = await _load_answer_images_from_storage()
         return ResultsReviewContextResponse(
             batch_id=batch_id,
             status=history.status,
             current_stage=None,
             student_results=_format_results_for_frontend(raw_results),
-            answer_images=[],
+            answer_images=answer_images,
         )
 
     try:
@@ -2364,6 +2616,8 @@ async def get_results_review_context(
                         answer_images.append(img)
             except Exception as exc:
                 logger.debug(f"Failed to convert answer images: {exc}")
+        if not answer_images:
+            answer_images = await _load_answer_images_from_storage()
         return ResultsReviewContextResponse(
             batch_id=batch_id,
             status=run_info.status.value if run_info.status else None,
@@ -2877,14 +3131,15 @@ async def submit_results_review(
                         updated_scores.append(total_score)
                         updated_keys.add(student_key)
 
+                        student_id_value = existing_row.student_id if existing_row else None
                         student_result = StudentGradingResult(
-                            id=existing_row.id if existing_row else str(uuid.uuid4()),
+                            id=existing_row.id if existing_row else _make_student_result_id(history.id, student_key, student_id_value),
                             grading_history_id=history.id,
                             student_key=student_key,
                             score=total_score,
                             max_score=total_max or None,
                             class_id=existing_row.class_id if existing_row else None,
-                            student_id=existing_row.student_id if existing_row else None,
+                            student_id=student_id_value,
                             summary=existing_row.summary if existing_row else None,
                             self_report=existing_row.self_report if existing_row else None,
                             result_data=existing_data,

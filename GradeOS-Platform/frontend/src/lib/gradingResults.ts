@@ -155,9 +155,18 @@ export const normalizeStudentResults = (raw: RawObject[]): StudentResult[] => {
           })(),
           honestyNote: (q.honestyNote || q.honesty_note) as string | undefined,
           pageIndices: (() => {
-            const rawPages = (q.page_indices || q.pageIndices) as unknown;
-            if (!Array.isArray(rawPages)) return undefined;
-            return (rawPages as unknown[]).map((v) => Number(v));
+            const rawPages = (q.page_indices ?? q.pageIndices) as unknown;
+            if (Array.isArray(rawPages)) {
+              return (rawPages as unknown[]).map((v) => Number(v));
+            }
+            if (rawPages !== undefined && rawPages !== null) {
+              return [Number(rawPages)];
+            }
+            const singlePage = (q.page_index ?? q.pageIndex) as unknown;
+            if (singlePage !== undefined && singlePage !== null) {
+              return [Number(singlePage)];
+            }
+            return undefined;
           })(),
           isCrossPage: (q.is_cross_page || q.isCrossPage) as boolean | undefined,
           mergeSource: (() => {
@@ -201,7 +210,13 @@ export const normalizeStudentResults = (raw: RawObject[]): StudentResult[] => {
       })
       : [];
 
-    const studentNameRaw = r.studentName || r.student_name || r.student_key || 'Unknown';
+    const studentNameRaw =
+      r.studentName ||
+      r.student_name ||
+      r.student_key ||
+      r.studentId ||
+      r.student_id ||
+      'Unknown';
     const scoreRaw = r.score ?? r.total_score ?? 0;
     const maxScoreRaw = r.maxScore ?? r.max_score ?? r.max_total_score ?? 100;
     return {
@@ -211,8 +226,8 @@ export const normalizeStudentResults = (raw: RawObject[]): StudentResult[] => {
       gradingMode: (r.gradingMode || r.grading_mode) as string | undefined,
       percentage: r.percentage as number | undefined,
       totalRevisions: (r.totalRevisions ?? r.total_revisions) as number | undefined,
-      startPage: (r.startPage || r.start_page) as number | undefined,
-      endPage: (r.endPage || r.end_page) as number | undefined,
+      startPage: (r.startPage ?? r.start_page) as number | undefined,
+      endPage: (r.endPage ?? r.end_page) as number | undefined,
       confidence: r.confidence as number | undefined,
       needsConfirmation: (r.needsConfirmation ?? r.needs_confirmation) as boolean | undefined,
       studentSummary: (r.studentSummary || r.student_summary) as any,

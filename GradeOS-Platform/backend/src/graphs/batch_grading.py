@@ -305,6 +305,13 @@ def _coerce_int(value: Any) -> Optional[int]:
         return None
 
 
+def _first_not_none(*values: Any) -> Any:
+    for value in values:
+        if value is not None:
+            return value
+    return None
+
+
 def _sanitize_pages(raw_pages: Any, total_pages: int) -> List[int]:
     if not isinstance(raw_pages, (list, tuple)):
         return []
@@ -369,8 +376,16 @@ def _normalize_manual_boundaries(raw: Any, total_pages: int) -> List[Dict[str, A
 
         pages = entry.get("pages") or entry.get("page_indices") or entry.get("pageIndices")
         if pages is None:
-            start = entry.get("start_page") or entry.get("startPage") or entry.get("start")
-            end = entry.get("end_page") or entry.get("endPage") or entry.get("end")
+            start = _first_not_none(
+                entry.get("start_page"),
+                entry.get("startPage"),
+                entry.get("start"),
+            )
+            end = _first_not_none(
+                entry.get("end_page"),
+                entry.get("endPage"),
+                entry.get("end"),
+            )
             start_idx = _coerce_int(start) if start is not None else None
             end_idx = _coerce_int(end) if end is not None else None
             if start_idx is not None and end_idx is not None:
@@ -966,17 +981,17 @@ def grading_fanout_router(state: BatchGradingGraphState) -> List[Send]:
                 mapping.get("pages") or mapping.get("page_indices") or mapping.get("pageIndices")
             )
             if pages is None:
-                start_idx = (
-                    mapping.get("start_index")
-                    or mapping.get("startIndex")
-                    or mapping.get("start_page")
-                    or mapping.get("startPage")
+                start_idx = _first_not_none(
+                    mapping.get("start_index"),
+                    mapping.get("startIndex"),
+                    mapping.get("start_page"),
+                    mapping.get("startPage"),
                 )
-                end_idx = (
-                    mapping.get("end_index")
-                    or mapping.get("endIndex")
-                    or mapping.get("end_page")
-                    or mapping.get("endPage")
+                end_idx = _first_not_none(
+                    mapping.get("end_index"),
+                    mapping.get("endIndex"),
+                    mapping.get("end_page"),
+                    mapping.get("endPage"),
                 )
                 start_page = _coerce_int(start_idx) if start_idx is not None else None
                 end_page = _coerce_int(end_idx) if end_idx is not None else None
@@ -985,14 +1000,20 @@ def grading_fanout_router(state: BatchGradingGraphState) -> List[Send]:
             if pages:
                 pages_list = list(pages) if not isinstance(pages, list) else pages
                 if pages_list:
+                    student_name = mapping.get("student_name") or mapping.get("studentName")
+                    student_id = mapping.get("student_id") or mapping.get("studentId")
+                    student_key = (
+                        mapping.get("student_key")
+                        or mapping.get("studentKey")
+                        or student_name
+                        or student_id
+                        or f"学生{idx+1}"
+                    )
                     student_boundaries.append(
                         {
-                            "student_key": mapping.get("student_key")
-                            or mapping.get("studentKey")
-                            or f"学生{idx+1}",
-                            "student_id": mapping.get("student_id") or mapping.get("studentId"),
-                            "student_name": mapping.get("student_name")
-                            or mapping.get("studentName"),
+                            "student_key": student_key,
+                            "student_id": student_id,
+                            "student_name": student_name,
                             "start_page": min(pages_list),
                             "end_page": max(pages_list),
                             "pages": sorted(pages_list),
@@ -1029,6 +1050,8 @@ def grading_fanout_router(state: BatchGradingGraphState) -> List[Send]:
         sends = []
         for batch_idx, boundary in enumerate(student_boundaries):
             student_key = boundary.get("student_key", f"student_{batch_idx}")
+            student_name = boundary.get("student_name")
+            student_id = boundary.get("student_id")
             pages = boundary.get("pages")
             if pages:
                 page_indices = sorted(list(pages))
@@ -1054,6 +1077,8 @@ def grading_fanout_router(state: BatchGradingGraphState) -> List[Send]:
                 "batch_index": batch_idx,
                 "total_batches": num_batches,
                 "student_key": student_key,
+                "student_name": student_name,
+                "student_id": student_id,
                 "page_indices": page_indices,
                 "images": batch_images,
                 "rubric": rubric,
@@ -2155,6 +2180,8 @@ async def _grade_batch_node_impl(state: Dict[str, Any]) -> Dict[str, Any]:
     retry_count = state.get("retry_count", 0)
     max_retries = state.get("max_retries", 2)
     batch_student_key = state.get("student_key") or f"Student {batch_index + 1}"
+    batch_student_name = state.get("student_name")
+    batch_student_id = state.get("student_id")
 
     logger.info(
         f"[grade_batch] 开始批改批次 {batch_index + 1}/{total_batches}: "
@@ -2400,6 +2427,8 @@ async def _grade_batch_node_impl(state: Dict[str, Any]) -> Dict[str, Any]:
                         "feedback": student_result.get("overall_feedback", ""),
                         "question_details": question_details,
                         "student_key": batch_student_key,
+                        "student_name": batch_student_name,
+                        "student_id": batch_student_id,
                         "batch_index": batch_index,
                     }
                 )
@@ -2453,6 +2482,8 @@ async def _grade_batch_node_impl(state: Dict[str, Any]) -> Dict[str, Any]:
                             "question_details": [],
                             "question_numbers": [],
                             "student_key": batch_student_key,
+                            "student_name": batch_student_name,
+                            "student_id": batch_student_id,
                             "batch_index": batch_index,
                             "is_blank_page": bool(
                                 page_context and page_context.get("is_cover_page")
@@ -2484,6 +2515,8 @@ async def _grade_batch_node_impl(state: Dict[str, Any]) -> Dict[str, Any]:
                         "question_details": page_result.get("question_details", []),
                         "question_numbers": question_numbers or [],
                         "student_key": batch_student_key,
+                        "student_name": batch_student_name,
+                        "student_id": batch_student_id,
                         "batch_index": batch_index,
                         "is_blank_page": bool(page_context and page_context.get("is_cover_page")),
                     }
@@ -2708,6 +2741,11 @@ def _build_student_results_from_page_results(
         entry["page_results"].append(result)
         if result.get("grading_mode"):
             entry["grading_mode"] = result.get("grading_mode")
+
+        if result.get("student_id") and not entry.get("student_id"):
+            entry["student_id"] = result.get("student_id")
+        if result.get("student_name") and not entry.get("student_name"):
+            entry["student_name"] = result.get("student_name")
 
         if not entry["feedback"] and result.get("feedback"):
             entry["feedback"] = result.get("feedback")
