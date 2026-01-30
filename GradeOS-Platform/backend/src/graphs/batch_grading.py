@@ -1050,6 +1050,7 @@ def grading_fanout_router(state: BatchGradingGraphState) -> List[Send]:
     import copy
 
     batch_id = state["batch_id"]
+    inputs = state.get("inputs", {})
     processed_images = state.get("processed_images") or state.get("answer_images") or []
     rubric = state.get("rubric", "")
     parsed_rubric = state.get("parsed_rubric", {})
