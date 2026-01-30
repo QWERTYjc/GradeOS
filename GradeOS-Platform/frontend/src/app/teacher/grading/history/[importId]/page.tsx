@@ -42,6 +42,23 @@ export default function GradingHistoryDetailPage() {
         if (!active) return null;
         resolvedBatchId = detail.record.batch_id;
         setBatchId(resolvedBatchId);
+
+        // 如果没有 batch_id，直接使用 detail.items 中的结果
+        if (!resolvedBatchId || resolvedBatchId.trim() === '') {
+          // 从 items 构建 student_results
+          const studentResults = detail.items.map(item => ({
+            ...item.result,
+            studentName: item.student_name,
+            studentId: item.student_id,
+          }));
+
+          return Promise.resolve({
+            batch_id: importId,
+            student_results: studentResults,
+            answer_images: [],
+          });
+        }
+
         return gradingApi.getResultsReviewContext(resolvedBatchId);
       })
       .then((data: ResultsReviewContext | null) => {
