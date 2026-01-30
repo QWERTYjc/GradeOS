@@ -304,15 +304,15 @@ class LangGraphOrchestrator(Orchestrator):
                                 )
                             # #endregion
 
-                            # 只对 grading_results 使用追加逻辑（它有 operator.add reducer）
-                            # 其他字段（包括 student_results）使用覆盖逻辑
+                            # 对使用 operator.add reducer 的字段使用追加逻辑
+                            # grading_results 和 student_results 都使用了 operator.add reducer
                             if (
-                                key == "grading_results"
+                                key in ("grading_results", "student_results")
                                 and key in accumulated_state
                                 and isinstance(accumulated_state[key], list)
                                 and isinstance(value, list)
                             ):
-                                # 只有 grading_results 追加
+                                # 追加列表结果
                                 accumulated_state[key].extend(value)
                             else:
                                 # 其他类型：覆盖
@@ -1078,8 +1078,9 @@ class LangGraphOrchestrator(Orchestrator):
                     output = event_data.get("output", {})
                     if isinstance(output, dict):
                         for key, value in output.items():
+                            # 对使用 operator.add reducer 的字段使用追加逻辑
                             if (
-                                key == "grading_results"
+                                key in ("grading_results", "student_results")
                                 and key in accumulated_state
                                 and isinstance(accumulated_state[key], list)
                                 and isinstance(value, list)
