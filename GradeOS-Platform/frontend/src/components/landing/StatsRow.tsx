@@ -36,7 +36,132 @@ const techFeatures = [
   },
 ];
 
+// 统计数据
+const stats = [
+  {
+    icon: FileText,
+    value: 50000,
+    suffix: '+',
+    label: '已批改试卷',
+    color: '#3b82f6'
+  },
+  {
+    icon: Users,
+    value: 1200,
+    suffix: '+',
+    label: '教师用户',
+    color: '#06b6d4'
+  },
+  {
+    icon: Clock,
+    value: 90,
+    suffix: 's',
+    label: '平均批改时间',
+    color: '#8b5cf6'
+  },
+  {
+    icon: Award,
+    value: 98,
+    suffix: '%',
+    label: '准确率',
+    color: '#10b981'
+  },
+];
 
+// 数字计数动画组件
+const CountUp = ({
+  end,
+  suffix,
+  duration = 2000
+}: {
+  end: number;
+  suffix: string;
+  duration?: number;
+}) => {
+  const [count, setCount] = useState(0);
+  const countRef = useRef(0);
+  const startTimeRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    const animate = (timestamp: number) => {
+      if (!startTimeRef.current) startTimeRef.current = timestamp;
+      const progress = timestamp - startTimeRef.current;
+      const percentage = Math.min(progress / duration, 1);
+
+      // 使用缓动函数
+      const easeOutQuart = 1 - Math.pow(1 - percentage, 4);
+      const currentCount = Math.floor(easeOutQuart * end);
+
+      if (currentCount !== countRef.current) {
+        countRef.current = currentCount;
+        setCount(currentCount);
+      }
+
+      if (percentage < 1) {
+        requestAnimationFrame(animate);
+      } else {
+        setCount(end);
+      }
+    };
+
+    requestAnimationFrame(animate);
+
+    return () => {
+      startTimeRef.current = null;
+    };
+  }, [end, duration]);
+
+  return (
+    <span>
+      {count.toLocaleString()}{suffix}
+    </span>
+  );
+};
+
+// 统计卡片组件
+const StatCard = ({ stat, index, isInView }: { stat: typeof stats[0]; index: number; isInView: boolean }) => {
+  const Icon = stat.icon;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 30 }}
+      animate={isInView ? { opacity: 1, y: 0 } : {}}
+      transition={{ delay: index * 0.1, duration: 0.5 }}
+      className="relative group"
+    >
+      <div className="relative bg-white rounded-2xl p-6 border border-gray-100 shadow-sm hover:shadow-lg transition-all duration-300 hover:-translate-y-1">
+        {/* 图标 */}
+        <div
+          className="w-12 h-12 rounded-xl flex items-center justify-center mb-4 transition-transform group-hover:scale-110"
+          style={{ background: `${stat.color}15` }}
+        >
+          <Icon className="w-6 h-6" style={{ color: stat.color }} />
+        </div>
+
+        {/* 数值 */}
+        <div
+          className="text-4xl font-bold mb-2"
+          style={{ color: stat.color }}
+        >
+          {isInView ? (
+            <CountUp end={stat.value} suffix={stat.suffix} />
+          ) : (
+            `0${stat.suffix}`
+          )}
+        </div>
+
+        {/* 标签 */}
+        <div className="text-gray-600 text-sm">{stat.label}</div>
+
+        {/* 悬停装饰 */}
+        <div
+          className="absolute bottom-0 left-0 right-0 h-1 rounded-b-2xl opacity-0 group-hover:opacity-100 transition-opacity"
+          style={{ background: `linear-gradient(to right, ${stat.color}, ${stat.color}80)` }}
+        />
+      </div>
+    </motion.div>
+  );
+};
 
 // 技术特性卡片
 const TechFeatureCard = ({ feature, index }: { feature: typeof techFeatures[0]; index: number }) => {

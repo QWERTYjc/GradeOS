@@ -18,6 +18,8 @@ from src.utils.llm_thinking import split_thinking_content
 
 
 logger = logging.getLogger(__name__)
+# Stdout-visible workflow markers for Railway verification.
+workflow_logger = logging.getLogger("gradeos.workflow")
 
 
 @lru_cache(maxsize=1)
@@ -4391,9 +4393,11 @@ async def self_report_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     grading_mode = _resolve_grading_mode(state.get("inputs", {}), parsed_rubric)
 
     def _log_self_report_done(reason: str, count: int) -> None:
-        logger.info(
+        message = (
             f"[self_report] OK completed ({reason}): batch_id={batch_id}, students={count}"
         )
+        logger.info(message)
+        workflow_logger.info(message)
 
     # 获取科目（用于记忆隔离）
     # 科目来源优先级：state["subject"] > inputs["subject"] > "general"
@@ -4985,10 +4989,12 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     grading_mode = _resolve_grading_mode(state.get("inputs", {}), parsed_rubric)
 
     def _log_logic_review_done(reason: str, count: int, reviewed: int = 0) -> None:
-        logger.info(
+        message = (
             f"[logic_review] OK completed ({reason}): batch_id={batch_id}, "
             f"students={count}, reviewed={reviewed}"
         )
+        logger.info(message)
+        workflow_logger.info(message)
 
     # 获取记忆服务
     from src.services.grading_memory import get_memory_service, MemoryType, MemoryImportance
