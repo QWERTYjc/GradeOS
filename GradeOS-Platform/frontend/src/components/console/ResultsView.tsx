@@ -3,16 +3,16 @@
 import React, { useState, useContext, useMemo, useEffect, useCallback } from 'react';
 import { useConsoleStore, StudentResult, QuestionResult } from '@/store/consoleStore';
 import clsx from 'clsx';
-import { ArrowLeft, ChevronDown, ChevronUp, CheckCircle, XCircle, Download, GitMerge, AlertCircle, Layers, FileText, Info, X, AlertTriangle, BookOpen, ListOrdered, Pencil, Loader2 } from 'lucide-react';
+import { ArrowLeft, ChevronDown, ChevronUp, CheckCircle, XCircle, Download, GitMerge, AlertCircle, Layers, FileText, Info, X, AlertTriangle, BookOpen, ListOrdered, Loader2, Shield, Pencil } from 'lucide-react';
 import { CrownOutlined, BarChartOutlined, UsergroupAddOutlined, CheckCircleOutlined, ExclamationCircleOutlined, RocketOutlined } from '@ant-design/icons';
 import { Popover } from 'antd';
 import { motion, AnimatePresence } from 'framer-motion';
 import { RubricOverview } from './RubricOverview';
+import { GlassCard } from '@/components/design-system/GlassCard';
 import { AppContext, AppContextType } from '../bookscan/AppContext';
 import { MathText } from '@/components/common/MathText';
 import { SmoothButton } from '@/components/design-system/SmoothButton';
 import { gradingApi } from '@/services/api';
-import { renderAnnotationsToBase64 } from '@/services/annotationApi';
 import type { VisualAnnotation } from '@/types/annotation';
 import AnnotationCanvas from '@/components/grading/AnnotationCanvas';
 
@@ -461,45 +461,60 @@ const ResultCard: React.FC<ResultCardProps> = ({ result, rank, onExpand }) => {
     const pageRange = result.pageRange || result.pages || '';
 
     return (
-        <div
+        <GlassCard
             className={clsx(
-                'grid grid-cols-[56px_1fr_auto] items-center gap-4 px-4 py-3 border-b border-slate-100 hover:bg-slate-50/60 transition',
-                result.needsConfirmation && 'bg-amber-50/50'
+                'grid grid-cols-[56px_1fr_auto] items-center gap-4 px-4 py-3 border-b border-white/20 transition-all cursor-pointer mb-3',
+                result.needsConfirmation ? 'bg-amber-50/40 border-amber-200/50' : 'bg-white/40 hover:bg-white/60'
             )}
             onClick={() => onExpand?.()}
+            hoverEffect={true}
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            layout
         >
-            <div className="h-10 w-10 rounded-md border border-slate-200 bg-slate-50 text-slate-700 font-mono font-bold text-sm flex items-center justify-center">
+            <div className='h-10 w-10 rounded-md border border-slate-200 bg-white/50 text-slate-700 font-mono font-bold text-sm flex items-center justify-center'>
                 {rank}
             </div>
 
-            <div className="min-w-0">
-                <div className="flex items-center gap-3">
-                    <h3 className="font-semibold text-slate-900 truncate">{result.studentName}</h3>
-                    <span className="text-[11px] font-medium text-slate-500">{gradeLabel}</span>
+            <div className='min-w-0'>
+                <div className='flex items-center gap-3'>
+                    <h3 className='font-semibold text-slate-900 truncate'>{result.studentName}</h3>
+                    <span className='text-[11px] font-medium text-slate-500'>{gradeLabel}</span>
                 </div>
-                <div className="mt-1 text-[11px] text-slate-500 flex flex-wrap gap-3">
+                <div className='mt-1 text-[11px] text-slate-500 flex flex-wrap gap-3 items-center'>
                     {pageRange && <span>Pages {pageRange}</span>}
                     {result.totalRevisions !== undefined && result.totalRevisions > 0 && (
                         <span>Revisions {result.totalRevisions}</span>
                     )}
                     {crossPageCount > 0 && <span>Cross-page {crossPageCount}</span>}
-                    {result.needsConfirmation && <span className="text-amber-600">Needs confirmation</span>}
+                    {result.needsConfirmation && <span className='text-amber-600 bg-amber-100/50 px-2 py-0.5 rounded-md border border-amber-200/50'>Needs verification</span>}
+                    {result.selfReport?.overallStatus === 'caution' && (
+                        <span className='text-orange-600 bg-orange-100/50 px-2 py-0.5 rounded-md border border-orange-200/50 flex items-center gap-1'>
+                            <AlertTriangle className='w-3 h-3' /> Self-Report
+                        </span>
+                    )}
+                    {result.logicReviewedAt && (
+                        <span className='text-indigo-600 bg-indigo-100/50 px-2 py-0.5 rounded-md border border-indigo-200/50 flex items-center gap-1'>
+                            <Shield className='w-3 h-3' /> Logic Review
+                        </span>
+                    )}
                 </div>
             </div>
 
-            <div className="text-right">
+            <div className='text-right'>
                 {isAssist ? (
-                    <div className="text-xs font-semibold text-slate-500">Assist</div>
+                    <div className='text-xs font-semibold text-slate-500'>Assist</div>
                 ) : (
-                    <div className="text-lg font-bold text-slate-900">
-                        {result.score.toFixed(1)}<span className="text-xs text-slate-400">/{result.maxScore}</span>
+                    <div className='text-lg font-bold text-slate-900'>
+                        {result.score.toFixed(1)}<span className='text-xs text-slate-400'>/{result.maxScore}</span>
                     </div>
                 )}
                 {!isAssist && (
-                    <div className="text-[11px] text-slate-500">{percentage.toFixed(0)}%</div>
+                    <div className='text-[11px] text-slate-500'>{percentage.toFixed(0)}%</div>
                 )}
             </div>
-        </div>
+        </GlassCard>
     );
 };
 
@@ -600,7 +615,6 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
 
     // 批注渲染状态 - 默认开启
     const [showAnnotations, setShowAnnotations] = useState(true);
-    const [annotatedImages, setAnnotatedImages] = useState<Map<number, string>>(new Map());
     const [annotationLoading, setAnnotationLoading] = useState<Set<number>>(new Set());
     // 🔥 新增：存储每页的批注数据，用于 Canvas 直接渲染
     const [pageAnnotationsData, setPageAnnotationsData] = useState<Map<number, VisualAnnotation[]>>(new Map());
@@ -703,7 +717,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
             status,
             alreadyAttempted: submissionId ? apiFallbackAttemptedRef.current.has(submissionId) : false
         });
-        
+
         // 条件：有 submissionId，没有结果，状态为 COMPLETED，且未尝试过
         if (!submissionId || finalResults.length > 0 || status !== 'COMPLETED') {
             console.log('[API Fallback] Skipping - conditions not met');
@@ -713,26 +727,26 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
             console.log('[API Fallback] Skipping - already attempted for this submissionId');
             return;
         }
-        
+
         const fetchResultsFromApi = async () => {
             apiFallbackAttemptedRef.current.add(submissionId);
             setApiFallbackLoading(true);
             setApiFallbackError(null);
-            
+
             try {
                 console.log('[API Fallback] Fetching results for batch:', submissionId);
                 const response = await gradingApi.getBatchResults(submissionId);
-                
+
                 // 后端可能返回 results（camelCase）或 student_results（snake_case）
                 const rawResults = (response as any).results || response.student_results || [];
                 console.log('[API Fallback] Raw results:', rawResults.length, 'items');
-                
+
                 if (rawResults.length > 0) {
                     // 检测数据格式（camelCase 或 snake_case）
                     const firstResult = rawResults[0];
                     const isCamelCase = 'studentName' in firstResult;
                     console.log('[API Fallback] Data format:', isCamelCase ? 'camelCase' : 'snake_case');
-                    
+
                     // 转换 API 响应格式到前端格式
                     const formattedResults: StudentResult[] = rawResults.map((r: any) => {
                         if (isCamelCase) {
@@ -832,7 +846,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                             };
                         }
                     });
-                    
+
                     console.log('[API Fallback] Successfully fetched', formattedResults.length, 'results');
                     setFinalResults(formattedResults);
                 } else {
@@ -846,7 +860,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                 setApiFallbackLoading(false);
             }
         };
-        
+
         // 延迟执行，给 WebSocket 一些时间
         const timer = setTimeout(fetchResultsFromApi, 2000);
         return () => clearTimeout(timer);
@@ -973,89 +987,89 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
             // 从 questionResults 中提取批注
             if (pageAnnotations.length === 0) {
                 student.questionResults?.forEach(q => {
-                // 检查该题目是否在当前页
-                const questionPages = q.pageIndices || [];
-                if (!questionPages.includes(pageIdx) && questionPages.length > 0) return;
+                    // 检查该题目是否在当前页
+                    const questionPages = q.pageIndices || [];
+                    if (!questionPages.includes(pageIdx) && questionPages.length > 0) return;
 
-                // 优先使用后端返回的 annotations 字段
-                if (q.annotations && q.annotations.length > 0) {
-                    q.annotations.forEach(ann => {
-                        // 只添加当前页的批注
-                        if (ann.page_index === undefined || ann.page_index === pageIdx) {
-                            pageAnnotations.push({
-                                annotation_type: ann.type,
-                                bounding_box: ann.bounding_box,
-                                text: ann.text || '',
-                                color: ann.color || '#FF0000',
-                            } as VisualAnnotation);
-                        }
-                    });
-                }
-
-                // 从 steps 字段提取步骤批注
-                if (q.steps && q.steps.length > 0) {
-                    q.steps.forEach(step => {
-                        if (step.step_region) {
-                            // 构建 M/A mark 文本（如 "M1", "M0", "A1", "A0"）
-                            const markText = step.mark_type === 'M'
-                                ? `M${step.mark_value}`
-                                : `A${step.mark_value}`;
-                            // 使用 m_mark 或 a_mark 类型，根据 mark_type 决定
-                            const annotationType = step.mark_type === 'M' ? 'm_mark' : 'a_mark';
-
-                            pageAnnotations.push({
-                                annotation_type: annotationType,
-                                bounding_box: step.step_region,
-                                text: markText,
-                                color: step.is_correct ? '#00AA00' : '#FF0000',
-                            } as VisualAnnotation);
-
-                            // 如果步骤错误，额外添加错误圈选
-                            if (!step.is_correct && step.feedback) {
+                    // 优先使用后端返回的 annotations 字段
+                    if (q.annotations && q.annotations.length > 0) {
+                        q.annotations.forEach(ann => {
+                            // 只添加当前页的批注
+                            if (ann.page_index === undefined || ann.page_index === pageIdx) {
                                 pageAnnotations.push({
-                                    annotation_type: 'comment',
-                                    bounding_box: {
-                                        x_min: Math.min((step.step_region.x_max || 0.8) + 0.02, 0.95),
-                                        y_min: step.step_region.y_min,
-                                        x_max: Math.min((step.step_region.x_max || 0.8) + 0.25, 1.0),
-                                        y_max: step.step_region.y_max,
-                                    },
-                                    text: step.feedback,
-                                    color: '#0066FF',
+                                    annotation_type: ann.type,
+                                    bounding_box: ann.bounding_box,
+                                    text: ann.text || '',
+                                    color: ann.color || '#FF0000',
                                 } as VisualAnnotation);
                             }
+                        });
+                    }
+
+                    // 从 steps 字段提取步骤批注
+                    if (q.steps && q.steps.length > 0) {
+                        q.steps.forEach(step => {
+                            if (step.step_region) {
+                                // 构建 M/A mark 文本（如 "M1", "M0", "A1", "A0"）
+                                const markText = step.mark_type === 'M'
+                                    ? `M${step.mark_value}`
+                                    : `A${step.mark_value}`;
+                                // 使用 m_mark 或 a_mark 类型，根据 mark_type 决定
+                                const annotationType = step.mark_type === 'M' ? 'm_mark' : 'a_mark';
+
+                                pageAnnotations.push({
+                                    annotation_type: annotationType,
+                                    bounding_box: step.step_region,
+                                    text: markText,
+                                    color: step.is_correct ? '#00AA00' : '#FF0000',
+                                } as VisualAnnotation);
+
+                                // 如果步骤错误，额外添加错误圈选
+                                if (!step.is_correct && step.feedback) {
+                                    pageAnnotations.push({
+                                        annotation_type: 'comment',
+                                        bounding_box: {
+                                            x_min: Math.min((step.step_region.x_max || 0.8) + 0.02, 0.95),
+                                            y_min: step.step_region.y_min,
+                                            x_max: Math.min((step.step_region.x_max || 0.8) + 0.25, 1.0),
+                                            y_max: step.step_region.y_max,
+                                        },
+                                        text: step.feedback,
+                                        color: '#0066FF',
+                                    } as VisualAnnotation);
+                                }
+                            }
+                        });
+                    }
+
+                    // 从 scoringPointResults 中提取错误区域批注
+                    q.scoringPointResults?.forEach((spr: any) => {
+                        // 如果有错误区域坐标，创建错误圈选批注
+                        if (spr.errorRegion || spr.error_region) {
+                            const errorRegion = spr.errorRegion || spr.error_region;
+                            pageAnnotations.push({
+                                annotation_type: 'error_circle',
+                                bounding_box: errorRegion,
+                                text: spr.evidence || '',
+                                color: '#FF0000',
+                            } as VisualAnnotation);
                         }
                     });
-                }
 
-                // 从 scoringPointResults 中提取错误区域批注
-                q.scoringPointResults?.forEach((spr: any) => {
-                    // 如果有错误区域坐标，创建错误圈选批注
-                    if (spr.errorRegion || spr.error_region) {
-                        const errorRegion = spr.errorRegion || spr.error_region;
+                    // 添加答案区域的分数批注
+                    if (q.answerRegion) {
                         pageAnnotations.push({
-                            annotation_type: 'error_circle',
-                            bounding_box: errorRegion,
-                            text: spr.evidence || '',
-                            color: '#FF0000',
+                            annotation_type: 'score',
+                            bounding_box: {
+                                x_min: Math.min(q.answerRegion.x_max + 0.02, 0.95),
+                                y_min: q.answerRegion.y_min,
+                                x_max: Math.min(q.answerRegion.x_max + 0.12, 1.0),
+                                y_max: q.answerRegion.y_min + 0.05,
+                            },
+                            text: `${q.score}/${q.maxScore}`,
+                            color: q.score >= q.maxScore * 0.8 ? '#00AA00' : q.score >= q.maxScore * 0.5 ? '#FF8800' : '#FF0000',
                         } as VisualAnnotation);
                     }
-                });
-
-                // 添加答案区域的分数批注
-                if (q.answerRegion) {
-                    pageAnnotations.push({
-                        annotation_type: 'score',
-                        bounding_box: {
-                            x_min: Math.min(q.answerRegion.x_max + 0.02, 0.95),
-                            y_min: q.answerRegion.y_min,
-                            x_max: Math.min(q.answerRegion.x_max + 0.12, 1.0),
-                            y_max: q.answerRegion.y_min + 0.05,
-                        },
-                        text: `${q.score}/${q.maxScore}`,
-                        color: q.score >= q.maxScore * 0.8 ? '#00AA00' : q.score >= q.maxScore * 0.5 ? '#FF8800' : '#FF0000',
-                    } as VisualAnnotation);
-                }
                 });
             }
 
@@ -1067,7 +1081,6 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                     next.set(pageIdx, pageAnnotations);
                     return next;
                 });
-                // 标记为已完成（不需要 annotatedImages，因为会用 Canvas 渲染）
                 setAnnotationLoading(prev => {
                     const next = new Set(prev);
                     next.delete(pageIdx);
@@ -1076,68 +1089,9 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                 return;
             }
 
-            // 获取图片的 base64（仅在需要调用 API 时才获取）
-            let imageBase64 = imageUrl;
-            if (imageUrl.startsWith('data:')) {
-                imageBase64 = imageUrl.split(',')[1] || imageUrl;
-            } else if (imageUrl.startsWith('http')) {
-                // 如果是 URL，需要先获取图片
-                const response = await fetch(imageUrl);
-                const blob = await response.blob();
-                const reader = new FileReader();
-                imageBase64 = await new Promise((resolve) => {
-                    reader.onload = () => {
-                        const result = reader.result as string;
-                        resolve(result.split(',')[1] || result);
-                    };
-                    reader.readAsDataURL(blob);
-                });
-            }
-
-            // 如果没有批注坐标但有评分标准，调用 annotate-and-render API
-            if (parsedRubric?.questions && parsedRubric.questions.length > 0) {
-                const { annotateAndRender } = await import('@/services/annotationApi');
-
-                // 构建评分标准
-                const rubrics = parsedRubric.questions.map(q => ({
-                    question_id: q.questionId,
-                    max_score: q.maxScore,
-                    question_text: q.questionText || '',
-                    standard_answer: q.standardAnswer || '',
-                    scoring_points: (q.scoringPoints || []).map(sp => ({
-                        description: sp.description,
-                        score: sp.score || 1,
-                        point_id: sp.pointId || '',
-                        is_required: sp.isRequired ?? true,
-                    })),
-                    grading_notes: q.gradingNotes || '',
-                }));
-
-                try {
-                    const blob = await annotateAndRender(imageBase64, rubrics, pageIdx);
-                    const reader = new FileReader();
-                    const dataUrl = await new Promise<string>((resolve) => {
-                        reader.onload = () => resolve(reader.result as string);
-                        reader.readAsDataURL(blob);
-                    });
-
-                    setAnnotatedImages(prev => {
-                        const next = new Map(prev);
-                        next.set(pageIdx, dataUrl);
-                        return next;
-                    });
-                    return;
-                } catch (err) {
-                    console.error('调用 annotate-and-render API 失败:', err);
-                }
-            }
-
-            // 如果是 Assist 模式且没有批注数据，生成演示批注
             const isAssistMode = (student.gradingMode || '').startsWith('assist') || student.maxScore <= 0;
             if (isAssistMode && pageAnnotations.length === 0) {
-                console.log('Assist 模式：生成演示批注');
-                // 生成一些演示批注来展示功能
-                // BoundingBox 使用 {x_min, y_min, x_max, y_max} 格式（归一化坐标 0.0-1.0）
+                console.log('Assist mode: using demo annotations');
                 const demoAnnotations: VisualAnnotation[] = [
                     {
                         annotation_type: 'step_check',
@@ -1166,23 +1120,16 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                     {
                         annotation_type: 'comment',
                         bounding_box: { x_min: 0.70, y_min: 0.55, x_max: 0.95, y_max: 0.63 },
-                        text: '演示批注',
+                        text: '示例批注',
                         color: '#0066CC',
                     },
                 ];
 
-                try {
-                    const result = await renderAnnotationsToBase64(imageBase64, demoAnnotations);
-                    if (result.success && result.image_base64) {
-                        setAnnotatedImages(prev => {
-                            const next = new Map(prev);
-                            next.set(pageIdx, `data:image/png;base64,${result.image_base64}`);
-                            return next;
-                        });
-                    }
-                } catch (err) {
-                    console.error('渲染演示批注失败:', err);
-                }
+                setPageAnnotationsData(prev => {
+                    const next = new Map(prev);
+                    next.set(pageIdx, demoAnnotations);
+                    return next;
+                });
             }
         } catch (error) {
             console.error('渲染批注失败:', error);
@@ -1233,7 +1180,6 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
     useEffect(() => {
         if (!showAnnotations) {
             // 关闭批注时清理
-            setAnnotatedImages(new Map());
             setPageAnnotationsData(new Map());
             renderedPagesRef.current.clear();
         }
@@ -1241,8 +1187,6 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
 
     // 切换学生时清理该学生的渲染缓存
     useEffect(() => {
-        // 切换学生时，清理 annotatedImages 和 pageAnnotationsData
-        setAnnotatedImages(new Map());
         setPageAnnotationsData(new Map());
         renderedPagesRef.current.clear();
     }, [detailViewIndex]);
@@ -1266,31 +1210,6 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
     }, [detailViewIndex]);
 
     // ==================== 导出处理函数 ====================
-
-    const handleExportAnnotatedImages = async () => {
-        if (!submissionId) return;
-        setExportLoading('images');
-        try {
-            const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || ''}/batch/export/annotated-images/${submissionId}`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ include_original: false }),
-            });
-            if (!response.ok) throw new Error('导出失败');
-            const blob = await response.blob();
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `grading_annotated_${submissionId}.zip`;
-            a.click();
-            URL.revokeObjectURL(url);
-        } catch (error) {
-            console.error('导出带批注图片失败:', error);
-        } finally {
-            setExportLoading(null);
-            setExportMenuOpen(false);
-        }
-    };
 
     const handleExportExcel = async () => {
         if (!submissionId) return;
@@ -1664,30 +1583,30 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
         const index = sortedResults.findIndex(r => r.studentName === student.studentName);
         setDetailViewIndex(index >= 0 ? index : 0);
     }, [sortedResults]);
-    
+
     // 手动重试获取结果
     const handleRetryFetch = useCallback(async () => {
         if (!submissionId) return;
-        
+
         // 清除已尝试标记，允许重试
         apiFallbackAttemptedRef.current.delete(submissionId);
         setApiFallbackLoading(true);
         setApiFallbackError(null);
-        
+
         try {
             console.log('[Manual Retry] Fetching results for batch:', submissionId);
             const response = await gradingApi.getBatchResults(submissionId);
-            
+
             // 后端可能返回 results（camelCase）或 student_results（snake_case）
             const rawResults = (response as any).results || response.student_results || [];
             console.log('[Manual Retry] Raw results:', rawResults.length, 'items');
-            
+
             if (rawResults.length > 0) {
                 // 检测数据格式（camelCase 或 snake_case）
                 const firstResult = rawResults[0];
                 const isCamelCase = 'studentName' in firstResult;
                 console.log('[Manual Retry] Data format:', isCamelCase ? 'camelCase' : 'snake_case');
-                
+
                 // 转换 API 响应格式到前端格式
                 const formattedResults: StudentResult[] = rawResults.map((r: any) => {
                     if (isCamelCase) {
@@ -1785,7 +1704,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                         };
                     }
                 });
-                
+
                 console.log('[Manual Retry] Successfully fetched', formattedResults.length, 'results');
                 setFinalResults(formattedResults);
             } else {
@@ -2369,7 +2288,6 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                                         onChange={(e) => {
                                             setShowAnnotations(e.target.checked);
                                             if (!e.target.checked) {
-                                                setAnnotatedImages(new Map());
                                                 setPageAnnotationsData(new Map());
                                             }
                                         }}
@@ -2388,11 +2306,9 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                         )}
                         {uniquePages.map((pageIdx, pageIdxIndex) => {
                             const originalImageUrl = uploadedImages[pageIdx] || currentSession?.images[pageIdx]?.url;
-                            const annotatedImageUrl = annotatedImages.get(pageIdx);
                             const pageAnnotations = pageAnnotationsData.get(pageIdx);
                             const isLoading = annotationLoading.has(pageIdx);
                             const hasCanvasAnnotations = showAnnotations && pageAnnotations && pageAnnotations.length > 0;
-                            const displayImageUrl = showAnnotations && annotatedImageUrl ? annotatedImageUrl : originalImageUrl;
                             const isLastPage = pageIdxIndex === uniquePages.length - 1;
                             return (
                                 <div key={pageIdx} className={clsx("pb-6 border-b border-slate-100/80 space-y-2", isLastPage && "border-b-0 pb-0")}>
@@ -2403,17 +2319,17 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                                         {showAnnotations && isLoading && (
                                             <div className="flex items-center gap-1 text-xs text-blue-500">
                                                 <Loader2 className="w-3 h-3 animate-spin" />
-                                                渲染中...
+                                                加载批注中...
                                             </div>
                                         )}
-                                        {showAnnotations && (annotatedImageUrl || hasCanvasAnnotations) && !isLoading && (
+                                        {showAnnotations && hasCanvasAnnotations && !isLoading && (
                                             <div className="flex items-center gap-1 text-xs text-emerald-500">
                                                 <Pencil className="w-3 h-3" />
-                                                已批注{hasCanvasAnnotations ? ' (Canvas)' : ''}
+                                                已标注 (Canvas)
                                             </div>
                                         )}
                                     </div>
-                                    {/* 🔥 优先使用 Canvas 渲染批注（快速路径） */}
+                                    {/* Canvas 渲染批注 */}
                                     {hasCanvasAnnotations && originalImageUrl ? (
                                         <AnnotationCanvas
                                             imageSrc={originalImageUrl}
@@ -2421,8 +2337,8 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                                             className="w-full h-auto"
                                             showText={true}
                                         />
-                                    ) : displayImageUrl ? (
-                                        <img src={displayImageUrl} alt={`Page ${pageIdx + 1}`} className="w-full h-auto" />
+                                    ) : originalImageUrl ? (
+                                        <img src={originalImageUrl} alt={`Page ${pageIdx + 1}`} className="w-full h-auto" />
                                     ) : (
                                         <div className="p-10 text-center text-slate-400">Image missing</div>
                                     )}
@@ -2806,7 +2722,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
             apiFallbackLoading,
             apiFallbackError
         });
-        
+
         return (
             <div className="flex flex-col items-center justify-center h-full text-slate-400 gap-4">
                 <div className="p-8 flex flex-col items-center gap-4">
@@ -2837,6 +2753,20 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
             </div>
         );
     }
+
+    const containerVariants = {
+        hidden: { opacity: 0 },
+        visible: {
+            opacity: 1,
+            transition: {
+                staggerChildren: 0.1
+            }
+        }
+    };
+    const itemVariants = {
+        hidden: { opacity: 0, y: 20 },
+        visible: { opacity: 1, y: 0 }
+    };
 
     return (
         <div className="h-full overflow-y-auto p-6 space-y-8 custom-scrollbar bg-white">
@@ -2939,21 +2869,6 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                             {exportMenuOpen && (
                                 <div className="absolute right-0 top-full mt-1 w-56 bg-white rounded-lg shadow-lg border border-slate-200 py-1 z-50">
                                     <button
-                                        onClick={handleExportAnnotatedImages}
-                                        disabled={exportLoading === 'images'}
-                                        className="w-full px-4 py-2.5 text-left text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-3 disabled:opacity-50"
-                                    >
-                                        {exportLoading === 'images' ? (
-                                            <Loader2 className="w-4 h-4 animate-spin" />
-                                        ) : (
-                                            <Pencil className="w-4 h-4 text-slate-400" />
-                                        )}
-                                        <div>
-                                            <div className="font-medium">带批注图片</div>
-                                            <div className="text-[10px] text-slate-400">ZIP 打包下载</div>
-                                        </div>
-                                    </button>
-                                    <button
                                         onClick={handleExportExcel}
                                         disabled={exportLoading === 'excel'}
                                         className="w-full px-4 py-2.5 text-left text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-3 disabled:opacity-50"
@@ -3042,13 +2957,13 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                     )}
                 </div>
 
-                <div className="bg-white">
+                <motion.div className='bg-transparent space-y-3' variants={containerVariants} initial='hidden' animate='visible'>
                     {sortedResults.map((result, index) => (
-                        <div key={`${result.studentName}-${index}`} onClick={() => handleViewDetail(result)} className="cursor-pointer">
+                        <motion.div key={`${result.studentName}-${index}`} variants={itemVariants} onClick={() => handleViewDetail(result)} className='cursor-pointer'>
                             <ResultCard result={result} rank={index + 1} isExpanded={false} onExpand={() => { }} />
-                        </div>
+                        </motion.div>
                     ))}
-                </div>
+                </motion.div>
             </div>
 
             {/* Cross Page Alerts */}

@@ -2160,6 +2160,18 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
         student_summary = r.get("student_summary") or r.get("studentSummary")
         self_audit = r.get("self_audit") or r.get("selfAudit")
         self_report_raw = r.get("self_report") or r.get("selfReport") or r.get("confession")
+        if isinstance(self_report_raw, str):
+            try:
+                self_report_raw = json.loads(self_report_raw)
+            except Exception:
+                self_report_raw = None
+
+        logic_review_raw = r.get("logic_review") or r.get("logicReview")
+        if isinstance(logic_review_raw, str):
+            try:
+                logic_review_raw = json.loads(logic_review_raw)
+            except Exception:
+                logic_review_raw = None
 
         # 标准化 selfReport 格式，确保前端能正确显示
         self_report = None
@@ -2285,6 +2297,7 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
                 "selfAudit": self_audit,
                 # 🔥 新增：批改透明度字段
                 "selfReport": self_report,
+                "logicReview": logic_review_raw,
                 "draftQuestionDetails": draft_question_results if draft_question_results else None,
                 "draftTotalScore": r.get("draft_total_score") or r.get("draftTotalScore"),
                 "draftMaxScore": r.get("draft_max_score") or r.get("draftMaxScore"),
@@ -3441,65 +3454,10 @@ async def export_annotated_images(
 
     将所有学生的作答图片渲染批注后打包为 ZIP 下载
     """
-    from fastapi.responses import Response
-    from src.services.export_service import AnnotatedImageExporter, ExportConfig
-
-    try:
-        if not orchestrator:
-            raise HTTPException(status_code=503, detail="编排器未初始化")
-
-        run_id = f"batch_grading_{batch_id}"
-        run_info = await orchestrator.get_run_info(run_id)
-
-        if not run_info:
-            raise HTTPException(status_code=404, detail="批次不存在")
-
-        state = run_info.state or {}
-        student_results = state.get("student_results", [])
-
-        if not student_results:
-            raise HTTPException(status_code=404, detail="无批改结果")
-
-        # 获取图片
-        cached = batch_image_cache.get(batch_id, {})
-        images_ready = cached.get("images_ready", {})
-        images_b64 = images_ready.get("images", [])
-
-        if not images_b64:
-            raise HTTPException(status_code=404, detail="无图片数据，请重新上传")
-
-        # 解码图片
-        import base64
-
-        images = []
-        for img_b64 in images_b64:
-            if img_b64.startswith("data:"):
-                img_b64 = img_b64.split(",", 1)[1]
-            images.append(base64.b64decode(img_b64))
-
-        # 格式化结果
-        formatted_results = _format_results_for_frontend(student_results)
-
-        # 导出
-        config = ExportConfig(include_original=request.include_original)
-        exporter = AnnotatedImageExporter(config)
-        zip_bytes = exporter.export_to_zip(formatted_results, images, batch_id)
-
-        filename = f"grading_annotated_{batch_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
-
-        return Response(
-            content=zip_bytes,
-            media_type="application/zip",
-            headers={
-                "Content-Disposition": f'attachment; filename="{filename}"',
-            },
-        )
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"导出带批注图片失败: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"导出失败: {str(e)}")
+    raise HTTPException(
+        status_code=410,
+        detail="后端批注渲染已禁用，请使用前端 Canvas 渲染与导出。",
+    )
 
 
 @router.post("/export/excel/{batch_id}")
@@ -3651,68 +3609,10 @@ async def render_batch_annotations(
 
     返回指定页面的带批注图片 Base64 列表
     """
-    from src.services.export_service import AnnotatedImageExporter
-
-    try:
-        if not orchestrator:
-            raise HTTPException(status_code=503, detail="编排器未初始化")
-
-        run_id = f"batch_grading_{batch_id}"
-        run_info = await orchestrator.get_run_info(run_id)
-
-        if not run_info:
-            raise HTTPException(status_code=404, detail="批次不存在")
-
-        state = run_info.state or {}
-        student_results = state.get("student_results", [])
-
-        # 获取图片
-        cached = batch_image_cache.get(batch_id, {})
-        images_ready = cached.get("images_ready", {})
-        images_b64 = images_ready.get("images", [])
-
-        if not images_b64:
-            raise HTTPException(status_code=404, detail="无图片数据")
-
-        # 解码图片
-        import base64
-
-        images = []
-        for img_b64 in images_b64:
-            if img_b64.startswith("data:"):
-                img_b64 = img_b64.split(",", 1)[1]
-            images.append(base64.b64decode(img_b64))
-
-        # 格式化结果
-        formatted_results = _format_results_for_frontend(student_results)
-
-        # 渲染
-        exporter = AnnotatedImageExporter()
-        rendered_images = {}
-
-        # 确定要渲染的页面
-        target_pages = page_indices if page_indices else list(range(len(images)))
-
-        for student in formatted_results:
-            start_page = student.get("startPage") or 0
-            end_page = student.get("endPage") or len(images) - 1
-
-            for page_idx, rendered_bytes in exporter.render_student_pages(
-                student, images, start_page, end_page
-            ):
-                if page_idx in target_pages:
-                    rendered_images[page_idx] = base64.b64encode(rendered_bytes).decode("utf-8")
-
-        return {
-            "success": True,
-            "rendered_images": rendered_images,
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"批量渲染批注失败: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"渲染失败: {str(e)}")
+    raise HTTPException(
+        status_code=410,
+        detail="后端批注渲染已禁用，请使用前端 Canvas 渲染。",
+    )
 
 
 # ==================== 自白 API (Task 11) ====================

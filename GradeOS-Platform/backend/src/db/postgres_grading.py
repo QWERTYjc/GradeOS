@@ -49,17 +49,64 @@ class StudentGradingResult:
 
 @dataclass
 class GradingPageImage:
-    """批改页面图像"""
+    """批改页面图像索引"""
     
     id: str
     grading_history_id: str
     student_key: str
     page_index: int
-    image_data: bytes  # 图像二进制数据
-    image_format: str = "png"  # 图像格式：png, jpg, webp
+    file_id: str  # file storage id
+    file_url: Optional[str] = None  # file download url
+    content_type: Optional[str] = None  # MIME type
     created_at: str = ""
 
 
+_PAGE_IMAGES_TABLE_READY = False
+
+
+async def ensure_page_images_table() -> None:
+    """Ensure grading_page_images table exists and includes file reference columns."""
+    global _PAGE_IMAGES_TABLE_READY
+    if _PAGE_IMAGES_TABLE_READY:
+        return
+
+    create_query = """
+        CREATE TABLE IF NOT EXISTS grading_page_images (
+            id VARCHAR(100) PRIMARY KEY,
+            grading_history_id VARCHAR(100) NOT NULL,
+            student_key VARCHAR(200) NOT NULL,
+            page_index INTEGER NOT NULL,
+            file_id VARCHAR(200),
+            file_url TEXT,
+            content_type VARCHAR(100),
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (grading_history_id) REFERENCES grading_history(id) ON DELETE CASCADE,
+            CONSTRAINT unique_page_image UNIQUE (grading_history_id, student_key, page_index)
+        )
+    """
+    alter_queries = [
+        "ALTER TABLE grading_page_images ADD COLUMN IF NOT EXISTS file_id VARCHAR(200)",
+        "ALTER TABLE grading_page_images ADD COLUMN IF NOT EXISTS file_url TEXT",
+        "ALTER TABLE grading_page_images ADD COLUMN IF NOT EXISTS content_type VARCHAR(100)",
+    ]
+    index_queries = [
+        "CREATE INDEX IF NOT EXISTS idx_page_images_history ON grading_page_images(grading_history_id)",
+        "CREATE INDEX IF NOT EXISTS idx_page_images_student ON grading_page_images(grading_history_id, student_key)",
+        "CREATE INDEX IF NOT EXISTS idx_page_images_file_id ON grading_page_images(file_id)",
+    ]
+
+    try:
+        async with db.connection() as conn:
+            await conn.execute(create_query)
+            for statement in alter_queries:
+                await conn.execute(statement)
+            for statement in index_queries:
+                await conn.execute(statement)
+            await conn.commit()
+        _PAGE_IMAGES_TABLE_READY = True
+    except Exception as exc:
+        logger.error(f"Ensure grading_page_images failed: {exc}")
+        raise
 async def save_grading_history(history: GradingHistory) -> None:
     """保存批改历史到 PostgreSQL"""
     if not history.created_at:
@@ -91,14 +138,15 @@ async def save_grading_history(history: GradingHistory) -> None:
     )
 
     try:
-        log_sql_operation("INSERT/UPDATE", query, params)
+        # Avoid logging large result_data payloads in deploy logs
+        log_sql_operation("INSERT/UPDATE", "grading_history")
         async with db.connection() as conn:
             await conn.execute(query, params)
             await conn.commit()
         log_sql_operation("INSERT/UPDATE", "grading_history", result_count=1)
         logger.info(f"批改历史已保存到 PostgreSQL: batch_id={history.batch_id}")
     except Exception as e:
-        log_sql_operation("INSERT/UPDATE", query, params, error=e)
+        log_sql_operation("INSERT/UPDATE", "grading_history", error=e)
         logger.error(f"保存批改历史到 PostgreSQL 失败: {e}")
         raise
 
@@ -334,10 +382,10 @@ async def save_student_result(result: StudentGradingResult) -> None:
             
             # 如果没有更新任何行，说明记录不存在，执行插入
             if updated_rows == 0:
-                log_sql_operation("INSERT", insert_query, insert_params)
+                log_sql_operation("INSERT", "student_grading_results")
                 await conn.execute(insert_query, insert_params)
             else:
-                log_sql_operation("UPDATE", update_query, update_params)
+                log_sql_operation("UPDATE", "student_grading_results")
             
             await conn.commit()
         
@@ -415,28 +463,33 @@ async def save_page_image(image: GradingPageImage) -> None:
     """保存批改页面图像到 PostgreSQL"""
     if not image.created_at:
         image.created_at = datetime.now().isoformat()
+
+    await ensure_page_images_table()
     
     query = """
         INSERT INTO grading_page_images 
         (id, grading_history_id, student_key, page_index, 
-         image_data, image_format, created_at)
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
-        ON CONFLICT (id) DO UPDATE SET
-            image_data = EXCLUDED.image_data,
-            image_format = EXCLUDED.image_format
+         file_id, file_url, content_type, created_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (grading_history_id, student_key, page_index) DO UPDATE SET
+            file_id = EXCLUDED.file_id,
+            file_url = EXCLUDED.file_url,
+            content_type = EXCLUDED.content_type,
+            created_at = EXCLUDED.created_at
     """
     params = (
         image.id,
         image.grading_history_id,
         image.student_key,
         image.page_index,
-        image.image_data,
-        image.image_format,
+        image.file_id,
+        image.file_url,
+        image.content_type,
         image.created_at,
     )
     
     try:
-        log_sql_operation("INSERT/UPDATE", "grading_page_images", {"id": image.id})
+        log_sql_operation("INSERT/UPDATE", "grading_page_images")
         async with db.connection() as conn:
             await conn.execute(query, params)
             await conn.commit()
@@ -494,8 +547,9 @@ async def get_page_images(
                     grading_history_id=str(row["grading_history_id"]),
                     student_key=row["student_key"],
                     page_index=row["page_index"],
-                    image_data=row["image_data"],
-                    image_format=row["image_format"],
+                    file_id=row["file_id"] or "",
+                    file_url=row["file_url"],
+                    content_type=row["content_type"],
                     created_at=created_at_value,
                 )
             )
