@@ -789,7 +789,6 @@ async def rubric_parse_node(state: BatchGradingGraphState) -> Dict[str, Any]:
             )
             
             # 🔍 输出完整的 AI 返回结果 JSON
-            import json
             logger.info(f"[rubric_parse] 📋 AI 返回的完整评分标准 JSON:")
             logger.info(f"[rubric_parse] {json.dumps(parsed_rubric, ensure_ascii=False, indent=2)}")
 
@@ -2657,11 +2656,13 @@ async def _grade_batch_node_impl(state: Dict[str, Any]) -> Dict[str, Any]:
         grading_mode=grading_mode,
     )
 
+    logger.debug(
+        f"[grade_batch] Page results summary: total={len(page_results)}, "
+        f"success={success_count}, failed={failed_count}"
+    )
+    logger.debug(f"[grade_batch] Student results count: {len(student_results)}")
+
     # 🔍 输出完整的批改结果 JSON
-    import json
-    logger.info(f"[grade_batch] 📝 批次 {batch_index + 1} 批改完成，AI 返回的完整结果 JSON:")
-    logger.info(f"[grade_batch] Page Results: {json.dumps(page_results, ensure_ascii=False, indent=2)}")
-    logger.info(f"[grade_batch] Student Results: {json.dumps(student_results, ensure_ascii=False, indent=2)}")
 
     # 返回结果（使用 add reducer 聚合，直接输出 student_results）
     return {
@@ -5749,7 +5750,6 @@ async def export_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     # 无数据库模式或有失败时都导出
     if not persisted or has_failures:
         try:
-            import json
             import os
 
             # 创建导出目录
