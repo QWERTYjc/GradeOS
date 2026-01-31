@@ -13,7 +13,7 @@ from src.services.distributed_transaction import (
     SagaTransaction,
     ReviewOverrideSagaBuilder,
 )
-from src.services.grading_confession import generate_confession, generate_student_confession
+from src.services.grading_confession import generate_confession
 from src.services.student_summary import generate_student_summary, generate_class_summary
 
 # 批注批改服务
@@ -66,9 +66,8 @@ __all__ = [
     "SagaTransactionStatus",
     "SagaTransaction",
     "ReviewOverrideSagaBuilder",
-    # Confession (原 Self Report)
+    # Confession
     "generate_confession",
-    "generate_student_confession",
     "generate_student_summary",
     "generate_class_summary",
     # 批注批改服务

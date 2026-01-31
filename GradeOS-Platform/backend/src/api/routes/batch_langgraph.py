@@ -1829,6 +1829,19 @@ def _dedupe_formatted_results(results: List[Dict[str, Any]]) -> List[Dict[str, A
                 merged_questions[qid] = q
         merged["questionResults"] = list(merged_questions.values())
 
+        # Prefer newer post-processing fields when the current entry is missing them.
+        for field in (
+            "confession",
+            "logicReview",
+            "logicReviewedAt",
+            "selfAudit",
+            "draftQuestionDetails",
+            "draftTotalScore",
+            "draftMaxScore",
+        ):
+            if not merged.get(field) and result.get(field):
+                merged[field] = result.get(field)
+
         merged_start = merged.get("startPage")
         merged_end = merged.get("endPage")
         candidate_start = result.get("startPage")
@@ -2707,6 +2720,15 @@ async def get_results_review_context(
                     "score": row.score,
                     "maxScore": row.max_score,
                 }
+            confession_value = row.confession
+            if confession_value and not data.get("confession"):
+                if isinstance(confession_value, str):
+                    try:
+                        confession_value = json.loads(confession_value)
+                    except Exception:
+                        confession_value = None
+                if confession_value:
+                    data["confession"] = confession_value
             raw_results.append(data)
 
         answer_images = await _load_answer_images_from_db(history.id)
@@ -2730,7 +2752,11 @@ async def get_results_review_context(
             return await _load_from_db()
 
         state = run_info.state or {}
-        student_results = state.get("student_results", [])
+        student_results = (
+            state.get("reviewed_results")
+            or state.get("confessed_results")
+            or state.get("student_results", [])
+        )
         if not student_results:
             try:
                 final_output = await orchestrator.get_final_output(run_id)

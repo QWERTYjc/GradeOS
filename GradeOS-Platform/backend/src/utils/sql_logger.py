@@ -41,11 +41,14 @@ def log_sql_operation(
         "true",
         "yes",
     )
+    is_sensitive = _is_sensitive_query(query)
+    if is_sensitive and not error:
+        return
     log_data = {
         "operation": operation,
         "query": query.strip(),
     }
-    if log_params and params and not _is_sensitive_query(query):
+    if log_params and params and not is_sensitive:
         log_data["params"] = params
     
     if result_count is not None:
@@ -54,6 +57,6 @@ def log_sql_operation(
     if error:
         log_data["error"] = str(error)
         logger.error(f"[SQL] ❌ {operation} 失败: {json.dumps(log_data, ensure_ascii=False)}")
-    elif log_success:
+    elif log_success and not is_sensitive:
         # Successful SQL logs are noisy and may contain sensitive data; default to disabled.
         logger.debug(f"[SQL] ✅ {operation}: {json.dumps(log_data, ensure_ascii=False)}")

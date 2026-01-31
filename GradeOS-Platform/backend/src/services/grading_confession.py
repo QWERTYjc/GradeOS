@@ -293,63 +293,6 @@ def _generate_summary(
     return " ".join(parts)
 
 
-def generate_student_confession(
-    student_key: str,
-    page_results: List[Dict[str, Any]],
-) -> Dict[str, Any]:
-    """
-    生成学生级别的批改忏悔
-
-    汇总该学生所有页面的批改忏悔。
-
-    Args:
-        student_key: 学生标识
-        page_results: 该学生的所有页面批改结果
-
-    Returns:
-        学生批改忏悔
-    """
-    all_issues: List[Dict[str, Any]] = []
-    all_warnings: List[str] = []
-
-    for page_result in page_results:
-        confession = page_result.get("confession")
-        if confession:
-            all_issues.extend(confession.get("issues", []))
-            all_warnings.extend(confession.get("warnings", []))
-
-    # 去重 warnings
-    unique_warnings = list(set(all_warnings))
-
-    # 计算整体状态
-    error_count = sum(1 for i in all_issues if i.get("severity") == "error")
-    if error_count > 0:
-        overall_status = "needs_review"
-    elif len(all_issues) > 3:
-        overall_status = "caution"
-    else:
-        overall_status = "ok"
-
-    # 生成总结
-    total_score = sum(p.get("score", 0) for p in page_results)
-    total_max = sum(p.get("max_score", 0) for p in page_results)
-
-    summary_parts = [f"学生 {student_key}: 总分 {total_score}/{total_max}。"]
-    if error_count > 0:
-        summary_parts.append(f"共 {error_count} 处需核查。")
-    if not all_issues:
-        summary_parts.append("批改过程无异常标记。")
-
-    return {
-        "student_key": student_key,
-        "overall_status": overall_status,
-        "issues": all_issues,
-        "warnings": unique_warnings,
-        "summary": " ".join(summary_parts),
-        "generated_at": datetime.now().isoformat(),
-    }
-
-
 # ==================== 忏悔驱动的记忆更新 (任务 7) ====================
 
 
@@ -593,7 +536,6 @@ def apply_memory_review_result(
 __all__ = [
     "ConfessionIssue",
     "generate_confession",
-    "generate_student_confession",
     "update_memory_from_confession",
     "review_memory_conflict",
     "apply_memory_review_result",
