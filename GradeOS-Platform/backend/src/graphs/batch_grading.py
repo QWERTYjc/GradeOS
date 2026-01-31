@@ -788,9 +788,14 @@ async def rubric_parse_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                 f"状态={parse_self_report['overallStatus']}"
             )
             
-            # 🔍 输出完整的 AI 返回结果 JSON
-            logger.info(f"[rubric_parse] 📋 AI 返回的完整评分标准 JSON:")
-            logger.info(f"[rubric_parse] {json.dumps(parsed_rubric, ensure_ascii=False, indent=2)}")
+            # 🔍 输出完整的 AI 返回结果 JSON (仅在 DEBUG 模式)
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(f"[rubric_parse] 📋 AI 返回的完整评分标准 JSON:")
+                logger.debug(f"[rubric_parse] {json.dumps(parsed_rubric, ensure_ascii=False, indent=2)}")
+            else:
+                # 生产环境只输出题目列表
+                question_ids = [q.get('question_id', '?') for q in parsed_rubric.get('questions', [])]
+                logger.info(f"[rubric_parse] 题目列表: {', '.join(question_ids)}")
 
         elif rubric_text:
             # 如果有文本形式的评分标准，简单解析
@@ -1066,7 +1071,10 @@ def grading_fanout_router(state: BatchGradingGraphState) -> List[Send]:
             logger.info(f"[grading_fanout] 生成 {len(student_boundaries)} 个学生边界")
 
     if not processed_images:
-        logger.warning(f"[grading_fanout] 没有待批改的图像: batch_id={batch_id}")
+        logger.warning(f"[grading_fanout] ⚠️ 没有待批改的图像: batch_id={batch_id}")
+        logger.warning(f"[grading_fanout] 🔍 调试: state keys={list(state.keys())}")
+        logger.warning(f"[grading_fanout] 🔍 answer_images count={len(state.get('answer_images', []))}")
+        logger.warning(f"[grading_fanout] 🔍 processed_images count={len(state.get('processed_images', []))}")
         return [Send("self_report", state)]
 
     # 不再从 page_index_contexts 推导 student_boundaries
@@ -1133,8 +1141,10 @@ def grading_fanout_router(state: BatchGradingGraphState) -> List[Send]:
             )
 
         if sends:
+            logger.info(f"[grading_fanout] ✅ 成功创建 {len(sends)} 个学生批改任务")
             return sends
-        logger.warning(f"[grading_fanout] 没有有效的学生批次")
+        logger.warning(f"[grading_fanout] ⚠️ 没有有效的学生批次")
+        logger.warning(f"[grading_fanout] 🔍 student_boundaries={student_boundaries}")
 
     # 回退：按固定批次大小分配
     batch_size = config.batch_size
