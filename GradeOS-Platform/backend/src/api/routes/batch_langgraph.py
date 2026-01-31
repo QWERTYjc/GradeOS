@@ -2676,6 +2676,14 @@ async def get_results_review_context(
             logger.debug(f"Failed to load answer images from DB: {exc}")
             return []
 
+    def _has_post_confession_fields(results: List[Dict[str, Any]]) -> bool:
+        for item in results:
+            if not isinstance(item, dict):
+                continue
+            if item.get("confession") or item.get("logic_review") or item.get("logicReview"):
+                return True
+        return False
+
     async def _load_from_db() -> ResultsReviewContextResponse:
         """从数据库加载批改结果"""
         history = await _maybe_await(get_grading_history(batch_id))
@@ -2752,6 +2760,18 @@ async def get_results_review_context(
                     except HTTPException:
                         student_results = []
 
+        # If the run completed but confession/logic_review is missing, prefer DB results.
+        if (
+            student_results
+            and run_info.status
+            and run_info.status.value == "completed"
+            and not _has_post_confession_fields(student_results)
+        ):
+            try:
+                return await _load_from_db()
+            except HTTPException:
+                pass
+
         cached = batch_image_cache.get(batch_id, {})
         cached_images = cached.get("images_ready", {}).get("images") if cached else None
         answer_images: List[str] = cached_images or []
@@ -2771,6 +2791,17 @@ async def get_results_review_context(
             history = await _maybe_await(get_grading_history(batch_id))
             if history:
                 answer_images = await _load_answer_images_from_db(history.id)
+        else:
+            # Prefer DB image URLs over large base64 blobs when available.
+            if any(
+                isinstance(img, str) and img.startswith("data:")
+                for img in answer_images
+            ):
+                history = await _maybe_await(get_grading_history(batch_id))
+                if history:
+                    db_images = await _load_answer_images_from_db(history.id)
+                    if db_images:
+                        answer_images = db_images
         if not answer_images:
             answer_images = await _load_answer_images_from_storage()
         return ResultsReviewContextResponse(
