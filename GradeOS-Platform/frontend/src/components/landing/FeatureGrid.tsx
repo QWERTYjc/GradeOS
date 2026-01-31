@@ -108,108 +108,120 @@ const features: Feature[] = [
   }
 ];
 
+// ... imports
+import { TiltCard } from '@/components/ui/TiltCard';
+
 // 3D翻转卡片组件
 const FeatureCard = ({ feature, index }: { feature: Feature; index: number }) => {
   const [isFlipped, setIsFlipped] = useState(false);
   const Icon = feature.icon;
 
+  // Staggered entrance from different angles based on index
+  const initialX = index % 3 === 0 ? -100 : index % 3 === 2 ? 100 : 0;
+  const initialY = 100;
+  const rotateStart = index % 2 === 0 ? -15 : 15;
+
   return (
     <motion.div
-      initial={{ opacity: 0, y: 30 }}
-      whileInView={{ opacity: 1, y: 0 }}
+      initial={{ opacity: 0, x: initialX, y: initialY, rotate: rotateStart }}
+      whileInView={{ opacity: 1, x: 0, y: 0, rotate: 0 }}
       viewport={{ once: true, margin: "-50px" }}
-      transition={{ delay: index * 0.1, duration: 0.5 }}
-      className="relative h-[320px] cursor-pointer group perspective-1000"
+      transition={{
+        type: "spring",
+        stiffness: 50,
+        damping: 15,
+        delay: index * 0.1
+      }}
+      className="relative h-[320px] cursor-pointer group z-0 hover:z-10"
       onMouseEnter={() => setIsFlipped(true)}
       onMouseLeave={() => setIsFlipped(false)}
       onClick={() => setIsFlipped(!isFlipped)}
     >
-      <motion.div
-        className="relative w-full h-full preserve-3d"
-        animate={{ rotateY: isFlipped ? 180 : 0 }}
-        transition={{ duration: 0.6, type: "spring", stiffness: 260, damping: 20 }}
-        style={{ transformStyle: 'preserve-3d' }}
-      >
-        {/* 正面 */}
-        <div
-          className="absolute inset-0 backface-hidden rounded-2xl p-6 flex flex-col"
-          style={{
-            backfaceVisibility: 'hidden',
-            background: 'linear-gradient(145deg, #ffffff 0%, #f8fafc 100%)',
-            border: '1px solid rgba(226, 232, 240, 0.8)',
-            boxShadow: '0 4px 20px rgba(0,0,0,0.05)'
-          }}
+      <TiltCard className="h-full" scale={1.05}>
+        <motion.div
+          className="relative w-full h-full preserve-3d"
+          animate={{ rotateY: isFlipped ? 180 : 0 }}
+          transition={{ duration: 0.6, type: "spring", stiffness: 260, damping: 20 }}
+          style={{ transformStyle: 'preserve-3d' }}
         >
-          {/* 图标 */}
+          {/* 正面 */}
           <div
-            className={`w-14 h-14 rounded-xl bg-gradient-to-br ${feature.gradient} p-[1px] mb-5 group-hover:scale-110 transition-transform duration-300`}
+            className="absolute inset-0 backface-hidden rounded-2xl p-6 flex flex-col"
+            style={{
+              backfaceVisibility: 'hidden',
+              background: 'linear-gradient(145deg, #ffffff 0%, #f8fafc 100%)',
+              border: '1px solid rgba(226, 232, 240, 0.8)',
+              boxShadow: '0 4px 20px rgba(0,0,0,0.05)',
+              transform: 'translateZ(1px)' // Ensure visibility
+            }}
           >
-            <div className="w-full h-full rounded-xl bg-white flex items-center justify-center">
-              <Icon className="w-7 h-7" style={{ color: feature.color }} />
-            </div>
-          </div>
-
-          {/* 标题 */}
-          <h3 className="text-xl font-bold text-gray-900 mb-3">
-            {feature.title}
-          </h3>
-
-          {/* 描述 */}
-          <p className="text-gray-600 text-sm leading-relaxed flex-1">
-            {feature.description}
-          </p>
-
-
-
-          {/* 翻转提示 */}
-          <div className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity">
-            <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center">
-              <ArrowRight className="w-4 h-4 text-gray-400 rotate-[-45deg]" />
-            </div>
-          </div>
-        </div>
-
-        {/* 背面 */}
-        <div
-          className="absolute inset-0 backface-hidden rounded-2xl p-6 flex flex-col"
-          style={{
-            backfaceVisibility: 'hidden',
-            transform: 'rotateY(180deg)',
-            background: `linear-gradient(145deg, ${feature.color}08 0%, ${feature.color}15 100%)`,
-            border: `1px solid ${feature.color}30`,
-          }}
-        >
-          {/* 头部 */}
-          <div className="flex items-center gap-3 mb-5">
+            {/* 图标 */}
             <div
-              className="w-10 h-10 rounded-lg flex items-center justify-center"
-              style={{ background: `${feature.color}20` }}
+              className={`w-14 h-14 rounded-xl bg-gradient-to-br ${feature.gradient} p-[1px] mb-5 group-hover:scale-110 transition-transform duration-300`}
             >
-              <Icon className="w-5 h-5" style={{ color: feature.color }} />
+              <div className="w-full h-full rounded-xl bg-white flex items-center justify-center">
+                <Icon className="w-7 h-7" style={{ color: feature.color }} />
+              </div>
             </div>
-            <h3 className="text-lg font-bold" style={{ color: feature.color }}>
+
+            {/* 标题 */}
+            <h3 className="text-xl font-bold text-gray-900 mb-3">
               {feature.title}
             </h3>
+
+            {/* 描述 */}
+            <p className="text-gray-600 text-sm leading-relaxed flex-1">
+              {feature.description}
+            </p>
+
+            {/* 翻转提示 */}
+            <div className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity">
+              <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center">
+                <ArrowRight className="w-4 h-4 text-gray-400 rotate-[-45deg]" />
+              </div>
+            </div>
           </div>
 
-          {/* 详细特性 */}
-          <ul className="space-y-3 flex-1">
-            {feature.details.map((detail, i) => (
-              <li key={i} className="flex items-start gap-3">
-                <div
-                  className="w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5"
-                  style={{ background: `${feature.color}20` }}
-                >
-                  <Sparkles className="w-3 h-3" style={{ color: feature.color }} />
-                </div>
-                <span className="text-sm text-gray-700">{detail}</span>
-              </li>
-            ))}
-          </ul>
+          {/* 背面 */}
+          <div
+            className="absolute inset-0 backface-hidden rounded-2xl p-6 flex flex-col"
+            style={{
+              backfaceVisibility: 'hidden',
+              transform: 'rotateY(180deg)',
+              background: `linear-gradient(145deg, ${feature.color}08 0%, ${feature.color}15 100%)`,
+              border: `1px solid ${feature.color}30`,
+            }}
+          >
+            {/* 头部 */}
+            <div className="flex items-center gap-3 mb-5">
+              <div
+                className="w-10 h-10 rounded-lg flex items-center justify-center"
+                style={{ background: `${feature.color}20` }}
+              >
+                <Icon className="w-5 h-5" style={{ color: feature.color }} />
+              </div>
+              <h3 className="text-lg font-bold" style={{ color: feature.color }}>
+                {feature.title}
+              </h3>
+            </div>
 
-
-        </div>
-      </motion.div>
+            {/* 详细特性 */}
+            <ul className="space-y-3 flex-1">
+              {feature.details.map((detail, i) => (
+                <li key={i} className="flex items-start gap-3">
+                  <div
+                    className="w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5"
+                    style={{ background: `${feature.color}20` }}
+                  >
+                    <Sparkles className="w-3 h-3" style={{ color: feature.color }} />
+                  </div>
+                  <span className="text-sm text-gray-700">{detail}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </motion.div>
+      </TiltCard>
     </motion.div>
   );
 };

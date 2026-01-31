@@ -106,7 +106,7 @@ class StreamingService:
                 self._get_sequence_key(stream_id), 0, ex=self.event_ttl_seconds
             )
 
-            logger.info(f"创建流式连接: stream_id={stream_id}")
+            logger.debug(f"创建流式连接: stream_id={stream_id}")
             return stream_id
 
         except RedisError as e:
@@ -434,7 +434,7 @@ class StreamingService:
             # 删除事件列表和序列号
             await self.redis_client.delete(stream_key, sequence_key)
 
-            logger.info(f"关闭流式连接: stream_id={stream_id}")
+            logger.debug(f"关闭流式连接: stream_id={stream_id}")
 
         except RedisError as e:
             logger.warning(f"关闭流式连接失败: {str(e)}")

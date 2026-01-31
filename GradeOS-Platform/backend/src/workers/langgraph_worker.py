@@ -26,6 +26,7 @@ from src.utils.database import get_db_pool
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
+logging.getLogger("src.utils.sql_logger").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 

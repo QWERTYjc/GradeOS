@@ -51,6 +51,7 @@ logging.basicConfig(
 
 # 禁用噪音日志
 logging.getLogger("src.utils.redis_logger").setLevel(logging.WARNING)
+logging.getLogger("src.utils.sql_logger").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 

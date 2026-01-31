@@ -18,6 +18,8 @@ from src.utils.llm_thinking import split_thinking_content
 
 
 logger = logging.getLogger(__name__)
+# Stdout-visible workflow markers for Railway verification.
+workflow_logger = logging.getLogger("gradeos.workflow")
 
 
 @lru_cache(maxsize=1)
@@ -4425,6 +4427,13 @@ async def self_report_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     api_key = state.get("api_key") or os.getenv("LLM_API_KEY") or os.getenv("OPENROUTER_API_KEY")
     grading_mode = _resolve_grading_mode(state.get("inputs", {}), parsed_rubric)
 
+    def _log_self_report_done(reason: str, count: int) -> None:
+        message = (
+            f"[self_report] OK completed ({reason}): batch_id={batch_id}, students={count}"
+        )
+        logger.info(message)
+        workflow_logger.info(message)
+
     # 获取科目（用于记忆隔离）
     # 科目来源优先级：state["subject"] > inputs["subject"] > "general"
     subject = state.get("subject") or state.get("inputs", {}).get("subject", "general")
@@ -4442,6 +4451,7 @@ async def self_report_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     # 辅助模式跳过自白
     if grading_mode.startswith("assist"):
         logger.info(f"[self_report] skip (assist mode): batch_id={batch_id}")
+        _log_self_report_done("assist mode", len(student_results))
         return {
             "current_stage": "self_report_completed",
             "percentage": 80.0,
@@ -4452,6 +4462,7 @@ async def self_report_node(state: BatchGradingGraphState) -> Dict[str, Any]:
         }
 
     if not student_results:
+        _log_self_report_done("no student_results", 0)
         return {
             "current_stage": "self_report_completed",
             "percentage": 80.0,
@@ -4486,6 +4497,7 @@ async def self_report_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                         updated["self_report"]["issues"].extend(rule_report.get("issues", []))
                         updated["self_report"]["warnings"].extend(rule_report.get("warnings", []))
             updated_results.append(updated)
+        _log_self_report_done("rule-based", len(updated_results))
         return {
             "student_results": updated_results,
             "current_stage": "self_report_completed",
@@ -4727,6 +4739,7 @@ async def self_report_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     final_results = [r if r else student_results[i] for i, r in enumerate(updated_results)]
 
     logger.info(f"[self_report] completed for {len(final_results)} students: batch_id={batch_id}")
+    _log_self_report_done("llm", len(final_results))
 
     # 保存记忆到持久化存储
     try:
@@ -5010,6 +5023,14 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     api_key = state.get("api_key") or os.getenv("LLM_API_KEY") or os.getenv("OPENROUTER_API_KEY")
     grading_mode = _resolve_grading_mode(state.get("inputs", {}), parsed_rubric)
 
+    def _log_logic_review_done(reason: str, count: int, reviewed: int = 0) -> None:
+        message = (
+            f"[logic_review] OK completed ({reason}): batch_id={batch_id}, "
+            f"students={count}, reviewed={reviewed}"
+        )
+        logger.info(message)
+        workflow_logger.info(message)
+
     # 获取记忆服务
     from src.services.grading_memory import get_memory_service, MemoryType, MemoryImportance
 
@@ -5017,6 +5038,7 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
 
     if grading_mode.startswith("assist"):
         logger.info(f"[logic_review] skip (assist mode): batch_id={batch_id}")
+        _log_logic_review_done("assist mode", len(student_results), 0)
         return {
             "logic_review_results": [],
             "current_stage": "logic_review_completed",
@@ -5028,6 +5050,7 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
         }
 
     if not student_results:
+        _log_logic_review_done("no student_results", 0, 0)
         return {
             "logic_review_results": [],
             "current_stage": "logic_review_completed",
@@ -5054,6 +5077,7 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
             updated = dict(student)
             updated.setdefault("self_audit", _build_self_audit(updated))
             updated_results.append(updated)
+        _log_logic_review_done("rule-based", len(updated_results), 0)
         return {
             "student_results": updated_results,
             "logic_review_results": [],
@@ -5289,6 +5313,7 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     except Exception as e:
         logger.warning(f"[logic_review] 记忆整合失败: {e}")
 
+    _log_logic_review_done("llm", len(final_results), len(logic_review_results))
     return {
         "student_results": final_results,
         "logic_review_results": logic_review_results,
@@ -6036,23 +6061,37 @@ def create_batch_grading_graph(
     graph.add_edge("intake", "preprocess")
     graph.add_edge("preprocess", "rubric_parse")
     
+    # ✅ 先添加占位节点,用于跳过 review 时的路由
+    async def grading_fanout_placeholder_node(state: BatchGradingGraphState) -> Dict[str, Any]:
+        """占位节点,用于跳过 review 时直接进入 grading_fanout"""
+        batch_id = state.get("batch_id", "unknown")
+        logger.info(f"[grading_fanout_placeholder] 跳过 review,准备进入批改: batch_id={batch_id}")
+        return {
+            "current_stage": "grading_fanout_placeholder",
+            "percentage": 20.0,
+        }
+    
+    graph.add_node("grading_fanout_placeholder", grading_fanout_placeholder_node)
+    
     # ✅ 修复:添加条件路由,根据 enable_review 决定是否需要 rubric_review
     def should_review_rubric(state: BatchGradingGraphState) -> str:
         """决定是否需要 rubric review"""
+        batch_id = state.get("batch_id", "unknown")
         enable_review = state.get("inputs", {}).get("enable_review", True)
         parsed_rubric = state.get("parsed_rubric", {})
         grading_mode = _resolve_grading_mode(state.get("inputs", {}), parsed_rubric)
         
         # 如果是 assist 模式或 review 被禁用,直接跳到 grading_fanout
         if grading_mode.startswith("assist") or not enable_review:
-            logger.info(f"[should_review_rubric] 跳过 review,直接进入批改: mode={grading_mode}, enable_review={enable_review}")
+            logger.info(f"[should_review_rubric] 跳过 review,直接进入批改: batch_id={batch_id}, mode={grading_mode}, enable_review={enable_review}")
             return "skip_review"
         
         # 如果没有 rubric,也跳过
         if not parsed_rubric or not parsed_rubric.get("questions"):
-            logger.info(f"[should_review_rubric] 没有 rubric,跳过 review")
+            logger.info(f"[should_review_rubric] 没有 rubric,跳过 review: batch_id={batch_id}")
             return "skip_review"
         
+        logger.info(f"[should_review_rubric] 需要 review: batch_id={batch_id}")
         return "do_review"
     
     graph.add_conditional_edges(
@@ -6063,13 +6102,6 @@ def create_batch_grading_graph(
             "skip_review": "grading_fanout_placeholder",
         },
     )
-    
-    # 添加一个占位节点,用于跳过 review 时的路由
-    async def grading_fanout_placeholder_node(state: BatchGradingGraphState) -> Dict[str, Any]:
-        """占位节点,用于跳过 review 时直接进入 grading_fanout"""
-        return {}
-    
-    graph.add_node("grading_fanout_placeholder", grading_fanout_placeholder_node)
 
     # rubric_review 后也进入 grading_fanout
     graph.add_conditional_edges(
@@ -6091,8 +6123,16 @@ def create_batch_grading_graph(
         ],
     )
 
-    # 并行批改后直接进入 self_report（grade_batch 通过 add reducer 聚合 student_results）
-    graph.add_edge("grade_batch", "self_report")
+    # 并行批改后通过汇聚门控进入 self_report
+    # 只有当所有页面都批改完成后，才继续执行
+    graph.add_conditional_edges(
+        "grade_batch",
+        grading_merge_gate,
+        {
+            "continue": "self_report",
+            "wait": END,
+        },
+    )
 
     # 简化流程：self_report → logic_review → annotation_generation → review → export → END
     graph.add_edge("self_report", "logic_review")
@@ -6111,6 +6151,60 @@ def create_batch_grading_graph(
     logger.info("批量批改 Graph 已编译")
 
     return compiled_graph
+
+
+def _count_graded_pages(grading_results: List[Dict[str, Any]]) -> int:
+    """Count unique graded pages from grading_results (supports multi-page student batches)."""
+    if not grading_results:
+        return 0
+    pages = set()
+    for result in grading_results:
+        page_indices = result.get("page_indices") if isinstance(result, dict) else None
+        if isinstance(page_indices, list) and page_indices:
+            for idx in page_indices:
+                if idx is None:
+                    continue
+                pages.add(idx)
+            continue
+        page_index = result.get("page_index") if isinstance(result, dict) else None
+        if page_index is None:
+            continue
+        pages.add(page_index)
+    return len(pages)
+
+
+def grading_merge_gate(state: BatchGradingGraphState) -> str:
+    """
+    批改汇聚门控
+
+    检查是否所有并行批改任务都已完成。
+    通过比较 grading_results（已批改页面数）和 processed_images（总页面数）。
+    """
+    processed_images = state.get("processed_images") or []
+    grading_results = state.get("grading_results") or []
+
+    total_pages = len(processed_images)
+    graded_pages = _count_graded_pages(grading_results)
+
+    # 如果总页数为0（异常情况），且有结果（可能逻辑错误），或者都没结果
+    if total_pages == 0:
+        logger.warning("[grading_merge] 总页数为 0，直接继续")
+        return "continue"
+
+    progress = (graded_pages / total_pages) * 100
+    # 降低日志级别以减少冗余，只在关键节点打日志
+    if graded_pages % 5 == 0 or graded_pages >= total_pages:
+        logger.info(
+            f"[grading_merge] 进度检查: {graded_pages}/{total_pages} ({progress:.1f}%)"
+        )
+
+    # 检查是否全部完成
+    if graded_pages >= total_pages:
+        logger.info("[grading_merge] ✅ 所有批次完成，进入自白阶段")
+        return "continue"
+    
+    # 还有未完成的任务，当前分支结束
+    return "wait"
 
 
 # ==================== 导出 ====================
