@@ -1085,6 +1085,17 @@ def grading_fanout_router(state: BatchGradingGraphState) -> List[Send]:
             f"[grading_fanout] 按学生边界创建批改任务: batch_id={batch_id}, "
             f"学生数={num_batches}, 总页数={total_pages}"
         )
+        
+        # 🔍 调试日志：输出所有学生边界
+        logger.info(f"[grading_fanout] 📋 学生边界详情:")
+        for idx, boundary in enumerate(student_boundaries):
+            pages_info = boundary.get('pages') or f"{boundary.get('start_page')}-{boundary.get('end_page')}"
+            logger.info(
+                f"[grading_fanout]   学生 {idx + 1}: "
+                f"student_key={boundary.get('student_key')}, "
+                f"student_name={boundary.get('student_name')}, "
+                f"pages={pages_info}"
+            )
 
         sends = []
         for batch_idx, boundary in enumerate(student_boundaries):
@@ -1480,7 +1491,7 @@ def _infer_question_type(question: Dict[str, Any]) -> str:
 
     if standard_answer:
         answer_clean = re.sub(r"\s+", "", standard_answer)
-        if len(answer_clean) <= 4 and re.fullmatch(r"[0-9A-Za-z\\-+.=()（）/]+", answer_clean):
+        if len(answer_clean) <= 4 and re.fullmatch(r"[0-9A-Za-z+.=()（）/\-]+", answer_clean):
             return "objective"
         if len(standard_answer) > 30 or "\n" in standard_answer:
             return "subjective"
@@ -2355,8 +2366,8 @@ async def _grade_batch_node_impl(state: Dict[str, Any]) -> Dict[str, Any]:
         error_manager = get_error_manager()
 
         batch_agent_id = f"batch_{batch_index}"
-        batch_student_key = state.get("student_key")
-        batch_agent_label = batch_student_key or f"Student Batch {batch_index + 1}"
+        batch_student_key = state.get("student_key") or state.get("student_name") or f"Student {batch_index + 1}"
+        batch_agent_label = batch_student_key
         total_pages_in_batch = len(page_indices)
         pages_done = 0
         pages_lock = asyncio.Lock()
@@ -2455,22 +2466,27 @@ async def _grade_batch_node_impl(state: Dict[str, Any]) -> Dict[str, Any]:
                 max_score = student_result.get("max_score", 0)
                 question_details = student_result.get("question_details", [])
 
-                page_results.append(
-                    {
-                        "page_index": page_indices[0] if page_indices else 0,
-                        "page_indices": page_indices,
-                        "status": "completed",
-                        "score": total_score,
-                        "max_score": max_score,
-                        "confidence": student_result.get("confidence", 0.8),
-                        "feedback": student_result.get("overall_feedback", ""),
-                        "question_details": question_details,
-                        "student_key": batch_student_key,
-                        "student_name": batch_student_name,
-                        "student_id": batch_student_id,
-                        "batch_index": batch_index,
-                    }
-                )
+                # 为每个页面创建一个结果条目（包含图片数据）
+                for idx, page_index in enumerate(page_indices):
+                    image_bytes = images[idx] if idx < len(images) else None
+                    
+                    page_results.append(
+                        {
+                            "page_index": page_index,
+                            "page_indices": [page_index],
+                            "status": "completed",
+                            "score": total_score / len(page_indices) if len(page_indices) > 0 else total_score,  # 平均分配分数
+                            "max_score": max_score / len(page_indices) if len(page_indices) > 0 else max_score,
+                            "confidence": student_result.get("confidence", 0.8),
+                            "feedback": student_result.get("overall_feedback", ""),
+                            "question_details": question_details if idx == 0 else [],  # 只在第一页包含题目详情
+                            "student_key": batch_student_key,
+                            "student_name": batch_student_name,
+                            "student_id": batch_student_id,
+                            "batch_index": batch_index,
+                            "image": image_bytes,  # ✅ 添加图片数据
+                        }
+                    )
             else:
                 student_error = student_result.get("error", "Unknown error")
                 logger.warning(
@@ -2527,6 +2543,7 @@ async def _grade_batch_node_impl(state: Dict[str, Any]) -> Dict[str, Any]:
                             "is_blank_page": bool(
                                 page_context and page_context.get("is_cover_page")
                             ),
+                            "image": image,  # ✅ 添加图片数据（即使失败也保存）
                         }
                     )
                     await mark_page_done(page_index, f"Graded page {idx + 1}/{len(images)}")
@@ -2548,6 +2565,7 @@ async def _grade_batch_node_impl(state: Dict[str, Any]) -> Dict[str, Any]:
                         "page_indices": [page_index],
                         "status": status,
                         "score": page_result.get("score", 0),
+                        "image": image,  # ✅ 添加图片数据
                         "max_score": page_result.get("max_score", page_max_score),
                         "confidence": page_result.get("confidence", 0),
                         "feedback": page_result.get("feedback", ""),
@@ -2602,7 +2620,8 @@ async def _grade_batch_node_impl(state: Dict[str, Any]) -> Dict[str, Any]:
             }
 
         # 所有页面标记为失败
-        for page_idx in page_indices:
+        for idx, page_idx in enumerate(page_indices):
+            image_bytes = images[idx] if idx < len(images) else None
             page_results.append(
                 {
                     "page_index": page_idx,
@@ -2611,6 +2630,7 @@ async def _grade_batch_node_impl(state: Dict[str, Any]) -> Dict[str, Any]:
                     "score": 0,
                     "max_score": 0,
                     "batch_index": batch_index,
+                    "image": image_bytes,  # ✅ 添加图片数据（即使失败也保存）
                     "grading_mode": grading_mode,
                 }
             )
@@ -2657,16 +2677,33 @@ async def _grade_batch_node_impl(state: Dict[str, Any]) -> Dict[str, Any]:
         grading_mode=grading_mode,
     )
 
-    # 🔍 输出完整的批改结果 JSON
+    # 🔍 输出完整的批改结果 JSON（排除图片数据以避免序列化错误）
     import json
+    
+    # 创建不包含图片的副本用于日志
+    page_results_for_log = []
+    for pr in page_results:
+        pr_copy = {k: v for k, v in pr.items() if k != "image"}
+        if "image" in pr:
+            pr_copy["image_size"] = len(pr["image"]) if pr["image"] else 0
+        page_results_for_log.append(pr_copy)
+    
+    student_results_for_log = []
+    for sr in student_results:
+        sr_copy = {k: v for k, v in sr.items() if k != "page_results"}
+        if "page_results" in sr:
+            sr_copy["page_count"] = len(sr["page_results"])
+        student_results_for_log.append(sr_copy)
+    
     logger.info(f"[grade_batch] 📝 批次 {batch_index + 1} 批改完成，AI 返回的完整结果 JSON:")
-    logger.info(f"[grade_batch] Page Results: {json.dumps(page_results, ensure_ascii=False, indent=2)}")
-    logger.info(f"[grade_batch] Student Results: {json.dumps(student_results, ensure_ascii=False, indent=2)}")
+    logger.info(f"[grade_batch] Page Results: {json.dumps(page_results_for_log, ensure_ascii=False, indent=2)}")
+    logger.info(f"[grade_batch] Student Results: {json.dumps(student_results_for_log, ensure_ascii=False, indent=2)}")
 
     # 返回结果（使用 add reducer 聚合，直接输出 student_results）
+    # 注意：图片数据保留在 page_results 中，供 export_node 使用
     return {
         "student_results": student_results,
-        "grading_results": page_results,  # 保留用于调试/日志
+        "grading_results": page_results,  # 包含图片数据
         "batch_progress": progress_info,
     }
 
@@ -5496,6 +5533,16 @@ async def export_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                 # 1. 保存批改历史
                 history_id = str(uuid.uuid4())
                 total_students = len(student_results)
+                
+                # 🔍 调试日志：输出所有学生的 student_key
+                logger.info(f"[export] 📋 准备保存 {total_students} 个学生结果:")
+                for idx, student in enumerate(student_results, 1):
+                    student_key = student.get("student_key") or student.get("student_name") or "N/A"
+                    page_count = len(student.get("page_results", []))
+                    logger.info(
+                        f"[export]   学生 {idx}: student_key={student_key}, "
+                        f"pages={page_count}, score={student.get('total_score', 0)}"
+                    )
                 
                 # 计算平均分
                 total_scores = [s.get("total_score", 0) for s in student_results]

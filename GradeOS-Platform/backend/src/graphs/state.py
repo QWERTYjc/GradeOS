@@ -124,8 +124,8 @@ class BatchGradingGraphState(TypedDict, total=False):
     # ===== 学生聚合（基于索引）=====
     student_boundaries: List[Dict[str, Any]]  # 学生试卷边界列表
     student_results: Annotated[
-        List[Dict[str, Any]], operator.add
-    ]  # 按学生聚合的结果（使用 add reducer 聚合并行结果）
+        List[Dict[str, Any]], last_value
+    ]  # 按学生聚合的结果（使用 last_value reducer 替换旧值）
 
     # ===== 审核结果 =====
     review_summary: Dict[str, Any]  # 审核摘要
