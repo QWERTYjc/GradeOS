@@ -2601,38 +2601,73 @@ async def get_rubric_review_context(
 ):
     """获取 rubric review 页面上下文"""
     try:
-        if not orchestrator:
-            raise HTTPException(status_code=503, detail="编排器未初始化")
+        # 1. 优先尝试从 LangGraph 运行时状态获取
+        if orchestrator:
+            run_id = f"batch_grading_{batch_id}"
+            run_info = await orchestrator.get_run_info(run_id)
+            
+            if run_info:
+                state = run_info.state or {}
+                parsed_rubric = state.get("parsed_rubric")
 
-        run_id = f"batch_grading_{batch_id}"
-        run_info = await orchestrator.get_run_info(run_id)
-        if not run_info:
+                cached = batch_image_cache.get(batch_id, {})
+                cached_images = cached.get("rubric_images_ready", {}).get("images") if cached else None
+                rubric_images: List[str] = cached_images or []
+
+                if not rubric_images and state.get("rubric_images"):
+                    try:
+                        rubric_images = []
+                        for img in state.get("rubric_images", []):
+                            if isinstance(img, (bytes, bytearray)):
+                                rubric_images.append(base64.b64encode(img).decode("utf-8"))
+                            elif isinstance(img, str) and img:
+                                rubric_images.append(img)
+                    except Exception as exc:
+                        logger.debug(f"Failed to convert rubric images: {exc}")
+                
+                return RubricReviewContextResponse(
+                    batch_id=batch_id,
+                    status=run_info.status.value if run_info.status else None,
+                    current_stage=state.get("current_stage"),
+                    parsed_rubric=parsed_rubric,
+                    rubric_images=rubric_images,
+                )
+        
+        # 2. 如果 LangGraph 状态不存在，从数据库读取
+        logger.info(f"[rubric_context] LangGraph 状态不存在，尝试从数据库读取: batch_id={batch_id}")
+        
+        from src.db.postgres_grading import get_grading_history, get_rubric_images
+        
+        # 通过 batch_id 查找 grading_history
+        history = await get_grading_history(batch_id)
+        if not history:
             raise HTTPException(status_code=404, detail="批次不存在")
-
-        state = run_info.state or {}
-        parsed_rubric = state.get("parsed_rubric")
-
-        cached = batch_image_cache.get(batch_id, {})
-        cached_images = cached.get("rubric_images_ready", {}).get("images") if cached else None
-        rubric_images: List[str] = cached_images or []
-
-        if not rubric_images and state.get("rubric_images"):
+        
+        # 获取 rubric JSON
+        parsed_rubric = history.rubric
+        
+        # 获取 rubric 图片并转换为 base64
+        rubric_images_db = await get_rubric_images(history.id)
+        rubric_images = []
+        
+        for img in rubric_images_db:
             try:
-                rubric_images = []
-                for img in state.get("rubric_images", []):
-                    if isinstance(img, (bytes, bytearray)):
-                        rubric_images.append(base64.b64encode(img).decode("utf-8"))
-                    elif isinstance(img, str) and img:
-                        rubric_images.append(img)
+                # 将图片二进制数据转换为 base64
+                img_base64 = base64.b64encode(img.image_data).decode("utf-8")
+                rubric_images.append(img_base64)
             except Exception as exc:
-                logger.debug(f"Failed to convert rubric images: {exc}")
+                logger.warning(f"Failed to convert rubric image {img.page_index}: {exc}")
+        
+        logger.info(f"[rubric_context] 从数据库读取成功: rubric={bool(parsed_rubric)}, images={len(rubric_images)}")
+        
         return RubricReviewContextResponse(
             batch_id=batch_id,
-            status=run_info.status.value if run_info.status else None,
-            current_stage=state.get("current_stage"),
+            status="completed",  # 从数据库读取说明已完成
+            current_stage="completed",
             parsed_rubric=parsed_rubric,
             rubric_images=rubric_images,
         )
+        
     except HTTPException:
         raise
     except Exception as exc:

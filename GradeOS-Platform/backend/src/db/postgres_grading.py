@@ -27,6 +27,7 @@ class GradingHistory:
     total_students: int = 0
     average_score: Optional[float] = None
     result_data: Optional[Dict[str, Any]] = None
+    rubric: Optional[Dict[str, Any]] = None  # 评分标准（解析后的 JSON）
 
 
 @dataclass
@@ -68,15 +69,16 @@ async def save_grading_history(history: GradingHistory) -> None:
     query = """
         INSERT INTO grading_history 
         (id, batch_id, class_ids, created_at, completed_at, status, 
-         total_students, average_score, result_data)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+         total_students, average_score, result_data, rubric)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (batch_id) DO UPDATE SET
             class_ids = EXCLUDED.class_ids,
             completed_at = EXCLUDED.completed_at,
             status = EXCLUDED.status,
             total_students = EXCLUDED.total_students,
             average_score = EXCLUDED.average_score,
-            result_data = EXCLUDED.result_data
+            result_data = EXCLUDED.result_data,
+            rubric = EXCLUDED.rubric
     """
     params = (
         history.id,
@@ -88,6 +90,7 @@ async def save_grading_history(history: GradingHistory) -> None:
         history.total_students,
         history.average_score,
         json.dumps(history.result_data) if history.result_data else None,
+        json.dumps(history.rubric, ensure_ascii=False) if history.rubric else None,
     )
 
     try:
@@ -157,6 +160,13 @@ async def get_grading_history(batch_id_or_id: str) -> Optional[GradingHistory]:
             else:
                 completed_at_value = None
 
+            # 处理 rubric 字段（JSONB）
+            raw_rubric = row.get("rubric")
+            if isinstance(raw_rubric, str):
+                rubric = json.loads(raw_rubric) if raw_rubric else None
+            else:
+                rubric = raw_rubric
+
             return GradingHistory(
                 id=str(row["id"]),
                 batch_id=row["batch_id"],
@@ -167,6 +177,7 @@ async def get_grading_history(batch_id_or_id: str) -> Optional[GradingHistory]:
                 total_students=row["total_students"] or 0,
                 average_score=float(row["average_score"]) if row["average_score"] else None,
                 result_data=result_data,
+                rubric=rubric,  # 添加 rubric 字段
             )
     except Exception as e:
         logger.error(f"从 PostgreSQL 获取批改历史失败: {e}")
@@ -421,9 +432,8 @@ async def save_page_image(image: GradingPageImage) -> None:
         (id, grading_history_id, student_key, page_index, 
          image_data, image_format, created_at)
         VALUES (%s, %s, %s, %s, %s, %s, %s)
-        ON CONFLICT (id) DO UPDATE SET
-            image_data = EXCLUDED.image_data,
-            image_format = EXCLUDED.image_format
+        ON CONFLICT (grading_history_id, student_key, page_index) 
+        DO NOTHING
     """
     params = (
         image.id,
@@ -436,14 +446,14 @@ async def save_page_image(image: GradingPageImage) -> None:
     )
     
     try:
-        log_sql_operation("INSERT/UPDATE", "grading_page_images", {"id": image.id})
+        log_sql_operation("INSERT", "grading_page_images", {"id": image.id})
         async with db.connection() as conn:
             await conn.execute(query, params)
             await conn.commit()
-        log_sql_operation("INSERT/UPDATE", "grading_page_images", result_count=1)
+        log_sql_operation("INSERT", "grading_page_images", result_count=1)
         logger.debug(f"页面图像已保存: student_key={image.student_key}, page={image.page_index}")
     except Exception as e:
-        log_sql_operation("INSERT/UPDATE", "grading_page_images", error=e)
+        log_sql_operation("INSERT", "grading_page_images", error=e)
         logger.error(f"保存页面图像失败: {e}")
         raise
 
@@ -503,4 +513,100 @@ async def get_page_images(
         return images
     except Exception as e:
         logger.error(f"获取页面图像失败: {e}")
+        return []
+
+
+
+@dataclass
+class RubricImage:
+    """评分标准图片"""
+    
+    id: str
+    grading_history_id: str
+    page_index: int
+    image_data: bytes  # 图像二进制数据
+    image_format: str = "png"  # 图像格式：png, jpg, webp
+    created_at: str = ""
+
+
+async def save_rubric_image(image: RubricImage) -> None:
+    """保存评分标准图片到 PostgreSQL"""
+    if not image.created_at:
+        image.created_at = datetime.now().isoformat()
+    
+    query = """
+        INSERT INTO rubric_images 
+        (id, grading_history_id, page_index, 
+         image_data, image_format, created_at)
+        VALUES (%s, %s, %s, %s, %s, %s)
+        ON CONFLICT (grading_history_id, page_index) 
+        DO UPDATE SET
+            image_data = EXCLUDED.image_data,
+            image_format = EXCLUDED.image_format
+    """
+    params = (
+        image.id,
+        image.grading_history_id,
+        image.page_index,
+        image.image_data,
+        image.image_format,
+        image.created_at,
+    )
+    
+    try:
+        log_sql_operation("INSERT", "rubric_images", {"id": image.id})
+        async with db.connection() as conn:
+            await conn.execute(query, params)
+            await conn.commit()
+        log_sql_operation("INSERT", "rubric_images", result_count=1)
+        logger.debug(f"评分标准图片已保存: page={image.page_index}")
+    except Exception as e:
+        log_sql_operation("INSERT", "rubric_images", error=e)
+        logger.error(f"保存评分标准图片失败: {e}")
+        raise
+
+
+async def get_rubric_images(grading_history_id: str) -> List[RubricImage]:
+    """获取评分标准图片"""
+    try:
+        query = """
+            SELECT * FROM rubric_images 
+            WHERE grading_history_id = %s
+            ORDER BY page_index
+        """
+        params = (grading_history_id,)
+        
+        log_sql_operation("SELECT", query, params)
+        
+        async with db.connection() as conn:
+            cursor = await conn.execute(query, params)
+            rows = await cursor.fetchall()
+        
+        log_sql_operation("SELECT", "rubric_images", result_count=len(rows))
+        
+        images = []
+        for row in rows:
+            # 处理日期字段（可能是 datetime 对象或字符串）
+            created_at_value = row["created_at"]
+            if hasattr(created_at_value, 'isoformat'):
+                created_at_value = created_at_value.isoformat()
+            elif created_at_value:
+                created_at_value = str(created_at_value)
+            else:
+                created_at_value = ""
+            
+            images.append(
+                RubricImage(
+                    id=str(row["id"]),
+                    grading_history_id=str(row["grading_history_id"]),
+                    page_index=row["page_index"],
+                    image_data=row["image_data"],
+                    image_format=row["image_format"],
+                    created_at=created_at_value,
+                )
+            )
+        
+        return images
+    except Exception as e:
+        logger.error(f"获取评分标准图片失败: {e}")
         return []

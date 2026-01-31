@@ -72,13 +72,19 @@ async def init_orchestrator():
 
         checkpointer = None
         db_pool = None
-        if use_database and AsyncPostgresSaver is not None:
+        
+        # 🔧 临时禁用 PostgreSQL Checkpointer 以避免 bytes 序列化问题
+        # TODO: 在图片数据保存逻辑完善后，可以重新启用
+        force_memory_checkpointer = os.getenv("FORCE_MEMORY_CHECKPOINTER", "true").lower() == "true"
+        
+        if use_database and AsyncPostgresSaver is not None and not force_memory_checkpointer:
             dsn = os.getenv("DATABASE_URL", "")
             if not dsn:
                 dsn = DatabaseConfig().connection_string
             checkpointer = await _open_postgres_checkpointer(dsn)
 
         if checkpointer is None:
+            logger.info("使用内存 Checkpointer（图片数据不会被序列化到 LangGraph 状态）")
             checkpointer = InMemorySaver()
             offline_mode = True
         else:

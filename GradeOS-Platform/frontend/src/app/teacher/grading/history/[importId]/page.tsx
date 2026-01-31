@@ -27,6 +27,8 @@ export default function GradingHistoryDetailPage() {
   const setSubmissionId = useConsoleStore((state) => state.setSubmissionId);
   const setStatus = useConsoleStore((state) => state.setStatus);
   const setCurrentTab = useConsoleStore((state) => state.setCurrentTab);
+  const setParsedRubric = useConsoleStore((state) => state.setParsedRubric);
+  const setRubricImages = useConsoleStore((state) => state.setRubricImages);
   const [batchId, setBatchId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -38,10 +40,92 @@ export default function GradingHistoryDetailPage() {
     setLoading(true);
     gradingApi
       .getGradingHistoryDetail(importId)
-      .then((detail) => {
+      .then(async (detail) => {
         if (!active) return null;
         resolvedBatchId = detail.record.batch_id;
         setBatchId(resolvedBatchId);
+
+        // 尝试从数据库加载图片
+        let imagesFromDb: string[] = [];
+        try {
+          const imagesResponse = await gradingApi.getGradingHistoryImages(importId);
+          if (imagesResponse && imagesResponse.images) {
+            imagesFromDb = imagesResponse.images.map(img => 
+              `data:image/${img.image_format};base64,${img.image_base64}`
+            );
+            console.log(`从数据库加载了 ${imagesFromDb.length} 张图片`);
+          }
+        } catch (err) {
+          console.warn('从数据库加载图片失败，尝试从 batch context 加载:', err);
+        }
+
+        // 🔥 加载评分标准（rubric JSON + 图片）
+        try {
+          const rubricResponse = await gradingApi.getGradingHistoryRubric(importId);
+          if (rubricResponse && rubricResponse.data) {
+            const { rubric, rubric_images } = rubricResponse.data;
+            
+            // 设置 parsed rubric - 需要规范化字段命名（下划线 -> 驼峰）
+            if (rubric) {
+              console.log('📋 原始 Rubric 数据:', rubric);
+              console.log('📋 原始 questions 字段:', rubric.questions);
+              console.log('📋 原始 question_list 字段:', rubric.question_list);
+              
+              // 转换 questions 数组中每个题目的字段命名
+              const rawQuestions = rubric.questions || rubric.question_list || [];
+              const normalizedQuestions = rawQuestions.map((q: any) => ({
+                questionId: q.question_id || q.questionId || '',
+                maxScore: q.max_score ?? q.maxScore ?? 0,
+                questionText: q.question_text || q.questionText || '',
+                standardAnswer: q.standard_answer || q.standardAnswer || '',
+                gradingNotes: q.grading_notes || q.gradingNotes || '',
+                criteria: q.criteria || [],
+                sourcePages: q.source_pages || q.sourcePages || [],
+                scoringPoints: (q.scoring_points || q.scoringPoints || []).map((sp: any) => ({
+                  pointId: sp.point_id || sp.pointId || '',
+                  description: sp.description || '',
+                  expectedValue: sp.expected_value || sp.expectedValue || '',
+                  score: sp.score ?? 0,
+                  isRequired: sp.is_required ?? sp.isRequired ?? true,
+                  keywords: sp.keywords || [],
+                })),
+                alternativeSolutions: (q.alternative_solutions || q.alternativeSolutions || []).map((alt: any) => ({
+                  description: alt.description || '',
+                  scoringCriteria: alt.scoring_criteria || alt.scoringCriteria || '',
+                  note: alt.note || '',
+                })),
+              }));
+              
+              // 转换字段命名：total_questions -> totalQuestions, total_score -> totalScore
+              const normalizedRubric = {
+                totalQuestions: rubric.total_questions ?? rubric.totalQuestions ?? 0,
+                totalScore: rubric.total_score ?? rubric.totalScore ?? 0,
+                questions: normalizedQuestions,
+                generalNotes: rubric.general_notes || rubric.generalNotes || '',
+                rubricFormat: rubric.rubric_format || rubric.rubricFormat || '',
+                overallParseConfidence: rubric.overall_parse_confidence ?? rubric.overallParseConfidence ?? 1.0,
+                parseSelfReport: rubric.parse_self_report || rubric.parseSelfReport,
+              };
+              
+              console.log('📋 规范化后的 Rubric:', normalizedRubric);
+              console.log('📋 规范化后的 questions:', normalizedRubric.questions);
+              console.log('📋 规范化后的 questions[0]:', normalizedRubric.questions[0]);
+              setParsedRubric(normalizedRubric);
+              console.log(`从数据库加载了评分标准: ${normalizedRubric.totalQuestions} 道题，总分 ${normalizedRubric.totalScore}`);
+            } else {
+              console.warn('⚠️ Rubric 数据为空');
+            }
+            
+            // 设置 rubric images URLs
+            if (rubric_images && rubric_images.length > 0) {
+              const rubricImageUrls = rubric_images.map(img => img.image_url);
+              setRubricImages(rubricImageUrls);
+              console.log(`从数据库加载了 ${rubric_images.length} 张评分标准图片`);
+            }
+          }
+        } catch (err) {
+          console.warn('从数据库加载评分标准失败:', err);
+        }
 
         // 如果没有 batch_id，直接使用 detail.items 中的结果
         if (!resolvedBatchId || resolvedBatchId.trim() === '') {
@@ -55,11 +139,32 @@ export default function GradingHistoryDetailPage() {
           return Promise.resolve({
             batch_id: importId,
             student_results: studentResults,
-            answer_images: [],
+            answer_images: imagesFromDb.length > 0 ? imagesFromDb : [],
           });
         }
 
-        return gradingApi.getResultsReviewContext(resolvedBatchId);
+        // 尝试从 batch context 加载
+        try {
+          const contextData = await gradingApi.getResultsReviewContext(resolvedBatchId);
+          return {
+            ...contextData,
+            // 优先使用数据库中的图片
+            answer_images: imagesFromDb.length > 0 ? imagesFromDb : (contextData.answer_images || []),
+          };
+        } catch (err) {
+          console.warn('从 batch context 加载失败，使用数据库图片:', err);
+          // 如果 batch context 加载失败，使用 detail.items 构建结果
+          const studentResults = detail.items.map(item => ({
+            ...item.result,
+            studentName: item.student_name,
+            studentId: item.student_id,
+          }));
+          return {
+            batch_id: resolvedBatchId,
+            student_results: studentResults,
+            answer_images: imagesFromDb,
+          };
+        }
       })
       .then((data: ResultsReviewContext | null) => {
         if (!active || !data) return;
@@ -93,7 +198,7 @@ export default function GradingHistoryDetailPage() {
     return () => {
       active = false;
     };
-  }, [importId, setFinalResults, setUploadedImages, setSubmissionId, setStatus, setCurrentTab]);
+  }, [importId, setFinalResults, setUploadedImages, setSubmissionId, setStatus, setCurrentTab, setParsedRubric, setRubricImages]);
 
   return (
     <DashboardLayout>

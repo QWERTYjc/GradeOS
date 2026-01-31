@@ -5511,6 +5511,7 @@ async def export_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     cross_page_questions = state.get("cross_page_questions", [])
     merged_questions = state.get("merged_questions", [])
     grading_results = state.get("grading_results", [])
+    parsed_rubric = state.get("parsed_rubric", {})
 
     logger.info(f"[export] 开始导出结果: batch_id={batch_id}, 学生数={len(student_results)}")
 
@@ -5566,6 +5567,7 @@ async def export_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                     completed_at=datetime.now().isoformat(),
                     total_students=total_students,
                     average_score=average_score,
+                    rubric=parsed_rubric,  # 保存评分标准
                     result_data={
                         "has_failures": has_failures,
                         "failed_pages_count": len(failed_pages),
@@ -5641,6 +5643,33 @@ async def export_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                 
                 logger.info(f"[export] 已保存 {saved_students}/{total_students} 个学生结果到数据库")
                 logger.info(f"[export] 已保存 {saved_images} 张页面图像到数据库")
+                
+                # 4. 保存评分标准图片
+                rubric_images = state.get("rubric_images", [])
+                saved_rubric_images = 0
+                
+                if rubric_images:
+                    from src.db.postgres_grading import RubricImage, save_rubric_image
+                    
+                    for page_index, rubric_image_bytes in enumerate(rubric_images):
+                        if rubric_image_bytes and isinstance(rubric_image_bytes, bytes):
+                            try:
+                                rubric_image = RubricImage(
+                                    id=str(uuid.uuid4()),
+                                    grading_history_id=history_id,
+                                    page_index=page_index,
+                                    image_data=rubric_image_bytes,
+                                    image_format="png",
+                                    created_at=datetime.now().isoformat(),
+                                )
+                                
+                                await save_rubric_image(rubric_image)
+                                saved_rubric_images += 1
+                            except Exception as e:
+                                logger.error(f"[export] 保存评分标准图片失败 (page={page_index}): {e}")
+                    
+                    logger.info(f"[export] 已保存 {saved_rubric_images}/{len(rubric_images)} 张评分标准图片到数据库")
+                
                 persisted = True
                 
             except Exception as e:

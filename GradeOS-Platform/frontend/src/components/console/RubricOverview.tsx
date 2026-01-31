@@ -8,6 +8,11 @@ export function RubricOverview() {
   const parsedRubric = useConsoleStore((state) => state.parsedRubric);
   const [showSelfReport, setShowSelfReport] = useState(true);
 
+  // 调试日志
+  console.log('🔍 RubricOverview - parsedRubric:', parsedRubric);
+  console.log('🔍 RubricOverview - questions:', parsedRubric?.questions);
+  console.log('🔍 RubricOverview - questions length:', parsedRubric?.questions?.length);
+
   if (!parsedRubric || !parsedRubric.questions || parsedRubric.questions.length === 0) {
     return (
       <div className="p-6 flex items-center justify-center text-slate-400 text-sm gap-2">
@@ -91,7 +96,7 @@ export function RubricOverview() {
                   <div className="space-y-1">
                     {selfReport.issues.map((issue, idx) => (
                       <div
-                        key={idx}
+                        key={`issue-${issue.questionId || idx}`}
                         className={`text-xs p-2 rounded flex items-start gap-2 ${
                           issue.severity === 'high'
                             ? 'bg-rose-50 text-rose-700 border border-rose-200'
@@ -125,7 +130,7 @@ export function RubricOverview() {
                   </div>
                   <div className="space-y-1">
                     {selfReport.uncertainties.map((uncertainty, idx) => (
-                      <div key={idx} className="text-xs text-blue-600 bg-white/50 rounded p-2 pl-4 border-l-2 border-blue-300">
+                      <div key={`uncertainty-${idx}`} className="text-xs text-blue-600 bg-white/50 rounded p-2 pl-4 border-l-2 border-blue-300">
                         • {uncertainty}
                       </div>
                     ))}
@@ -140,7 +145,7 @@ export function RubricOverview() {
                   <div className="grid grid-cols-2 gap-2">
                     {selfReport.qualityChecks.map((check, idx) => (
                       <div
-                        key={idx}
+                        key={`quality-check-${idx}`}
                         className={`text-xs p-2 rounded flex items-start gap-2 ${
                           check.passed
                             ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
@@ -173,8 +178,8 @@ export function RubricOverview() {
         </div>
       )}
       <div className="space-y-3">
-        {parsedRubric.questions.map((q) => (
-          <div key={q.questionId} className="border-b border-slate-100 pb-3 last:border-b-0">
+        {parsedRubric.questions.map((q, qIndex) => (
+          <div key={`question-${q.questionId || qIndex}`} className="border-b border-slate-100 pb-3 last:border-b-0">
             <div className="flex items-center justify-between">
               <div className="text-sm font-bold text-slate-700">
                 Q{q.questionId}
@@ -188,9 +193,9 @@ export function RubricOverview() {
             )}
             {q.scoringPoints?.length ? (
               <div className="mt-2.5 flex flex-wrap gap-2">
-                {q.scoringPoints.slice(0, 3).map((sp) => (
+                {q.scoringPoints.slice(0, 3).map((sp, spIndex) => (
                   <span
-                    key={`${q.questionId}-${sp.pointId}`}
+                    key={`${q.questionId}-${sp.pointId || spIndex}`}
                     className="text-[10px] border border-slate-200 px-2 py-1 text-slate-600 font-medium flex items-center gap-1"
                   >
                     <ListOrdered className="w-3 h-3 text-slate-400" />

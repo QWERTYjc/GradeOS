@@ -2526,3 +2526,402 @@ async def bookscan_generate(request: BookscanGenerateRequest):
 
     svg_base64 = base64.b64encode(svg_text.encode("utf-8")).decode("ascii")
     return {"image": f"data:image/svg+xml;base64,{svg_base64}"}
+
+
+# ============ 批改历史图片 API ============
+
+from fastapi.responses import Response
+from src.db.postgres_grading import get_page_images
+
+
+class PageImageResponse(BaseModel):
+    """页面图片响应"""
+    page_index: int
+    image_base64: str
+    image_format: str = "png"
+
+
+class GradingImagesResponse(BaseModel):
+    """批改历史图片响应"""
+    history_id: str
+    student_key: str
+    images: List[PageImageResponse]
+
+
+@router.get(
+    "/grading/history/{history_id}/images",
+    response_model=GradingImagesResponse,
+    tags=["Grading History"],
+)
+async def get_grading_history_images(
+    history_id: str,
+    student_key: Optional[str] = None,
+):
+    """
+    获取批改历史的页面图片
+    
+    Args:
+        history_id: 批改历史 ID（grading_history.id）
+        student_key: 学生标识（可选，如果不提供则返回所有学生的图片）
+    
+    Returns:
+        GradingImagesResponse: 包含 Base64 编码的图片数据
+    """
+    try:
+        # 从数据库获取图片
+        page_images = await get_page_images(history_id, student_key)
+        
+        if not page_images:
+            raise HTTPException(
+                status_code=404,
+                detail=f"未找到批改历史图片: history_id={history_id}, student_key={student_key}"
+            )
+        
+        # 转换为 Base64
+        images = []
+        for img in page_images:
+            image_base64 = base64.b64encode(img.image_data).decode('utf-8')
+            images.append(
+                PageImageResponse(
+                    page_index=img.page_index,
+                    image_base64=image_base64,
+                    image_format=img.image_format,
+                )
+            )
+        
+        # 使用第一张图片的 student_key（如果没有指定）
+        response_student_key = student_key or (page_images[0].student_key if page_images else "")
+        
+        logger.info(
+            f"返回批改历史图片: history_id={history_id}, "
+            f"student_key={response_student_key}, "
+            f"图片数量={len(images)}"
+        )
+        
+        return GradingImagesResponse(
+            history_id=history_id,
+            student_key=response_student_key,
+            images=images,
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"获取批改历史图片失败: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"获取批改历史图片失败: {str(e)}"
+        )
+
+
+@router.get(
+    "/grading/history/{history_id}/images/{student_key}/{page_index}",
+    tags=["Grading History"],
+)
+async def get_grading_history_image_single(
+    history_id: str,
+    student_key: str,
+    page_index: int,
+):
+    """
+    获取单张批改历史图片（直接返回图片二进制数据）
+    
+    Args:
+        history_id: 批改历史 ID
+        student_key: 学生标识
+        page_index: 页面索引
+    
+    Returns:
+        Response: 图片二进制数据（PNG 格式）
+    """
+    try:
+        # 从数据库获取图片
+        page_images = await get_page_images(history_id, student_key)
+        
+        # 查找指定页面
+        target_image = None
+        for img in page_images:
+            if img.page_index == page_index:
+                target_image = img
+                break
+        
+        if not target_image:
+            raise HTTPException(
+                status_code=404,
+                detail=f"未找到图片: history_id={history_id}, student_key={student_key}, page={page_index}"
+            )
+        
+        # 返回图片二进制数据
+        media_type = f"image/{target_image.image_format}"
+        return Response(
+            content=target_image.image_data,
+            media_type=media_type,
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"获取单张批改历史图片失败: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"获取图片失败: {str(e)}"
+        )
+
+
+
+# ==================== Rubric Images API ====================
+
+@router.get(
+    "/grading-history/{history_id}/rubric-images",
+    summary="获取评分标准图片列表",
+    description="获取指定批改历史的所有评分标准图片元数据（不含图片数据）",
+)
+async def get_rubric_images_list(history_id: str):
+    """
+    获取评分标准图片列表
+    
+    Args:
+        history_id: 批改历史 ID
+    
+    Returns:
+        List[Dict]: 图片元数据列表
+    """
+    try:
+        from src.db.postgres_grading import get_rubric_images
+        
+        rubric_images = await get_rubric_images(history_id)
+        
+        return {
+            "data": [
+                {
+                    "id": img.id,
+                    "grading_history_id": img.grading_history_id,
+                    "page_index": img.page_index,
+                    "image_format": img.image_format,
+                    "created_at": img.created_at,
+                    "image_url": f"/api/grading-history/{history_id}/rubric-images/{img.page_index}",
+                }
+                for img in rubric_images
+            ],
+            "total": len(rubric_images),
+        }
+    except Exception as e:
+        logger.error(f"获取评分标准图片列表失败: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"获取评分标准图片列表失败: {str(e)}"
+        )
+
+
+@router.get(
+    "/grading-history/{history_id}/rubric-images/{page_index}",
+    summary="获取单张评分标准图片",
+    description="获取指定批改历史的指定页面的评分标准图片（直接返回图片二进制数据）",
+)
+async def get_rubric_image_single(
+    history_id: str,
+    page_index: int,
+):
+    """
+    获取单张评分标准图片（直接返回图片二进制数据）
+    
+    Args:
+        history_id: 批改历史 ID
+        page_index: 页面索引
+    
+    Returns:
+        Response: 图片二进制数据（PNG 格式）
+    """
+    try:
+        from src.db.postgres_grading import get_rubric_images
+        
+        # 从数据库获取图片
+        rubric_images = await get_rubric_images(history_id)
+        
+        # 查找指定页面
+        target_image = None
+        for img in rubric_images:
+            if img.page_index == page_index:
+                target_image = img
+                break
+        
+        if not target_image:
+            raise HTTPException(
+                status_code=404,
+                detail=f"未找到评分标准图片: history_id={history_id}, page={page_index}"
+            )
+        
+        # 返回图片二进制数据
+        media_type = f"image/{target_image.image_format}"
+        return Response(
+            content=target_image.image_data,
+            media_type=media_type,
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"获取单张评分标准图片失败: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"获取图片失败: {str(e)}"
+        )
+
+
+
+@router.get(
+    "/grading/history/{history_id}/rubric",
+    summary="获取批改历史的评分标准",
+    description="获取指定批改历史的评分标准（JSON）和图片信息，用于复核或重新批改",
+    tags=["Grading History"],
+)
+async def get_grading_history_rubric(history_id: str):
+    """
+    获取批改历史的评分标准
+    
+    Args:
+        history_id: 批改历史 ID
+    
+    Returns:
+        Dict: 包含 rubric JSON 和图片信息
+    """
+    try:
+        from src.db.postgres_grading import get_grading_history, get_rubric_images
+        
+        # 1. 获取批改历史（包含 rubric JSON）
+        history = await get_grading_history(history_id)
+        if not history:
+            raise HTTPException(
+                status_code=404,
+                detail=f"未找到批改历史: history_id={history_id}"
+            )
+        
+        # 2. 获取 rubric 图片
+        rubric_images = await get_rubric_images(history_id)
+        
+        # 3. 构建返回数据
+        return {
+            "data": {
+                "history_id": history.id,
+                "batch_id": history.batch_id,
+                "rubric": history.rubric,  # 解析后的评分标准 JSON
+                "rubric_images": [
+                    {
+                        "page_index": img.page_index,
+                        "image_format": img.image_format,
+                        "image_url": f"/api/grading/history/{history_id}/rubric-images/{img.page_index}",
+                        "created_at": img.created_at,
+                    }
+                    for img in rubric_images
+                ],
+                "total_questions": history.rubric.get("total_questions", 0) if history.rubric else 0,
+                "total_score": history.rubric.get("total_score", 0) if history.rubric else 0,
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"获取批改历史评分标准失败: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"获取评分标准失败: {str(e)}"
+        )
+
+
+@router.get(
+    "/grading/history/{history_id}/rubric-images",
+    summary="获取评分标准图片列表",
+    description="获取指定批改历史的所有评分标准图片元数据（不含图片数据）",
+    tags=["Grading History"],
+)
+async def get_rubric_images_list_v2(history_id: str):
+    """
+    获取评分标准图片列表
+    
+    Args:
+        history_id: 批改历史 ID
+    
+    Returns:
+        List[Dict]: 图片元数据列表
+    """
+    try:
+        from src.db.postgres_grading import get_rubric_images
+        
+        rubric_images = await get_rubric_images(history_id)
+        
+        return {
+            "data": [
+                {
+                    "id": img.id,
+                    "grading_history_id": img.grading_history_id,
+                    "page_index": img.page_index,
+                    "image_format": img.image_format,
+                    "created_at": img.created_at,
+                    "image_url": f"/api/grading/history/{history_id}/rubric-images/{img.page_index}",
+                }
+                for img in rubric_images
+            ],
+            "total": len(rubric_images),
+        }
+    except Exception as e:
+        logger.error(f"获取评分标准图片列表失败: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"获取评分标准图片列表失败: {str(e)}"
+        )
+
+
+@router.get(
+    "/grading/history/{history_id}/rubric-images/{page_index}",
+    summary="获取单张评分标准图片",
+    description="获取指定批改历史的指定页面的评分标准图片（直接返回图片二进制数据）",
+    tags=["Grading History"],
+)
+async def get_rubric_image_single_v2(
+    history_id: str,
+    page_index: int,
+):
+    """
+    获取单张评分标准图片（直接返回图片二进制数据）
+    
+    Args:
+        history_id: 批改历史 ID
+        page_index: 页面索引
+    
+    Returns:
+        Response: 图片二进制数据（PNG 格式）
+    """
+    try:
+        from src.db.postgres_grading import get_rubric_images
+        
+        # 从数据库获取图片
+        rubric_images = await get_rubric_images(history_id)
+        
+        # 查找指定页面
+        target_image = None
+        for img in rubric_images:
+            if img.page_index == page_index:
+                target_image = img
+                break
+        
+        if not target_image:
+            raise HTTPException(
+                status_code=404,
+                detail=f"未找到评分标准图片: history_id={history_id}, page={page_index}"
+            )
+        
+        # 返回图片二进制数据
+        media_type = f"image/{target_image.image_format}"
+        return Response(
+            content=target_image.image_data,
+            media_type=media_type,
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"获取单张评分标准图片失败: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"获取图片失败: {str(e)}"
+        )

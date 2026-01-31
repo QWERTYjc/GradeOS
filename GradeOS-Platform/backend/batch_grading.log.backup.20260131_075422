@@ -1,0 +1,908 @@
+2026-01-31 06:42:55,483 - src.orchestration.langgraph_orchestrator - INFO - LangGraphOrchestrator 已初始化（离线模式）
+2026-01-31 06:42:55,484 - src.graphs.batch_grading - INFO - 创建批量批改 Graph: batch_size=1000, max_workers=5, max_retries=2
+2026-01-31 06:42:55,600 - src.graphs.batch_grading - INFO - 批量批改 Graph 已编译
+2026-01-31 06:42:55,600 - src.orchestration.langgraph_orchestrator - INFO - 已注册 Graph: batch_grading
+2026-01-31 06:42:55,614 - src.orchestration.langgraph_orchestrator - INFO - Auto resume unavailable (no DB/checkpointer).
+2026-01-31 07:00:28,398 - src.services.enhanced_api - INFO - 增强型 API 服务已启动
+2026-01-31 07:00:28,410 - src.services.enhanced_api - INFO - ??? Redis Pub/Sub ??: state_changes:*
+2026-01-31 07:00:28,538 - src.orchestration.langgraph_orchestrator - INFO - LangGraphOrchestrator 已初始化
+2026-01-31 07:00:28,538 - src.graphs.batch_grading - INFO - 创建批量批改 Graph: batch_size=1000, max_workers=5, max_retries=2
+2026-01-31 07:00:28,593 - src.graphs.batch_grading - INFO - 批量批改 Graph 已编译
+2026-01-31 07:00:28,593 - src.orchestration.langgraph_orchestrator - INFO - 已注册 Graph: batch_grading
+2026-01-31 07:00:28,597 - src.orchestration.langgraph_orchestrator - INFO - 查询到 1 个 Runs
+2026-01-31 07:00:28,603 - src.orchestration.langgraph_orchestrator - INFO - 查询到 0 个 Runs
+2026-01-31 07:03:00,624 - src.api.routes.batch_langgraph - DEBUG - 接收到原始 student_boundaries: [0] (type: <class 'str'>)
+2026-01-31 07:03:00,625 - src.api.routes.batch_langgraph - DEBUG - 解析后的 manual_boundaries: [0]
+2026-01-31 07:03:00,625 - src.api.routes.batch_langgraph - INFO - 收到批量提交（LangGraph）: batch_id=a8a509dd-87a4-4123-a602-6739f851a089, exam_id=6ec9172a-ad01-496f-8870-557368fd2ef3, auto_identify=True
+2026-01-31 07:03:00,758 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814151960.jpg, 大小: 154111 bytes
+2026-01-31 07:03:00,776 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814151960.jpg, 大小: 155445 bytes
+2026-01-31 07:03:00,801 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814151960.jpg, 大小: 127850 bytes
+2026-01-31 07:03:00,828 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814151960.jpg, 大小: 155813 bytes
+2026-01-31 07:03:00,852 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814151960.jpg, 大小: 192615 bytes
+2026-01-31 07:03:00,881 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814151960.jpg, 大小: 176390 bytes
+2026-01-31 07:03:00,914 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814151960.jpg, 大小: 97623 bytes
+2026-01-31 07:03:00,947 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814151960.jpg, 大小: 174111 bytes
+2026-01-31 07:03:00,982 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814151960.jpg, 大小: 96313 bytes
+2026-01-31 07:03:01,022 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814151960.jpg, 大小: 152778 bytes
+2026-01-31 07:03:01,063 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814151960.jpg, 大小: 96778 bytes
+2026-01-31 07:03:01,097 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814151960.jpg, 大小: 152333 bytes
+2026-01-31 07:03:01,120 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814151960.jpg, 大小: 117791 bytes
+2026-01-31 07:03:01,149 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814151960.jpg, 大小: 173842 bytes
+2026-01-31 07:03:01,170 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814151960.jpg, 大小: 150159 bytes
+2026-01-31 07:03:01,194 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814151960.jpg, 大小: 107820 bytes
+2026-01-31 07:03:01,213 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814151960.jpg, 大小: 109453 bytes
+2026-01-31 07:03:01,237 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814151960.jpg, 大小: 138920 bytes
+2026-01-31 07:03:01,263 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814151960.jpg, 大小: 108019 bytes
+2026-01-31 07:03:01,299 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814151960.jpg, 大小: 101758 bytes
+2026-01-31 07:03:01,338 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814151960.jpg, 大小: 103822 bytes
+2026-01-31 07:03:01,380 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814151960.jpg, 大小: 136426 bytes
+2026-01-31 07:03:01,413 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814151960.jpg, 大小: 155718 bytes
+2026-01-31 07:03:01,437 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814151960.jpg, 大小: 115317 bytes
+2026-01-31 07:03:01,457 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814151960.jpg, 大小: 102291 bytes
+2026-01-31 07:03:01,480 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814151960.jpg, 大小: 153666 bytes
+2026-01-31 07:03:01,500 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814151960.jpg, 大小: 119354 bytes
+2026-01-31 07:03:01,521 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814151960.jpg, 大小: 104338 bytes
+2026-01-31 07:03:01,529 - src.api.routes.batch_langgraph - INFO - 答题文件处理完成: batch_id=a8a509dd-87a4-4123-a602-6739f851a089, 总页数=28
+2026-01-31 07:03:01,552 - src.api.routes.batch_langgraph - INFO - 已缓存 28 张图片用于前端显示
+2026-01-31 07:03:02,088 - src.api.routes.batch_langgraph - INFO - 评分标准处理完成: batch_id=a8a509dd-87a4-4123-a602-6739f851a089, 总页数=14
+2026-01-31 07:03:02,104 - src.api.routes.batch_langgraph - INFO - 已缓存 14 张评分标准图片用于前端显示
+2026-01-31 07:03:02,104 - src.api.routes.batch_langgraph - INFO - 文件处理完成: batch_id=a8a509dd-87a4-4123-a602-6739f851a089, rubric_pages=14, answer_pages=28
+2026-01-31 07:03:02,104 - src.api.routes.batch_langgraph - INFO - 班级批改模式: class_id=None, homework_id=None, 学生数=1
+2026-01-31 07:09:53,941 - src.services.enhanced_api - INFO - 增强型 API 服务已启动
+2026-01-31 07:09:53,951 - src.services.enhanced_api - INFO - ??? Redis Pub/Sub ??: state_changes:*
+2026-01-31 07:09:54,098 - src.orchestration.langgraph_orchestrator - INFO - LangGraphOrchestrator 已初始化
+2026-01-31 07:09:54,098 - src.graphs.batch_grading - INFO - 创建批量批改 Graph: batch_size=1000, max_workers=5, max_retries=2
+2026-01-31 07:09:54,179 - src.graphs.batch_grading - INFO - 批量批改 Graph 已编译
+2026-01-31 07:09:54,179 - src.orchestration.langgraph_orchestrator - INFO - 已注册 Graph: batch_grading
+2026-01-31 07:09:54,184 - src.orchestration.langgraph_orchestrator - INFO - 查询到 1 个 Runs
+2026-01-31 07:09:54,187 - src.orchestration.langgraph_orchestrator - INFO - 查询到 0 个 Runs
+2026-01-31 07:10:56,785 - src.api.routes.batch_langgraph - DEBUG - 接收到原始 student_boundaries: [0] (type: <class 'str'>)
+2026-01-31 07:10:56,786 - src.api.routes.batch_langgraph - DEBUG - 解析后的 manual_boundaries: [0]
+2026-01-31 07:10:56,786 - src.api.routes.batch_langgraph - INFO - 收到批量提交（LangGraph）: batch_id=1454dae4-437b-4d29-8155-084334c011db, exam_id=825edec9-67dc-460c-af84-ce273e72fd11, auto_identify=True
+2026-01-31 07:10:56,821 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814638197.jpg, 大小: 154111 bytes
+2026-01-31 07:10:56,855 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814638197.jpg, 大小: 155445 bytes
+2026-01-31 07:10:56,876 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814638197.jpg, 大小: 127850 bytes
+2026-01-31 07:10:56,890 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814638197.jpg, 大小: 155813 bytes
+2026-01-31 07:10:56,909 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814638197.jpg, 大小: 192615 bytes
+2026-01-31 07:10:56,928 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814638197.jpg, 大小: 176390 bytes
+2026-01-31 07:10:56,943 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814638197.jpg, 大小: 97623 bytes
+2026-01-31 07:10:56,962 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814638197.jpg, 大小: 174111 bytes
+2026-01-31 07:10:56,975 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814638197.jpg, 大小: 96313 bytes
+2026-01-31 07:10:56,996 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814638197.jpg, 大小: 152778 bytes
+2026-01-31 07:10:57,014 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814638197.jpg, 大小: 96778 bytes
+2026-01-31 07:10:57,037 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814638197.jpg, 大小: 152333 bytes
+2026-01-31 07:10:57,056 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814638197.jpg, 大小: 117791 bytes
+2026-01-31 07:10:57,081 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814638197.jpg, 大小: 173842 bytes
+2026-01-31 07:10:57,103 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814638197.jpg, 大小: 150159 bytes
+2026-01-31 07:10:57,127 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814638197.jpg, 大小: 107820 bytes
+2026-01-31 07:10:57,150 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814638197.jpg, 大小: 109453 bytes
+2026-01-31 07:10:57,183 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814638197.jpg, 大小: 138920 bytes
+2026-01-31 07:10:57,209 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814638197.jpg, 大小: 108019 bytes
+2026-01-31 07:10:57,231 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814638197.jpg, 大小: 101758 bytes
+2026-01-31 07:10:57,260 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814638197.jpg, 大小: 103822 bytes
+2026-01-31 07:10:57,283 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814638197.jpg, 大小: 136426 bytes
+2026-01-31 07:10:57,312 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814638197.jpg, 大小: 155718 bytes
+2026-01-31 07:10:57,332 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814638197.jpg, 大小: 115317 bytes
+2026-01-31 07:10:57,355 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814638197.jpg, 大小: 102291 bytes
+2026-01-31 07:10:57,394 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814638197.jpg, 大小: 153666 bytes
+2026-01-31 07:10:57,437 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814638197.jpg, 大小: 119354 bytes
+2026-01-31 07:10:57,478 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814638197.jpg, 大小: 104338 bytes
+2026-01-31 07:10:57,487 - src.api.routes.batch_langgraph - INFO - 答题文件处理完成: batch_id=1454dae4-437b-4d29-8155-084334c011db, 总页数=28
+2026-01-31 07:10:57,524 - src.api.routes.batch_langgraph - INFO - 已缓存 28 张图片用于前端显示
+2026-01-31 07:10:57,954 - src.api.routes.batch_langgraph - INFO - 评分标准处理完成: batch_id=1454dae4-437b-4d29-8155-084334c011db, 总页数=14
+2026-01-31 07:10:57,968 - src.api.routes.batch_langgraph - INFO - 已缓存 14 张评分标准图片用于前端显示
+2026-01-31 07:10:57,968 - src.api.routes.batch_langgraph - INFO - 文件处理完成: batch_id=1454dae4-437b-4d29-8155-084334c011db, rubric_pages=14, answer_pages=28
+2026-01-31 07:10:57,969 - src.api.routes.batch_langgraph - INFO - 班级批改模式: class_id=None, homework_id=None, 学生数=1
+2026-01-31 07:13:31,254 - src.services.enhanced_api - INFO - 增强型 API 服务已启动
+2026-01-31 07:13:31,264 - src.services.enhanced_api - INFO - ??? Redis Pub/Sub ??: state_changes:*
+2026-01-31 07:13:31,420 - src.orchestration.langgraph_orchestrator - INFO - LangGraphOrchestrator 已初始化
+2026-01-31 07:13:31,420 - src.graphs.batch_grading - INFO - 创建批量批改 Graph: batch_size=1000, max_workers=5, max_retries=2
+2026-01-31 07:13:31,469 - src.graphs.batch_grading - INFO - 批量批改 Graph 已编译
+2026-01-31 07:13:31,469 - src.orchestration.langgraph_orchestrator - INFO - 已注册 Graph: batch_grading
+2026-01-31 07:13:31,473 - src.orchestration.langgraph_orchestrator - INFO - 查询到 1 个 Runs
+2026-01-31 07:13:31,476 - src.orchestration.langgraph_orchestrator - INFO - 查询到 0 个 Runs
+2026-01-31 07:16:34,094 - src.api.routes.batch_langgraph - DEBUG - 接收到原始 student_boundaries: [0] (type: <class 'str'>)
+2026-01-31 07:16:34,094 - src.api.routes.batch_langgraph - DEBUG - 解析后的 manual_boundaries: [0]
+2026-01-31 07:16:34,094 - src.api.routes.batch_langgraph - INFO - 收到批量提交（LangGraph）: batch_id=79757192-8986-4daf-8237-d0d789042d27, exam_id=1e165fd2-56be-46d2-ac45-2bc78eb33bd4, auto_identify=True
+2026-01-31 07:16:34,131 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814976722.jpg, 大小: 154111 bytes
+2026-01-31 07:16:34,150 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814976722.jpg, 大小: 155445 bytes
+2026-01-31 07:16:34,166 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814976722.jpg, 大小: 127850 bytes
+2026-01-31 07:16:34,183 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814976722.jpg, 大小: 155813 bytes
+2026-01-31 07:16:34,198 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814976722.jpg, 大小: 192615 bytes
+2026-01-31 07:16:34,226 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814976722.jpg, 大小: 176390 bytes
+2026-01-31 07:16:34,250 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814976722.jpg, 大小: 97623 bytes
+2026-01-31 07:16:34,272 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814976722.jpg, 大小: 174111 bytes
+2026-01-31 07:16:34,289 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814976722.jpg, 大小: 96313 bytes
+2026-01-31 07:16:34,307 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814976723.jpg, 大小: 152778 bytes
+2026-01-31 07:16:34,329 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814976723.jpg, 大小: 96778 bytes
+2026-01-31 07:16:34,363 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814976723.jpg, 大小: 152333 bytes
+2026-01-31 07:16:34,396 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814976723.jpg, 大小: 117791 bytes
+2026-01-31 07:16:34,425 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814976723.jpg, 大小: 173842 bytes
+2026-01-31 07:16:34,447 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814976723.jpg, 大小: 150159 bytes
+2026-01-31 07:16:34,484 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814976723.jpg, 大小: 107820 bytes
+2026-01-31 07:16:34,515 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814976723.jpg, 大小: 109453 bytes
+2026-01-31 07:16:34,542 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814976723.jpg, 大小: 138920 bytes
+2026-01-31 07:16:34,566 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814976723.jpg, 大小: 108019 bytes
+2026-01-31 07:16:34,588 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814976723.jpg, 大小: 101758 bytes
+2026-01-31 07:16:34,603 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814976723.jpg, 大小: 103822 bytes
+2026-01-31 07:16:34,622 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814976723.jpg, 大小: 136426 bytes
+2026-01-31 07:16:34,639 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814976723.jpg, 大小: 155718 bytes
+2026-01-31 07:16:34,661 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814976723.jpg, 大小: 115317 bytes
+2026-01-31 07:16:34,677 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814976723.jpg, 大小: 102291 bytes
+2026-01-31 07:16:34,699 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814976723.jpg, 大小: 153666 bytes
+2026-01-31 07:16:34,719 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814976723.jpg, 大小: 119354 bytes
+2026-01-31 07:16:34,737 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769814976723.jpg, 大小: 104338 bytes
+2026-01-31 07:16:34,745 - src.api.routes.batch_langgraph - INFO - 答题文件处理完成: batch_id=79757192-8986-4daf-8237-d0d789042d27, 总页数=28
+2026-01-31 07:16:34,763 - src.api.routes.batch_langgraph - INFO - 已缓存 28 张图片用于前端显示
+2026-01-31 07:16:35,121 - src.api.routes.batch_langgraph - INFO - 评分标准处理完成: batch_id=79757192-8986-4daf-8237-d0d789042d27, 总页数=14
+2026-01-31 07:16:35,135 - src.api.routes.batch_langgraph - INFO - 已缓存 14 张评分标准图片用于前端显示
+2026-01-31 07:16:35,135 - src.api.routes.batch_langgraph - INFO - 文件处理完成: batch_id=79757192-8986-4daf-8237-d0d789042d27, rubric_pages=14, answer_pages=28
+2026-01-31 07:16:35,135 - src.api.routes.batch_langgraph - INFO - 班级批改模式: class_id=None, homework_id=None, 学生数=1
+2026-01-31 07:19:49,628 - src.services.enhanced_api - INFO - 增强型 API 服务已停止
+2026-01-31 07:19:51,922 - src.services.enhanced_api - INFO - 增强型 API 服务已启动
+2026-01-31 07:19:51,931 - src.services.enhanced_api - INFO - ??? Redis Pub/Sub ??: state_changes:*
+2026-01-31 07:19:52,082 - src.orchestration.langgraph_orchestrator - INFO - LangGraphOrchestrator 已初始化
+2026-01-31 07:19:52,083 - src.graphs.batch_grading - INFO - 创建批量批改 Graph: batch_size=1000, max_workers=5, max_retries=2
+2026-01-31 07:19:52,142 - src.graphs.batch_grading - INFO - 批量批改 Graph 已编译
+2026-01-31 07:19:52,142 - src.orchestration.langgraph_orchestrator - INFO - 已注册 Graph: batch_grading
+2026-01-31 07:19:52,148 - src.orchestration.langgraph_orchestrator - INFO - 查询到 1 个 Runs
+2026-01-31 07:19:52,151 - src.orchestration.langgraph_orchestrator - INFO - 查询到 0 个 Runs
+2026-01-31 07:20:06,611 - src.services.enhanced_api - INFO - 增强型 API 服务已停止
+2026-01-31 07:20:08,807 - src.services.enhanced_api - INFO - 增强型 API 服务已启动
+2026-01-31 07:20:08,816 - src.services.enhanced_api - INFO - ??? Redis Pub/Sub ??: state_changes:*
+2026-01-31 07:20:09,009 - src.orchestration.langgraph_orchestrator - INFO - LangGraphOrchestrator 已初始化
+2026-01-31 07:20:09,009 - src.graphs.batch_grading - INFO - 创建批量批改 Graph: batch_size=1000, max_workers=5, max_retries=2
+2026-01-31 07:20:09,086 - src.graphs.batch_grading - INFO - 批量批改 Graph 已编译
+2026-01-31 07:20:09,087 - src.orchestration.langgraph_orchestrator - INFO - 已注册 Graph: batch_grading
+2026-01-31 07:20:09,093 - src.orchestration.langgraph_orchestrator - INFO - 查询到 1 个 Runs
+2026-01-31 07:20:09,097 - src.orchestration.langgraph_orchestrator - INFO - 查询到 0 个 Runs
+2026-01-31 07:21:07,344 - src.services.enhanced_api - INFO - 增强型 API 服务已停止
+2026-01-31 07:21:09,366 - src.services.enhanced_api - INFO - 增强型 API 服务已启动
+2026-01-31 07:21:09,371 - src.services.enhanced_api - INFO - ??? Redis Pub/Sub ??: state_changes:*
+2026-01-31 07:21:09,605 - src.orchestration.langgraph_orchestrator - INFO - LangGraphOrchestrator 已初始化
+2026-01-31 07:21:09,605 - src.graphs.batch_grading - INFO - 创建批量批改 Graph: batch_size=1000, max_workers=5, max_retries=2
+2026-01-31 07:21:09,654 - src.graphs.batch_grading - INFO - 批量批改 Graph 已编译
+2026-01-31 07:21:09,654 - src.orchestration.langgraph_orchestrator - INFO - 已注册 Graph: batch_grading
+2026-01-31 07:21:09,688 - src.orchestration.langgraph_orchestrator - INFO - 查询到 1 个 Runs
+2026-01-31 07:21:09,690 - src.orchestration.langgraph_orchestrator - INFO - 查询到 0 个 Runs
+2026-01-31 07:21:12,076 - src.services.enhanced_api - INFO - 增强型 API 服务已启动
+2026-01-31 07:21:12,082 - src.services.enhanced_api - INFO - ??? Redis Pub/Sub ??: state_changes:*
+2026-01-31 07:21:12,348 - src.orchestration.langgraph_orchestrator - INFO - LangGraphOrchestrator 已初始化
+2026-01-31 07:21:12,348 - src.graphs.batch_grading - INFO - 创建批量批改 Graph: batch_size=1000, max_workers=5, max_retries=2
+2026-01-31 07:21:12,392 - src.graphs.batch_grading - INFO - 批量批改 Graph 已编译
+2026-01-31 07:21:12,392 - src.orchestration.langgraph_orchestrator - INFO - 已注册 Graph: batch_grading
+2026-01-31 07:21:12,395 - src.orchestration.langgraph_orchestrator - INFO - 查询到 1 个 Runs
+2026-01-31 07:21:12,398 - src.orchestration.langgraph_orchestrator - INFO - 查询到 0 个 Runs
+2026-01-31 07:21:13,962 - src.services.enhanced_api - INFO - 增强型 API 服务已停止
+2026-01-31 07:21:16,387 - src.services.enhanced_api - INFO - 增强型 API 服务已启动
+2026-01-31 07:21:16,398 - src.services.enhanced_api - INFO - ??? Redis Pub/Sub ??: state_changes:*
+2026-01-31 07:21:16,583 - src.orchestration.langgraph_orchestrator - INFO - LangGraphOrchestrator 已初始化
+2026-01-31 07:21:16,583 - src.graphs.batch_grading - INFO - 创建批量批改 Graph: batch_size=1000, max_workers=5, max_retries=2
+2026-01-31 07:21:16,631 - src.graphs.batch_grading - INFO - 批量批改 Graph 已编译
+2026-01-31 07:21:16,631 - src.orchestration.langgraph_orchestrator - INFO - 已注册 Graph: batch_grading
+2026-01-31 07:21:16,638 - src.orchestration.langgraph_orchestrator - INFO - 查询到 1 个 Runs
+2026-01-31 07:21:16,642 - src.orchestration.langgraph_orchestrator - INFO - 查询到 0 个 Runs
+2026-01-31 07:21:21,206 - src.services.enhanced_api - INFO - 增强型 API 服务已停止
+2026-01-31 07:21:23,312 - src.services.enhanced_api - INFO - 增强型 API 服务已启动
+2026-01-31 07:21:23,323 - src.services.enhanced_api - INFO - ??? Redis Pub/Sub ??: state_changes:*
+2026-01-31 07:21:23,473 - src.orchestration.langgraph_orchestrator - INFO - LangGraphOrchestrator 已初始化
+2026-01-31 07:21:23,473 - src.graphs.batch_grading - INFO - 创建批量批改 Graph: batch_size=1000, max_workers=5, max_retries=2
+2026-01-31 07:21:23,537 - src.graphs.batch_grading - INFO - 批量批改 Graph 已编译
+2026-01-31 07:21:23,537 - src.orchestration.langgraph_orchestrator - INFO - 已注册 Graph: batch_grading
+2026-01-31 07:21:23,542 - src.orchestration.langgraph_orchestrator - INFO - 查询到 1 个 Runs
+2026-01-31 07:21:23,547 - src.orchestration.langgraph_orchestrator - INFO - 查询到 0 个 Runs
+2026-01-31 07:22:07,588 - src.api.routes.batch_langgraph - DEBUG - 接收到原始 student_boundaries: [0] (type: <class 'str'>)
+2026-01-31 07:22:07,588 - src.api.routes.batch_langgraph - DEBUG - 解析后的 manual_boundaries: [0]
+2026-01-31 07:22:07,588 - src.api.routes.batch_langgraph - INFO - 收到批量提交（LangGraph）: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, exam_id=96c4d76d-a12e-47dc-b454-1cd3a0fb8142, auto_identify=True
+2026-01-31 07:22:07,617 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815314408.jpg, 大小: 154111 bytes
+2026-01-31 07:22:07,629 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815314408.jpg, 大小: 155445 bytes
+2026-01-31 07:22:07,641 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815314408.jpg, 大小: 127850 bytes
+2026-01-31 07:22:07,651 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815314408.jpg, 大小: 155813 bytes
+2026-01-31 07:22:07,664 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815314408.jpg, 大小: 192615 bytes
+2026-01-31 07:22:07,677 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815314408.jpg, 大小: 176390 bytes
+2026-01-31 07:22:07,688 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815314408.jpg, 大小: 97623 bytes
+2026-01-31 07:22:07,701 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815314408.jpg, 大小: 174111 bytes
+2026-01-31 07:22:07,710 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815314408.jpg, 大小: 96313 bytes
+2026-01-31 07:22:07,724 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815314408.jpg, 大小: 152778 bytes
+2026-01-31 07:22:07,735 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815314408.jpg, 大小: 96778 bytes
+2026-01-31 07:22:07,746 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815314408.jpg, 大小: 152333 bytes
+2026-01-31 07:22:07,762 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815314408.jpg, 大小: 117791 bytes
+2026-01-31 07:22:07,773 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815314408.jpg, 大小: 173842 bytes
+2026-01-31 07:22:07,791 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815314408.jpg, 大小: 150159 bytes
+2026-01-31 07:22:07,806 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815314408.jpg, 大小: 107820 bytes
+2026-01-31 07:22:07,823 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815314408.jpg, 大小: 109453 bytes
+2026-01-31 07:22:07,837 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815314408.jpg, 大小: 138920 bytes
+2026-01-31 07:22:07,850 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815314408.jpg, 大小: 108019 bytes
+2026-01-31 07:22:07,861 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815314408.jpg, 大小: 101758 bytes
+2026-01-31 07:22:07,879 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815314408.jpg, 大小: 103822 bytes
+2026-01-31 07:22:07,894 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815314408.jpg, 大小: 136426 bytes
+2026-01-31 07:22:07,907 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815314408.jpg, 大小: 155718 bytes
+2026-01-31 07:22:07,924 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815314408.jpg, 大小: 115317 bytes
+2026-01-31 07:22:07,940 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815314408.jpg, 大小: 102291 bytes
+2026-01-31 07:22:07,963 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815314408.jpg, 大小: 153666 bytes
+2026-01-31 07:22:07,980 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815314408.jpg, 大小: 119354 bytes
+2026-01-31 07:22:08,002 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815314408.jpg, 大小: 104338 bytes
+2026-01-31 07:22:08,009 - src.api.routes.batch_langgraph - INFO - 答题文件处理完成: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, 总页数=28
+2026-01-31 07:22:08,024 - src.api.routes.batch_langgraph - INFO - 已缓存 28 张图片用于前端显示
+2026-01-31 07:22:08,375 - src.api.routes.batch_langgraph - INFO - 评分标准处理完成: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, 总页数=14
+2026-01-31 07:22:08,385 - src.api.routes.batch_langgraph - INFO - 已缓存 14 张评分标准图片用于前端显示
+2026-01-31 07:22:08,385 - src.api.routes.batch_langgraph - INFO - 文件处理完成: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, rubric_pages=14, answer_pages=28
+2026-01-31 07:22:08,385 - src.api.routes.batch_langgraph - INFO - 班级批改模式: class_id=None, homework_id=None, 学生数=1
+2026-01-31 07:22:08,386 - src.api.routes.batch_langgraph - INFO - 准备启动批改任务: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, answer_images=28, rubric_images=14
+2026-01-31 07:22:08,386 - src.api.routes.batch_langgraph - INFO - 批改任务已提交到事件循环: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d
+2026-01-31 07:22:08,390 - src.api.routes.batch_langgraph - INFO - [_start_run_with_teacher_limit] 开始执行: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d
+2026-01-31 07:22:08,390 - src.api.routes.batch_langgraph - INFO - [_start_run_with_teacher_limit] payload keys: ['batch_id', 'exam_id', 'temp_dir', 'rubric_images', 'answer_images', 'api_key', 'class_id', 'homework_id', 'student_mapping', 'inputs']
+2026-01-31 07:22:08,390 - src.api.routes.batch_langgraph - INFO - [_start_run_with_teacher_limit] answer_images count: 28
+2026-01-31 07:22:08,390 - src.api.routes.batch_langgraph - INFO - [_start_run_with_teacher_limit] rubric_images count: 14
+2026-01-31 07:24:37,121 - src.services.enhanced_api - INFO - 增强型 API 服务已启动
+2026-01-31 07:24:37,147 - src.services.enhanced_api - INFO - ??? Redis Pub/Sub ??: state_changes:*
+2026-01-31 07:24:37,218 - src.orchestration.langgraph_orchestrator - INFO - LangGraphOrchestrator 已初始化
+2026-01-31 07:24:37,218 - src.graphs.batch_grading - INFO - 创建批量批改 Graph: batch_size=1000, max_workers=5, max_retries=2
+2026-01-31 07:24:37,269 - src.graphs.batch_grading - INFO - 批量批改 Graph 已编译
+2026-01-31 07:24:37,269 - src.orchestration.langgraph_orchestrator - INFO - 已注册 Graph: batch_grading
+2026-01-31 07:24:37,272 - src.orchestration.langgraph_orchestrator - INFO - 查询到 1 个 Runs
+2026-01-31 07:24:37,276 - src.orchestration.langgraph_orchestrator - INFO - 查询到 0 个 Runs
+2026-01-31 07:25:17,718 - src.api.routes.batch_langgraph - DEBUG - 接收到原始 student_boundaries: [0] (type: <class 'str'>)
+2026-01-31 07:25:17,719 - src.api.routes.batch_langgraph - DEBUG - 解析后的 manual_boundaries: [0]
+2026-01-31 07:25:17,719 - src.api.routes.batch_langgraph - INFO - 收到批量提交（LangGraph）: batch_id=bf03f725-51d3-40c8-877b-c6f631fc2555, exam_id=384972ce-735b-4645-8fb4-e9a229472752, auto_identify=True
+2026-01-31 07:25:17,752 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815497883.jpg, 大小: 154111 bytes
+2026-01-31 07:25:17,767 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815497883.jpg, 大小: 155445 bytes
+2026-01-31 07:25:17,779 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815497883.jpg, 大小: 127850 bytes
+2026-01-31 07:25:17,794 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815497883.jpg, 大小: 155813 bytes
+2026-01-31 07:25:17,809 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815497883.jpg, 大小: 192615 bytes
+2026-01-31 07:25:17,823 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815497883.jpg, 大小: 176390 bytes
+2026-01-31 07:25:17,839 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815497883.jpg, 大小: 97623 bytes
+2026-01-31 07:25:17,852 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815497883.jpg, 大小: 174111 bytes
+2026-01-31 07:25:17,865 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815497883.jpg, 大小: 96313 bytes
+2026-01-31 07:25:17,885 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815497883.jpg, 大小: 152778 bytes
+2026-01-31 07:25:17,899 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815497883.jpg, 大小: 96778 bytes
+2026-01-31 07:25:17,911 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815497883.jpg, 大小: 152333 bytes
+2026-01-31 07:25:17,931 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815497883.jpg, 大小: 117791 bytes
+2026-01-31 07:25:17,943 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815497883.jpg, 大小: 173842 bytes
+2026-01-31 07:25:17,958 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815497883.jpg, 大小: 150159 bytes
+2026-01-31 07:25:17,970 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815497883.jpg, 大小: 107820 bytes
+2026-01-31 07:25:17,984 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815497883.jpg, 大小: 109453 bytes
+2026-01-31 07:25:18,001 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815497883.jpg, 大小: 138920 bytes
+2026-01-31 07:25:18,013 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815497883.jpg, 大小: 108019 bytes
+2026-01-31 07:25:18,027 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815497883.jpg, 大小: 101758 bytes
+2026-01-31 07:25:18,040 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815497883.jpg, 大小: 103822 bytes
+2026-01-31 07:25:18,058 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815497883.jpg, 大小: 136426 bytes
+2026-01-31 07:25:18,072 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815497883.jpg, 大小: 155718 bytes
+2026-01-31 07:25:18,086 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815497883.jpg, 大小: 115317 bytes
+2026-01-31 07:25:18,101 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815497883.jpg, 大小: 102291 bytes
+2026-01-31 07:25:18,118 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815497883.jpg, 大小: 153666 bytes
+2026-01-31 07:25:18,136 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815497883.jpg, 大小: 119354 bytes
+2026-01-31 07:25:18,151 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815497883.jpg, 大小: 104338 bytes
+2026-01-31 07:25:18,158 - src.api.routes.batch_langgraph - INFO - 答题文件处理完成: batch_id=bf03f725-51d3-40c8-877b-c6f631fc2555, 总页数=28
+2026-01-31 07:25:18,175 - src.api.routes.batch_langgraph - INFO - 已缓存 28 张图片用于前端显示
+2026-01-31 07:25:18,416 - src.api.routes.batch_langgraph - INFO - 评分标准处理完成: batch_id=bf03f725-51d3-40c8-877b-c6f631fc2555, 总页数=14
+2026-01-31 07:25:18,421 - src.api.routes.batch_langgraph - INFO - 已缓存 14 张评分标准图片用于前端显示
+2026-01-31 07:25:18,421 - src.api.routes.batch_langgraph - INFO - 文件处理完成: batch_id=bf03f725-51d3-40c8-877b-c6f631fc2555, rubric_pages=14, answer_pages=28
+2026-01-31 07:25:18,421 - src.api.routes.batch_langgraph - INFO - 班级批改模式: class_id=None, homework_id=None, 学生数=1
+2026-01-31 07:25:18,421 - src.api.routes.batch_langgraph - INFO - 准备启动批改任务: batch_id=bf03f725-51d3-40c8-877b-c6f631fc2555, answer_images=28, rubric_images=14
+2026-01-31 07:25:18,421 - src.api.routes.batch_langgraph - INFO - 批改任务已提交到事件循环: batch_id=bf03f725-51d3-40c8-877b-c6f631fc2555
+2026-01-31 07:25:18,424 - src.api.routes.batch_langgraph - INFO - [_start_run_with_teacher_limit] 开始执行: batch_id=bf03f725-51d3-40c8-877b-c6f631fc2555
+2026-01-31 07:25:18,424 - src.api.routes.batch_langgraph - INFO - [_start_run_with_teacher_limit] payload keys: ['batch_id', 'exam_id', 'temp_dir', 'rubric_images', 'answer_images', 'api_key', 'class_id', 'homework_id', 'student_mapping', 'inputs']
+2026-01-31 07:25:18,424 - src.api.routes.batch_langgraph - INFO - [_start_run_with_teacher_limit] answer_images count: 28
+2026-01-31 07:25:18,424 - src.api.routes.batch_langgraph - INFO - [_start_run_with_teacher_limit] rubric_images count: 14
+2026-01-31 07:27:30,078 - src.services.enhanced_api - INFO - 增强型 API 服务已停止
+2026-01-31 07:27:32,324 - src.services.enhanced_api - INFO - 增强型 API 服务已启动
+2026-01-31 07:27:32,329 - src.services.enhanced_api - INFO - ??? Redis Pub/Sub ??: state_changes:*
+2026-01-31 07:27:32,556 - src.orchestration.langgraph_orchestrator - INFO - LangGraphOrchestrator 已初始化
+2026-01-31 07:27:32,556 - src.graphs.batch_grading - INFO - 创建批量批改 Graph: batch_size=1000, max_workers=5, max_retries=2
+2026-01-31 07:27:32,599 - src.graphs.batch_grading - INFO - 批量批改 Graph 已编译
+2026-01-31 07:27:32,599 - src.orchestration.langgraph_orchestrator - INFO - 已注册 Graph: batch_grading
+2026-01-31 07:27:32,627 - src.orchestration.langgraph_orchestrator - INFO - 查询到 1 个 Runs
+2026-01-31 07:27:32,629 - src.orchestration.langgraph_orchestrator - INFO - 查询到 0 个 Runs
+2026-01-31 07:27:37,424 - src.services.enhanced_api - INFO - 增强型 API 服务已停止
+2026-01-31 07:28:56,024 - src.services.enhanced_api - INFO - 增强型 API 服务已启动
+2026-01-31 07:28:56,050 - src.services.enhanced_api - INFO - ??? Redis Pub/Sub ??: state_changes:*
+2026-01-31 07:28:56,282 - src.orchestration.langgraph_orchestrator - INFO - LangGraphOrchestrator 已初始化
+2026-01-31 07:28:56,282 - src.graphs.batch_grading - INFO - 创建批量批改 Graph: batch_size=1000, max_workers=5, max_retries=2
+2026-01-31 07:28:56,329 - src.graphs.batch_grading - INFO - 批量批改 Graph 已编译
+2026-01-31 07:28:56,329 - src.orchestration.langgraph_orchestrator - INFO - 已注册 Graph: batch_grading
+2026-01-31 07:28:56,347 - src.orchestration.langgraph_orchestrator - INFO - 查询到 1 个 Runs
+2026-01-31 07:28:56,349 - src.orchestration.langgraph_orchestrator - INFO - 查询到 0 个 Runs
+2026-01-31 07:29:28,602 - src.api.routes.batch_langgraph - DEBUG - 接收到原始 student_boundaries: [0] (type: <class 'str'>)
+2026-01-31 07:29:28,602 - src.api.routes.batch_langgraph - DEBUG - 解析后的 manual_boundaries: [0]
+2026-01-31 07:29:28,602 - src.api.routes.batch_langgraph - INFO - 收到批量提交（LangGraph）: batch_id=64a2f294-173b-4b1c-920e-2c580542ccd4, exam_id=3bb752f6-d0d2-44f6-910d-bb2f030aaa71, auto_identify=True
+2026-01-31 07:29:28,638 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815756026.jpg, 大小: 154111 bytes
+2026-01-31 07:29:28,650 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815756026.jpg, 大小: 155445 bytes
+2026-01-31 07:29:28,663 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815756026.jpg, 大小: 127850 bytes
+2026-01-31 07:29:28,676 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815756026.jpg, 大小: 155813 bytes
+2026-01-31 07:29:28,692 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815756026.jpg, 大小: 192615 bytes
+2026-01-31 07:29:28,707 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815756026.jpg, 大小: 176390 bytes
+2026-01-31 07:29:28,718 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815756026.jpg, 大小: 97623 bytes
+2026-01-31 07:29:28,732 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815756026.jpg, 大小: 174111 bytes
+2026-01-31 07:29:28,743 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815756027.jpg, 大小: 96313 bytes
+2026-01-31 07:29:28,757 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815756027.jpg, 大小: 152778 bytes
+2026-01-31 07:29:28,769 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815756027.jpg, 大小: 96778 bytes
+2026-01-31 07:29:28,784 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815756027.jpg, 大小: 152333 bytes
+2026-01-31 07:29:28,803 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815756027.jpg, 大小: 117791 bytes
+2026-01-31 07:29:28,822 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815756027.jpg, 大小: 173842 bytes
+2026-01-31 07:29:28,839 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815756027.jpg, 大小: 150159 bytes
+2026-01-31 07:29:28,852 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815756027.jpg, 大小: 107820 bytes
+2026-01-31 07:29:28,863 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815756027.jpg, 大小: 109453 bytes
+2026-01-31 07:29:28,877 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815756027.jpg, 大小: 138920 bytes
+2026-01-31 07:29:28,889 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815756027.jpg, 大小: 108019 bytes
+2026-01-31 07:29:28,900 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815756027.jpg, 大小: 101758 bytes
+2026-01-31 07:29:28,913 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815756027.jpg, 大小: 103822 bytes
+2026-01-31 07:29:28,926 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815756027.jpg, 大小: 136426 bytes
+2026-01-31 07:29:28,940 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815756027.jpg, 大小: 155718 bytes
+2026-01-31 07:29:28,952 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815756027.jpg, 大小: 115317 bytes
+2026-01-31 07:29:28,965 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815756027.jpg, 大小: 102291 bytes
+2026-01-31 07:29:28,978 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815756027.jpg, 大小: 153666 bytes
+2026-01-31 07:29:28,990 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815756027.jpg, 大小: 119354 bytes
+2026-01-31 07:29:29,001 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815756027.jpg, 大小: 104338 bytes
+2026-01-31 07:29:29,008 - src.api.routes.batch_langgraph - INFO - 答题文件处理完成: batch_id=64a2f294-173b-4b1c-920e-2c580542ccd4, 总页数=28
+2026-01-31 07:29:29,019 - src.api.routes.batch_langgraph - INFO - 已缓存 28 张图片用于前端显示
+2026-01-31 07:29:29,265 - src.api.routes.batch_langgraph - INFO - 评分标准处理完成: batch_id=64a2f294-173b-4b1c-920e-2c580542ccd4, 总页数=14
+2026-01-31 07:29:29,270 - src.api.routes.batch_langgraph - INFO - 已缓存 14 张评分标准图片用于前端显示
+2026-01-31 07:29:29,270 - src.api.routes.batch_langgraph - INFO - 文件处理完成: batch_id=64a2f294-173b-4b1c-920e-2c580542ccd4, rubric_pages=14, answer_pages=28
+2026-01-31 07:29:29,270 - src.api.routes.batch_langgraph - INFO - 班级批改模式: class_id=None, homework_id=None, 学生数=1
+2026-01-31 07:29:29,270 - src.api.routes.batch_langgraph - INFO - 准备启动批改任务: batch_id=64a2f294-173b-4b1c-920e-2c580542ccd4, answer_images=28, rubric_images=14
+2026-01-31 07:29:29,270 - src.api.routes.batch_langgraph - INFO - 批改任务已提交到事件循环: batch_id=64a2f294-173b-4b1c-920e-2c580542ccd4
+2026-01-31 07:29:29,271 - src.api.routes.batch_langgraph - INFO - [_start_run_with_teacher_limit] 开始执行: batch_id=64a2f294-173b-4b1c-920e-2c580542ccd4
+2026-01-31 07:29:29,272 - src.api.routes.batch_langgraph - INFO - [_start_run_with_teacher_limit] payload keys: ['batch_id', 'exam_id', 'temp_dir', 'rubric_images', 'answer_images', 'api_key', 'class_id', 'homework_id', 'student_mapping', 'inputs']
+2026-01-31 07:29:29,272 - src.api.routes.batch_langgraph - INFO - [_start_run_with_teacher_limit] answer_images count: 28
+2026-01-31 07:29:29,272 - src.api.routes.batch_langgraph - INFO - [_start_run_with_teacher_limit] rubric_images count: 14
+2026-01-31 07:29:29,272 - src.api.routes.batch_langgraph - INFO - [_start_run_with_teacher_limit] 准备调用 get_run_controller()
+2026-01-31 07:29:29,272 - src.api.routes.batch_langgraph - INFO - [_start_run_with_teacher_limit] get_run_controller() 返回: True
+2026-01-31 07:29:29,272 - src.api.routes.batch_langgraph - INFO - [_start_run_with_teacher_limit] 准备获取 slot: teacher_key=t-517e6f6f
+2026-01-31 07:29:29,274 - src.api.routes.batch_langgraph - INFO - [_start_run_with_teacher_limit] try_acquire_slot 返回: False
+2026-01-31 07:29:29,274 - src.api.routes.batch_langgraph - INFO - [_start_run_with_teacher_limit] 未获取到 slot，进入等待队列
+2026-01-31 07:29:29,278 - src.api.routes.batch_langgraph - INFO - [_start_run_with_teacher_limit] 开始等待 slot
+2026-01-31 07:30:26,153 - src.services.enhanced_api - INFO - 增强型 API 服务已停止
+2026-01-31 07:30:28,211 - src.services.enhanced_api - INFO - 增强型 API 服务已启动
+2026-01-31 07:30:28,237 - src.services.enhanced_api - INFO - ??? Redis Pub/Sub ??: state_changes:*
+2026-01-31 07:30:28,327 - src.orchestration.langgraph_orchestrator - INFO - LangGraphOrchestrator 已初始化
+2026-01-31 07:30:28,328 - src.graphs.batch_grading - INFO - 创建批量批改 Graph: batch_size=1000, max_workers=5, max_retries=2
+2026-01-31 07:30:28,367 - src.graphs.batch_grading - INFO - 批量批改 Graph 已编译
+2026-01-31 07:30:28,367 - src.orchestration.langgraph_orchestrator - INFO - 已注册 Graph: batch_grading
+2026-01-31 07:30:28,370 - src.orchestration.langgraph_orchestrator - INFO - 查询到 1 个 Runs
+2026-01-31 07:30:28,373 - src.orchestration.langgraph_orchestrator - INFO - 查询到 0 个 Runs
+2026-01-31 07:30:32,750 - src.orchestration.langgraph_orchestrator - INFO - 启动 LangGraph Graph: graph_name=batch_grading, run_id=batch_grading_85205ff9-1423-4ebe-ba12-a02d8579716d, idempotency_key=85205ff9-1423-4ebe-ba12-a02d8579716d
+2026-01-31 07:30:32,753 - src.orchestration.langgraph_orchestrator - WARNING - 数据库写入失败，使用内存存储: Object of type bytes is not JSON serializable
+2026-01-31 07:30:32,754 - src.orchestration.langgraph_orchestrator - INFO - Graph 已启动: run_id=batch_grading_85205ff9-1423-4ebe-ba12-a02d8579716d
+2026-01-31 07:30:32,754 - src.api.routes.batch_langgraph - INFO - LangGraph ??????? batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, run_id=batch_grading_85205ff9-1423-4ebe-ba12-a02d8579716d
+2026-01-31 07:30:32,754 - src.api.routes.batch_langgraph - INFO - 开始流式监听 LangGraph 进度: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, run_id=batch_grading_85205ff9-1423-4ebe-ba12-a02d8579716d
+2026-01-31 07:30:32,754 - src.orchestration.langgraph_orchestrator - INFO - 开始流式监听 Graph（从队列）: run_id=batch_grading_85205ff9-1423-4ebe-ba12-a02d8579716d
+2026-01-31 07:30:32,757 - src.orchestration.langgraph_orchestrator - INFO - 开始执行 Graph: run_id=batch_grading_85205ff9-1423-4ebe-ba12-a02d8579716d
+2026-01-31 07:30:32,760 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, type=node_start, node=LangGraph
+2026-01-31 07:30:32,784 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, type=node_start, node=intake
+2026-01-31 07:30:32,785 - src.graphs.batch_grading - INFO - [intake] 开始接收文件: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d
+2026-01-31 07:30:32,785 - src.graphs.batch_grading - INFO - [intake] 文件接收完成: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, 答题页数=28, 评分标准页数=14
+2026-01-31 07:30:32,797 - src.graphs.batch_grading - INFO - [preprocess] 开始图像预处理: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, 页数=28
+2026-01-31 07:30:32,808 - src.graphs.batch_grading - DEBUG - [preprocess] 页面 0 转换为 JPEG: 137771 -> 137604 bytes
+2026-01-31 07:30:32,817 - src.graphs.batch_grading - DEBUG - [preprocess] 页面 1 转换为 JPEG: 137909 -> 137933 bytes
+2026-01-31 07:30:32,829 - src.graphs.batch_grading - DEBUG - [preprocess] 页面 2 转换为 JPEG: 113788 -> 113778 bytes
+2026-01-31 07:30:32,838 - src.graphs.batch_grading - DEBUG - [preprocess] 页面 3 转换为 JPEG: 138342 -> 138320 bytes
+2026-01-31 07:30:32,854 - src.graphs.batch_grading - DEBUG - [preprocess] 页面 4 转换为 JPEG: 171128 -> 171042 bytes
+2026-01-31 07:30:32,867 - src.graphs.batch_grading - DEBUG - [preprocess] 页面 5 转换为 JPEG: 156885 -> 156932 bytes
+2026-01-31 07:30:32,877 - src.graphs.batch_grading - DEBUG - [preprocess] 页面 6 转换为 JPEG: 86574 -> 86649 bytes
+2026-01-31 07:30:32,887 - src.graphs.batch_grading - DEBUG - [preprocess] 页面 7 转换为 JPEG: 154887 -> 154791 bytes
+2026-01-31 07:30:32,895 - src.graphs.batch_grading - DEBUG - [preprocess] 页面 8 转换为 JPEG: 85535 -> 85613 bytes
+2026-01-31 07:30:32,905 - src.graphs.batch_grading - DEBUG - [preprocess] 页面 9 转换为 JPEG: 135993 -> 135934 bytes
+2026-01-31 07:30:32,913 - src.graphs.batch_grading - DEBUG - [preprocess] 页面 10 转换为 JPEG: 85890 -> 86086 bytes
+2026-01-31 07:30:32,923 - src.graphs.batch_grading - DEBUG - [preprocess] 页面 11 转换为 JPEG: 135165 -> 135160 bytes
+2026-01-31 07:30:32,931 - src.graphs.batch_grading - DEBUG - [preprocess] 页面 12 转换为 JPEG: 104610 -> 104705 bytes
+2026-01-31 07:30:32,941 - src.graphs.batch_grading - DEBUG - [preprocess] 页面 13 转换为 JPEG: 154792 -> 154698 bytes
+2026-01-31 07:30:32,950 - src.graphs.batch_grading - DEBUG - [preprocess] 页面 14 转换为 JPEG: 133418 -> 133442 bytes
+2026-01-31 07:30:32,959 - src.graphs.batch_grading - DEBUG - [preprocess] 页面 15 转换为 JPEG: 95568 -> 95638 bytes
+2026-01-31 07:30:32,969 - src.graphs.batch_grading - DEBUG - [preprocess] 页面 16 转换为 JPEG: 97294 -> 97328 bytes
+2026-01-31 07:30:32,980 - src.graphs.batch_grading - DEBUG - [preprocess] 页面 17 转换为 JPEG: 123651 -> 123629 bytes
+2026-01-31 07:30:32,989 - src.graphs.batch_grading - DEBUG - [preprocess] 页面 18 转换为 JPEG: 95462 -> 95575 bytes
+2026-01-31 07:30:33,003 - src.graphs.batch_grading - DEBUG - [preprocess] 页面 19 转换为 JPEG: 90320 -> 90442 bytes
+2026-01-31 07:30:33,012 - src.graphs.batch_grading - DEBUG - [preprocess] 页面 20 转换为 JPEG: 92212 -> 92359 bytes
+2026-01-31 07:30:33,020 - src.graphs.batch_grading - DEBUG - [preprocess] 页面 21 转换为 JPEG: 121210 -> 121221 bytes
+2026-01-31 07:30:33,029 - src.graphs.batch_grading - DEBUG - [preprocess] 页面 22 转换为 JPEG: 138148 -> 138236 bytes
+2026-01-31 07:30:33,037 - src.graphs.batch_grading - DEBUG - [preprocess] 页面 23 转换为 JPEG: 102553 -> 102648 bytes
+2026-01-31 07:30:33,053 - src.graphs.batch_grading - DEBUG - [preprocess] 页面 24 转换为 JPEG: 90881 -> 90973 bytes
+2026-01-31 07:30:33,068 - src.graphs.batch_grading - DEBUG - [preprocess] 页面 25 转换为 JPEG: 136468 -> 136484 bytes
+2026-01-31 07:30:33,079 - src.graphs.batch_grading - DEBUG - [preprocess] 页面 26 转换为 JPEG: 105815 -> 105900 bytes
+2026-01-31 07:30:33,087 - src.graphs.batch_grading - DEBUG - [preprocess] 页面 27 转换为 JPEG: 92805 -> 92882 bytes
+2026-01-31 07:30:33,087 - src.graphs.batch_grading - INFO - [preprocess] 图像预处理完成: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, JPEG转换=28/28
+2026-01-31 07:30:33,091 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, type=stream, node=intake
+2026-01-31 07:30:33,091 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, type=node_end, node=intake
+2026-01-31 07:30:33,093 - src.graphs.batch_grading - INFO - [rubric_parse] 开始解析评分标准: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, 评分标准页数=14
+2026-01-31 07:30:33,093 - src.graphs.batch_grading - INFO - [rubric_parse] 📸 rubric_images 详情: 共 14 页
+2026-01-31 07:30:33,093 - src.graphs.batch_grading - INFO - [rubric_parse]   - 第 1 页: 157664 bytes
+2026-01-31 07:30:33,093 - src.graphs.batch_grading - INFO - [rubric_parse]   - 第 2 页: 95396 bytes
+2026-01-31 07:30:33,093 - src.graphs.batch_grading - INFO - [rubric_parse]   - 第 3 页: 102427 bytes
+2026-01-31 07:30:33,093 - src.graphs.batch_grading - INFO - [rubric_parse]   - 第 4 页: 50479 bytes
+2026-01-31 07:30:33,093 - src.graphs.batch_grading - INFO - [rubric_parse]   - 第 5 页: 92257 bytes
+2026-01-31 07:30:33,093 - src.graphs.batch_grading - INFO - [rubric_parse]   - 第 6 页: 79241 bytes
+2026-01-31 07:30:33,093 - src.graphs.batch_grading - INFO - [rubric_parse]   - 第 7 页: 69340 bytes
+2026-01-31 07:30:33,093 - src.graphs.batch_grading - INFO - [rubric_parse]   - 第 8 页: 82647 bytes
+2026-01-31 07:30:33,093 - src.graphs.batch_grading - INFO - [rubric_parse]   - 第 9 页: 99730 bytes
+2026-01-31 07:30:33,093 - src.graphs.batch_grading - INFO - [rubric_parse]   - 第 10 页: 75320 bytes
+2026-01-31 07:30:33,093 - src.graphs.batch_grading - INFO - [rubric_parse]   - 第 11 页: 93169 bytes
+2026-01-31 07:30:33,093 - src.graphs.batch_grading - INFO - [rubric_parse]   - 第 12 页: 82412 bytes
+2026-01-31 07:30:33,093 - src.graphs.batch_grading - INFO - [rubric_parse]   - 第 13 页: 124825 bytes
+2026-01-31 07:30:33,093 - src.graphs.batch_grading - INFO - [rubric_parse]   - 第 14 页: 101741 bytes
+2026-01-31 07:30:33,122 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, type=state_update, node=intake
+2026-01-31 07:30:34,464 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, type=stream, node=LangGraph
+2026-01-31 07:30:34,464 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, type=node_start, node=preprocess
+2026-01-31 07:30:34,470 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, type=stream, node=preprocess
+2026-01-31 07:30:34,470 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, type=node_end, node=preprocess
+2026-01-31 07:30:34,476 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, type=state_update, node=preprocess
+2026-01-31 07:30:34,480 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, type=stream, node=LangGraph
+2026-01-31 07:30:34,480 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, type=node_start, node=rubric_parse
+2026-01-31 07:31:13,145 - src.graphs.batch_grading - INFO - [rubric_parse] 已注册 12 道题目到 RubricRegistry
+2026-01-31 07:31:13,146 - src.graphs.batch_grading - INFO - [rubric_parse] 评分标准解析成功: 题目数=12, 总分=100.0, 置信度=0.96, 状态=ok
+2026-01-31 07:31:13,146 - src.graphs.batch_grading - INFO - [rubric_parse] 评分标准解析完成: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, 题目数=12, 总分=100.0
+2026-01-31 07:31:13,193 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, type=stream, node=rubric_parse
+2026-01-31 07:31:13,194 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, type=node_end, node=rubric_parse
+2026-01-31 07:31:13,197 - src.graphs.batch_grading - INFO - [rubric_review] skip (review disabled): batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d
+2026-01-31 07:31:13,199 - src.graphs.batch_grading - INFO - [grading_fanout] 按学生边界创建批改任务: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, 学生数=1, 总页数=28
+2026-01-31 07:31:13,200 - src.graphs.batch_grading - INFO - [grading_fanout] 创建学生批次: student=学生1, pages=0-27
+2026-01-31 07:31:13,210 - src.graphs.batch_grading - INFO - [grade_batch] 开始批改批次 1/1: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, 页面=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27], 重试次数=0
+2026-01-31 07:31:13,213 - src.graphs.batch_grading - INFO - [grade_batch] grading_mode=standard
+2026-01-31 07:31:13,213 - src.graphs.batch_grading - INFO - [grade_batch] 接收到 parsed_rubric: total_questions=12, total_score=100.0, questions_count=12
+2026-01-31 07:31:13,213 - src.graphs.batch_grading - INFO - [grade_batch] 已重建 RubricRegistry，注册 12 道题目
+2026-01-31 07:31:13,223 - src.graphs.batch_grading - INFO - [grade_batch] page count exceeds limit; fallback to per-page: pages=28 limit=12
+2026-01-31 07:31:13,247 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, type=state_update, node=rubric_parse
+2026-01-31 07:31:13,251 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, type=stream, node=LangGraph
+2026-01-31 07:31:13,251 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, type=node_start, node=rubric_review
+2026-01-31 07:31:13,254 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, type=node_start, node=grading_fanout_router
+2026-01-31 07:31:13,259 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, type=node_end, node=grading_fanout_router
+2026-01-31 07:31:13,262 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, type=stream, node=rubric_review
+2026-01-31 07:31:13,262 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, type=node_end, node=rubric_review
+2026-01-31 07:31:13,265 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, type=state_update, node=rubric_review
+2026-01-31 07:31:13,268 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, type=stream, node=LangGraph
+2026-01-31 07:31:13,268 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, type=node_start, node=grade_batch
+2026-01-31 07:34:11,855 - src.graphs.batch_grading - INFO - [grade_batch] 批次 1/1 完成: 成功=28/28, 失败=0, 总分=80.0
+2026-01-31 07:34:11,862 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, type=stream, node=grade_batch
+2026-01-31 07:34:11,862 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, type=node_end, node=grade_batch
+2026-01-31 07:34:11,866 - src.graphs.batch_grading - INFO - [self_report] 批次记忆已创建: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, subject=general
+2026-01-31 07:34:11,879 - src.graphs.batch_grading - DEBUG - [_extract_logic_review_questions] 没有自白报告，跳过逻辑复核
+2026-01-31 07:34:11,880 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, type=state_update, node=grade_batch
+2026-01-31 07:34:11,880 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, type=stream, node=LangGraph
+2026-01-31 07:34:11,880 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, type=node_start, node=self_report
+2026-01-31 07:34:11,885 - src.graphs.batch_grading - INFO - [self_report] completed for 1 students: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d
+2026-01-31 07:34:11,885 - src.graphs.batch_grading - INFO - [self_report] 记忆系统已保存: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d
+2026-01-31 07:34:11,889 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, type=node_start, node=report_student
+2026-01-31 07:34:11,903 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, type=node_end, node=report_student
+2026-01-31 07:34:11,913 - src.graphs.batch_grading - INFO - [_extract_logic_review_questions] 自白中没有标记需要复核的题目
+2026-01-31 07:34:11,914 - src.graphs.batch_grading - DEBUG - [_extract_logic_review_questions] 没有自白报告，跳过逻辑复核
+2026-01-31 07:34:11,918 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, type=state_update, node=report_student
+2026-01-31 07:34:11,918 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, type=stream, node=self_report
+2026-01-31 07:34:11,918 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, type=node_end, node=self_report
+2026-01-31 07:34:11,921 - src.graphs.batch_grading - INFO - [logic_review] 记忆整合完成: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, 新增 0 条长期记忆
+2026-01-31 07:34:11,930 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, type=state_update, node=self_report
+2026-01-31 07:34:11,930 - src.graphs.batch_grading - INFO - [annotation_generation] 开始生成批注: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d
+2026-01-31 07:34:11,932 - src.graphs.batch_grading - DEBUG - [annotation_generation] 学生 学生1: 生成 123 个批注
+2026-01-31 07:34:11,932 - src.graphs.batch_grading - DEBUG - [annotation_generation] 学生 学生1: 生成 123 个批注
+2026-01-31 07:34:11,933 - src.graphs.batch_grading - DEBUG - [annotation_generation] 学生 学生1: 生成 123 个批注
+2026-01-31 07:34:11,935 - src.graphs.batch_grading - DEBUG - [annotation_generation] 学生 学生1: 生成 123 个批注
+2026-01-31 07:34:11,935 - src.graphs.batch_grading - INFO - [annotation_generation] 完成: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, 学生数=4, 总批注数=492
+2026-01-31 07:34:11,939 - src.graphs.batch_grading - INFO - [review] 开始结果审核: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d
+2026-01-31 07:34:11,941 - src.graphs.batch_grading - INFO - [review] 审核完成: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, 学生数=8, 待确认边界=0
+2026-01-31 07:34:11,942 - src.graphs.batch_grading - INFO - [review] skip (review disabled): batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d
+2026-01-31 07:34:11,945 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, type=stream, node=LangGraph
+2026-01-31 07:34:11,946 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, type=node_start, node=logic_review
+2026-01-31 07:34:11,951 - src.graphs.batch_grading - INFO - [export] 开始导出结果: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, 学生数=16
+2026-01-31 07:34:11,952 - src.graphs.batch_grading - INFO - [export] 数据库连接可用，但未实现持久化逻辑，继续导出 JSON 以确保数据安全
+2026-01-31 07:34:12,104 - src.graphs.batch_grading - INFO - [export] 结果已导出为 JSON: ./exports\grading_result_85205ff9-1423-4ebe-ba12-a02d8579716d_20260131_073411.json
+2026-01-31 07:34:12,104 - src.graphs.batch_grading - INFO - [export] 导出完成: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, 学生数=16, 跨页题目数=0, 失败页面数=0
+2026-01-31 07:34:12,116 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, type=node_start, node=review_student
+2026-01-31 07:34:12,121 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, type=node_start, node=review_student
+2026-01-31 07:34:12,126 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, type=node_end, node=review_student
+2026-01-31 07:34:12,136 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, type=state_update, node=review_student
+2026-01-31 07:34:12,137 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, type=node_end, node=review_student
+2026-01-31 07:34:12,140 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, type=state_update, node=review_student
+2026-01-31 07:34:12,140 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, type=stream, node=logic_review
+2026-01-31 07:34:12,140 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, type=node_end, node=logic_review
+2026-01-31 07:34:12,146 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, type=state_update, node=logic_review
+2026-01-31 07:34:12,151 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, type=stream, node=LangGraph
+2026-01-31 07:34:12,151 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, type=node_start, node=annotation_generation
+2026-01-31 07:34:12,154 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, type=stream, node=annotation_generation
+2026-01-31 07:34:12,154 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, type=node_end, node=annotation_generation
+2026-01-31 07:34:12,157 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, type=state_update, node=annotation_generation
+2026-01-31 07:34:12,161 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, type=stream, node=LangGraph
+2026-01-31 07:34:12,161 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, type=node_start, node=review
+2026-01-31 07:34:12,163 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, type=stream, node=review
+2026-01-31 07:34:12,163 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, type=node_end, node=review
+2026-01-31 07:34:12,169 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, type=state_update, node=review
+2026-01-31 07:34:12,177 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, type=stream, node=LangGraph
+2026-01-31 07:34:12,177 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, type=node_start, node=export
+2026-01-31 07:34:12,181 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, type=stream, node=export
+2026-01-31 07:34:12,181 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, type=node_end, node=export
+2026-01-31 07:34:12,184 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, type=state_update, node=export
+2026-01-31 07:34:12,449 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, type=stream, node=LangGraph
+2026-01-31 07:34:12,450 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, type=node_end, node=LangGraph
+2026-01-31 07:34:12,456 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, type=state_update, node=LangGraph
+2026-01-31 07:34:12,623 - src.orchestration.langgraph_orchestrator - INFO - Graph 执行完成: run_id=batch_grading_85205ff9-1423-4ebe-ba12-a02d8579716d
+2026-01-31 07:34:12,626 - src.orchestration.langgraph_orchestrator - WARNING - 数据库更新失败: Object of type bytes is not JSON serializable
+2026-01-31 07:34:12,638 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, type=completed, node=None
+2026-01-31 07:34:12,659 - src.api.routes.batch_langgraph - INFO - 保存批改结果: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d, class_id=None, homework_id=None
+2026-01-31 07:34:12,902 - src.api.routes.batch_langgraph - INFO - 批改结果已保存: history_id=4b6e9c91-7a3a-4548-8a91-88d80cfb7f53
+2026-01-31 07:34:12,917 - src.orchestration.langgraph_orchestrator - INFO - 流式监听完成: run_id=batch_grading_85205ff9-1423-4ebe-ba12-a02d8579716d
+2026-01-31 07:34:12,917 - src.api.routes.batch_langgraph - INFO - LangGraph 进度流式传输完成: batch_id=85205ff9-1423-4ebe-ba12-a02d8579716d
+2026-01-31 07:35:54,434 - src.api.routes.batch_langgraph - DEBUG - 接收到原始 student_boundaries: [0] (type: <class 'str'>)
+2026-01-31 07:35:54,434 - src.api.routes.batch_langgraph - DEBUG - 解析后的 manual_boundaries: [0]
+2026-01-31 07:35:54,434 - src.api.routes.batch_langgraph - INFO - 收到批量提交（LangGraph）: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, exam_id=dc5cdbbc-a076-4ac5-8986-9a20bb2fc480, auto_identify=True
+2026-01-31 07:35:54,469 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815918903.jpg, 大小: 154111 bytes
+2026-01-31 07:35:54,483 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815918903.jpg, 大小: 155445 bytes
+2026-01-31 07:35:54,499 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815918903.jpg, 大小: 127850 bytes
+2026-01-31 07:35:54,514 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815918903.jpg, 大小: 155813 bytes
+2026-01-31 07:35:54,531 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815918903.jpg, 大小: 192615 bytes
+2026-01-31 07:35:54,544 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815918903.jpg, 大小: 176390 bytes
+2026-01-31 07:35:54,556 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815918903.jpg, 大小: 97623 bytes
+2026-01-31 07:35:54,568 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815918903.jpg, 大小: 174111 bytes
+2026-01-31 07:35:54,579 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815918903.jpg, 大小: 96313 bytes
+2026-01-31 07:35:54,594 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815918903.jpg, 大小: 152778 bytes
+2026-01-31 07:35:54,615 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815918903.jpg, 大小: 96778 bytes
+2026-01-31 07:35:54,631 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815918903.jpg, 大小: 152333 bytes
+2026-01-31 07:35:54,646 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815918903.jpg, 大小: 117791 bytes
+2026-01-31 07:35:54,661 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815918903.jpg, 大小: 173842 bytes
+2026-01-31 07:35:54,677 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815918903.jpg, 大小: 150159 bytes
+2026-01-31 07:35:54,692 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815918903.jpg, 大小: 107820 bytes
+2026-01-31 07:35:54,706 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815918903.jpg, 大小: 109453 bytes
+2026-01-31 07:35:54,720 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815918903.jpg, 大小: 138920 bytes
+2026-01-31 07:35:54,736 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815918903.jpg, 大小: 108019 bytes
+2026-01-31 07:35:54,752 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815918903.jpg, 大小: 101758 bytes
+2026-01-31 07:35:54,765 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815918903.jpg, 大小: 103822 bytes
+2026-01-31 07:35:54,778 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815918903.jpg, 大小: 136426 bytes
+2026-01-31 07:35:54,795 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815918903.jpg, 大小: 155718 bytes
+2026-01-31 07:35:54,812 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815918903.jpg, 大小: 115317 bytes
+2026-01-31 07:35:54,828 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815918903.jpg, 大小: 102291 bytes
+2026-01-31 07:35:54,842 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815918903.jpg, 大小: 153666 bytes
+2026-01-31 07:35:54,854 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815918903.jpg, 大小: 119354 bytes
+2026-01-31 07:35:54,866 - src.api.routes.batch_langgraph - DEBUG - 读取图片文件: asset_pdf_1769815918903.jpg, 大小: 104338 bytes
+2026-01-31 07:35:54,871 - src.api.routes.batch_langgraph - INFO - 答题文件处理完成: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, 总页数=28
+2026-01-31 07:35:54,884 - src.api.routes.batch_langgraph - INFO - 已缓存 28 张图片用于前端显示
+2026-01-31 07:35:55,048 - src.api.routes.batch_langgraph - INFO - 评分标准处理完成: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, 总页数=14
+2026-01-31 07:35:55,053 - src.api.routes.batch_langgraph - INFO - 已缓存 14 张评分标准图片用于前端显示
+2026-01-31 07:35:55,053 - src.api.routes.batch_langgraph - INFO - 文件处理完成: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, rubric_pages=14, answer_pages=28
+2026-01-31 07:35:55,053 - src.api.routes.batch_langgraph - INFO - 班级批改模式: class_id=None, homework_id=None, 学生数=1
+2026-01-31 07:35:55,053 - src.api.routes.batch_langgraph - INFO - 准备启动批改任务: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, answer_images=28, rubric_images=14
+2026-01-31 07:35:55,053 - src.api.routes.batch_langgraph - INFO - 批改任务已提交到事件循环: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d
+2026-01-31 07:35:55,055 - src.api.routes.batch_langgraph - INFO - [_start_run_with_teacher_limit] 开始执行: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d
+2026-01-31 07:35:55,055 - src.api.routes.batch_langgraph - INFO - [_start_run_with_teacher_limit] payload keys: ['batch_id', 'exam_id', 'temp_dir', 'rubric_images', 'answer_images', 'api_key', 'class_id', 'homework_id', 'student_mapping', 'inputs']
+2026-01-31 07:35:55,055 - src.api.routes.batch_langgraph - INFO - [_start_run_with_teacher_limit] answer_images count: 28
+2026-01-31 07:35:55,055 - src.api.routes.batch_langgraph - INFO - [_start_run_with_teacher_limit] rubric_images count: 14
+2026-01-31 07:35:55,055 - src.api.routes.batch_langgraph - INFO - [_start_run_with_teacher_limit] 准备调用 get_run_controller()
+2026-01-31 07:35:55,055 - src.api.routes.batch_langgraph - INFO - [_start_run_with_teacher_limit] get_run_controller() 返回: True
+2026-01-31 07:35:55,056 - src.api.routes.batch_langgraph - INFO - [_start_run_with_teacher_limit] 准备获取 slot: teacher_key=t-517e6f6f
+2026-01-31 07:35:55,058 - src.api.routes.batch_langgraph - INFO - [_start_run_with_teacher_limit] try_acquire_slot 返回: True
+2026-01-31 07:35:55,058 - src.api.routes.batch_langgraph - INFO - [_start_run_with_teacher_limit] 成功获取 slot，更新运行状态
+2026-01-31 07:35:55,060 - src.api.routes.batch_langgraph - INFO - [_start_run_with_teacher_limit] 准备启动 LangGraph run
+2026-01-31 07:35:55,060 - src.orchestration.langgraph_orchestrator - INFO - 启动 LangGraph Graph: graph_name=batch_grading, run_id=batch_grading_72f10c21-ea53-423d-8619-8d4e1fb8b23d, idempotency_key=72f10c21-ea53-423d-8619-8d4e1fb8b23d
+2026-01-31 07:35:55,064 - src.orchestration.langgraph_orchestrator - WARNING - 数据库写入失败，使用内存存储: Object of type bytes is not JSON serializable
+2026-01-31 07:35:55,064 - src.orchestration.langgraph_orchestrator - INFO - Graph 已启动: run_id=batch_grading_72f10c21-ea53-423d-8619-8d4e1fb8b23d
+2026-01-31 07:35:55,064 - src.api.routes.batch_langgraph - INFO - [_start_run_with_teacher_limit] LangGraph 启动成功: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, run_id=batch_grading_72f10c21-ea53-423d-8619-8d4e1fb8b23d
+2026-01-31 07:35:55,064 - src.api.routes.batch_langgraph - INFO - [_start_run_with_teacher_limit] 流式任务已创建
+2026-01-31 07:35:55,064 - src.api.routes.batch_langgraph - INFO - 开始流式监听 LangGraph 进度: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, run_id=batch_grading_72f10c21-ea53-423d-8619-8d4e1fb8b23d
+2026-01-31 07:35:55,065 - src.orchestration.langgraph_orchestrator - INFO - 开始流式监听 Graph（从队列）: run_id=batch_grading_72f10c21-ea53-423d-8619-8d4e1fb8b23d
+2026-01-31 07:35:55,068 - src.orchestration.langgraph_orchestrator - INFO - 开始执行 Graph: run_id=batch_grading_72f10c21-ea53-423d-8619-8d4e1fb8b23d
+2026-01-31 07:35:55,069 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, type=node_start, node=LangGraph
+2026-01-31 07:35:55,092 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, type=node_start, node=intake
+2026-01-31 07:35:55,092 - src.graphs.batch_grading - INFO - [intake] 开始接收文件: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d
+2026-01-31 07:35:55,092 - src.graphs.batch_grading - INFO - [intake] 文件接收完成: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, 答题页数=28, 评分标准页数=14
+2026-01-31 07:35:55,104 - src.graphs.batch_grading - INFO - [preprocess] 开始图像预处理: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, 页数=28
+2026-01-31 07:35:55,116 - src.graphs.batch_grading - DEBUG - [preprocess] 页面 0 转换为 JPEG: 137771 -> 137604 bytes
+2026-01-31 07:35:55,132 - src.graphs.batch_grading - DEBUG - [preprocess] 页面 1 转换为 JPEG: 137909 -> 137933 bytes
+2026-01-31 07:35:55,143 - src.graphs.batch_grading - DEBUG - [preprocess] 页面 2 转换为 JPEG: 113788 -> 113778 bytes
+2026-01-31 07:35:55,173 - src.graphs.batch_grading - DEBUG - [preprocess] 页面 3 转换为 JPEG: 138342 -> 138320 bytes
+2026-01-31 07:35:55,198 - src.graphs.batch_grading - DEBUG - [preprocess] 页面 4 转换为 JPEG: 171128 -> 171042 bytes
+2026-01-31 07:35:55,214 - src.graphs.batch_grading - DEBUG - [preprocess] 页面 5 转换为 JPEG: 156885 -> 156932 bytes
+2026-01-31 07:35:55,240 - src.graphs.batch_grading - DEBUG - [preprocess] 页面 6 转换为 JPEG: 86574 -> 86649 bytes
+2026-01-31 07:35:55,269 - src.graphs.batch_grading - DEBUG - [preprocess] 页面 7 转换为 JPEG: 154887 -> 154791 bytes
+2026-01-31 07:35:55,293 - src.graphs.batch_grading - DEBUG - [preprocess] 页面 8 转换为 JPEG: 85535 -> 85613 bytes
+2026-01-31 07:35:55,315 - src.graphs.batch_grading - DEBUG - [preprocess] 页面 9 转换为 JPEG: 135993 -> 135934 bytes
+2026-01-31 07:35:55,340 - src.graphs.batch_grading - DEBUG - [preprocess] 页面 10 转换为 JPEG: 85890 -> 86086 bytes
+2026-01-31 07:35:55,355 - src.graphs.batch_grading - DEBUG - [preprocess] 页面 11 转换为 JPEG: 135165 -> 135160 bytes
+2026-01-31 07:35:55,372 - src.graphs.batch_grading - DEBUG - [preprocess] 页面 12 转换为 JPEG: 104610 -> 104705 bytes
+2026-01-31 07:35:55,394 - src.graphs.batch_grading - DEBUG - [preprocess] 页面 13 转换为 JPEG: 154792 -> 154698 bytes
+2026-01-31 07:35:55,413 - src.graphs.batch_grading - DEBUG - [preprocess] 页面 14 转换为 JPEG: 133418 -> 133442 bytes
+2026-01-31 07:35:55,429 - src.graphs.batch_grading - DEBUG - [preprocess] 页面 15 转换为 JPEG: 95568 -> 95638 bytes
+2026-01-31 07:35:55,448 - src.graphs.batch_grading - DEBUG - [preprocess] 页面 16 转换为 JPEG: 97294 -> 97328 bytes
+2026-01-31 07:35:55,467 - src.graphs.batch_grading - DEBUG - [preprocess] 页面 17 转换为 JPEG: 123651 -> 123629 bytes
+2026-01-31 07:35:55,479 - src.graphs.batch_grading - DEBUG - [preprocess] 页面 18 转换为 JPEG: 95462 -> 95575 bytes
+2026-01-31 07:35:55,492 - src.graphs.batch_grading - DEBUG - [preprocess] 页面 19 转换为 JPEG: 90320 -> 90442 bytes
+2026-01-31 07:35:55,506 - src.graphs.batch_grading - DEBUG - [preprocess] 页面 20 转换为 JPEG: 92212 -> 92359 bytes
+2026-01-31 07:35:55,533 - src.graphs.batch_grading - DEBUG - [preprocess] 页面 21 转换为 JPEG: 121210 -> 121221 bytes
+2026-01-31 07:35:55,559 - src.graphs.batch_grading - DEBUG - [preprocess] 页面 22 转换为 JPEG: 138148 -> 138236 bytes
+2026-01-31 07:35:55,582 - src.graphs.batch_grading - DEBUG - [preprocess] 页面 23 转换为 JPEG: 102553 -> 102648 bytes
+2026-01-31 07:35:55,607 - src.graphs.batch_grading - DEBUG - [preprocess] 页面 24 转换为 JPEG: 90881 -> 90973 bytes
+2026-01-31 07:35:55,628 - src.graphs.batch_grading - DEBUG - [preprocess] 页面 25 转换为 JPEG: 136468 -> 136484 bytes
+2026-01-31 07:35:55,656 - src.graphs.batch_grading - DEBUG - [preprocess] 页面 26 转换为 JPEG: 105815 -> 105900 bytes
+2026-01-31 07:35:55,687 - src.graphs.batch_grading - DEBUG - [preprocess] 页面 27 转换为 JPEG: 92805 -> 92882 bytes
+2026-01-31 07:35:55,687 - src.graphs.batch_grading - INFO - [preprocess] 图像预处理完成: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, JPEG转换=28/28
+2026-01-31 07:35:55,696 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, type=stream, node=intake
+2026-01-31 07:35:55,696 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, type=node_end, node=intake
+2026-01-31 07:35:55,700 - src.graphs.batch_grading - INFO - [rubric_parse] 开始解析评分标准: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, 评分标准页数=14
+2026-01-31 07:35:55,701 - src.graphs.batch_grading - INFO - [rubric_parse] 📸 rubric_images 详情: 共 14 页
+2026-01-31 07:35:55,701 - src.graphs.batch_grading - INFO - [rubric_parse]   - 第 1 页: 157664 bytes
+2026-01-31 07:35:55,701 - src.graphs.batch_grading - INFO - [rubric_parse]   - 第 2 页: 95396 bytes
+2026-01-31 07:35:55,701 - src.graphs.batch_grading - INFO - [rubric_parse]   - 第 3 页: 102427 bytes
+2026-01-31 07:35:55,701 - src.graphs.batch_grading - INFO - [rubric_parse]   - 第 4 页: 50479 bytes
+2026-01-31 07:35:55,701 - src.graphs.batch_grading - INFO - [rubric_parse]   - 第 5 页: 92257 bytes
+2026-01-31 07:35:55,701 - src.graphs.batch_grading - INFO - [rubric_parse]   - 第 6 页: 79241 bytes
+2026-01-31 07:35:55,701 - src.graphs.batch_grading - INFO - [rubric_parse]   - 第 7 页: 69340 bytes
+2026-01-31 07:35:55,701 - src.graphs.batch_grading - INFO - [rubric_parse]   - 第 8 页: 82647 bytes
+2026-01-31 07:35:55,701 - src.graphs.batch_grading - INFO - [rubric_parse]   - 第 9 页: 99730 bytes
+2026-01-31 07:35:55,702 - src.graphs.batch_grading - INFO - [rubric_parse]   - 第 10 页: 75320 bytes
+2026-01-31 07:35:55,702 - src.graphs.batch_grading - INFO - [rubric_parse]   - 第 11 页: 93169 bytes
+2026-01-31 07:35:55,702 - src.graphs.batch_grading - INFO - [rubric_parse]   - 第 12 页: 82412 bytes
+2026-01-31 07:35:55,702 - src.graphs.batch_grading - INFO - [rubric_parse]   - 第 13 页: 124825 bytes
+2026-01-31 07:35:55,702 - src.graphs.batch_grading - INFO - [rubric_parse]   - 第 14 页: 101741 bytes
+2026-01-31 07:35:55,723 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, type=state_update, node=intake
+2026-01-31 07:35:57,336 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, type=stream, node=LangGraph
+2026-01-31 07:35:57,336 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, type=node_start, node=preprocess
+2026-01-31 07:35:57,341 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, type=stream, node=preprocess
+2026-01-31 07:35:57,342 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, type=node_end, node=preprocess
+2026-01-31 07:35:57,348 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, type=state_update, node=preprocess
+2026-01-31 07:35:57,351 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, type=stream, node=LangGraph
+2026-01-31 07:35:57,351 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, type=node_start, node=rubric_parse
+2026-01-31 07:36:39,215 - src.graphs.batch_grading - INFO - [rubric_parse] 已注册 12 道题目到 RubricRegistry
+2026-01-31 07:36:39,216 - src.graphs.batch_grading - INFO - [rubric_parse] 评分标准解析成功: 题目数=12, 总分=100.0, 置信度=0.96, 状态=ok
+2026-01-31 07:36:39,216 - src.graphs.batch_grading - INFO - [rubric_parse] 评分标准解析完成: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, 题目数=12, 总分=100.0
+2026-01-31 07:36:39,262 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, type=stream, node=rubric_parse
+2026-01-31 07:36:39,262 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, type=node_end, node=rubric_parse
+2026-01-31 07:36:39,264 - src.graphs.batch_grading - INFO - [rubric_review] skip (review disabled): batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d
+2026-01-31 07:36:39,264 - src.graphs.batch_grading - INFO - [grading_fanout] 按学生边界创建批改任务: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, 学生数=1, 总页数=28
+2026-01-31 07:36:39,265 - src.graphs.batch_grading - INFO - [grading_fanout] 创建学生批次: student=学生1, pages=0-27
+2026-01-31 07:36:39,276 - src.graphs.batch_grading - INFO - [grade_batch] 开始批改批次 1/1: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, 页面=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27], 重试次数=0
+2026-01-31 07:36:39,278 - src.graphs.batch_grading - INFO - [grade_batch] grading_mode=standard
+2026-01-31 07:36:39,278 - src.graphs.batch_grading - INFO - [grade_batch] 接收到 parsed_rubric: total_questions=12, total_score=100.0, questions_count=12
+2026-01-31 07:36:39,278 - src.graphs.batch_grading - INFO - [grade_batch] 已重建 RubricRegistry，注册 12 道题目
+2026-01-31 07:36:39,296 - src.graphs.batch_grading - INFO - [grade_batch] page count exceeds limit; fallback to per-page: pages=28 limit=12
+2026-01-31 07:36:39,313 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, type=state_update, node=rubric_parse
+2026-01-31 07:36:39,316 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, type=stream, node=LangGraph
+2026-01-31 07:36:39,316 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, type=node_start, node=rubric_review
+2026-01-31 07:36:39,320 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, type=node_start, node=grading_fanout_router
+2026-01-31 07:36:39,323 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, type=node_end, node=grading_fanout_router
+2026-01-31 07:36:39,327 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, type=stream, node=rubric_review
+2026-01-31 07:36:39,327 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, type=node_end, node=rubric_review
+2026-01-31 07:36:39,329 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, type=state_update, node=rubric_review
+2026-01-31 07:36:39,332 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, type=stream, node=LangGraph
+2026-01-31 07:36:39,332 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, type=node_start, node=grade_batch
+2026-01-31 07:39:51,182 - src.graphs.batch_grading - INFO - [grade_batch] 批次 1/1 完成: 成功=28/28, 失败=0, 总分=80.0
+2026-01-31 07:39:51,185 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, type=stream, node=grade_batch
+2026-01-31 07:39:51,185 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, type=node_end, node=grade_batch
+2026-01-31 07:39:51,190 - src.graphs.batch_grading - INFO - [self_report] 批次记忆已创建: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, subject=general
+2026-01-31 07:39:51,199 - src.graphs.batch_grading - DEBUG - [_extract_logic_review_questions] 没有自白报告，跳过逻辑复核
+2026-01-31 07:39:51,200 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, type=state_update, node=grade_batch
+2026-01-31 07:39:51,201 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, type=stream, node=LangGraph
+2026-01-31 07:39:51,201 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, type=node_start, node=self_report
+2026-01-31 07:39:51,203 - src.graphs.batch_grading - INFO - [self_report] completed for 1 students: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d
+2026-01-31 07:39:51,203 - src.graphs.batch_grading - INFO - [self_report] 记忆系统已保存: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d
+2026-01-31 07:39:51,207 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, type=node_start, node=report_student
+2026-01-31 07:39:51,220 - src.graphs.batch_grading - DEBUG - [_extract_logic_review_questions] 没有自白报告，跳过逻辑复核
+2026-01-31 07:39:51,221 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, type=node_end, node=report_student
+2026-01-31 07:39:51,221 - src.graphs.batch_grading - INFO - [_extract_logic_review_questions] 自白中没有标记需要复核的题目
+2026-01-31 07:39:51,225 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, type=state_update, node=report_student
+2026-01-31 07:39:51,225 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, type=stream, node=self_report
+2026-01-31 07:39:51,225 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, type=node_end, node=self_report
+2026-01-31 07:39:51,226 - src.graphs.batch_grading - INFO - [logic_review] 记忆整合完成: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, 新增 0 条长期记忆
+2026-01-31 07:39:51,230 - src.graphs.batch_grading - INFO - [annotation_generation] 开始生成批注: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d
+2026-01-31 07:39:51,231 - src.graphs.batch_grading - DEBUG - [annotation_generation] 学生 学生1: 生成 123 个批注
+2026-01-31 07:39:51,231 - src.graphs.batch_grading - DEBUG - [annotation_generation] 学生 学生1: 生成 123 个批注
+2026-01-31 07:39:51,231 - src.graphs.batch_grading - DEBUG - [annotation_generation] 学生 学生1: 生成 123 个批注
+2026-01-31 07:39:51,232 - src.graphs.batch_grading - DEBUG - [annotation_generation] 学生 学生1: 生成 123 个批注
+2026-01-31 07:39:51,232 - src.graphs.batch_grading - INFO - [annotation_generation] 完成: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, 学生数=4, 总批注数=492
+2026-01-31 07:39:51,235 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, type=state_update, node=self_report
+2026-01-31 07:39:51,236 - src.graphs.batch_grading - INFO - [review] 开始结果审核: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d
+2026-01-31 07:39:51,237 - src.graphs.batch_grading - INFO - [review] 审核完成: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, 学生数=8, 待确认边界=0
+2026-01-31 07:39:51,237 - src.graphs.batch_grading - INFO - [review] skip (review disabled): batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d
+2026-01-31 07:39:51,241 - src.graphs.batch_grading - INFO - [export] 开始导出结果: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, 学生数=16
+2026-01-31 07:39:51,242 - src.graphs.batch_grading - INFO - [export] 数据库连接可用，但未实现持久化逻辑，继续导出 JSON 以确保数据安全
+2026-01-31 07:39:51,310 - src.graphs.batch_grading - INFO - [export] 结果已导出为 JSON: ./exports\grading_result_72f10c21-ea53-423d-8619-8d4e1fb8b23d_20260131_073951.json
+2026-01-31 07:39:51,310 - src.graphs.batch_grading - INFO - [export] 导出完成: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, 学生数=16, 跨页题目数=0, 失败页面数=0
+2026-01-31 07:39:51,312 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, type=stream, node=LangGraph
+2026-01-31 07:39:51,312 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, type=node_start, node=logic_review
+2026-01-31 07:39:51,316 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, type=node_start, node=review_student
+2026-01-31 07:39:51,323 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, type=node_start, node=review_student
+2026-01-31 07:39:51,326 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, type=node_end, node=review_student
+2026-01-31 07:39:51,333 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, type=state_update, node=review_student
+2026-01-31 07:39:51,333 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, type=node_end, node=review_student
+2026-01-31 07:39:51,336 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, type=state_update, node=review_student
+2026-01-31 07:39:51,336 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, type=stream, node=logic_review
+2026-01-31 07:39:51,336 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, type=node_end, node=logic_review
+2026-01-31 07:39:51,339 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, type=state_update, node=logic_review
+2026-01-31 07:39:51,341 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, type=stream, node=LangGraph
+2026-01-31 07:39:51,341 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, type=node_start, node=annotation_generation
+2026-01-31 07:39:51,346 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, type=stream, node=annotation_generation
+2026-01-31 07:39:51,346 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, type=node_end, node=annotation_generation
+2026-01-31 07:39:51,349 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, type=state_update, node=annotation_generation
+2026-01-31 07:39:51,351 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, type=stream, node=LangGraph
+2026-01-31 07:39:51,351 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, type=node_start, node=review
+2026-01-31 07:39:51,354 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, type=stream, node=review
+2026-01-31 07:39:51,354 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, type=node_end, node=review
+2026-01-31 07:39:51,362 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, type=state_update, node=review
+2026-01-31 07:39:51,365 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, type=stream, node=LangGraph
+2026-01-31 07:39:51,365 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, type=node_start, node=export
+2026-01-31 07:39:51,367 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, type=stream, node=export
+2026-01-31 07:39:51,367 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, type=node_end, node=export
+2026-01-31 07:39:51,370 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, type=state_update, node=export
+2026-01-31 07:39:51,585 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, type=stream, node=LangGraph
+2026-01-31 07:39:51,585 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, type=node_end, node=LangGraph
+2026-01-31 07:39:51,591 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, type=state_update, node=LangGraph
+2026-01-31 07:39:51,702 - src.orchestration.langgraph_orchestrator - INFO - Graph 执行完成: run_id=batch_grading_72f10c21-ea53-423d-8619-8d4e1fb8b23d
+2026-01-31 07:39:51,703 - src.orchestration.langgraph_orchestrator - WARNING - 数据库更新失败: Object of type bytes is not JSON serializable
+2026-01-31 07:39:51,709 - src.api.routes.batch_langgraph - DEBUG - LangGraph 事件: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, type=completed, node=None
+2026-01-31 07:39:51,713 - src.api.routes.batch_langgraph - INFO - 保存批改结果: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d, class_id=None, homework_id=None
+2026-01-31 07:39:51,847 - src.api.routes.batch_langgraph - INFO - 批改结果已保存: history_id=3ca70783-e9a0-470c-9f8d-bea5e894df35
+2026-01-31 07:39:51,897 - src.orchestration.langgraph_orchestrator - INFO - 流式监听完成: run_id=batch_grading_72f10c21-ea53-423d-8619-8d4e1fb8b23d
+2026-01-31 07:39:51,897 - src.api.routes.batch_langgraph - INFO - LangGraph 进度流式传输完成: batch_id=72f10c21-ea53-423d-8619-8d4e1fb8b23d
+2026-01-31 07:41:15,580 - src.services.enhanced_api - INFO - 增强型 API 服务已停止
+2026-01-31 07:41:17,468 - src.services.enhanced_api - INFO - 增强型 API 服务已启动
+2026-01-31 07:41:17,500 - src.services.enhanced_api - INFO - ??? Redis Pub/Sub ??: state_changes:*
+2026-01-31 07:41:17,563 - src.orchestration.langgraph_orchestrator - INFO - LangGraphOrchestrator 已初始化
+2026-01-31 07:41:17,563 - src.graphs.batch_grading - INFO - 创建批量批改 Graph: batch_size=1000, max_workers=5, max_retries=2
+2026-01-31 07:41:17,603 - src.graphs.batch_grading - INFO - 批量批改 Graph 已编译
+2026-01-31 07:41:17,603 - src.orchestration.langgraph_orchestrator - INFO - 已注册 Graph: batch_grading
+2026-01-31 07:41:17,606 - src.orchestration.langgraph_orchestrator - INFO - 查询到 1 个 Runs
+2026-01-31 07:41:17,610 - src.orchestration.langgraph_orchestrator - INFO - 查询到 0 个 Runs
+2026-01-31 07:41:37,193 - src.services.enhanced_api - INFO - 增强型 API 服务已停止
+2026-01-31 07:41:39,396 - src.services.enhanced_api - INFO - 增强型 API 服务已启动
+2026-01-31 07:41:39,426 - src.services.enhanced_api - INFO - ??? Redis Pub/Sub ??: state_changes:*
+2026-01-31 07:41:39,499 - src.orchestration.langgraph_orchestrator - INFO - LangGraphOrchestrator 已初始化
+2026-01-31 07:41:39,499 - src.graphs.batch_grading - INFO - 创建批量批改 Graph: batch_size=1000, max_workers=5, max_retries=2
+2026-01-31 07:41:39,540 - src.graphs.batch_grading - INFO - 批量批改 Graph 已编译
+2026-01-31 07:41:39,540 - src.orchestration.langgraph_orchestrator - INFO - 已注册 Graph: batch_grading
+2026-01-31 07:41:39,544 - src.orchestration.langgraph_orchestrator - INFO - 查询到 1 个 Runs
+2026-01-31 07:41:39,547 - src.orchestration.langgraph_orchestrator - INFO - 查询到 0 个 Runs
+2026-01-31 07:41:57,092 - src.services.enhanced_api - INFO - 增强型 API 服务已停止
+2026-01-31 07:41:59,161 - src.services.enhanced_api - INFO - 增强型 API 服务已启动
+2026-01-31 07:41:59,192 - src.services.enhanced_api - INFO - ??? Redis Pub/Sub ??: state_changes:*
+2026-01-31 07:41:59,262 - src.orchestration.langgraph_orchestrator - INFO - LangGraphOrchestrator 已初始化
+2026-01-31 07:41:59,263 - src.graphs.batch_grading - INFO - 创建批量批改 Graph: batch_size=1000, max_workers=5, max_retries=2
+2026-01-31 07:41:59,308 - src.graphs.batch_grading - INFO - 批量批改 Graph 已编译
+2026-01-31 07:41:59,308 - src.orchestration.langgraph_orchestrator - INFO - 已注册 Graph: batch_grading
+2026-01-31 07:41:59,312 - src.orchestration.langgraph_orchestrator - INFO - 查询到 1 个 Runs
+2026-01-31 07:41:59,314 - src.orchestration.langgraph_orchestrator - INFO - 查询到 0 个 Runs
+2026-01-31 07:43:18,071 - src.services.enhanced_api - INFO - 增强型 API 服务已停止
+2026-01-31 07:43:20,284 - src.services.enhanced_api - INFO - 增强型 API 服务已启动
+2026-01-31 07:43:20,294 - src.services.enhanced_api - INFO - ??? Redis Pub/Sub ??: state_changes:*
+2026-01-31 07:43:20,437 - src.orchestration.langgraph_orchestrator - INFO - LangGraphOrchestrator 已初始化
+2026-01-31 07:43:20,437 - src.graphs.batch_grading - INFO - 创建批量批改 Graph: batch_size=1000, max_workers=5, max_retries=2
+2026-01-31 07:43:20,487 - src.graphs.batch_grading - INFO - 批量批改 Graph 已编译
+2026-01-31 07:43:20,487 - src.orchestration.langgraph_orchestrator - INFO - 已注册 Graph: batch_grading
+2026-01-31 07:43:20,490 - src.orchestration.langgraph_orchestrator - INFO - 查询到 1 个 Runs
+2026-01-31 07:43:20,494 - src.orchestration.langgraph_orchestrator - INFO - 查询到 0 个 Runs
+2026-01-31 07:44:10,243 - src.services.enhanced_api - INFO - 增强型 API 服务已停止
+2026-01-31 07:44:12,315 - src.services.enhanced_api - INFO - 增强型 API 服务已启动
+2026-01-31 07:44:12,361 - src.services.enhanced_api - INFO - ??? Redis Pub/Sub ??: state_changes:*
+2026-01-31 07:44:12,428 - src.orchestration.langgraph_orchestrator - INFO - LangGraphOrchestrator 已初始化
+2026-01-31 07:44:12,428 - src.graphs.batch_grading - INFO - 创建批量批改 Graph: batch_size=1000, max_workers=5, max_retries=2
+2026-01-31 07:44:12,466 - src.graphs.batch_grading - INFO - 批量批改 Graph 已编译
+2026-01-31 07:44:12,466 - src.orchestration.langgraph_orchestrator - INFO - 已注册 Graph: batch_grading
+2026-01-31 07:44:12,468 - src.orchestration.langgraph_orchestrator - INFO - 查询到 1 个 Runs
+2026-01-31 07:44:12,470 - src.orchestration.langgraph_orchestrator - INFO - 查询到 0 个 Runs
+2026-01-31 07:45:46,565 - src.services.enhanced_api - INFO - 增强型 API 服务已启动
+2026-01-31 07:45:46,570 - src.services.enhanced_api - INFO - ??? Redis Pub/Sub ??: state_changes:*
+2026-01-31 07:45:46,673 - src.orchestration.langgraph_orchestrator - INFO - LangGraphOrchestrator 已初始化
+2026-01-31 07:45:46,673 - src.graphs.batch_grading - INFO - 创建批量批改 Graph: batch_size=1000, max_workers=5, max_retries=2
+2026-01-31 07:45:46,713 - src.graphs.batch_grading - INFO - 批量批改 Graph 已编译
+2026-01-31 07:45:46,713 - src.orchestration.langgraph_orchestrator - INFO - 已注册 Graph: batch_grading
+2026-01-31 07:45:46,715 - src.orchestration.langgraph_orchestrator - INFO - 查询到 1 个 Runs
+2026-01-31 07:45:46,717 - src.orchestration.langgraph_orchestrator - INFO - 查询到 0 个 Runs
+2026-01-31 07:48:43,935 - src.services.enhanced_api - INFO - 增强型 API 服务已停止
+2026-01-31 07:48:45,972 - src.services.enhanced_api - INFO - 增强型 API 服务已启动
+2026-01-31 07:48:46,025 - src.services.enhanced_api - INFO - ??? Redis Pub/Sub ??: state_changes:*
+2026-01-31 07:48:46,104 - src.orchestration.langgraph_orchestrator - INFO - LangGraphOrchestrator 已初始化
+2026-01-31 07:48:46,104 - src.graphs.batch_grading - INFO - 创建批量批改 Graph: batch_size=1000, max_workers=5, max_retries=2
+2026-01-31 07:48:46,146 - src.graphs.batch_grading - INFO - 批量批改 Graph 已编译
+2026-01-31 07:48:46,147 - src.orchestration.langgraph_orchestrator - INFO - 已注册 Graph: batch_grading
+2026-01-31 07:48:46,149 - src.orchestration.langgraph_orchestrator - INFO - 查询到 1 个 Runs
+2026-01-31 07:48:46,152 - src.orchestration.langgraph_orchestrator - INFO - 查询到 0 个 Runs
+2026-01-31 07:49:24,781 - src.services.enhanced_api - INFO - 增强型 API 服务已停止
+2026-01-31 07:49:26,822 - src.services.enhanced_api - INFO - 增强型 API 服务已启动
+2026-01-31 07:49:26,849 - src.services.enhanced_api - INFO - ??? Redis Pub/Sub ??: state_changes:*
+2026-01-31 07:49:26,926 - src.orchestration.langgraph_orchestrator - INFO - LangGraphOrchestrator 已初始化
+2026-01-31 07:49:26,926 - src.graphs.batch_grading - INFO - 创建批量批改 Graph: batch_size=1000, max_workers=5, max_retries=2
+2026-01-31 07:49:26,970 - src.graphs.batch_grading - INFO - 批量批改 Graph 已编译
+2026-01-31 07:49:26,971 - src.orchestration.langgraph_orchestrator - INFO - 已注册 Graph: batch_grading
+2026-01-31 07:49:26,975 - src.orchestration.langgraph_orchestrator - INFO - 查询到 1 个 Runs
+2026-01-31 07:49:26,978 - src.orchestration.langgraph_orchestrator - INFO - 查询到 0 个 Runs
+2026-01-31 07:49:36,889 - src.services.enhanced_api - INFO - 增强型 API 服务已停止
+2026-01-31 07:49:39,358 - src.services.enhanced_api - INFO - 增强型 API 服务已启动
+2026-01-31 07:49:39,368 - src.services.enhanced_api - INFO - ??? Redis Pub/Sub ??: state_changes:*
+2026-01-31 07:49:39,534 - src.orchestration.langgraph_orchestrator - INFO - LangGraphOrchestrator 已初始化
+2026-01-31 07:49:39,535 - src.graphs.batch_grading - INFO - 创建批量批改 Graph: batch_size=1000, max_workers=5, max_retries=2
+2026-01-31 07:49:39,629 - src.graphs.batch_grading - INFO - 批量批改 Graph 已编译
+2026-01-31 07:49:39,629 - src.orchestration.langgraph_orchestrator - INFO - 已注册 Graph: batch_grading
+2026-01-31 07:49:39,637 - src.orchestration.langgraph_orchestrator - INFO - 查询到 1 个 Runs
+2026-01-31 07:49:39,641 - src.orchestration.langgraph_orchestrator - INFO - 查询到 0 个 Runs
+2026-01-31 07:49:40,786 - src.services.enhanced_api - INFO - 增强型 API 服务已停止
+2026-01-31 07:49:43,469 - src.services.enhanced_api - INFO - 增强型 API 服务已启动
+2026-01-31 07:49:43,479 - src.services.enhanced_api - INFO - ??? Redis Pub/Sub ??: state_changes:*
+2026-01-31 07:49:43,632 - src.orchestration.langgraph_orchestrator - INFO - LangGraphOrchestrator 已初始化
+2026-01-31 07:49:43,632 - src.graphs.batch_grading - INFO - 创建批量批改 Graph: batch_size=1000, max_workers=5, max_retries=2
+2026-01-31 07:49:43,676 - src.graphs.batch_grading - INFO - 批量批改 Graph 已编译
+2026-01-31 07:49:43,676 - src.orchestration.langgraph_orchestrator - INFO - 已注册 Graph: batch_grading
+2026-01-31 07:49:43,680 - src.orchestration.langgraph_orchestrator - INFO - 查询到 1 个 Runs
+2026-01-31 07:49:43,683 - src.orchestration.langgraph_orchestrator - INFO - 查询到 0 个 Runs
+2026-01-31 07:50:03,258 - src.services.enhanced_api - INFO - 增强型 API 服务已停止
+2026-01-31 07:50:05,555 - src.services.enhanced_api - INFO - 增强型 API 服务已启动
+2026-01-31 07:50:05,564 - src.services.enhanced_api - INFO - ??? Redis Pub/Sub ??: state_changes:*
+2026-01-31 07:50:05,726 - src.orchestration.langgraph_orchestrator - INFO - LangGraphOrchestrator 已初始化
+2026-01-31 07:50:05,726 - src.graphs.batch_grading - INFO - 创建批量批改 Graph: batch_size=1000, max_workers=5, max_retries=2
+2026-01-31 07:50:05,772 - src.graphs.batch_grading - INFO - 批量批改 Graph 已编译
+2026-01-31 07:50:05,772 - src.orchestration.langgraph_orchestrator - INFO - 已注册 Graph: batch_grading
+2026-01-31 07:50:05,777 - src.orchestration.langgraph_orchestrator - INFO - 查询到 1 个 Runs
+2026-01-31 07:50:05,780 - src.orchestration.langgraph_orchestrator - INFO - 查询到 0 个 Runs
+2026-01-31 07:50:14,056 - src.services.enhanced_api - INFO - 增强型 API 服务已停止
+2026-01-31 07:50:16,567 - src.services.enhanced_api - INFO - 增强型 API 服务已启动
+2026-01-31 07:50:16,594 - src.services.enhanced_api - INFO - ??? Redis Pub/Sub ??: state_changes:*
+2026-01-31 07:50:16,735 - src.orchestration.langgraph_orchestrator - INFO - LangGraphOrchestrator 已初始化
+2026-01-31 07:50:16,735 - src.graphs.batch_grading - INFO - 创建批量批改 Graph: batch_size=1000, max_workers=5, max_retries=2
+2026-01-31 07:50:16,836 - src.graphs.batch_grading - INFO - 批量批改 Graph 已编译
+2026-01-31 07:50:16,836 - src.orchestration.langgraph_orchestrator - INFO - 已注册 Graph: batch_grading
+2026-01-31 07:50:16,841 - src.orchestration.langgraph_orchestrator - INFO - 查询到 1 个 Runs
+2026-01-31 07:50:16,845 - src.orchestration.langgraph_orchestrator - INFO - 查询到 0 个 Runs
+2026-01-31 07:50:20,850 - src.services.enhanced_api - INFO - 增强型 API 服务已停止
+2026-01-31 07:50:23,728 - src.services.enhanced_api - INFO - 增强型 API 服务已启动
+2026-01-31 07:50:23,737 - src.services.enhanced_api - INFO - ??? Redis Pub/Sub ??: state_changes:*
+2026-01-31 07:50:23,914 - src.orchestration.langgraph_orchestrator - INFO - LangGraphOrchestrator 已初始化
+2026-01-31 07:50:23,914 - src.graphs.batch_grading - INFO - 创建批量批改 Graph: batch_size=1000, max_workers=5, max_retries=2
+2026-01-31 07:50:24,002 - src.graphs.batch_grading - INFO - 批量批改 Graph 已编译
+2026-01-31 07:50:24,002 - src.orchestration.langgraph_orchestrator - INFO - 已注册 Graph: batch_grading
+2026-01-31 07:50:24,008 - src.orchestration.langgraph_orchestrator - INFO - 查询到 1 个 Runs
+2026-01-31 07:50:24,013 - src.orchestration.langgraph_orchestrator - INFO - 查询到 0 个 Runs
+2026-01-31 07:50:27,012 - src.services.enhanced_api - INFO - 增强型 API 服务已停止
+2026-01-31 07:50:30,084 - src.services.enhanced_api - INFO - 增强型 API 服务已启动
+2026-01-31 07:50:30,095 - src.services.enhanced_api - INFO - ??? Redis Pub/Sub ??: state_changes:*
+2026-01-31 07:50:30,256 - src.orchestration.langgraph_orchestrator - INFO - LangGraphOrchestrator 已初始化
+2026-01-31 07:50:30,256 - src.graphs.batch_grading - INFO - 创建批量批改 Graph: batch_size=1000, max_workers=5, max_retries=2
+2026-01-31 07:50:30,310 - src.graphs.batch_grading - INFO - 批量批改 Graph 已编译
+2026-01-31 07:50:30,310 - src.orchestration.langgraph_orchestrator - INFO - 已注册 Graph: batch_grading
+2026-01-31 07:50:30,315 - src.orchestration.langgraph_orchestrator - INFO - 查询到 1 个 Runs
+2026-01-31 07:50:30,320 - src.orchestration.langgraph_orchestrator - INFO - 查询到 0 个 Runs
+2026-01-31 07:50:32,241 - src.services.enhanced_api - INFO - 增强型 API 服务已停止
+2026-01-31 07:50:35,040 - src.services.enhanced_api - INFO - 增强型 API 服务已启动
+2026-01-31 07:50:35,048 - src.services.enhanced_api - INFO - ??? Redis Pub/Sub ??: state_changes:*
+2026-01-31 07:50:35,202 - src.orchestration.langgraph_orchestrator - INFO - LangGraphOrchestrator 已初始化
+2026-01-31 07:50:35,202 - src.graphs.batch_grading - INFO - 创建批量批改 Graph: batch_size=1000, max_workers=5, max_retries=2
+2026-01-31 07:50:35,271 - src.graphs.batch_grading - INFO - 批量批改 Graph 已编译
+2026-01-31 07:50:35,271 - src.orchestration.langgraph_orchestrator - INFO - 已注册 Graph: batch_grading
+2026-01-31 07:50:35,275 - src.orchestration.langgraph_orchestrator - INFO - 查询到 1 个 Runs
+2026-01-31 07:50:35,276 - src.orchestration.langgraph_orchestrator - INFO - 查询到 0 个 Runs
+2026-01-31 07:50:41,313 - src.services.enhanced_api - INFO - 增强型 API 服务已停止
+2026-01-31 07:50:43,745 - src.services.enhanced_api - INFO - 增强型 API 服务已启动
+2026-01-31 07:50:43,772 - src.services.enhanced_api - INFO - ??? Redis Pub/Sub ??: state_changes:*
+2026-01-31 07:50:43,995 - src.orchestration.langgraph_orchestrator - INFO - LangGraphOrchestrator 已初始化
+2026-01-31 07:50:43,995 - src.graphs.batch_grading - INFO - 创建批量批改 Graph: batch_size=1000, max_workers=5, max_retries=2
+2026-01-31 07:50:44,057 - src.graphs.batch_grading - INFO - 批量批改 Graph 已编译
+2026-01-31 07:50:44,057 - src.orchestration.langgraph_orchestrator - INFO - 已注册 Graph: batch_grading
+2026-01-31 07:50:44,062 - src.orchestration.langgraph_orchestrator - INFO - 查询到 1 个 Runs
+2026-01-31 07:50:44,067 - src.orchestration.langgraph_orchestrator - INFO - 查询到 0 个 Runs
+2026-01-31 07:50:55,710 - src.services.enhanced_api - INFO - 增强型 API 服务已停止
+2026-01-31 07:50:58,375 - src.services.enhanced_api - INFO - 增强型 API 服务已启动
+2026-01-31 07:50:58,384 - src.services.enhanced_api - INFO - ??? Redis Pub/Sub ??: state_changes:*
+2026-01-31 07:50:58,541 - src.orchestration.langgraph_orchestrator - INFO - LangGraphOrchestrator 已初始化
+2026-01-31 07:50:58,541 - src.graphs.batch_grading - INFO - 创建批量批改 Graph: batch_size=1000, max_workers=5, max_retries=2
+2026-01-31 07:50:58,652 - src.graphs.batch_grading - INFO - 批量批改 Graph 已编译
+2026-01-31 07:50:58,653 - src.orchestration.langgraph_orchestrator - INFO - 已注册 Graph: batch_grading
+2026-01-31 07:50:58,658 - src.orchestration.langgraph_orchestrator - INFO - 查询到 1 个 Runs
+2026-01-31 07:50:58,663 - src.orchestration.langgraph_orchestrator - INFO - 查询到 0 个 Runs
+2026-01-31 07:51:04,072 - src.services.enhanced_api - INFO - 增强型 API 服务已停止
+2026-01-31 07:51:06,484 - src.services.enhanced_api - INFO - 增强型 API 服务已启动
+2026-01-31 07:51:06,511 - src.services.enhanced_api - INFO - ??? Redis Pub/Sub ??: state_changes:*
+2026-01-31 07:51:06,628 - src.orchestration.langgraph_orchestrator - INFO - LangGraphOrchestrator 已初始化
+2026-01-31 07:51:06,628 - src.graphs.batch_grading - INFO - 创建批量批改 Graph: batch_size=1000, max_workers=5, max_retries=2
+2026-01-31 07:51:06,688 - src.graphs.batch_grading - INFO - 批量批改 Graph 已编译
+2026-01-31 07:51:06,689 - src.orchestration.langgraph_orchestrator - INFO - 已注册 Graph: batch_grading
+2026-01-31 07:51:06,693 - src.orchestration.langgraph_orchestrator - INFO - 查询到 1 个 Runs
+2026-01-31 07:51:06,698 - src.orchestration.langgraph_orchestrator - INFO - 查询到 0 个 Runs
+2026-01-31 07:53:12,199 - src.services.enhanced_api - INFO - 增强型 API 服务已停止
+2026-01-31 07:53:14,292 - src.services.enhanced_api - INFO - 增强型 API 服务已启动
+2026-01-31 07:53:14,317 - src.services.enhanced_api - INFO - ??? Redis Pub/Sub ??: state_changes:*
+2026-01-31 07:53:14,462 - src.orchestration.langgraph_orchestrator - INFO - LangGraphOrchestrator 已初始化
+2026-01-31 07:53:14,462 - src.graphs.batch_grading - INFO - 创建批量批改 Graph: batch_size=1000, max_workers=5, max_retries=2
+2026-01-31 07:53:14,503 - src.graphs.batch_grading - INFO - 批量批改 Graph 已编译
+2026-01-31 07:53:14,503 - src.orchestration.langgraph_orchestrator - INFO - 已注册 Graph: batch_grading
+2026-01-31 07:53:14,506 - src.orchestration.langgraph_orchestrator - INFO - 查询到 1 个 Runs
+2026-01-31 07:53:14,507 - src.orchestration.langgraph_orchestrator - INFO - 查询到 0 个 Runs
+2026-01-31 07:53:16,327 - src.services.enhanced_api - INFO - 增强型 API 服务已停止
+2026-01-31 07:53:18,952 - src.services.enhanced_api - INFO - 增强型 API 服务已启动
+2026-01-31 07:53:18,959 - src.services.enhanced_api - INFO - ??? Redis Pub/Sub ??: state_changes:*
+2026-01-31 07:53:19,105 - src.orchestration.langgraph_orchestrator - INFO - LangGraphOrchestrator 已初始化
+2026-01-31 07:53:19,105 - src.graphs.batch_grading - INFO - 创建批量批改 Graph: batch_size=1000, max_workers=5, max_retries=2
+2026-01-31 07:53:19,147 - src.graphs.batch_grading - INFO - 批量批改 Graph 已编译
+2026-01-31 07:53:19,147 - src.orchestration.langgraph_orchestrator - INFO - 已注册 Graph: batch_grading
+2026-01-31 07:53:19,154 - src.orchestration.langgraph_orchestrator - INFO - 查询到 1 个 Runs
+2026-01-31 07:53:19,156 - src.orchestration.langgraph_orchestrator - INFO - 查询到 0 个 Runs

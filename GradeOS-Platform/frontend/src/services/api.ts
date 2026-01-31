@@ -508,6 +508,18 @@ export interface GradingHistoryDetailResponse {
   items: GradingImportItem[];
 }
 
+export interface PageImageResponse {
+  page_index: number;
+  image_base64: string;
+  image_format: string;
+}
+
+export interface GradingImagesResponse {
+  history_id: string;
+  student_key: string;
+  images: PageImageResponse[];
+}
+
 export interface RubricReviewContext {
   batch_id: string;
   status?: string;
@@ -692,6 +704,56 @@ export const gradingApi = {
       method: 'POST',
       body: JSON.stringify({ reason }),
     }),
+
+  /** 获取批改历史的页面图片 */
+  getGradingHistoryImages: (historyId: string, studentKey?: string) => {
+    const query = studentKey ? `?student_key=${encodeURIComponent(studentKey)}` : '';
+    return request<GradingImagesResponse>(`/grading/history/${historyId}/images${query}`);
+  },
+
+  /** 获取单张批改历史图片的 URL */
+  getGradingHistoryImageUrl: (historyId: string, studentKey: string, pageIndex: number) => {
+    return `${API_BASE}/grading/history/${historyId}/images/${encodeURIComponent(studentKey)}/${pageIndex}`;
+  },
+
+  /** 获取批改历史的评分标准（rubric JSON + 图片） */
+  getGradingHistoryRubric: (historyId: string) => {
+    return request<{
+      data: {
+        history_id: string;
+        batch_id: string;
+        rubric: any;
+        rubric_images: Array<{
+          page_index: number;
+          image_format: string;
+          image_url: string;
+          created_at: string;
+        }>;
+        total_questions: number;
+        total_score: number;
+      };
+    }>(`/grading/history/${historyId}/rubric`);
+  },
+
+  /** 获取评分标准图片列表 */
+  getRubricImages: (historyId: string) => {
+    return request<{
+      data: Array<{
+        id: string;
+        grading_history_id: string;
+        page_index: number;
+        image_format: string;
+        created_at: string;
+        image_url: string;
+      }>;
+      total: number;
+    }>(`/grading/history/${historyId}/rubric-images`);
+  },
+
+  /** 获取单张评分标准图片的 URL */
+  getRubricImageUrl: (historyId: string, pageIndex: number) => {
+    return `${API_BASE}/grading/history/${historyId}/rubric-images/${pageIndex}`;
+  },
 };
 
 // ============ 导出所有 API ============
