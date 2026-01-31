@@ -151,7 +151,7 @@ class UnifiedLLMClient:
             **kwargs,
         }
 
-        logger.info(
+        logger.debug(
             "[LLM] invoke model=%s purpose=%s messages=%s",
             resolved_model,
             purpose,
@@ -185,7 +185,7 @@ class UnifiedLLMClient:
             if header_usage:
                 usage = {**usage, **header_usage}
 
-            logger.info("[LLM] response chars=%s tokens=%s", len(content), usage)
+            logger.debug("[LLM] response chars=%s tokens=%s", len(content), usage)
             return LLMResponse(
                 content=content,
                 model=resolved_model,
@@ -233,7 +233,7 @@ class UnifiedLLMClient:
                     if isinstance(item, dict) and item.get("type") == "image_url":
                         image_count += 1
 
-        logger.info(
+        logger.debug(
             "[LLM] stream model=%s purpose=%s images=%s messages=%s",
             resolved_model,
             purpose,

@@ -463,12 +463,13 @@ class RubricParserService:
 
             logger.debug(f"LLM 原始响应: {result_text[:500]}...")
 
-            # 🔍 诊断日志：输出完整响应以便调试
+            # 🔍 简要日志：只记录响应长度
             logger.info(f"[rubric_parse] LLM 响应长度: {len(result_text)} 字符")
+            # 详细响应内容改为 DEBUG 级别
             if len(result_text) < 2000:
-                logger.info(f"[rubric_parse] LLM 完整响应: {result_text}")
+                logger.debug(f"[rubric_parse] LLM 完整响应: {result_text}")
             else:
-                logger.info(f"[rubric_parse] LLM 响应前 2000 字符: {result_text[:2000]}...")
+                logger.debug(f"[rubric_parse] LLM 响应前 2000 字符: {result_text[:2000]}...")
 
             # 提取 JSON
             json_text = result_text
