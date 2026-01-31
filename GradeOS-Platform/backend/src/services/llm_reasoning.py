@@ -270,6 +270,12 @@ class LLMReasoningClient:
         )
         # 提取批注坐标
         annotations = detail.get("annotations") or []
+        enable_backend_annotations = (
+            os.getenv("ENABLE_BACKEND_ANNOTATIONS", "false").strip().lower()
+            in ("1", "true", "yes")
+        )
+        if not enable_backend_annotations:
+            annotations = []
 
         # 提取步骤信息（包含坐标）
         steps = detail.get("steps") or []
@@ -278,7 +284,7 @@ class LLMReasoningClient:
         answer_region = detail.get("answer_region") or detail.get("answerRegion")
 
         # 🔥 后备逻辑：如果 LLM 没有返回 annotations，从 scoring_point_results 构建基本批注
-        if not annotations and scoring_point_results:
+        if enable_backend_annotations and not annotations and scoring_point_results:
             fallback_annotations = []
             for idx, spr in enumerate(scoring_point_results):
                 # 从 error_region 构建错误圈选批注
