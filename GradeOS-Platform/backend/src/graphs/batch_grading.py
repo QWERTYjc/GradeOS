@@ -5291,88 +5291,6 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
         },
     }
 
-
-async def annotation_generation_node(state: BatchGradingGraphState) -> Dict[str, Any]:
-    """
-    批注生成节点
-
-    在逻辑复核完成后，基于最终的批改结果生成视觉批注。
-    批注用于在学生答卷图片上标注得分/错误位置。
-
-    工作流位置：logic_review → annotation_generation → review
-    """
-    from src.services.post_grading_annotator import (
-        PostGradingAnnotator,
-        AnnotatorConfig,
-        AnnotationMode,
-    )
-
-    batch_id = state["batch_id"]
-    # 优先读取 reviewed_results，回退到 confessed_results，再回退到 student_results
-    student_results = state.get("reviewed_results") or state.get("confessed_results") or state.get("student_results", []) or []
-    grading_mode = _resolve_grading_mode(state.get("inputs", {}), state.get("parsed_rubric", {}))
-
-    logger.info(f"[annotation_generation] 开始生成批注: batch_id={batch_id}")
-
-    # 获取批注模式配置
-    annotation_mode_str = state.get("inputs", {}).get("annotation_mode", "standard")
-    try:
-        annotation_mode = AnnotationMode(annotation_mode_str)
-    except ValueError:
-        annotation_mode = AnnotationMode.STANDARD
-
-    # 辅助模式使用简洁批注
-    if grading_mode.startswith("assist"):
-        annotation_mode = AnnotationMode.SIMPLE
-
-    # 创建批注生成器
-    config = AnnotatorConfig(mode=annotation_mode)
-    annotator = PostGradingAnnotator(config)
-
-    updated_results = []
-    total_annotations = 0
-
-    for student in student_results:
-        student_key = student.get("student_key") or "unknown"
-
-        try:
-            # 生成该学生的批注
-            annotation_result = annotator.generate_annotations_for_student(student)
-
-            # 将批注结果附加到学生数据
-            updated_student = dict(student)
-            updated_student["annotations"] = annotation_result.to_dict()
-
-            # 统计批注数量
-            for page in annotation_result.pages:
-                total_annotations += len(page.annotations)
-
-            updated_results.append(updated_student)
-
-            logger.debug(
-                f"[annotation_generation] 学生 {student_key}: "
-                f"生成 {sum(len(p.annotations) for p in annotation_result.pages)} 个批注"
-            )
-        except Exception as e:
-            logger.warning(f"[annotation_generation] 学生 {student_key} 批注生成失败: {e}")
-            updated_results.append(dict(student))
-
-    logger.info(
-        f"[annotation_generation] 完成: batch_id={batch_id}, "
-        f"学生数={len(updated_results)}, 总批注数={total_annotations}"
-    )
-
-    return {
-        "student_results": updated_results,
-        "current_stage": "annotation_generation_completed",
-        "percentage": 88.0,
-        "timestamps": {
-            **state.get("timestamps", {}),
-            "annotation_generation_at": datetime.now().isoformat(),
-        },
-    }
-
-
 async def review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     """
     结果审核节点
@@ -5903,7 +5821,7 @@ def create_batch_grading_graph(
     6. simple_aggregate: 简单聚合为学生结果
     7. self_report: 自白节点（风险分析）
     8. logic_review: 逻辑复核
-    9. annotation_generation: 生成批注
+
     10. review: 结果审核
     11. export: 导出结果
 
@@ -5927,7 +5845,7 @@ def create_batch_grading_graph(
       ↓
     logic_review  ← 逻辑复核
       ↓
-    annotation_generation  ← 批注生成
+
       ↓
     review
       ↓
@@ -5980,7 +5898,7 @@ def create_batch_grading_graph(
     # graph.add_node("index_merge", index_merge_node)  # 已移除：不再需要索引聚合
     graph.add_node("confession", confession_node)
     graph.add_node("logic_review", logic_review_node)
-    graph.add_node("annotation_generation", annotation_generation_node)
+
     graph.add_node("review", review_node)
     graph.add_node("export", export_node)
 
@@ -6064,10 +5982,9 @@ def create_batch_grading_graph(
         },
     )
 
-    # 简化流程：confession → logic_review → annotation_generation → review → export → END
+    # 简化流程：confession → logic_review → review → export → END
     graph.add_edge("confession", "logic_review")
-    graph.add_edge("logic_review", "annotation_generation")
-    graph.add_edge("annotation_generation", "review")
+    graph.add_edge("logic_review", "review")
     graph.add_edge("review", "export")
     graph.add_edge("export", END)
 
@@ -6154,7 +6071,7 @@ __all__ = [
     "grade_batch_node",
     "confession_node",  # 原 self_report_node
     "logic_review_node",
-    "annotation_generation_node",  # 新增批注生成节点
+
     "review_node",
     "export_node",
     # 路由函数
