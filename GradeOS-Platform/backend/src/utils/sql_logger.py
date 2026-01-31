@@ -1,7 +1,8 @@
 """SQL 操作详细日志记录器"""
 import logging
 import json
-from typing import Any, Optional
+import os
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -23,11 +24,13 @@ def log_sql_operation(
         result_count: 返回的记录数（如果适用）
         error: 错误信息（如果有）
     """
+    log_params = os.getenv("SQL_LOG_PARAMS", "false").strip().lower() in ("1", "true", "yes")
     log_data = {
         "operation": operation,
         "query": query.strip(),
-        "params": params if params else None,
     }
+    if log_params and params:
+        log_data["params"] = params
     
     if result_count is not None:
         log_data["result_count"] = result_count
@@ -36,4 +39,5 @@ def log_sql_operation(
         log_data["error"] = str(error)
         logger.error(f"[SQL] ❌ {operation} 失败: {json.dumps(log_data, ensure_ascii=False)}")
     else:
-        logger.info(f"[SQL] ✅ {operation}: {json.dumps(log_data, ensure_ascii=False)}")
+        # Successful SQL logs are noisy and may contain sensitive data; default to DEBUG.
+        logger.debug(f"[SQL] ✅ {operation}: {json.dumps(log_data, ensure_ascii=False)}")

@@ -4390,6 +4390,11 @@ async def self_report_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     api_key = state.get("api_key") or os.getenv("LLM_API_KEY") or os.getenv("OPENROUTER_API_KEY")
     grading_mode = _resolve_grading_mode(state.get("inputs", {}), parsed_rubric)
 
+    def _log_self_report_done(reason: str, count: int) -> None:
+        logger.info(
+            f"[self_report] OK completed ({reason}): batch_id={batch_id}, students={count}"
+        )
+
     # 获取科目（用于记忆隔离）
     # 科目来源优先级：state["subject"] > inputs["subject"] > "general"
     subject = state.get("subject") or state.get("inputs", {}).get("subject", "general")
@@ -4407,6 +4412,7 @@ async def self_report_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     # 辅助模式跳过自白
     if grading_mode.startswith("assist"):
         logger.info(f"[self_report] skip (assist mode): batch_id={batch_id}")
+        _log_self_report_done("assist mode", len(student_results))
         return {
             "current_stage": "self_report_completed",
             "percentage": 80.0,
@@ -4417,6 +4423,7 @@ async def self_report_node(state: BatchGradingGraphState) -> Dict[str, Any]:
         }
 
     if not student_results:
+        _log_self_report_done("no student_results", 0)
         return {
             "current_stage": "self_report_completed",
             "percentage": 80.0,
@@ -4451,6 +4458,7 @@ async def self_report_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                         updated["self_report"]["issues"].extend(rule_report.get("issues", []))
                         updated["self_report"]["warnings"].extend(rule_report.get("warnings", []))
             updated_results.append(updated)
+        _log_self_report_done("rule-based", len(updated_results))
         return {
             "student_results": updated_results,
             "current_stage": "self_report_completed",
@@ -4692,6 +4700,7 @@ async def self_report_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     final_results = [r if r else student_results[i] for i, r in enumerate(updated_results)]
 
     logger.info(f"[self_report] completed for {len(final_results)} students: batch_id={batch_id}")
+    _log_self_report_done("llm", len(final_results))
 
     # 保存记忆到持久化存储
     try:
@@ -4975,6 +4984,12 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     api_key = state.get("api_key") or os.getenv("LLM_API_KEY") or os.getenv("OPENROUTER_API_KEY")
     grading_mode = _resolve_grading_mode(state.get("inputs", {}), parsed_rubric)
 
+    def _log_logic_review_done(reason: str, count: int, reviewed: int = 0) -> None:
+        logger.info(
+            f"[logic_review] OK completed ({reason}): batch_id={batch_id}, "
+            f"students={count}, reviewed={reviewed}"
+        )
+
     # 获取记忆服务
     from src.services.grading_memory import get_memory_service, MemoryType, MemoryImportance
 
@@ -4982,6 +4997,7 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
 
     if grading_mode.startswith("assist"):
         logger.info(f"[logic_review] skip (assist mode): batch_id={batch_id}")
+        _log_logic_review_done("assist mode", len(student_results), 0)
         return {
             "logic_review_results": [],
             "current_stage": "logic_review_completed",
@@ -4993,6 +5009,7 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
         }
 
     if not student_results:
+        _log_logic_review_done("no student_results", 0, 0)
         return {
             "logic_review_results": [],
             "current_stage": "logic_review_completed",
@@ -5019,6 +5036,7 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
             updated = dict(student)
             updated.setdefault("self_audit", _build_self_audit(updated))
             updated_results.append(updated)
+        _log_logic_review_done("rule-based", len(updated_results), 0)
         return {
             "student_results": updated_results,
             "logic_review_results": [],
@@ -5254,6 +5272,7 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     except Exception as e:
         logger.warning(f"[logic_review] 记忆整合失败: {e}")
 
+    _log_logic_review_done("llm", len(final_results), len(logic_review_results))
     return {
         "student_results": final_results,
         "logic_review_results": logic_review_results,
@@ -6054,6 +6073,26 @@ def create_batch_grading_graph(
     return compiled_graph
 
 
+def _count_graded_pages(grading_results: List[Dict[str, Any]]) -> int:
+    """Count unique graded pages from grading_results (supports multi-page student batches)."""
+    if not grading_results:
+        return 0
+    pages = set()
+    for result in grading_results:
+        page_indices = result.get("page_indices") if isinstance(result, dict) else None
+        if isinstance(page_indices, list) and page_indices:
+            for idx in page_indices:
+                if idx is None:
+                    continue
+                pages.add(idx)
+            continue
+        page_index = result.get("page_index") if isinstance(result, dict) else None
+        if page_index is None:
+            continue
+        pages.add(page_index)
+    return len(pages)
+
+
 def grading_merge_gate(state: BatchGradingGraphState) -> str:
     """
     批改汇聚门控
@@ -6065,7 +6104,7 @@ def grading_merge_gate(state: BatchGradingGraphState) -> str:
     grading_results = state.get("grading_results") or []
 
     total_pages = len(processed_images)
-    graded_pages = len(grading_results)
+    graded_pages = _count_graded_pages(grading_results)
 
     # 如果总页数为0（异常情况），且有结果（可能逻辑错误），或者都没结果
     if total_pages == 0:

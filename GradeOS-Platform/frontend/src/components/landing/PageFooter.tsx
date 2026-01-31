@@ -2,7 +2,7 @@
 
 import React from 'react';
 import Link from 'next/link';
-import { Github, Twitter, Linkedin, Mail, MapPin, Phone } from 'lucide-react';
+import { Github, Twitter, Linkedin } from 'lucide-react';
 
 export const PageFooter = () => {
     return (
@@ -82,11 +82,6 @@ export const PageFooter = () => {
                             <li>
                                 <Link href="#features" className="hover:text-blue-400 transition-colors">
                                     核心特性
-                                </Link>
-                            </li>
-                            <li>
-                                <Link href="#workflow" className="hover:text-blue-400 transition-colors">
-                                    工作流
                                 </Link>
                             </li>
                             <li>

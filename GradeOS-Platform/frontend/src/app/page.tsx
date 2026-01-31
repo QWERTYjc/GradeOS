@@ -7,9 +7,7 @@ import { Role } from '@/types';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Menu, X, ArrowRight } from 'lucide-react';
 import { HeroSection } from '@/components/landing/HeroSection';
-import AIWorkflowVisualization from '@/components/landing/AIWorkflowShowcase';
 import { FeatureGrid } from '@/components/landing/FeatureGrid';
-import { StatsRow } from '@/components/landing/StatsRow';
 import { PageFooter } from '@/components/landing/PageFooter';
 
 export default function LandingPage() {
@@ -58,19 +56,7 @@ export default function LandingPage() {
                 href="#features"
                 className="text-sm font-medium text-gray-600 hover:text-blue-600 transition-colors"
               >
-                核心特性
-              </Link>
-              <Link
-                href="#workflow"
-                className="text-sm font-medium text-gray-600 hover:text-blue-600 transition-colors"
-              >
-                工作流
-              </Link>
-              <Link
-                href="#stats"
-                className="text-sm font-medium text-gray-600 hover:text-blue-600 transition-colors"
-              >
-                数据
+                核心能力
               </Link>
             </div>
 
@@ -133,20 +119,6 @@ export default function LandingPage() {
                 >
                   核心特性
                 </Link>
-                <Link
-                  href="#workflow"
-                  onClick={() => setIsMobileMenuOpen(false)}
-                  className="block py-2 text-gray-600 hover:text-blue-600"
-                >
-                  工作流
-                </Link>
-                <Link
-                  href="#stats"
-                  onClick={() => setIsMobileMenuOpen(false)}
-                  className="block py-2 text-gray-600 hover:text-blue-600"
-                >
-                  数据
-                </Link>
                 {!user && (
                   <div className="pt-4 border-t border-gray-100 flex flex-col gap-3">
                     <Link
@@ -174,19 +146,9 @@ export default function LandingPage() {
       {/* Hero Section */}
       <HeroSection />
 
-      {/* Stats Row */}
-      <div id="stats">
-        <StatsRow />
-      </div>
-
       {/* Feature Grid */}
       <div id="features">
         <FeatureGrid />
-      </div>
-
-      {/* AI Workflow Showcase */}
-      <div id="workflow">
-        <AIWorkflowVisualization />
       </div>
 
       {/* Footer */}
