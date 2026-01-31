@@ -5958,19 +5958,63 @@ def create_batch_grading_graph(
     # 入口点
     graph.set_entry_point("intake")
 
-    # 简化流程：intake → preprocess → rubric_parse → rubric_review
+    # 简化流程：intake → preprocess → rubric_parse → rubric_review (可选)
     graph.add_edge("intake", "preprocess")
-    graph.add_edge("preprocess", "rubric_parse")  # 跳过 index
-    graph.add_edge("rubric_parse", "rubric_review")
+    graph.add_edge("preprocess", "rubric_parse")
+    
+    # ✅ 修复:添加条件路由,根据 enable_review 决定是否需要 rubric_review
+    def should_review_rubric(state: BatchGradingGraphState) -> str:
+        """决定是否需要 rubric review"""
+        enable_review = state.get("inputs", {}).get("enable_review", True)
+        parsed_rubric = state.get("parsed_rubric", {})
+        grading_mode = _resolve_grading_mode(state.get("inputs", {}), parsed_rubric)
+        
+        # 如果是 assist 模式或 review 被禁用,直接跳到 grading_fanout
+        if grading_mode.startswith("assist") or not enable_review:
+            logger.info(f"[should_review_rubric] 跳过 review,直接进入批改: mode={grading_mode}, enable_review={enable_review}")
+            return "skip_review"
+        
+        # 如果没有 rubric,也跳过
+        if not parsed_rubric or not parsed_rubric.get("questions"):
+            logger.info(f"[should_review_rubric] 没有 rubric,跳过 review")
+            return "skip_review"
+        
+        return "do_review"
+    
+    graph.add_conditional_edges(
+        "rubric_parse",
+        should_review_rubric,
+        {
+            "do_review": "rubric_review",
+            "skip_review": "grading_fanout_placeholder",
+        },
+    )
+    
+    # 添加一个占位节点,用于跳过 review 时的路由
+    async def grading_fanout_placeholder_node(state: BatchGradingGraphState) -> Dict[str, Any]:
+        """占位节点,用于跳过 review 时直接进入 grading_fanout"""
+        return {}
+    
+    graph.add_node("grading_fanout_placeholder", grading_fanout_placeholder_node)
 
-    # rubric_review 后扇出到并行批改
+    # rubric_review 后也进入 grading_fanout
     graph.add_conditional_edges(
         "rubric_review",
         grading_fanout_router,
         [
             "grade_batch",
             "self_report",
-        ],  # 简化：grade_batch 直接输出 student_results，完成后进入 self_report
+        ],
+    )
+    
+    # grading_fanout_placeholder 也使用相同的路由
+    graph.add_conditional_edges(
+        "grading_fanout_placeholder",
+        grading_fanout_router,
+        [
+            "grade_batch",
+            "self_report",
+        ],
     )
 
     # 并行批改后直接进入 self_report（grade_batch 通过 add reducer 聚合 student_results）

@@ -20,13 +20,13 @@ export const PageFooter = () => {
                             </p>
                         </div>
                         <div className="flex flex-col sm:flex-row gap-4">
-                            <Link 
+                            <Link
                                 href="/console"
                                 className="px-8 py-4 rounded-xl bg-blue-600 text-white font-semibold hover:bg-blue-700 transition-colors text-center"
                             >
                                 免费开始使用
                             </Link>
-                            <Link 
+                            <Link
                                 href="/contact"
                                 className="px-8 py-4 rounded-xl bg-gray-800 text-white font-semibold hover:bg-gray-700 transition-colors text-center"
                             >
@@ -52,20 +52,20 @@ export const PageFooter = () => {
                             智能批改平台，让教育更专注。基于最先进的AI技术，为教师提供高效、准确的批改体验。
                         </p>
                         <div className="flex items-center gap-4">
-                            <a 
-                                href="#" 
+                            <a
+                                href="#"
                                 className="w-10 h-10 rounded-lg bg-gray-800 flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-700 transition-all"
                             >
                                 <Github className="w-5 h-5" />
                             </a>
-                            <a 
-                                href="#" 
+                            <a
+                                href="#"
                                 className="w-10 h-10 rounded-lg bg-gray-800 flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-700 transition-all"
                             >
                                 <Twitter className="w-5 h-5" />
                             </a>
-                            <a 
-                                href="#" 
+                            <a
+                                href="#"
                                 className="w-10 h-10 rounded-lg bg-gray-800 flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-700 transition-all"
                             >
                                 <Linkedin className="w-5 h-5" />
@@ -94,11 +94,7 @@ export const PageFooter = () => {
                                     控制台
                                 </Link>
                             </li>
-                            <li>
-                                <Link href="/pricing" className="hover:text-blue-400 transition-colors">
-                                    定价
-                                </Link>
-                            </li>
+
                             <li>
                                 <Link href="/changelog" className="hover:text-blue-400 transition-colors">
                                     更新日志
