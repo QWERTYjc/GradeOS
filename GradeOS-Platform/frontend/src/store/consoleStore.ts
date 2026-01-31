@@ -575,7 +575,8 @@ const initialNodes: WorkflowNode[] = [
     { id: 'rubric_parse', label: 'Rubric Parse', status: 'pending', isParallelContainer: true, children: [] },
     { id: 'rubric_review', label: 'Rubric Review', status: 'pending' },
     { id: 'grade_batch', label: 'Student Grading', status: 'pending', isParallelContainer: true, children: [] },
-    { id: 'logic_review', label: 'Logic Review', status: 'pending', isParallelContainer: true, children: [] },
+    { id: 'self_report', label: 'Self Report', status: 'pending' },
+    { id: 'logic_review', label: 'Logic Review', status: 'pending' },
     { id: 'review', label: 'Results Review', status: 'pending' },
     { id: 'export', label: 'Export', status: 'pending' },
 ];
@@ -858,19 +859,21 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
             const isWorker = agentId.startsWith('worker-');
             const isBatch = agentId.startsWith('batch_');
             const isReview = agentId.startsWith('review-worker-') || parentNodeId === 'logic_review';
+            const isSelfReport = agentId.startsWith('report-worker-') || parentNodeId === 'self_report';
             const isRubricReview = agentId.startsWith('rubric-review-batch-') || parentNodeId === 'rubric_review';
             const isRubricBatch = agentId.startsWith('rubric-batch-') || parentNodeId === 'rubric_parse';
             const targetNodeId = parentNodeId || (
                 isWorker || isBatch ? 'grade_batch' :
                     isReview ? 'logic_review' :
-                        isRubricReview ? 'rubric_review' :
-                            isRubricBatch ? 'rubric_parse' :
-                                null
+                        isSelfReport ? 'self_report' :
+                            isRubricReview ? 'rubric_review' :
+                                isRubricBatch ? 'rubric_parse' :
+                                    null
             );
             if (!targetNodeId) {
                 return {};
             }
-            const shouldAutoCreate = isWorker || isBatch || isReview || isRubricReview || isRubricBatch;
+            const shouldAutoCreate = isWorker || isBatch || isReview || isSelfReport || isRubricReview || isRubricBatch;
             const parsedIndex = (() => {
                 const parts = agentId.split('-');
                 const last = parts[parts.length - 1];
@@ -883,6 +886,8 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                     ? `Student ${parsedIndex + 1}`
                     : isReview && parsedIndex !== null
                         ? `Review ${parsedIndex + 1}`
+                        : isSelfReport && parsedIndex !== null
+                            ? `Self Report ${parsedIndex + 1}`
                         : isRubricReview && parsedIndex !== null
                             ? `Rubric Review ${parsedIndex + 1}`
                             : isRubricBatch && parsedIndex !== null
@@ -1204,7 +1209,14 @@ wsClient.on('agent_update', (data: any) => {
     const payload = data as any;
     const { agentId, status, progress, message, output, logs, error } = payload;
     const label = payload.agentLabel || payload.agent_label || payload.agentName || payload.agent_name;
-    const parentNodeId = payload.parentNodeId || payload.nodeId;
+    const rawParentNodeId = payload.parentNodeId || payload.nodeId;
+    const parentNodeId = rawParentNodeId === 'grading' ? 'grade_batch' : rawParentNodeId;
+    if (parentNodeId) {
+        const node = get().workflowNodes.find((n) => n.id === parentNodeId);
+        if (node && node.status === 'pending') {
+            get().updateNodeStatus(parentNodeId, 'running', message);
+        }
+    }
     get().updateAgentStatus(agentId, { status, progress, output, error, label }, parentNodeId);
     if (logs && logs.length > 0) {
         logs.forEach((log: string) => get().addAgentLog(agentId, log));
@@ -1402,9 +1414,10 @@ wsClient.on('llm_stream_chunk', (data: any) => {
     const displayNodeName = nodeName || (
     normalizedNodeId === 'rubric_parse' ? 'Rubric Parse' :
         normalizedNodeId === 'rubric_review' ? 'Rubric Review' :
-            normalizedNodeId === 'logic_review' ? 'Logic Review' :
-                normalizedNodeId === 'grade_batch' ? `Student Page ${pageIndex !== undefined ? pageIndex + 1 : ''}` :
-                    normalizedNodeId || 'Node'
+            normalizedNodeId === 'self_report' ? 'Self Report' :
+                normalizedNodeId === 'logic_review' ? 'Logic Review' :
+                    normalizedNodeId === 'grade_batch' ? `Student Page ${pageIndex !== undefined ? pageIndex + 1 : ''}` :
+                        normalizedNodeId || 'Node'
             );
 get().appendLLMThought(normalizedNodeId, displayNodeName, contentStr, pageIndex, streamType, agentId, agentLabel);
 const nodeForStream = get().workflowNodes.find((n) => n.id === normalizedNodeId);
@@ -1552,21 +1565,47 @@ if (questions && Array.isArray(questions)) {
         });
 
 // 处理工作流完�?
-            // Workflow completed handler commented out due to syntax error
-            //         wsClient.on('workflow_completed', (data: any) => {
-            //             console.log('Workflow Completed:', data);
-            //             get().addLog(data.message || 'Workflow completed', 'SUCCESS');
-            //         
-            //             if (Array.isArray(data.results)) {
-            //                 const formattedResults = data.results as StudentResult[];
-            //                 get().setFinalResults(formattedResults);
-            //                 get().addLog(`Saved results for ${formattedResults.length} students`, 'SUCCESS');
-            //         
-            //                 setTimeout(() => {
-            //                     set({ currentTab: 'results' });
-            //                 }, 1500);
-            //             }
-            //         });
+
+wsClient.on('workflow_completed', (data: any) => {
+    console.log('Workflow Completed:', data);
+    const message = data.message || 'Workflow completed';
+    get().addLog(message, 'SUCCESS');
+
+    const results = data.results || data.studentResults || data.student_results;
+    if (Array.isArray(results)) {
+        const formattedResults = results as StudentResult[];
+        get().setFinalResults(formattedResults);
+        get().addLog(`Saved results for ${formattedResults.length} students`, 'SUCCESS');
+    }
+
+    const classReport = data.classReport || data.class_report;
+    if (classReport) {
+        const normalizedReport = normalizeClassReport(classReport);
+        if (normalizedReport) {
+            get().setClassReport(normalizedReport);
+        }
+    }
+
+    get().setStatus('COMPLETED');
+    get().setPendingReview(null);
+    get().setReviewFocus(null);
+
+    const orderedNodes = [
+        'rubric_parse',
+        'rubric_review',
+        'grade_batch',
+        'self_report',
+        'logic_review',
+        'review',
+        'export'
+    ];
+    orderedNodes.forEach((nodeId) => get().updateNodeStatus(nodeId, 'completed'));
+
+    setTimeout(() => {
+        set({ currentTab: 'results' });
+    }, 800);
+});
+
 wsClient.on('page_graded', (data: any) => {
     console.log('Page Graded:', data);
     const { pageIndex, score, maxScore, questionNumbers } = data as any;
@@ -1596,6 +1635,7 @@ wsClient.on('grading_progress', (data: any) => {
             grade_batch_completed: 'grade_batch',
             cross_page_merge_completed: 'grade_batch',
             index_merge_completed: 'grade_batch',
+            self_report_completed: 'self_report',
             logic_review_completed: 'logic_review',
             logic_review_skipped: 'logic_review',
             review_completed: 'review',
@@ -1605,6 +1645,7 @@ wsClient.on('grading_progress', (data: any) => {
             'rubric_parse',
             'rubric_review',
             'grade_batch',
+            'self_report',
             'logic_review',
             'review',
             'export'

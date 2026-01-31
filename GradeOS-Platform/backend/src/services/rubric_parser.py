@@ -323,7 +323,6 @@ class RubricParserService:
 {{
   "rubric_format": "standard",
   "general_notes": "通用批改说明（如有）",
-  "total_questions_found": 实际识别到的题目数量,
   "overall_parse_confidence": 0.0-1.0之间的数值，表示整体解析的置信度,
   "parse_uncertainties": ["整体解析的不确定点1", "不确定点2"],
   "questions": [

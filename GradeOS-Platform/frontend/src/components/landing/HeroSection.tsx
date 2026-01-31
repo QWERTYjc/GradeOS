@@ -212,24 +212,7 @@ export const HeroSection = () => {
               ))}
             </motion.div>
 
-            {/* 统计数据 */}
-            <motion.div
-              initial={{ opacity: 0, y: 30 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.6, delay: 0.6 }}
-              className="grid grid-cols-3 gap-6 pt-8"
-            >
-              {[
-                { value: '90s', label: '平均批改' },
-                { value: '98%', label: '准确率' },
-                { value: '32+', label: '并行处理' },
-              ].map((stat, i) => (
-                <div key={i} className="text-center sm:text-left">
-                  <div className="text-2xl sm:text-3xl font-bold text-gray-900">{stat.value}</div>
-                  <div className="text-sm text-gray-500">{stat.label}</div>
-                </div>
-              ))}
-            </motion.div>
+
           </div>
 
           {/* 右侧 - 控制台预览 */}

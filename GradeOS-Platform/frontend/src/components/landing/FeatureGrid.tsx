@@ -2,12 +2,12 @@
 
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { 
-  Brain, 
-  Zap, 
-  Shield, 
-  BarChart3, 
-  Users, 
+import {
+  Brain,
+  Zap,
+  Shield,
+  BarChart3,
+  Users,
   Clock,
   ScanLine,
   GitBranch,
@@ -24,7 +24,7 @@ interface Feature {
   details: string[];
   color: string;
   gradient: string;
-  stat: { value: string; label: string };
+
 }
 
 const features: Feature[] = [
@@ -39,7 +39,7 @@ const features: Feature[] = [
     ],
     color: "#3b82f6",
     gradient: "from-blue-500 to-blue-600",
-    stat: { value: '99.2%', label: '识别精度' }
+
   },
   {
     icon: GitBranch,
@@ -52,7 +52,7 @@ const features: Feature[] = [
     ],
     color: "#06b6d4",
     gradient: "from-cyan-500 to-cyan-600",
-    stat: { value: '3-8', label: '并行Worker' }
+
   },
   {
     icon: Brain,
@@ -65,7 +65,7 @@ const features: Feature[] = [
     ],
     color: "#8b5cf6",
     gradient: "from-violet-500 to-violet-600",
-    stat: { value: '98%', label: 'Rubric匹配' }
+
   },
   {
     icon: Zap,
@@ -78,7 +78,7 @@ const features: Feature[] = [
     ],
     color: "#10b981",
     gradient: "from-emerald-500 to-emerald-600",
-    stat: { value: '90s', label: '平均批改' }
+
   },
   {
     icon: Eye,
@@ -91,7 +91,7 @@ const features: Feature[] = [
     ],
     color: "#f59e0b",
     gradient: "from-amber-500 to-amber-600",
-    stat: { value: '< 5%', label: '需审核率' }
+
   },
   {
     icon: BarChart3,
@@ -104,7 +104,7 @@ const features: Feature[] = [
     ],
     color: "#ef4444",
     gradient: "from-red-500 to-red-600",
-    stat: { value: '24ms', label: '响应延迟' }
+
   }
 ];
 
@@ -131,9 +131,9 @@ const FeatureCard = ({ feature, index }: { feature: Feature; index: number }) =>
         style={{ transformStyle: 'preserve-3d' }}
       >
         {/* 正面 */}
-        <div 
+        <div
           className="absolute inset-0 backface-hidden rounded-2xl p-6 flex flex-col"
-          style={{ 
+          style={{
             backfaceVisibility: 'hidden',
             background: 'linear-gradient(145deg, #ffffff 0%, #f8fafc 100%)',
             border: '1px solid rgba(226, 232, 240, 0.8)',
@@ -141,7 +141,7 @@ const FeatureCard = ({ feature, index }: { feature: Feature; index: number }) =>
           }}
         >
           {/* 图标 */}
-          <div 
+          <div
             className={`w-14 h-14 rounded-xl bg-gradient-to-br ${feature.gradient} p-[1px] mb-5 group-hover:scale-110 transition-transform duration-300`}
           >
             <div className="w-full h-full rounded-xl bg-white flex items-center justify-center">
@@ -153,24 +153,13 @@ const FeatureCard = ({ feature, index }: { feature: Feature; index: number }) =>
           <h3 className="text-xl font-bold text-gray-900 mb-3">
             {feature.title}
           </h3>
-          
+
           {/* 描述 */}
           <p className="text-gray-600 text-sm leading-relaxed flex-1">
             {feature.description}
           </p>
 
-          {/* 统计 */}
-          <div className="mt-4 pt-4 border-t border-gray-100">
-            <div className="flex items-baseline gap-2">
-              <span 
-                className="text-2xl font-bold"
-                style={{ color: feature.color }}
-              >
-                {feature.stat.value}
-              </span>
-              <span className="text-sm text-gray-500">{feature.stat.label}</span>
-            </div>
-          </div>
+
 
           {/* 翻转提示 */}
           <div className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -181,9 +170,9 @@ const FeatureCard = ({ feature, index }: { feature: Feature; index: number }) =>
         </div>
 
         {/* 背面 */}
-        <div 
+        <div
           className="absolute inset-0 backface-hidden rounded-2xl p-6 flex flex-col"
-          style={{ 
+          style={{
             backfaceVisibility: 'hidden',
             transform: 'rotateY(180deg)',
             background: `linear-gradient(145deg, ${feature.color}08 0%, ${feature.color}15 100%)`,
@@ -192,7 +181,7 @@ const FeatureCard = ({ feature, index }: { feature: Feature; index: number }) =>
         >
           {/* 头部 */}
           <div className="flex items-center gap-3 mb-5">
-            <div 
+            <div
               className="w-10 h-10 rounded-lg flex items-center justify-center"
               style={{ background: `${feature.color}20` }}
             >
@@ -207,7 +196,7 @@ const FeatureCard = ({ feature, index }: { feature: Feature; index: number }) =>
           <ul className="space-y-3 flex-1">
             {feature.details.map((detail, i) => (
               <li key={i} className="flex items-start gap-3">
-                <div 
+                <div
                   className="w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5"
                   style={{ background: `${feature.color}20` }}
                 >
@@ -218,21 +207,7 @@ const FeatureCard = ({ feature, index }: { feature: Feature; index: number }) =>
             ))}
           </ul>
 
-          {/* 底部统计 */}
-          <div 
-            className="mt-4 pt-4 border-t rounded-lg px-4 py-2"
-            style={{ borderColor: `${feature.color}20`, background: `${feature.color}10` }}
-          >
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-gray-600">{feature.stat.label}</span>
-              <span 
-                className="text-xl font-bold"
-                style={{ color: feature.color }}
-              >
-                {feature.stat.value}
-              </span>
-            </div>
-          </div>
+
         </div>
       </motion.div>
     </motion.div>
@@ -246,7 +221,7 @@ export const FeatureGrid = () => {
       <div className="absolute inset-0 pointer-events-none">
         <div className="absolute top-0 left-0 w-full h-px bg-gradient-to-r from-transparent via-gray-200 to-transparent" />
         <div className="absolute bottom-0 left-0 w-full h-px bg-gradient-to-r from-transparent via-gray-200 to-transparent" />
-        
+
         {/* 浮动光点 */}
         <div className="absolute top-20 left-20 w-2 h-2 rounded-full bg-blue-400/30 animate-pulse" />
         <div className="absolute top-40 right-32 w-3 h-3 rounded-full bg-cyan-400/20 animate-pulse" style={{ animationDelay: '1s' }} />
@@ -265,12 +240,12 @@ export const FeatureGrid = () => {
             <Sparkles className="w-4 h-4 text-blue-500" />
             <span className="text-sm text-blue-600 font-medium">核心特性</span>
           </div>
-          
+
           <h2 className="text-4xl md:text-5xl font-bold text-gray-900 mb-6">
             为什么选择
             <span className="gradient-text"> GradeOS</span>
           </h2>
-          
+
           <p className="text-lg text-gray-600">
             专为教育场景设计的AI批改系统，结合最新的多模态大模型和智能体技术，
             提供业界领先的批改体验
@@ -296,8 +271,8 @@ export const FeatureGrid = () => {
               <div className="text-sm text-gray-600 mb-1">准备好体验智能批改了？</div>
               <div className="text-lg font-semibold text-gray-900">立即开始免费试用</div>
             </div>
-            <a 
-              href="/console" 
+            <a
+              href="/console"
               className="px-6 py-3 rounded-xl bg-blue-600 text-white font-semibold hover:bg-blue-700 transition-colors flex items-center gap-2"
             >
               <span>开始体验</span>

@@ -788,10 +788,14 @@ async def rubric_parse_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                 f"状态={parse_self_report['overallStatus']}"
             )
             
-            # 🔍 输出完整的 AI 返回结果 JSON
-            import json
-            logger.info(f"[rubric_parse] 📋 AI 返回的完整评分标准 JSON:")
-            logger.info(f"[rubric_parse] {json.dumps(parsed_rubric, ensure_ascii=False, indent=2)}")
+            # 🔍 输出完整的 AI 返回结果 JSON (仅在 DEBUG 模式)
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(f"[rubric_parse] 📋 AI 返回的完整评分标准 JSON:")
+                logger.debug(f"[rubric_parse] {json.dumps(parsed_rubric, ensure_ascii=False, indent=2)}")
+            else:
+                # 生产环境只输出题目列表
+                question_ids = [q.get('question_id', '?') for q in parsed_rubric.get('questions', [])]
+                logger.info(f"[rubric_parse] 题目列表: {', '.join(question_ids)}")
 
         elif rubric_text:
             # 如果有文本形式的评分标准，简单解析
@@ -1067,7 +1071,10 @@ def grading_fanout_router(state: BatchGradingGraphState) -> List[Send]:
             logger.info(f"[grading_fanout] 生成 {len(student_boundaries)} 个学生边界")
 
     if not processed_images:
-        logger.warning(f"[grading_fanout] 没有待批改的图像: batch_id={batch_id}")
+        logger.warning(f"[grading_fanout] ⚠️ 没有待批改的图像: batch_id={batch_id}")
+        logger.warning(f"[grading_fanout] 🔍 调试: state keys={list(state.keys())}")
+        logger.warning(f"[grading_fanout] 🔍 answer_images count={len(state.get('answer_images', []))}")
+        logger.warning(f"[grading_fanout] 🔍 processed_images count={len(state.get('processed_images', []))}")
         return [Send("self_report", state)]
 
     # 不再从 page_index_contexts 推导 student_boundaries
@@ -1145,8 +1152,10 @@ def grading_fanout_router(state: BatchGradingGraphState) -> List[Send]:
             )
 
         if sends:
+            logger.info(f"[grading_fanout] ✅ 成功创建 {len(sends)} 个学生批改任务")
             return sends
-        logger.warning(f"[grading_fanout] 没有有效的学生批次")
+        logger.warning(f"[grading_fanout] ⚠️ 没有有效的学生批次")
+        logger.warning(f"[grading_fanout] 🔍 student_boundaries={student_boundaries}")
 
     # 回退：按固定批次大小分配
     batch_size = config.batch_size
@@ -5796,7 +5805,6 @@ async def export_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     # 无数据库模式或有失败时都导出
     if not persisted or has_failures:
         try:
-            import json
             import os
 
             # 创建导出目录
@@ -5995,19 +6003,63 @@ def create_batch_grading_graph(
     # 入口点
     graph.set_entry_point("intake")
 
-    # 简化流程：intake → preprocess → rubric_parse → rubric_review
+    # 简化流程：intake → preprocess → rubric_parse → rubric_review (可选)
     graph.add_edge("intake", "preprocess")
-    graph.add_edge("preprocess", "rubric_parse")  # 跳过 index
-    graph.add_edge("rubric_parse", "rubric_review")
+    graph.add_edge("preprocess", "rubric_parse")
+    
+    # ✅ 修复:添加条件路由,根据 enable_review 决定是否需要 rubric_review
+    def should_review_rubric(state: BatchGradingGraphState) -> str:
+        """决定是否需要 rubric review"""
+        enable_review = state.get("inputs", {}).get("enable_review", True)
+        parsed_rubric = state.get("parsed_rubric", {})
+        grading_mode = _resolve_grading_mode(state.get("inputs", {}), parsed_rubric)
+        
+        # 如果是 assist 模式或 review 被禁用,直接跳到 grading_fanout
+        if grading_mode.startswith("assist") or not enable_review:
+            logger.info(f"[should_review_rubric] 跳过 review,直接进入批改: mode={grading_mode}, enable_review={enable_review}")
+            return "skip_review"
+        
+        # 如果没有 rubric,也跳过
+        if not parsed_rubric or not parsed_rubric.get("questions"):
+            logger.info(f"[should_review_rubric] 没有 rubric,跳过 review")
+            return "skip_review"
+        
+        return "do_review"
+    
+    graph.add_conditional_edges(
+        "rubric_parse",
+        should_review_rubric,
+        {
+            "do_review": "rubric_review",
+            "skip_review": "grading_fanout_placeholder",
+        },
+    )
+    
+    # 添加一个占位节点,用于跳过 review 时的路由
+    async def grading_fanout_placeholder_node(state: BatchGradingGraphState) -> Dict[str, Any]:
+        """占位节点,用于跳过 review 时直接进入 grading_fanout"""
+        return {}
+    
+    graph.add_node("grading_fanout_placeholder", grading_fanout_placeholder_node)
 
-    # rubric_review 后扇出到并行批改
+    # rubric_review 后也进入 grading_fanout
     graph.add_conditional_edges(
         "rubric_review",
         grading_fanout_router,
         [
             "grade_batch",
             "self_report",
-        ],  # 简化：grade_batch 直接输出 student_results，完成后进入 self_report
+        ],
+    )
+    
+    # grading_fanout_placeholder 也使用相同的路由
+    graph.add_conditional_edges(
+        "grading_fanout_placeholder",
+        grading_fanout_router,
+        [
+            "grade_batch",
+            "self_report",
+        ],
     )
 
     # 并行批改后直接进入 self_report（grade_batch 通过 add reducer 聚合 student_results）
