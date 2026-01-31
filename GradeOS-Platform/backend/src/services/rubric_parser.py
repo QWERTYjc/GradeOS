@@ -160,7 +160,7 @@ class ParsedRubric:
     rubric_format: str = "standard"  # 格式类型: standard/embedded
     # 解析自白字段
     overall_parse_confidence: float = 1.0  # 整体解析置信度 (0.0-1.0)
-    parse_self_report: Dict[str, Any] = field(default_factory=dict)  # 完整自白报告
+    parse_confession: Dict[str, Any] = field(default_factory=dict)  # 完整自白报告
 
 
 class RubricParserService:
@@ -830,7 +830,7 @@ class RubricParserService:
 
         return "\n".join(lines)
 
-    def _generate_parse_self_report(
+    def _generate_parse_confession(
         self,
         rubric: ParsedRubric,
         expected_question_count: Optional[int] = None,
@@ -1092,8 +1092,8 @@ class RubricParserService:
             summary = f"解析存在严重问题，识别到 {rubric.total_questions} 题，有 {len([i for i in issues if i['severity'] == 'high'])} 个高严重性问题"
 
         # 8. 添加整体不确定性
-        if rubric.parse_self_report.get("parse_uncertainties"):
-            uncertainties.extend(rubric.parse_self_report["parse_uncertainties"])
+        if rubric.parse_confession.get("parse_uncertainties"):
+            uncertainties.extend(rubric.parse_confession["parse_uncertainties"])
 
         return {
             "overallStatus": overall_status,

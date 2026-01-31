@@ -170,7 +170,7 @@ def init_db():
                 score REAL,
                 max_score REAL,
                 summary TEXT,
-                self_report TEXT,
+                confession TEXT,
                 result_data TEXT,
                 imported_at TEXT,
                 revoked_at TEXT,
@@ -913,7 +913,7 @@ class StudentGradingResult:
     class_id: Optional[str] = None
     student_id: Optional[str] = None
     summary: Optional[str] = None
-    self_report: Optional[str] = None
+    confession: Optional[str] = None
     result_data: Optional[Dict[str, Any]] = None
     imported_at: Optional[str] = None
     revoked_at: Optional[str] = None
@@ -928,14 +928,14 @@ def save_student_result(result: StudentGradingResult) -> None:
             """
             INSERT INTO student_grading_results 
             (id, grading_history_id, student_key, class_id, student_id,
-             score, max_score, summary, self_report, result_data, 
+             score, max_score, summary, confession, result_data, 
              imported_at, revoked_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (id) DO UPDATE SET
                 score = EXCLUDED.score,
                 max_score = EXCLUDED.max_score,
                 summary = EXCLUDED.summary,
-                self_report = EXCLUDED.self_report,
+                confession = EXCLUDED.confession,
                 result_data = EXCLUDED.result_data,
                 imported_at = EXCLUDED.imported_at,
                 revoked_at = EXCLUDED.revoked_at
@@ -949,7 +949,7 @@ def save_student_result(result: StudentGradingResult) -> None:
                 result.score,
                 result.max_score,
                 result.summary,
-                result.self_report,
+                result.confession,
                 result_data_json,
                 result.imported_at,
                 result.revoked_at,
@@ -979,7 +979,7 @@ def get_student_results(grading_history_id: str) -> List[StudentGradingResult]:
                     score=row["score"],
                     max_score=row["max_score"],
                     summary=row["summary"],
-                    self_report=row["self_report"],
+                    confession=row["confession"],
                     result_data=result_data,
                     imported_at=row["imported_at"],
                     revoked_at=row["revoked_at"],

@@ -67,7 +67,7 @@ const RubricQuestionCard = ({ q }: { q: any }) => {
 
 export function RubricOverview() {
   const parsedRubric = useConsoleStore((state) => state.parsedRubric);
-  const [showSelfReport, setShowSelfReport] = useState(true);
+  const [showConfession, setShowConfession] = useState(true);
 
   if (!parsedRubric || !parsedRubric.questions || parsedRubric.questions.length === 0) {
     return (
@@ -78,7 +78,7 @@ export function RubricOverview() {
     );
   }
 
-  const selfReport = parsedRubric.parseSelfReport;
+  const confession = parsedRubric.parseConfession;
 
   return (
     <div className="border-t border-slate-100 pt-6">
@@ -93,22 +93,22 @@ export function RubricOverview() {
       </div>
 
       {/* 解析自白报告 */}
-      {selfReport && (
+      {confession && (
         <div className="mb-4 border border-blue-200 bg-blue-50/30 rounded-lg overflow-hidden">
           <div
             className="flex items-center justify-between p-3 cursor-pointer hover:bg-blue-50/50 transition-colors"
-            onClick={() => setShowSelfReport(!showSelfReport)}
+            onClick={() => setShowConfession(!showConfession)}
           >
             <div className="flex items-center gap-2">
               <AlertCircle className="w-4 h-4 text-blue-600" />
               <span className="text-sm font-semibold text-blue-800">解析质量报告</span>
-              <span className={`ml-2 px-2 py-0.5 rounded-full text-xs font-semibold ${selfReport.overallStatus === 'ok'
+              <span className={`ml-2 px-2 py-0.5 rounded-full text-xs font-semibold ${confession.overallStatus === 'ok'
                 ? 'bg-emerald-100 text-emerald-700'
-                : selfReport.overallStatus === 'caution'
+                : confession.overallStatus === 'caution'
                   ? 'bg-amber-100 text-amber-700'
                   : 'bg-rose-100 text-rose-700'
                 }`}>
-                {selfReport.overallStatus === 'ok' ? '✓ 正常' : selfReport.overallStatus === 'caution' ? '⚠ 需注意' : '⚠ 需复核'}
+                {confession.overallStatus === 'ok' ? '✓ 正常' : confession.overallStatus === 'caution' ? '⚠ 需注意' : '⚠ 需复核'}
               </span>
             </div>
             <div className="flex items-center gap-3">
@@ -116,39 +116,39 @@ export function RubricOverview() {
                 <span className="text-xs text-blue-600">置信度:</span>
                 <div className="w-16 h-2 bg-blue-200 rounded-full overflow-hidden">
                   <div
-                    className={`h-full rounded-full transition-all ${selfReport.overallConfidence >= 0.8
+                    className={`h-full rounded-full transition-all ${confession.overallConfidence >= 0.8
                       ? 'bg-emerald-500'
-                      : selfReport.overallConfidence >= 0.6
+                      : confession.overallConfidence >= 0.6
                         ? 'bg-amber-500'
                         : 'bg-rose-500'
                       }`}
-                    style={{ width: `${selfReport.overallConfidence * 100}%` }}
+                    style={{ width: `${confession.overallConfidence * 100}%` }}
                   />
                 </div>
                 <span className="text-xs font-mono text-blue-700">
-                  {(selfReport.overallConfidence * 100).toFixed(0)}%
+                  {(confession.overallConfidence * 100).toFixed(0)}%
                 </span>
               </div>
-              {showSelfReport ? <ChevronUp className="w-4 h-4 text-blue-600" /> : <ChevronDown className="w-4 h-4 text-blue-600" />}
+              {showConfession ? <ChevronUp className="w-4 h-4 text-blue-600" /> : <ChevronDown className="w-4 h-4 text-blue-600" />}
             </div>
           </div>
 
-          {showSelfReport && (
+          {showConfession && (
             <div className="p-3 pt-0 space-y-3">
               {/* 摘要 */}
               <div className="text-xs text-blue-700 bg-white/50 rounded p-2">
-                {selfReport.summary}
+                {confession.summary}
               </div>
 
               {/* 问题列表 */}
-              {selfReport.issues && selfReport.issues.length > 0 && (
+              {confession.issues && confession.issues.length > 0 && (
                 <div className="space-y-2">
                   <div className="text-xs font-semibold text-blue-800 flex items-center gap-1">
                     <AlertTriangle className="w-3 h-3" />
-                    问题 ({selfReport.issues.length})
+                    问题 ({confession.issues.length})
                   </div>
                   <div className="space-y-1">
-                    {selfReport.issues.map((issue, idx) => (
+                    {confession.issues.map((issue, idx) => (
                       <div
                         key={idx}
                         className={`text-xs p-2 rounded flex items-start gap-2 ${issue.severity === 'high'
@@ -176,13 +176,13 @@ export function RubricOverview() {
               )}
 
               {/* 不确定性 */}
-              {selfReport.uncertainties && selfReport.uncertainties.length > 0 && (
+              {confession.uncertainties && confession.uncertainties.length > 0 && (
                 <div className="space-y-2">
                   <div className="text-xs font-semibold text-blue-800">
-                    不确定性 ({selfReport.uncertainties.length})
+                    不确定性 ({confession.uncertainties.length})
                   </div>
                   <div className="space-y-1">
-                    {selfReport.uncertainties.map((uncertainty, idx) => (
+                    {confession.uncertainties.map((uncertainty, idx) => (
                       <div key={idx} className="text-xs text-blue-600 bg-white/50 rounded p-2 pl-4 border-l-2 border-blue-300">
                         • {uncertainty}
                       </div>
@@ -192,11 +192,11 @@ export function RubricOverview() {
               )}
 
               {/* 质量检查 */}
-              {selfReport.qualityChecks && selfReport.qualityChecks.length > 0 && (
+              {confession.qualityChecks && confession.qualityChecks.length > 0 && (
                 <div className="space-y-2">
                   <div className="text-xs font-semibold text-blue-800">质量检查</div>
                   <div className="grid grid-cols-2 gap-2">
-                    {selfReport.qualityChecks.map((check, idx) => (
+                    {confession.qualityChecks.map((check, idx) => (
                       <div
                         key={idx}
                         className={`text-xs p-2 rounded flex items-start gap-2 ${check.passed
@@ -220,9 +220,9 @@ export function RubricOverview() {
               )}
 
               {/* 生成时间 */}
-              {selfReport.generatedAt && (
+              {confession.generatedAt && (
                 <div className="text-[10px] text-blue-500 text-right">
-                  生成于 {new Date(selfReport.generatedAt).toLocaleString('zh-CN')}
+                  生成于 {new Date(confession.generatedAt).toLocaleString('zh-CN')}
                 </div>
               )}
             </div>

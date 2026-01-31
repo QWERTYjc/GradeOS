@@ -1,7 +1,7 @@
 -- Create grading page images table (store file references, not raw bytes)
 CREATE TABLE IF NOT EXISTS grading_page_images (
-    id VARCHAR(100) PRIMARY KEY,
-    grading_history_id VARCHAR(100) NOT NULL,
+    id UUID PRIMARY KEY,
+    grading_history_id UUID NOT NULL,
     student_key VARCHAR(200) NOT NULL,
     page_index INTEGER NOT NULL,
     file_id VARCHAR(200),

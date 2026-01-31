@@ -232,7 +232,7 @@ export const normalizeStudentResults = (raw: RawObject[]): StudentResult[] => {
       needsConfirmation: (r.needsConfirmation ?? r.needs_confirmation) as boolean | undefined,
       studentSummary: (r.studentSummary || r.student_summary) as any,
       selfAudit: normalizeSelfAudit(r.selfAudit || r.self_audit),
-      gradingAnnotations: (r.gradingAnnotations || r.grading_annotations || r.annotations || r.annotation_result) as any,
+      confession: (r.confession || r.confession_data) as any,
       questionResults,
     };
   });

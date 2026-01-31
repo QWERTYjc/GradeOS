@@ -47,6 +47,8 @@ from .postgres_grading import (
     StudentGradingResult,
     save_student_result,
     get_student_results,
+    GradingPageImage,
+    get_page_images,
 )
 
 __all__ = [
@@ -81,6 +83,8 @@ __all__ = [
     "StudentGradingResult",
     "save_student_result",
     "get_student_results",
+    "GradingPageImage",
+    "get_page_images",
     "HomeworkSubmission",
     "save_homework_submission",
     "get_homework_submissions",
