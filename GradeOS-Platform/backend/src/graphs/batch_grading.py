@@ -6024,8 +6024,16 @@ def create_batch_grading_graph(
         ],
     )
 
-    # 并行批改后直接进入 self_report（grade_batch 通过 add reducer 聚合 student_results）
-    graph.add_edge("grade_batch", "self_report")
+    # 并行批改后通过汇聚门控进入 self_report
+    # 只有当所有页面都批改完成后，才继续执行
+    graph.add_conditional_edges(
+        "grade_batch",
+        grading_merge_gate,
+        {
+            "continue": "self_report",
+            "wait": END,
+        },
+    )
 
     # 简化流程：self_report → logic_review → annotation_generation → review → export → END
     graph.add_edge("self_report", "logic_review")
@@ -6044,6 +6052,40 @@ def create_batch_grading_graph(
     logger.info("批量批改 Graph 已编译")
 
     return compiled_graph
+
+
+def grading_merge_gate(state: BatchGradingGraphState) -> str:
+    """
+    批改汇聚门控
+
+    检查是否所有并行批改任务都已完成。
+    通过比较 grading_results（已批改页面数）和 processed_images（总页面数）。
+    """
+    processed_images = state.get("processed_images") or []
+    grading_results = state.get("grading_results") or []
+
+    total_pages = len(processed_images)
+    graded_pages = len(grading_results)
+
+    # 如果总页数为0（异常情况），且有结果（可能逻辑错误），或者都没结果
+    if total_pages == 0:
+        logger.warning("[grading_merge] 总页数为 0，直接继续")
+        return "continue"
+
+    progress = (graded_pages / total_pages) * 100
+    # 降低日志级别以减少冗余，只在关键节点打日志
+    if graded_pages % 5 == 0 or graded_pages >= total_pages:
+        logger.info(
+            f"[grading_merge] 进度检查: {graded_pages}/{total_pages} ({progress:.1f}%)"
+        )
+
+    # 检查是否全部完成
+    if graded_pages >= total_pages:
+        logger.info("[grading_merge] ✅ 所有批次完成，进入自白阶段")
+        return "continue"
+    
+    # 还有未完成的任务，当前分支结束
+    return "wait"
 
 
 # ==================== 导出 ====================
