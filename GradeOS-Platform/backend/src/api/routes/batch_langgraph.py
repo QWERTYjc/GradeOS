@@ -2786,6 +2786,33 @@ async def get_results_review_context(
                     except HTTPException:
                         student_results = []
 
+        # Attach logic review payloads from state when missing on student_results.
+        logic_review_by_student: Dict[str, Any] = {}
+        for item in state.get("logic_review_results") or []:
+            if not isinstance(item, dict):
+                continue
+            key = item.get("student_key") or item.get("studentKey")
+            if key:
+                logic_review_by_student[key] = item
+        if logic_review_by_student:
+            for student in student_results:
+                if not isinstance(student, dict):
+                    continue
+                if student.get("logic_review") or student.get("logicReview"):
+                    continue
+                key = (
+                    student.get("student_key")
+                    or student.get("studentKey")
+                    or student.get("student_name")
+                    or student.get("studentName")
+                )
+                payload = logic_review_by_student.get(key)
+                if payload:
+                    student["logic_review"] = payload
+                    student["logicReview"] = payload
+                    if not student.get("logic_reviewed_at") and payload.get("reviewed_at"):
+                        student["logic_reviewed_at"] = payload.get("reviewed_at")
+
         # If the run completed but confession/logic_review is missing, prefer DB results.
         if (
             student_results

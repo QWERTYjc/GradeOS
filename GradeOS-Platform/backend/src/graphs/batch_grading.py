@@ -5021,13 +5021,11 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
             }
             updated_student["logic_review"] = logic_review_payload
 
-            review_payload = None
-            if payload_data:
-                review_payload = {
-                    "student_key": student_key,
-                    "student_id": updated_student.get("student_id"),
-                    **logic_review_payload,
-                }
+            review_payload = {
+                "student_key": student_key,
+                "student_id": updated_student.get("student_id"),
+                **logic_review_payload,
+            }
             await _broadcast_progress(
                 batch_id,
                 {
