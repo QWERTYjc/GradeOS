@@ -1940,8 +1940,8 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
                         "page_indices": page_indices,
                         "is_cross_page": q.get("is_cross_page", False),
                         "merge_source": q.get("merge_source"),
-                        # 🔥 批注坐标字段
-                        "annotations": q.get("annotations") or [],
+                        # 🔥 批注坐标字段（后端不再返回，改为前端渲染/按需生成）
+                        "annotations": [],
                         "steps": q.get("steps") or [],
                         "answerRegion": q.get("answer_region") or q.get("answerRegion"),
                     }
@@ -1998,8 +1998,8 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
                         "page_indices": page_indices,
                         "is_cross_page": q.get("is_cross_page", False),
                         "merge_source": q.get("merge_source"),
-                        # 🔥 批注坐标字段
-                        "annotations": q.get("annotations") or [],
+                        # 🔥 批注坐标字段（后端不再返回，改为前端渲染/按需生成）
+                        "annotations": [],
                         "steps": q.get("steps") or [],
                         "answerRegion": q.get("answer_region") or q.get("answerRegion"),
                     }
@@ -2063,8 +2063,8 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
                         "page_indices": page_indices,
                         "is_cross_page": q.get("is_cross_page", False),
                         "merge_source": q.get("merge_source"),
-                        # 🔥 批注坐标字段
-                        "annotations": q.get("annotations") or [],
+                        # 🔥 批注坐标字段（后端不再返回，改为前端渲染/按需生成）
+                        "annotations": [],
                         "steps": q.get("steps") or [],
                         "answerRegion": q.get("answer_region") or q.get("answerRegion"),
                     }
@@ -2127,8 +2127,8 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
                                 "page_indices": page_indices or [],
                                 "is_cross_page": q.get("is_cross_page", False),
                                 "merge_source": q.get("merge_source"),
-                                # 🔥 批注坐标字段
-                                "annotations": q.get("annotations") or [],
+                                # 🔥 批注坐标字段（后端不再返回，改为前端渲染/按需生成）
+                                "annotations": [],
                                 "steps": q.get("steps") or [],
                                 "answerRegion": q.get("answer_region") or q.get("answerRegion"),
                             }

@@ -4815,6 +4815,15 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
         for student in student_results:
             updated = dict(student)
             updated.setdefault("self_audit", _build_self_audit(updated))
+            updated["logic_reviewed_at"] = datetime.now().isoformat()
+            updated["logic_review"] = {
+                "reviewed_at": updated["logic_reviewed_at"],
+                "review_summary": _build_logic_review_summary(
+                    updated.get("question_details") or []
+                ),
+                "question_reviews": [],
+                "self_audit": updated.get("self_audit"),
+            }
             updated_results.append(updated)
         _log_logic_review_done("rule-based", len(updated_results), 0)
         return {
@@ -4865,6 +4874,12 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                 updated_student["self_audit"] = _build_self_audit(updated_student)
                 updated_student["logic_reviewed_at"] = datetime.now().isoformat()
                 review_summary = _build_logic_review_summary(question_details)
+                updated_student["logic_review"] = {
+                    "reviewed_at": updated_student["logic_reviewed_at"],
+                    "review_summary": review_summary,
+                    "question_reviews": [],
+                    "self_audit": updated_student.get("self_audit"),
+                }
                 await _broadcast_progress(
                     batch_id,
                     {
@@ -4997,17 +5012,22 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
             updated_student["self_audit"] = self_audit
             updated_student["logic_reviewed_at"] = datetime.now().isoformat()
 
+            review_summary = _build_logic_review_summary(updated_details)
+            logic_review_payload = {
+                "reviewed_at": updated_student["logic_reviewed_at"],
+                "review_summary": review_summary,
+                "question_reviews": list(review_map.values()) if payload_data else [],
+                "self_audit": self_audit,
+            }
+            updated_student["logic_review"] = logic_review_payload
+
             review_payload = None
             if payload_data:
                 review_payload = {
                     "student_key": student_key,
                     "student_id": updated_student.get("student_id"),
-                    "reviewed_at": updated_student["logic_reviewed_at"],
-                    "question_reviews": list(review_map.values()),
-                    "self_audit": self_audit,
+                    **logic_review_payload,
                 }
-
-            review_summary = _build_logic_review_summary(updated_details)
             await _broadcast_progress(
                 batch_id,
                 {
@@ -5258,6 +5278,33 @@ async def export_node(state: BatchGradingGraphState) -> Dict[str, Any]:
 
                 from src.db.postgres_grading import GradingPageImage, save_page_image
 
+                confession_by_student: Dict[str, Any] = {}
+                for item in state.get("confessed_results") or []:
+                    if not isinstance(item, dict):
+                        continue
+                    key = (
+                        item.get("student_key")
+                        or item.get("student_name")
+                        or item.get("studentName")
+                    )
+                    if not key:
+                        continue
+                    confession_value = (
+                        item.get("confession")
+                        or item.get("confession_data")
+                        or item.get("confessionData")
+                    )
+                    if confession_value:
+                        confession_by_student[key] = confession_value
+
+                logic_review_by_student: Dict[str, Any] = {}
+                for item in state.get("logic_review_results") or []:
+                    if not isinstance(item, dict):
+                        continue
+                    key = item.get("student_key") or item.get("studentKey")
+                    if key:
+                        logic_review_by_student[key] = item
+
                 # 预先构建文件存储索引（仅保存 file_id，不存图片内容）
                 file_index_by_page: Dict[int, Any] = {}
                 if os.getenv("ENABLE_FILE_STORAGE", "false").lower() == "true":
@@ -5289,7 +5336,15 @@ async def export_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                         cleaned = {
                             k: v
                             for k, v in item.items()
-                            if k not in ("image", "image_bytes")
+                            if k
+                            not in (
+                                "image",
+                                "image_bytes",
+                                "annotations",
+                                "annotation",
+                                "grading_annotations",
+                                "gradingAnnotations",
+                            )
                             and not isinstance(v, (bytes, bytearray))
                         }
                         sanitized.append(cleaned)
@@ -5304,12 +5359,23 @@ async def export_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                             or f"student_{saved_students + 1}"
                         )
                         
-                        confession_payload = student.get("confession")
+                        confession_payload = (
+                            student.get("confession")
+                            or student.get("confession_data")
+                            or student.get("confessionData")
+                        )
+                        if not confession_payload:
+                            confession_payload = confession_by_student.get(student_key)
+
                         logic_review_payload = student.get("logic_review") or student.get("logicReview")
+                        if not logic_review_payload:
+                            logic_review_payload = logic_review_by_student.get(student_key)
                         logic_reviewed_at = (
                             student.get("logic_reviewed_at")
                             or student.get("logicReviewedAt")
                         )
+                        if not logic_reviewed_at and isinstance(logic_review_payload, dict):
+                            logic_reviewed_at = logic_review_payload.get("reviewed_at")
                         self_audit_payload = student.get("self_audit") or student.get("selfAudit")
 
                         question_details = _sanitize_question_details(
