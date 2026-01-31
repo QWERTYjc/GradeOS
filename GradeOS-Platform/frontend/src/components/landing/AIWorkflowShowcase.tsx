@@ -134,7 +134,10 @@ const workflowStages = [
   },
 ];
 
-// 单个工作流卡片组件
+// ... imports
+import { TiltCard } from '@/components/ui/TiltCard';
+
+// ... (WorkflowCard component)
 const WorkflowCard = ({ stage, isActive, onClick }: {
   stage: typeof workflowStages[0];
   isActive: boolean;
@@ -147,144 +150,148 @@ const WorkflowCard = ({ stage, isActive, onClick }: {
   return (
     <motion.div
       ref={cardRef}
-      initial={{ opacity: 0, y: 50 }}
-      animate={isInView ? { opacity: 1, y: 0 } : {}}
-      transition={{ duration: 0.6 }}
-      onClick={onClick}
-      className={`relative flex-shrink-0 w-[280px] md:w-[320px] cursor-pointer group snap-center ${isActive ? 'z-10' : 'z-0'
-        }`}
+      initial={{ opacity: 0, y: 100, rotate: -10 }} // Flashy entrance: bottom angle
+      animate={isInView ? { opacity: 1, y: 0, rotate: 0 } : {}}
+      transition={{ duration: 0.8, type: "spring", bounce: 0.4 }}
+      className={`relative flex-shrink-0 w-[280px] md:w-[320px] snap-center ${isActive ? 'z-10' : 'z-0'}`}
     >
-      <motion.div
-        animate={{
-          scale: isActive ? 1.05 : 1,
-          y: isActive ? -10 : 0,
-        }}
-        transition={{ type: "spring", stiffness: 300, damping: 30 }}
-        className={`relative bg-white rounded-2xl p-6 border-2 transition-all duration-300 ${isActive
-          ? `border-[${stage.color}] shadow-2xl`
-          : 'border-gray-100 shadow-lg hover:border-gray-200'
-          }`}
-        style={{
-          boxShadow: isActive ? `0 25px 50px -12px ${stage.color}20` : undefined
-        }}
-      >
-        {/* 步骤编号 */}
-        <div className="absolute -top-4 -right-4 w-12 h-12 rounded-full bg-gradient-to-br from-gray-900 to-gray-700 text-white flex items-center justify-center font-bold text-lg shadow-lg">
-          {stage.step}
-        </div>
-
-        {/* 头部 */}
-        <div className="flex items-start gap-4 mb-4">
-          <div
-            className="w-14 h-14 rounded-xl flex items-center justify-center transition-transform group-hover:scale-110"
-            style={{ background: `${stage.color}15` }}
-          >
-            <Icon className="w-7 h-7" style={{ color: stage.color }} />
-          </div>
-          <div>
-            <div className="text-xs font-medium text-gray-400 uppercase tracking-wider">
-              {stage.subtitle}
-            </div>
-            <h3 className="text-xl font-bold text-gray-900">{stage.title}</h3>
-          </div>
-        </div>
-
-        {/* 描述 */}
-        <p className="text-gray-600 text-sm mb-4 leading-relaxed">
-          {stage.description}
-        </p>
-
-        {/* 特性列表 */}
-        <ul className="space-y-2 mb-4">
-          {stage.features.map((feature, i) => (
-            <li key={i} className="flex items-center gap-2 text-sm text-gray-500">
-              <div
-                className="w-1.5 h-1.5 rounded-full"
-                style={{ background: stage.color }}
-              />
-              {feature}
-            </li>
-          ))}
-        </ul>
-
-        {/* 统计 */}
+      <TiltCard onClick={onClick} className="h-full" scale={1.02}>
         <div
-          className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium"
-          style={{ background: `${stage.color}10`, color: stage.color }}
+          className={`relative h-full bg-white rounded-2xl p-6 border-2 transition-all duration-300 ${isActive
+            ? `border-[${stage.color}] shadow-2xl`
+            : 'border-gray-100 shadow-lg hover:border-gray-200'
+            }`}
+          style={{
+            boxShadow: isActive ? `0 25px 50px -12px ${stage.color}40` : undefined, // Stronger shadow
+            transform: "translateZ(20px)" // 3D depth
+          }}
         >
-          <BarChart3 className="w-4 h-4" />
-          <span>{stage.stats.label}: {stage.stats.value}</span>
-        </div>
+          {/* 3D Floating Elements */}
+          <div style={{ transform: "translateZ(30px)" }}>
+            {/* 步骤编号 */}
+            <div className="absolute -top-4 -right-4 w-12 h-12 rounded-full bg-gradient-to-br from-gray-900 to-gray-700 text-white flex items-center justify-center font-bold text-lg shadow-lg">
+              {stage.step}
+            </div>
 
-        {/* 连接线 */}
-        {stage.step < workflowStages.length && (
-          <div className="absolute top-1/2 -right-8 w-8 h-0.5 bg-gradient-to-r from-gray-300 to-transparent hidden lg:block" />
-        )}
-      </motion.div>
+            {/* 头部 */}
+            <div className="flex items-start gap-4 mb-4">
+              <div
+                className="w-14 h-14 rounded-xl flex items-center justify-center transition-transform group-hover:scale-110 shadow-inner"
+                style={{ background: `${stage.color}15` }}
+              >
+                <Icon className="w-7 h-7" style={{ color: stage.color }} />
+              </div>
+              <div>
+                <div className="text-xs font-medium text-gray-400 uppercase tracking-wider">
+                  {stage.subtitle}
+                </div>
+                <h3 className="text-xl font-bold text-gray-900">{stage.title}</h3>
+              </div>
+            </div>
+
+            {/* 描述 */}
+            <p className="text-gray-600 text-sm mb-4 leading-relaxed">
+              {stage.description}
+            </p>
+
+            {/* 特性列表 - Consolidated visual */}
+            <div className="flex flex-wrap gap-2 mb-4">
+              {stage.features.map((feature, i) => (
+                <span key={i} className="px-2 py-1 rounded-md text-xs font-medium bg-gray-50 text-gray-600 border border-gray-100">
+                  {feature}
+                </span>
+              ))}
+            </div>
+
+            {/* 统计 */}
+            <div
+              className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium w-full justify-between"
+              style={{ background: `${stage.color}10`, color: stage.color }}
+            >
+              <div className="flex items-center gap-2">
+                <BarChart3 className="w-4 h-4" />
+                <span>{stage.stats.label}</span>
+              </div>
+              <span className="font-bold">{stage.stats.value}</span>
+            </div>
+          </div>
+        </div>
+      </TiltCard>
+
+      {/* 连接线 - Flashy animated line */}
+      {stage.step < workflowStages.length && (
+        <div className="absolute top-1/2 -right-12 w-16 h-1 bg-gray-200 hidden lg:block overflow-hidden rounded-full">
+          <motion.div
+            className="h-full w-1/2 bg-blue-500"
+            animate={{ x: [-50, 100] }}
+            transition={{ duration: 1.5, repeat: Infinity, ease: "linear" }}
+          />
+        </div>
+      )}
     </motion.div>
   );
 };
 
-// 预览面板组件
+// ... (PreviewPanel component)
 const PreviewPanel = ({ stage }: { stage: typeof workflowStages[0] }) => {
   return (
     <motion.div
       key={stage.id}
-      initial={{ opacity: 0, scale: 0.95 }}
-      animate={{ opacity: 1, scale: 1 }}
-      exit={{ opacity: 0, scale: 0.95 }}
-      transition={{ duration: 0.3 }}
-      className="bg-white rounded-2xl border border-gray-200 shadow-xl overflow-hidden"
+      initial={{ opacity: 0, scale: 0.8, rotateX: 20 }} // 3D flip in
+      animate={{ opacity: 1, scale: 1, rotateX: 0 }}
+      exit={{ opacity: 0, scale: 0.8, rotateX: -20 }}
+      transition={{ duration: 0.4, type: "spring" }}
+      className="bg-white rounded-2xl border border-gray-200 shadow-3xl overflow-hidden backdrop-blur-3xl bg-opacity-80"
+      style={{ perspective: "1000px" }}
     >
-      {/* 面板头部 */}
-      <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+      {/* ... (Header unchanged) */}
+      <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between bg-gradient-to-r from-gray-50 to-white">
         <div className="flex items-center gap-3">
           <div
-            className="w-8 h-8 rounded-lg flex items-center justify-center"
-            style={{ background: `${stage.color}15` }}
+            className="w-8 h-8 rounded-lg flex items-center justify-center shadow-sm"
+            style={{ background: `${stage.color}20` }}
           >
             <stage.icon className="w-4 h-4" style={{ color: stage.color }} />
           </div>
-          <span className="font-semibold text-gray-900">{stage.preview.title}</span>
+          <span className="font-semibold text-gray-900 tracking-tight">{stage.preview.title}</span>
         </div>
         <div className="flex gap-1.5">
-          <div className="w-2.5 h-2.5 rounded-full bg-red-400" />
-          <div className="w-2.5 h-2.5 rounded-full bg-yellow-400" />
-          <div className="w-2.5 h-2.5 rounded-full bg-green-400" />
+          <div className="w-2.5 h-2.5 rounded-full bg-red-400 shadow-sm" />
+          <div className="w-2.5 h-2.5 rounded-full bg-yellow-400 shadow-sm" />
+          <div className="w-2.5 h-2.5 rounded-full bg-green-400 shadow-sm" />
         </div>
       </div>
 
-      {/* 面板内容 */}
       <div className="p-6">
-        {stage.id === 'upload' && (
-          <div className="space-y-3">
-            {stage.preview.items?.map((item, i) => (
-              <div key={i} className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
-                <FileText className="w-5 h-5 text-gray-400" />
-                <div className="flex-1">
-                  <div className="text-sm text-gray-700">{item.name}</div>
-                  <div className="progress-bar h-1.5 mt-2">
-                    <div
-                      className="progress-bar-fill transition-all duration-500"
-                      style={{ width: `${item.progress}%` }}
-                    />
-                  </div>
+        {/* ... (upload & scan cases unchanged for now) */}
+        {stage.id === 'upload' && (/* ... */ <div className="space-y-3">
+          {stage.preview.items?.map((item, i) => (
+            <div key={i} className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
+              <FileText className="w-5 h-5 text-gray-400" />
+              <div className="flex-1">
+                <div className="text-sm text-gray-700">{item.name}</div>
+                <div className="progress-bar h-1.5 mt-2">
+                  <div
+                    className="progress-bar-fill transition-all duration-500"
+                    style={{ width: `${item.progress}%` }}
+                  />
                 </div>
-                <span className={`text-xs ${item.status === 'completed' ? 'text-emerald-500' :
-                  item.status === 'processing' ? 'text-blue-500' : 'text-gray-400'
-                  }`}>
-                  {item.status === 'completed' ? '✓' : item.status === 'processing' ? '...' : '○'}
-                </span>
               </div>
-            ))}
-          </div>
+              <span className={`text-xs ${item.status === 'completed' ? 'text-emerald-500' :
+                item.status === 'processing' ? 'text-blue-500' : 'text-gray-400'
+                }`}>
+                {item.status === 'completed' ? '✓' : item.status === 'processing' ? '...' : '○'}
+              </span>
+            </div>
+          ))}
+        </div>
         )}
 
         {stage.id === 'scan' && (
-          <div className="relative h-48 bg-gray-900 rounded-lg overflow-hidden">
+          <div className="relative h-48 bg-gray-900 rounded-lg overflow-hidden group">
             <div className="scan-line" />
             <div className="absolute inset-0 flex items-center justify-center">
-              <div className="text-center">
+              <div className="text-center group-hover:scale-110 transition-transform">
                 <ScanLine className="w-12 h-12 text-cyan-400 mx-auto mb-4 animate-pulse" />
                 <p className="text-cyan-400 font-mono text-sm">正在扫描识别...</p>
               </div>
@@ -293,10 +300,10 @@ const PreviewPanel = ({ stage }: { stage: typeof workflowStages[0] }) => {
               {stage.preview.detectedText?.map((text, i) => (
                 <motion.div
                   key={i}
-                  initial={{ opacity: 0, x: -10 }}
+                  initial={{ opacity: 0, x: -20 }}
                   animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: i * 0.3 }}
-                  className="text-xs font-mono text-emerald-400 bg-emerald-400/10 px-2 py-1 rounded"
+                  transition={{ delay: i * 0.2 }}
+                  className="text-xs font-mono text-emerald-400 bg-emerald-400/10 px-2 py-1 rounded backdrop-blur-md"
                 >
                   {text}
                 </motion.div>
@@ -305,61 +312,95 @@ const PreviewPanel = ({ stage }: { stage: typeof workflowStages[0] }) => {
           </div>
         )}
 
+        {/* Consolidate Rubric View */}
         {stage.id === 'rubric' && (
-          <div className="space-y-3">
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
             {stage.preview.rubric?.map((item, i) => (
-              <div key={i} className="flex items-center justify-between p-3 bg-violet-50 rounded-lg border border-violet-100">
-                <div className="flex items-center gap-3">
-                  <span className="w-8 h-8 rounded-lg bg-violet-500 text-white flex items-center justify-center text-sm font-bold">
-                    {item.q}
-                  </span>
-                  <span className="text-sm text-gray-700">{item.criteria}</span>
-                </div>
-                <span className="text-violet-600 font-semibold">{item.points}分</span>
-              </div>
+              <motion.div
+                key={i}
+                initial={{ opacity: 0, scale: 0.8 }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ delay: i * 0.1 }}
+                whileHover={{ scale: 1.05, borderColor: '#8b5cf6' }}
+                className="flex flex-col p-3 bg-white rounded-xl border-2 border-dashed border-violet-100 items-center text-center hover:shadow-md transition-all cursor-default"
+              >
+                <span className="w-10 h-10 rounded-full bg-violet-100 text-violet-600 flex items-center justify-center text-sm font-bold mb-2 shadow-inner">
+                  {item.points}分
+                </span>
+                <span className="text-xs font-bold text-gray-800 bg-gray-100 px-2 py-0.5 rounded-full mb-2">{item.q}</span>
+                <span className="text-xs text-gray-500 leading-tight">{item.criteria}</span>
+              </motion.div>
             ))}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ delay: 0.4 }}
+              className="col-span-full mt-2 p-2 bg-violet-50 rounded-lg text-center text-xs text-violet-600 font-medium"
+            >
+              ✨ AI 已自动构建结构化评分树
+            </motion.div>
           </div>
         )}
 
+        {/* ... (Other stages with minor flashiness upgrades if needed, keeping simple for now) */}
         {stage.id === 'grade' && (
           <div className="space-y-3">
-            {stage.preview.workers?.map((worker) => (
-              <div key={worker.id} className="p-3 bg-gray-50 rounded-lg">
+            {stage.preview.workers?.map((worker, i) => (
+              <motion.div
+                key={worker.id}
+                initial={{ x: -20, opacity: 0 }}
+                animate={{ x: 0, opacity: 1 }}
+                transition={{ delay: i * 0.1 }}
+                className="p-3 bg-gray-50 rounded-lg hover:bg-white hover:shadow-md transition-all border border-transparent hover:border-gray-200"
+              >
+                {/* ... content unchanged ... */}
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-2">
-                    <div className="w-6 h-6 rounded-full bg-gradient-to-br from-emerald-400 to-teal-500 flex items-center justify-center text-white text-xs font-bold">
+                    <div className="w-6 h-6 rounded-full bg-gradient-to-br from-emerald-400 to-teal-500 flex items-center justify-center text-white text-xs font-bold shadow-md">
                       W{worker.id}
                     </div>
                     <span className="text-sm text-gray-700">{worker.student}</span>
                   </div>
-                  <span className={`text-xs ${worker.status === 'grading' ? 'text-emerald-500' : 'text-blue-500'
-                    }`}>
+                  <span className={`text-xs ${worker.status === 'grading' ? 'text-emerald-500' : 'text-blue-500'}`}>
                     {worker.status === 'grading' ? '批改中' : '审核中'}
                   </span>
                 </div>
-                <div className="progress-bar h-1.5">
-                  <div
-                    className="progress-bar-fill transition-all duration-1000"
-                    style={{ width: `${worker.progress}%` }}
+                <div className="progress-bar h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                  <motion.div
+                    layout
+                    className="h-full bg-gradient-to-r from-emerald-400 to-teal-500"
+                    initial={{ width: 0 }}
+                    animate={{ width: `${worker.progress}%` }}
+                    transition={{ duration: 1, ease: 'easeOut' }}
                   />
                 </div>
-              </div>
+              </motion.div>
             ))}
           </div>
         )}
 
+        {/* ... (review and export cases) */}
         {stage.id === 'review' && (
-          <div className="space-y-3">
+          <div className="grid grid-cols-1 gap-3">
             {stage.preview.flagged?.map((item, i) => (
-              <div key={i} className="p-3 bg-amber-50 rounded-lg border border-amber-200">
-                <div className="flex items-center justify-between mb-1">
-                  <span className="font-medium text-gray-900">{item.student} - {item.question}</span>
-                  <span className="text-xs px-2 py-0.5 rounded-full bg-amber-200 text-amber-800">
-                    置信度 {(item.confidence * 100).toFixed(0)}%
-                  </span>
+              <motion.div
+                key={i}
+                whileHover={{ scale: 1.02 }}
+                className="p-3 bg-gradient-to-r from-amber-50 to-orange-50 rounded-lg border border-amber-200 flex items-start gap-3"
+              >
+                <div className="p-2 bg-white rounded-full text-amber-500 shadow-sm">
+                  <Eye size={16} />
                 </div>
-                <p className="text-sm text-gray-600">{item.reason}</p>
-              </div>
+                <div className="flex-1">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="font-bold text-gray-900 text-sm">{item.student} - {item.question}</span>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-200 text-amber-800 font-bold">
+                      {(item.confidence * 100).toFixed(0)}% CONFIDENCE
+                    </span>
+                  </div>
+                  <p className="text-xs text-gray-600">{item.reason}</p>
+                </div>
+              </motion.div>
             ))}
           </div>
         )}
@@ -368,27 +409,43 @@ const PreviewPanel = ({ stage }: { stage: typeof workflowStages[0] }) => {
           <div className="space-y-4">
             <div className="grid grid-cols-4 gap-3">
               {[
-                { label: '平均分', value: stage.preview.stats?.avg },
-                { label: '最高分', value: stage.preview.stats?.max },
-                { label: '最低分', value: stage.preview.stats?.min },
-                { label: '人数', value: stage.preview.stats?.count },
+                { label: '平均分', value: stage.preview.stats?.avg, color: 'text-blue-600', bg: 'bg-blue-50' },
+                { label: '最高分', value: stage.preview.stats?.max, color: 'text-emerald-600', bg: 'bg-emerald-50' },
+                { label: '最低分', value: stage.preview.stats?.min, color: 'text-amber-600', bg: 'bg-amber-50' },
+                { label: '人数', value: stage.preview.stats?.count, color: 'text-purple-600', bg: 'bg-purple-50' },
               ].map((stat, i) => (
-                <div key={i} className="text-center p-3 bg-red-50 rounded-lg">
-                  <div className="text-lg font-bold text-red-600">{stat.value}</div>
-                  <div className="text-xs text-gray-500">{stat.label}</div>
-                </div>
+                <motion.div
+                  key={i}
+                  initial={{ scale: 0 }}
+                  animate={{ scale: 1 }}
+                  transition={{ delay: i * 0.1, type: "spring" }}
+                  className={`text-center p-3 rounded-lg ${stat.bg}`}
+                >
+                  <div className={`text-lg font-black ${stat.color}`}>{stat.value}</div>
+                  <div className="text-[10px] text-gray-500 uppercase tracking-widest">{stat.label}</div>
+                </motion.div>
               ))}
             </div>
-            <div className="p-3 bg-gray-50 rounded-lg">
-              <div className="text-sm font-medium text-gray-700 mb-2">前三名</div>
-              <div className="space-y-1">
+            {/* ... Top Students ... */}
+            <div className="p-4 bg-gray-900 rounded-xl text-white">
+              <div className="text-xs font-bold uppercase tracking-widest mb-3 text-gray-400">Top Performers</div>
+              <div className="space-y-2">
                 {stage.preview.topStudents?.map((student, i) => (
-                  <div key={i} className="flex items-center gap-2 text-sm">
-                    <span className="w-5 h-5 rounded-full bg-yellow-400 text-white flex items-center justify-center text-xs font-bold">
+                  <motion.div
+                    key={i}
+                    initial={{ x: 20, opacity: 0 }}
+                    animate={{ x: 0, opacity: 1 }}
+                    transition={{ delay: 0.3 + i * 0.1 }}
+                    className="flex items-center gap-3 text-sm"
+                  >
+                    <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold leading-none ${i === 0 ? 'bg-yellow-400 text-yellow-900' : i === 1 ? 'bg-gray-400 text-gray-900' : 'bg-orange-400 text-orange-900'
+                      }`}>
                       {i + 1}
                     </span>
-                    <span className="text-gray-600">{student}</span>
-                  </div>
+                    <span className="font-mono">{student}</span>
+                    <div className="flex-1 h-px bg-gray-800 mx-2" />
+                    <Zap size={12} className="text-yellow-400" />
+                  </motion.div>
                 ))}
               </div>
             </div>
