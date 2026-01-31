@@ -1077,7 +1077,7 @@ def grading_fanout_router(state: BatchGradingGraphState) -> List[Send]:
         logger.warning(f"[grading_fanout] 🔍 调试: state keys={list(state.keys())}")
         logger.warning(f"[grading_fanout] 🔍 answer_images count={len(state.get('answer_images', []))}")
         logger.warning(f"[grading_fanout] 🔍 processed_images count={len(state.get('processed_images', []))}")
-        return [Send("self_report", state)]
+        return [Send("confession", state)]
 
     # 不再从 page_index_contexts 推导 student_boundaries
     # 如果前端没有提供 student_mapping，则按批次大小分配
@@ -4372,11 +4372,11 @@ def _build_self_report_prompt(
     return "\n".join(lines)
 
 
-async def self_report_node(state: BatchGradingGraphState) -> Dict[str, Any]:
+async def confession_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     """
-    自白节点 (Text LLM) - 集成共享记忆系统
+    忏悔/自白节点 (Confession Node) - 集成共享记忆系统
 
-    每个学生进行一次 LLM 自白，审查批改结果：
+    每个学生进行一次 LLM 自白/忏悔，审查批改结果：
     - 低置信度评分点
     - 证据不足的评分
     - 可能的识别错误
@@ -4384,7 +4384,7 @@ async def self_report_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     - **新增**：基于历史记忆进行风险分析
     - **新增**：将发现的模式记录到记忆系统
 
-    工作流位置：index_merge → self_report → logic_review
+    工作流位置：grade_batch → confession → logic_review
     """
     batch_id = state["batch_id"]
     student_results = state.get("student_results", []) or []
@@ -4714,12 +4714,12 @@ async def self_report_node(state: BatchGradingGraphState) -> Dict[str, Any]:
         logger.warning(f"[self_report] 记忆保存失败: {e}")
 
     return {
-        "student_results": final_results,
-        "current_stage": "self_report_completed",
+        "confessed_results": final_results,
+        "current_stage": "confession_completed",
         "percentage": 80.0,
         "timestamps": {
             **state.get("timestamps", {}),
-            "self_report_at": datetime.now().isoformat(),
+            "confession_at": datetime.now().isoformat(),
         },
     }
 
@@ -4983,7 +4983,8 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     =========================================
     """
     batch_id = state["batch_id"]
-    student_results = state.get("student_results", []) or []
+    # 优先读取 confessed_results（confession 节点输出），回退到 student_results
+    student_results = state.get("confessed_results") or state.get("student_results", []) or []
     parsed_rubric = state.get("parsed_rubric", {}) or {}
     api_key = state.get("api_key") or os.getenv("LLM_API_KEY") or os.getenv("OPENROUTER_API_KEY")
     grading_mode = _resolve_grading_mode(state.get("inputs", {}), parsed_rubric)
@@ -5280,7 +5281,7 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
 
     _log_logic_review_done("llm", len(final_results), len(logic_review_results))
     return {
-        "student_results": final_results,
+        "reviewed_results": final_results,  # 使用新字段，避免 operator.add 问题
         "logic_review_results": logic_review_results,
         "current_stage": "logic_review_completed",
         "percentage": 85.0,
@@ -5307,7 +5308,8 @@ async def annotation_generation_node(state: BatchGradingGraphState) -> Dict[str,
     )
 
     batch_id = state["batch_id"]
-    student_results = state.get("student_results", []) or []
+    # 优先读取 reviewed_results，回退到 confessed_results，再回退到 student_results
+    student_results = state.get("reviewed_results") or state.get("confessed_results") or state.get("student_results", []) or []
     grading_mode = _resolve_grading_mode(state.get("inputs", {}), state.get("parsed_rubric", {}))
 
     logger.info(f"[annotation_generation] 开始生成批注: batch_id={batch_id}")
@@ -5378,7 +5380,8 @@ async def review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     汇总审核批改结果，标记需要人工确认的项目。
     """
     batch_id = state["batch_id"]
-    student_results = state.get("student_results", [])
+    # 优先读取 reviewed_results，回退到 confessed_results，再回退到 student_results
+    student_results = state.get("reviewed_results") or state.get("confessed_results") or state.get("student_results", [])
     student_boundaries = state.get("student_boundaries", [])
     enable_review = state.get("inputs", {}).get("enable_review", True)
     grading_mode = _resolve_grading_mode(state.get("inputs", {}), state.get("parsed_rubric", {}))
@@ -5497,7 +5500,8 @@ async def export_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     Requirements: 9.4, 11.4
     """
     batch_id = state["batch_id"]
-    student_results = state.get("student_results", [])
+    # 优先读取 reviewed_results，回退到 confessed_results，再回退到 student_results
+    student_results = state.get("reviewed_results") or state.get("confessed_results") or state.get("student_results", [])
     cross_page_questions = state.get("cross_page_questions", [])
     merged_questions = state.get("merged_questions", [])
     grading_results = state.get("grading_results", [])
@@ -5974,7 +5978,7 @@ def create_batch_grading_graph(
     # graph.add_node("simple_aggregate", simple_aggregate_node)  # 已移除：grade_batch 直接输出 student_results
     # graph.add_node("cross_page_merge", cross_page_merge_node)  # 已移除：不再需要跨页合并
     # graph.add_node("index_merge", index_merge_node)  # 已移除：不再需要索引聚合
-    graph.add_node("self_report", self_report_node)
+    graph.add_node("confession", confession_node)
     graph.add_node("logic_review", logic_review_node)
     graph.add_node("annotation_generation", annotation_generation_node)
     graph.add_node("review", review_node)
@@ -6035,7 +6039,7 @@ def create_batch_grading_graph(
         grading_fanout_router,
         [
             "grade_batch",
-            "self_report",
+            "confession",
         ],
     )
     
@@ -6045,7 +6049,7 @@ def create_batch_grading_graph(
         grading_fanout_router,
         [
             "grade_batch",
-            "self_report",
+            "confession",
         ],
     )
 
@@ -6055,13 +6059,13 @@ def create_batch_grading_graph(
         "grade_batch",
         grading_merge_gate,
         {
-            "continue": "self_report",
+            "continue": "confession",
             "wait": END,
         },
     )
 
-    # 简化流程：self_report → logic_review → annotation_generation → review → export → END
-    graph.add_edge("self_report", "logic_review")
+    # 简化流程：confession → logic_review → annotation_generation → review → export → END
+    graph.add_edge("confession", "logic_review")
     graph.add_edge("logic_review", "annotation_generation")
     graph.add_edge("annotation_generation", "review")
     graph.add_edge("review", "export")
@@ -6148,7 +6152,7 @@ __all__ = [
     "preprocess_node",
     "rubric_parse_node",
     "grade_batch_node",
-    "self_report_node",
+    "confession_node",  # 原 self_report_node
     "logic_review_node",
     "annotation_generation_node",  # 新增批注生成节点
     "review_node",
