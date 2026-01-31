@@ -12,6 +12,7 @@ import redis.asyncio as redis
 from redis.exceptions import RedisError
 
 from src.utils.pool_manager import UnifiedPoolManager, PoolNotInitializedError
+from src.utils.redis_logger import log_redis_operation
 
 
 logger = logging.getLogger(__name__)
@@ -124,15 +125,20 @@ class RedisGradingRunController:
         run_key = self._run_key(snapshot.batch_id)
         run_set_key = self._run_set_key(snapshot.teacher_id)
         try:
+            log_redis_operation("HSET", run_key, value=payload)
             await self._redis.hset(run_key, mapping=payload)
             await self._redis.expire(run_key, RUN_RECORD_TTL_SECONDS)
+            
+            log_redis_operation("SADD", run_set_key, value=snapshot.batch_id)
             await self._redis.sadd(run_set_key, snapshot.batch_id)
             await self._redis.expire(run_set_key, RUN_RECORD_TTL_SECONDS)
             if snapshot.status == "queued":
                 queue_key = self._queue_key(snapshot.teacher_id)
+                log_redis_operation("ZADD", queue_key, value={snapshot.batch_id: self._queue_score(snapshot)})
                 await self._redis.zadd(queue_key, {snapshot.batch_id: self._queue_score(snapshot)})
                 await self._redis.expire(queue_key, RUN_QUEUE_TTL_SECONDS)
         except RedisError as exc:
+            log_redis_operation("HSET/SADD/ZADD", run_key, error=exc)
             logger.debug("Failed to register grading run: %s", exc)
 
     async def update_run(
@@ -147,9 +153,12 @@ class RedisGradingRunController:
         if not payload:
             return
         try:
+            log_redis_operation("HSET", run_key, value=payload)
             await self._redis.hset(run_key, mapping=payload)
             await self._redis.expire(run_key, RUN_RECORD_TTL_SECONDS)
+            log_redis_operation("HSET", run_key, result="success")
         except RedisError as exc:
+            log_redis_operation("HSET", run_key, error=exc)
             logger.debug("Failed to update grading run: %s", exc)
 
     async def try_acquire_slot(
@@ -187,6 +196,8 @@ class RedisGradingRunController:
             "return 1"
         )
         try:
+            log_redis_operation("LUA_SCRIPT", f"try_acquire_slot:{active_key}", 
+                              value=f"batch_id={batch_id}, max_active={max_active_runs}")
             result = await self._redis.eval(
                 script,
                 2,
@@ -198,8 +209,11 @@ class RedisGradingRunController:
                 ttl,
                 queue_ttl,
             )
+            log_redis_operation("LUA_SCRIPT", f"try_acquire_slot:{active_key}", 
+                              result=f"acquired={bool(result)}")
             return bool(result)
         except RedisError as exc:
+            log_redis_operation("LUA_SCRIPT", f"try_acquire_slot:{active_key}", error=exc)
             logger.debug("Failed to acquire grading slot: %s", exc)
             return True
 
@@ -227,23 +241,33 @@ class RedisGradingRunController:
         active_key = self._active_set_key(teacher_key)
         queue_key = self._queue_key(teacher_key)
         try:
+            log_redis_operation("ZREM", active_key, value=batch_id)
             await self._redis.zrem(active_key, batch_id)
+            log_redis_operation("ZREM", queue_key, value=batch_id)
             await self._redis.zrem(queue_key, batch_id)
+            log_redis_operation("ZREM", f"{active_key},{queue_key}", result="success")
         except RedisError as exc:
+            log_redis_operation("ZREM", f"{active_key},{queue_key}", error=exc)
             logger.debug("Failed to release grading slot: %s", exc)
 
     async def remove_from_queue(self, teacher_key: str, batch_id: str) -> None:
         queue_key = self._queue_key(teacher_key)
         try:
+            log_redis_operation("ZREM", queue_key, value=batch_id)
             await self._redis.zrem(queue_key, batch_id)
+            log_redis_operation("ZREM", queue_key, result="success")
         except RedisError as exc:
+            log_redis_operation("ZREM", queue_key, error=exc)
             logger.debug("Failed to remove grading run from queue: %s", exc)
 
     async def list_runs(self, teacher_key: str) -> List[GradingRunSnapshot]:
         run_set_key = self._run_set_key(teacher_key)
         try:
+            log_redis_operation("SMEMBERS", run_set_key)
             run_ids = await self._redis.smembers(run_set_key)
+            log_redis_operation("SMEMBERS", run_set_key, result=f"count={len(run_ids)}")
         except RedisError as exc:
+            log_redis_operation("SMEMBERS", run_set_key, error=exc)
             logger.debug("Failed to list grading runs: %s", exc)
             return []
         if not run_ids:
@@ -254,7 +278,9 @@ class RedisGradingRunController:
                 run_id.decode("utf-8") if isinstance(run_id, (bytes, bytearray)) else str(run_id)
             )
             try:
+                log_redis_operation("HGETALL", run_key)
                 data = await self._redis.hgetall(run_key)
+                log_redis_operation("HGETALL", run_key, result=f"fields={len(data)}")
             except RedisError:
                 continue
             if not data:
@@ -268,8 +294,11 @@ class RedisGradingRunController:
     async def get_run(self, batch_id: str) -> Optional[GradingRunSnapshot]:
         run_key = self._run_key(batch_id)
         try:
+            log_redis_operation("HGETALL", run_key)
             data = await self._redis.hgetall(run_key)
+            log_redis_operation("HGETALL", run_key, result=f"fields={len(data)}" if data else "not_found")
         except RedisError as exc:
+            log_redis_operation("HGETALL", run_key, error=exc)
             logger.debug("Failed to fetch grading run: %s", exc)
             return None
         if not data:

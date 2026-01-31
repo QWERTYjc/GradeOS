@@ -459,14 +459,34 @@ async def _start_run_with_teacher_limit(
     homework_id: Optional[str],
     student_mapping: List[dict],
 ) -> Optional[str]:
-    run_controller = await get_run_controller()
+    logger.info(f"[_start_run_with_teacher_limit] 开始执行: batch_id={batch_id}")
+    logger.info(f"[_start_run_with_teacher_limit] payload keys: {list(payload.keys())}")
+    logger.info(f"[_start_run_with_teacher_limit] answer_images count: {len(payload.get('answer_images', []))}")
+    logger.info(f"[_start_run_with_teacher_limit] rubric_images count: {len(payload.get('rubric_images', []))}")
+    
+    logger.info(f"[_start_run_with_teacher_limit] 准备调用 get_run_controller()")
+    try:
+        run_controller = await get_run_controller()
+        logger.info(f"[_start_run_with_teacher_limit] get_run_controller() 返回: {run_controller is not None}")
+    except Exception as e:
+        logger.error(f"[_start_run_with_teacher_limit] get_run_controller() 异常: {e}", exc_info=True)
+        run_controller = None
+    
     if run_controller:
-        acquired = await run_controller.try_acquire_slot(
-            teacher_key,
-            batch_id,
-            TEACHER_MAX_ACTIVE_RUNS,
-        )
+        logger.info(f"[_start_run_with_teacher_limit] 准备获取 slot: teacher_key={teacher_key}")
+        try:
+            acquired = await run_controller.try_acquire_slot(
+                teacher_key,
+                batch_id,
+                TEACHER_MAX_ACTIVE_RUNS,
+            )
+            logger.info(f"[_start_run_with_teacher_limit] try_acquire_slot 返回: {acquired}")
+        except Exception as e:
+            logger.error(f"[_start_run_with_teacher_limit] try_acquire_slot 异常: {e}", exc_info=True)
+            acquired = False
+        
         if not acquired:
+            logger.info(f"[_start_run_with_teacher_limit] 未获取到 slot，进入等待队列")
             await broadcast_progress(
                 batch_id,
                 {
@@ -476,6 +496,7 @@ async def _start_run_with_teacher_limit(
                     "message": "Queued: waiting for grading slot",
                 },
             )
+            logger.info(f"[_start_run_with_teacher_limit] 开始等待 slot")
             max_wait = RUN_QUEUE_TIMEOUT_SECONDS if RUN_QUEUE_TIMEOUT_SECONDS > 0 else None
             acquired = await run_controller.wait_for_slot(
                 teacher_key,
@@ -484,7 +505,9 @@ async def _start_run_with_teacher_limit(
                 RUN_QUEUE_POLL_SECONDS,
                 max_wait,
             )
+            logger.info(f"[_start_run_with_teacher_limit] wait_for_slot 返回: {acquired}")
             if not acquired:
+                logger.info(f"[_start_run_with_teacher_limit] 等待超时，任务失败")
                 await run_controller.update_run(
                     batch_id,
                     {"status": "failed", "updated_at": datetime.now().isoformat()},
@@ -500,6 +523,8 @@ async def _start_run_with_teacher_limit(
                     },
                 )
                 return None
+        
+        logger.info(f"[_start_run_with_teacher_limit] 成功获取 slot，更新运行状态")
         await run_controller.update_run(
             batch_id,
             {
@@ -508,12 +533,15 @@ async def _start_run_with_teacher_limit(
                 "updated_at": datetime.now().isoformat(),
             },
         )
+    
     run_id: Optional[str] = None
     try:
+        logger.info(f"[_start_run_with_teacher_limit] 准备启动 LangGraph run")
         run_id = await orchestrator.start_run(
             graph_name="batch_grading", payload=payload, idempotency_key=batch_id
         )
-        logger.info(f"LangGraph ??????? batch_id={batch_id}, run_id={run_id}")
+        logger.info(f"[_start_run_with_teacher_limit] LangGraph 启动成功: batch_id={batch_id}, run_id={run_id}")
+        
         stream_task = asyncio.create_task(
             stream_langgraph_progress(
                 batch_id=batch_id,
@@ -526,9 +554,10 @@ async def _start_run_with_teacher_limit(
             )
         )
         _active_stream_tasks[batch_id] = stream_task
+        logger.info(f"[_start_run_with_teacher_limit] 流式任务已创建")
         return run_id
     except Exception as exc:
-        logger.error(f"????????: {exc}", exc_info=True)
+        logger.error(f"[_start_run_with_teacher_limit] 启动失败: {exc}", exc_info=True)
         if run_controller:
             await run_controller.release_slot(teacher_key, batch_id)
             await run_controller.update_run(
@@ -848,7 +877,9 @@ async def submit_batch(
         }
 
         # 启动 LangGraph batch_grading Graph
-        asyncio.create_task(
+        logger.info(f"准备启动批改任务: batch_id={batch_id}, answer_images={len(answer_images)}, rubric_images={len(rubric_images)}")
+        
+        task = asyncio.create_task(
             _start_run_with_teacher_limit(
                 teacher_key=teacher_key,
                 batch_id=batch_id,
@@ -859,6 +890,16 @@ async def submit_batch(
                 student_mapping=student_mapping,
             )
         )
+        
+        # 添加错误处理回调
+        def task_done_callback(t):
+            try:
+                t.result()
+            except Exception as e:
+                logger.error(f"批改任务启动失败: batch_id={batch_id}, error={e}", exc_info=True)
+        
+        task.add_done_callback(task_done_callback)
+        logger.info(f"批改任务已提交到事件循环: batch_id={batch_id}")
 
         return BatchSubmissionResponse(
             batch_id=batch_id,
@@ -1273,27 +1314,34 @@ async def stream_langgraph_progress(
                     if average_score is None and scores:
                         average_score = round(sum(scores) / len(scores), 2)
 
-                    history_id = str(uuid.uuid4())
-                    history = GradingHistory(
-                        id=history_id,
-                        batch_id=batch_id,
-                        status="completed",
-                        class_ids=[class_id] if class_id else None,
-                        created_at=now,
-                        completed_at=now,
-                        total_students=len(formatted_results),
-                        average_score=average_score,
-                        result_data=(
-                            {
-                                "summary": class_report,
-                                "class_id": class_id,
-                                "homework_id": homework_id,
-                            }
-                            if class_report or class_id or homework_id
-                            else None
-                        ),
-                    )
-                    await _maybe_await(save_grading_history(history))
+                    # 先检查是否已经存在批改历史记录
+                    existing_history = await get_grading_history(batch_id)
+                    if existing_history:
+                        history_id = existing_history.id
+                        logger.info(f"使用已存在的批改历史: history_id={history_id}")
+                    else:
+                        history_id = str(uuid.uuid4())
+                        history = GradingHistory(
+                            id=history_id,
+                            batch_id=batch_id,
+                            status="completed",
+                            class_ids=[class_id] if class_id else None,
+                            created_at=now,
+                            completed_at=now,
+                            total_students=len(formatted_results),
+                            average_score=average_score,
+                            result_data=(
+                                {
+                                    "summary": class_report,
+                                    "class_id": class_id,
+                                    "homework_id": homework_id,
+                                }
+                                if class_report or class_id or homework_id
+                                else None
+                            ),
+                        )
+                        await _maybe_await(save_grading_history(history))
+                        logger.info(f"创建新的批改历史: history_id={history_id}")
 
                     student_map_by_index = {}
                     student_map_by_name = {}
@@ -2798,13 +2846,13 @@ async def get_full_batch_results(
         完整批改结果（包含跨页题目信息）
     """
 
-    def _load_from_db() -> Dict[str, Any]:
-        history = get_grading_history(batch_id)
+    async def _load_from_db() -> Dict[str, Any]:
+        history = await get_grading_history(batch_id)
         if not history:
             raise HTTPException(status_code=404, detail="批次不存在")
 
         raw_results: List[Dict[str, Any]] = []
-        for row in get_student_results(history.id):
+        for row in await get_student_results(history.id):
             data = row.result_data
             if isinstance(data, str):
                 try:
@@ -2853,13 +2901,13 @@ async def get_full_batch_results(
 
     try:
         if not orchestrator:
-            return _load_from_db()
+            return await _load_from_db()
 
         run_id = f"batch_grading_{batch_id}"
         run_info = await orchestrator.get_run_info(run_id)
 
         if not run_info:
-            return _load_from_db()
+            return await _load_from_db()
 
         state = run_info.state or {}
         student_results = state.get("student_results", []) or []
@@ -2886,7 +2934,7 @@ async def get_full_batch_results(
         # 如果 orchestrator 返回空结果，回退到数据库查询
         if not student_results:
             logger.info(f"Orchestrator 返回空结果，回退到数据库查询: batch_id={batch_id}")
-            return _load_from_db()
+            return await _load_from_db()
 
         return {
             "batch_id": batch_id,

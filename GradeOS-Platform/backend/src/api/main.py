@@ -49,6 +49,11 @@ logging.basicConfig(
     force=True,
 )
 
+# 禁用噪音日志
+logging.getLogger("src.utils.redis_logger").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
 
 def _configure_stdout_loggers() -> None:
     handler = logging.StreamHandler(sys.stdout)

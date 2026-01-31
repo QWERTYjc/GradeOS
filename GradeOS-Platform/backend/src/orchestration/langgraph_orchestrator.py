@@ -103,6 +103,20 @@ class LangGraphOrchestrator(Orchestrator):
         """创建默认 Checkpointer"""
         return InMemorySaver()
 
+    @staticmethod
+    def _json_serializer(obj):
+        """自定义 JSON 序列化器，处理 bytes 和其他特殊类型"""
+        if isinstance(obj, bytes):
+            # 将 bytes 转换为 base64 字符串
+            import base64
+            return base64.b64encode(obj).decode('utf-8')
+        elif isinstance(obj, datetime):
+            return obj.isoformat()
+        elif hasattr(obj, '__dict__'):
+            return obj.__dict__
+        else:
+            return str(obj)
+
     def _build_graph_config(self, run_id: str, graph_name: str) -> Dict[str, Any]:
         config: Dict[str, Any] = {"configurable": {"thread_id": run_id}}
         max_concurrency = self._graph_max_concurrency
@@ -1489,7 +1503,8 @@ class LangGraphOrchestrator(Orchestrator):
 
                         if output_data is not None:
                             set_parts.append("output_data = %s")
-                            params.append(json.dumps(output_data))
+                            # 使用自定义序列化函数处理 bytes 类型
+                            params.append(json.dumps(output_data, default=self._json_serializer))
 
                         if error is not None:
                             set_parts.append("error = %s")

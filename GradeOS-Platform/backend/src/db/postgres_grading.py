@@ -8,6 +8,7 @@ from typing import Optional, List, Dict, Any
 from dataclasses import dataclass, asdict
 
 from src.utils.database import db
+from src.utils.sql_logger import log_sql_operation
 
 
 logger = logging.getLogger(__name__)
@@ -46,42 +47,58 @@ class StudentGradingResult:
     revoked_at: Optional[str] = None
 
 
+@dataclass
+class GradingPageImage:
+    """批改页面图像"""
+    
+    id: str
+    grading_history_id: str
+    student_key: str
+    page_index: int
+    image_data: bytes  # 图像二进制数据
+    image_format: str = "png"  # 图像格式：png, jpg, webp
+    created_at: str = ""
+
+
 async def save_grading_history(history: GradingHistory) -> None:
     """保存批改历史到 PostgreSQL"""
     if not history.created_at:
         history.created_at = datetime.now().isoformat()
 
+    query = """
+        INSERT INTO grading_history 
+        (id, batch_id, class_ids, created_at, completed_at, status, 
+         total_students, average_score, result_data)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (batch_id) DO UPDATE SET
+            class_ids = EXCLUDED.class_ids,
+            completed_at = EXCLUDED.completed_at,
+            status = EXCLUDED.status,
+            total_students = EXCLUDED.total_students,
+            average_score = EXCLUDED.average_score,
+            result_data = EXCLUDED.result_data
+    """
+    params = (
+        history.id,
+        history.batch_id,
+        json.dumps(history.class_ids) if history.class_ids else None,
+        history.created_at,
+        history.completed_at,
+        history.status,
+        history.total_students,
+        history.average_score,
+        json.dumps(history.result_data) if history.result_data else None,
+    )
+
     try:
+        log_sql_operation("INSERT/UPDATE", query, params)
         async with db.connection() as conn:
-            await conn.execute(
-                """
-                INSERT INTO grading_history 
-                (id, batch_id, class_ids, created_at, completed_at, status, 
-                 total_students, average_score, result_data)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (batch_id) DO UPDATE SET
-                    class_ids = EXCLUDED.class_ids,
-                    completed_at = EXCLUDED.completed_at,
-                    status = EXCLUDED.status,
-                    total_students = EXCLUDED.total_students,
-                    average_score = EXCLUDED.average_score,
-                    result_data = EXCLUDED.result_data
-                """,
-                (
-                    history.id,
-                    history.batch_id,
-                    json.dumps(history.class_ids) if history.class_ids else None,
-                    history.created_at,
-                    history.completed_at,
-                    history.status,
-                    history.total_students,
-                    history.average_score,
-                    json.dumps(history.result_data) if history.result_data else None,
-                ),
-            )
+            await conn.execute(query, params)
             await conn.commit()
+        log_sql_operation("INSERT/UPDATE", "grading_history", result_count=1)
         logger.info(f"批改历史已保存到 PostgreSQL: batch_id={history.batch_id}")
     except Exception as e:
+        log_sql_operation("INSERT/UPDATE", query, params, error=e)
         logger.error(f"保存批改历史到 PostgreSQL 失败: {e}")
         raise
 
@@ -91,21 +108,25 @@ async def get_grading_history(batch_id_or_id: str) -> Optional[GradingHistory]:
     try:
         async with db.connection() as conn:
             # 先尝试通过 batch_id 查询
-            cursor = await conn.execute(
-                "SELECT * FROM grading_history WHERE batch_id = %s", (batch_id_or_id,)
-            )
+            query1 = "SELECT * FROM grading_history WHERE batch_id = %s"
+            params1 = (batch_id_or_id,)
+            log_sql_operation("SELECT", query1, params1)
+            cursor = await conn.execute(query1, params1)
             row = await cursor.fetchone()
 
             # 如果没找到，尝试通过 id 查询
             if not row:
-                cursor = await conn.execute(
-                    "SELECT * FROM grading_history WHERE id::text = %s", (batch_id_or_id,)
-                )
+                query2 = "SELECT * FROM grading_history WHERE id::text = %s"
+                params2 = (batch_id_or_id,)
+                log_sql_operation("SELECT", query2, params2)
+                cursor = await conn.execute(query2, params2)
                 row = await cursor.fetchone()
 
             if not row:
+                log_sql_operation("SELECT", "grading_history", result_count=0)
                 return None
 
+            log_sql_operation("SELECT", "grading_history", result_count=1)
             # JSONB 字段可能已经是 dict，也可能是 str（取决于驱动）
             raw_class_ids = row["class_ids"]
             if isinstance(raw_class_ids, str):
@@ -119,13 +140,30 @@ async def get_grading_history(batch_id_or_id: str) -> Optional[GradingHistory]:
             else:
                 result_data = raw_result_data
 
+            # 处理日期字段（可能是 datetime 对象或字符串）
+            created_at_value = row["created_at"]
+            if hasattr(created_at_value, 'isoformat'):
+                created_at_value = created_at_value.isoformat()
+            elif created_at_value:
+                created_at_value = str(created_at_value)
+            else:
+                created_at_value = ""
+            
+            completed_at_value = row["completed_at"]
+            if hasattr(completed_at_value, 'isoformat'):
+                completed_at_value = completed_at_value.isoformat()
+            elif completed_at_value:
+                completed_at_value = str(completed_at_value)
+            else:
+                completed_at_value = None
+
             return GradingHistory(
                 id=str(row["id"]),
                 batch_id=row["batch_id"],
                 status=row["status"],
                 class_ids=class_ids,
-                created_at=row["created_at"].isoformat() if row["created_at"] else "",
-                completed_at=row["completed_at"].isoformat() if row["completed_at"] else None,
+                created_at=created_at_value,
+                completed_at=completed_at_value,
                 total_students=row["total_students"] or 0,
                 average_score=float(row["average_score"]) if row["average_score"] else None,
                 result_data=result_data,
@@ -142,22 +180,24 @@ async def list_grading_history(
     try:
         async with db.connection() as conn:
             if class_id:
-                # 使用 JSONB 包含查询
-                cursor = await conn.execute(
-                    """
+                # 使用 JSONB 包含查询，同时包含 class_ids 为 NULL 的记录（控制台批改）
+                query = """
                     SELECT * FROM grading_history 
-                    WHERE class_ids @> %s::jsonb
+                    WHERE class_ids @> %s::jsonb OR class_ids IS NULL
                     ORDER BY created_at DESC 
                     LIMIT %s
-                    """,
-                    (json.dumps([class_id]), limit),
-                )
+                """
+                params = (json.dumps([class_id]), limit)
+                log_sql_operation("SELECT", query, params)
+                cursor = await conn.execute(query, params)
             else:
-                cursor = await conn.execute(
-                    "SELECT * FROM grading_history ORDER BY created_at DESC LIMIT %s", (limit,)
-                )
+                query = "SELECT * FROM grading_history ORDER BY created_at DESC LIMIT %s"
+                params = (limit,)
+                log_sql_operation("SELECT", query, params)
+                cursor = await conn.execute(query, params)
 
             rows = await cursor.fetchall()
+            log_sql_operation("SELECT", "grading_history", result_count=len(rows))
 
             histories = []
             for row in rows:
@@ -174,16 +214,31 @@ async def list_grading_history(
                 else:
                     result_data = raw_result_data  # 已经是 dict
 
+                # 处理日期字段 - 可能是 datetime 对象或字符串
+                created_at_value = row["created_at"]
+                if hasattr(created_at_value, 'isoformat'):
+                    created_at_value = created_at_value.isoformat()
+                elif created_at_value:
+                    created_at_value = str(created_at_value)
+                else:
+                    created_at_value = ""
+
+                completed_at_value = row["completed_at"]
+                if hasattr(completed_at_value, 'isoformat'):
+                    completed_at_value = completed_at_value.isoformat()
+                elif completed_at_value:
+                    completed_at_value = str(completed_at_value)
+                else:
+                    completed_at_value = None
+
                 histories.append(
                     GradingHistory(
                         id=str(row["id"]),
                         batch_id=row["batch_id"],
                         status=row["status"],
                         class_ids=class_ids,
-                        created_at=row["created_at"].isoformat() if row["created_at"] else "",
-                        completed_at=(
-                            row["completed_at"].isoformat() if row["completed_at"] else None
-                        ),
+                        created_at=created_at_value,
+                        completed_at=completed_at_value,
                         total_students=row["total_students"] or 0,
                         average_score=float(row["average_score"]) if row["average_score"] else None,
                         result_data=result_data,
@@ -198,42 +253,98 @@ async def list_grading_history(
 
 async def save_student_result(result: StudentGradingResult) -> None:
     """保存学生批改结果到 PostgreSQL"""
+    # 先尝试更新，如果不存在则插入
+    update_query = """
+        UPDATE student_grading_results 
+        SET id = %s,
+            score = %s,
+            max_score = %s,
+            class_id = %s,
+            student_id = %s,
+            summary = %s,
+            self_report = %s,
+            result_data = %s::jsonb,
+            imported_at = %s,
+            revoked_at = %s
+        WHERE grading_history_id = %s AND student_key = %s
+    """
+    
+    insert_query = """
+        INSERT INTO student_grading_results 
+        (id, grading_history_id, student_key, class_id, student_id,
+         score, max_score, summary, self_report, result_data, 
+         imported_at, revoked_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s)
+    """
+    
+    # 确保 result_data 被正确序列化为 JSON 字符串
+    result_data_json = None
+    if result.result_data:
+        try:
+            result_data_json = json.dumps(result.result_data, ensure_ascii=False)
+        except Exception as e:
+            logger.error(f"序列化 result_data 失败: {e}")
+            result_data_json = "{}"
+    
+    # 确保 self_report 也被正确序列化（如果是 dict）
+    self_report_value = result.self_report
+    if isinstance(self_report_value, dict):
+        try:
+            self_report_value = json.dumps(self_report_value, ensure_ascii=False)
+        except Exception as e:
+            logger.error(f"序列化 self_report 失败: {e}")
+            self_report_value = None
+    
+    # 先尝试更新
+    update_params = (
+        result.id,
+        result.score,
+        result.max_score,
+        result.class_id,
+        result.student_id,
+        result.summary,
+        self_report_value,
+        result_data_json,
+        result.imported_at,
+        result.revoked_at,
+        result.grading_history_id,
+        result.student_key,
+    )
+    
+    insert_params = (
+        result.id,
+        result.grading_history_id,
+        result.student_key,
+        result.class_id,
+        result.student_id,
+        result.score,
+        result.max_score,
+        result.summary,
+        self_report_value,
+        result_data_json,
+        result.imported_at,
+        result.revoked_at,
+    )
+
     try:
         async with db.connection() as conn:
-            await conn.execute(
-                """
-                INSERT INTO student_grading_results 
-                (id, grading_history_id, student_key, class_id, student_id,
-                 score, max_score, summary, self_report, result_data, 
-                 imported_at, revoked_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (id) DO UPDATE SET
-                    score = EXCLUDED.score,
-                    max_score = EXCLUDED.max_score,
-                    summary = EXCLUDED.summary,
-                    self_report = EXCLUDED.self_report,
-                    result_data = EXCLUDED.result_data,
-                    imported_at = EXCLUDED.imported_at,
-                    revoked_at = EXCLUDED.revoked_at
-                """,
-                (
-                    result.id,
-                    result.grading_history_id,
-                    result.student_key,
-                    result.class_id,
-                    result.student_id,
-                    result.score,
-                    result.max_score,
-                    result.summary,
-                    result.self_report,
-                    json.dumps(result.result_data) if result.result_data else None,
-                    result.imported_at,
-                    result.revoked_at,
-                ),
-            )
+            # 先尝试更新
+            cursor = await conn.execute(update_query, update_params)
+            updated_rows = cursor.rowcount
+            
+            # 如果没有更新任何行，说明记录不存在，执行插入
+            if updated_rows == 0:
+                log_sql_operation("INSERT", insert_query, insert_params)
+                await conn.execute(insert_query, insert_params)
+            else:
+                log_sql_operation("UPDATE", update_query, update_params)
+            
             await conn.commit()
+        
+        log_sql_operation("INSERT/UPDATE", "student_grading_results", result_count=1)
         logger.debug(f"学生结果已保存: student_key={result.student_key}")
     except Exception as e:
+        log_sql_operation("INSERT/UPDATE", "student_grading_results", error=e)
         logger.error(f"保存学生结果失败: {e}")
         raise
 
@@ -241,40 +352,155 @@ async def save_student_result(result: StudentGradingResult) -> None:
 async def get_student_results(grading_history_id: str) -> List[StudentGradingResult]:
     """获取批改历史的所有学生结果"""
     try:
+        query = "SELECT * FROM student_grading_results WHERE grading_history_id = %s"
+        params = (grading_history_id,)
+        log_sql_operation("SELECT", query, params)
+        
         async with db.connection() as conn:
-            cursor = await conn.execute(
-                "SELECT * FROM student_grading_results WHERE grading_history_id = %s",
-                (grading_history_id,),
-            )
+            cursor = await conn.execute(query, params)
             rows = await cursor.fetchall()
+        
+        log_sql_operation("SELECT", "student_grading_results", result_count=len(rows))
 
-            results = []
-            for row in rows:
-                # JSONB 字段可能已经是 dict，也可能是 str（取决于驱动）
-                raw_result_data = row["result_data"]
-                if isinstance(raw_result_data, str):
-                    result_data = json.loads(raw_result_data) if raw_result_data else None
-                else:
-                    result_data = raw_result_data
+        results = []
+        for row in rows:
+            # JSONB 字段可能已经是 dict，也可能是 str（取决于驱动）
+            raw_result_data = row["result_data"]
+            if isinstance(raw_result_data, str):
+                result_data = json.loads(raw_result_data) if raw_result_data else None
+            else:
+                result_data = raw_result_data
 
-                results.append(
-                    StudentGradingResult(
-                        id=str(row["id"]),
-                        grading_history_id=str(row["grading_history_id"]),
-                        student_key=row["student_key"],
-                        class_id=row["class_id"],
-                        student_id=row["student_id"],
-                        score=float(row["score"]) if row["score"] else None,
-                        max_score=float(row["max_score"]) if row["max_score"] else None,
-                        summary=row["summary"],
-                        self_report=row["self_report"],
-                        result_data=result_data,
-                        imported_at=row["imported_at"].isoformat() if row["imported_at"] else None,
-                        revoked_at=row["revoked_at"].isoformat() if row["revoked_at"] else None,
-                    )
+            # 处理日期字段（可能是 datetime 对象或字符串）
+            imported_at_value = row["imported_at"]
+            if hasattr(imported_at_value, 'isoformat'):
+                imported_at_value = imported_at_value.isoformat()
+            elif imported_at_value:
+                imported_at_value = str(imported_at_value)
+            else:
+                imported_at_value = None
+            
+            revoked_at_value = row["revoked_at"]
+            if hasattr(revoked_at_value, 'isoformat'):
+                revoked_at_value = revoked_at_value.isoformat()
+            elif revoked_at_value:
+                revoked_at_value = str(revoked_at_value)
+            else:
+                revoked_at_value = None
+
+            results.append(
+                StudentGradingResult(
+                    id=str(row["id"]),
+                    grading_history_id=str(row["grading_history_id"]),
+                    student_key=row["student_key"],
+                    class_id=row["class_id"],
+                    student_id=row["student_id"],
+                    score=float(row["score"]) if row["score"] else None,
+                    max_score=float(row["max_score"]) if row["max_score"] else None,
+                    summary=row["summary"],
+                    self_report=row["self_report"],
+                    result_data=result_data,
+                    imported_at=imported_at_value,
+                    revoked_at=revoked_at_value,
                 )
+            )
 
-            return results
+        return results
     except Exception as e:
         logger.error(f"获取学生结果失败: {e}")
+        return []
+
+
+async def save_page_image(image: GradingPageImage) -> None:
+    """保存批改页面图像到 PostgreSQL"""
+    if not image.created_at:
+        image.created_at = datetime.now().isoformat()
+    
+    query = """
+        INSERT INTO grading_page_images 
+        (id, grading_history_id, student_key, page_index, 
+         image_data, image_format, created_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (id) DO UPDATE SET
+            image_data = EXCLUDED.image_data,
+            image_format = EXCLUDED.image_format
+    """
+    params = (
+        image.id,
+        image.grading_history_id,
+        image.student_key,
+        image.page_index,
+        image.image_data,
+        image.image_format,
+        image.created_at,
+    )
+    
+    try:
+        log_sql_operation("INSERT/UPDATE", "grading_page_images", {"id": image.id})
+        async with db.connection() as conn:
+            await conn.execute(query, params)
+            await conn.commit()
+        log_sql_operation("INSERT/UPDATE", "grading_page_images", result_count=1)
+        logger.debug(f"页面图像已保存: student_key={image.student_key}, page={image.page_index}")
+    except Exception as e:
+        log_sql_operation("INSERT/UPDATE", "grading_page_images", error=e)
+        logger.error(f"保存页面图像失败: {e}")
+        raise
+
+
+async def get_page_images(
+    grading_history_id: str, 
+    student_key: Optional[str] = None
+) -> List[GradingPageImage]:
+    """获取批改页面图像"""
+    try:
+        if student_key:
+            query = """
+                SELECT * FROM grading_page_images 
+                WHERE grading_history_id = %s AND student_key = %s
+                ORDER BY page_index
+            """
+            params = (grading_history_id, student_key)
+        else:
+            query = """
+                SELECT * FROM grading_page_images 
+                WHERE grading_history_id = %s
+                ORDER BY student_key, page_index
+            """
+            params = (grading_history_id,)
+        
+        log_sql_operation("SELECT", query, params)
+        
+        async with db.connection() as conn:
+            cursor = await conn.execute(query, params)
+            rows = await cursor.fetchall()
+        
+        log_sql_operation("SELECT", "grading_page_images", result_count=len(rows))
+        
+        images = []
+        for row in rows:
+            # 处理日期字段（可能是 datetime 对象或字符串）
+            created_at_value = row["created_at"]
+            if hasattr(created_at_value, 'isoformat'):
+                created_at_value = created_at_value.isoformat()
+            elif created_at_value:
+                created_at_value = str(created_at_value)
+            else:
+                created_at_value = ""
+            
+            images.append(
+                GradingPageImage(
+                    id=str(row["id"]),
+                    grading_history_id=str(row["grading_history_id"]),
+                    student_key=row["student_key"],
+                    page_index=row["page_index"],
+                    image_data=row["image_data"],
+                    image_format=row["image_format"],
+                    created_at=created_at_value,
+                )
+            )
+        
+        return images
+    except Exception as e:
+        logger.error(f"获取页面图像失败: {e}")
         return []

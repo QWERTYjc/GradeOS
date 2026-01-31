@@ -1027,6 +1027,10 @@ class LLMReasoningClient:
             Dict: 解析后的评分结果
         """
         json_text = self._extract_json_from_text(response_text)
+        
+        # 直接输出 AI 返回的原始 JSON
+        logger.info(f"AI返回的原始JSON: {json_text}")
+        
         result = json.loads(json_text)
 
         # 确保所有 scoring_point_results 都有 evidence 字段
@@ -1218,7 +1222,8 @@ class LLMReasoningClient:
         Returns:
             Dict: 包含详细评分结果
         """
-        logger.debug(f"开始批改单页, rubric长度={len(rubric)}")
+        logger.debug(f"开始批改单页, rubric长度={len(rubric)}" + 
+                     (" (识别模式)" if len(rubric) == 0 else " (评分模式)"))
 
         # 检测输入类型：文本还是图像
         is_text = isinstance(image, bytes) and self._is_text_content(image)

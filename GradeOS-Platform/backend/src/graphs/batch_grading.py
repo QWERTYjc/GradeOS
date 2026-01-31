@@ -787,6 +787,11 @@ async def rubric_parse_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                 f"置信度={parse_self_report['overallConfidence']:.2f}, "
                 f"状态={parse_self_report['overallStatus']}"
             )
+            
+            # 🔍 输出完整的 AI 返回结果 JSON
+            import json
+            logger.info(f"[rubric_parse] 📋 AI 返回的完整评分标准 JSON:")
+            logger.info(f"[rubric_parse] {json.dumps(parsed_rubric, ensure_ascii=False, indent=2)}")
 
         elif rubric_text:
             # 如果有文本形式的评分标准，简单解析
@@ -2651,6 +2656,12 @@ async def _grade_batch_node_impl(state: Dict[str, Any]) -> Dict[str, Any]:
         default_student_key=batch_student_key,
         grading_mode=grading_mode,
     )
+
+    # 🔍 输出完整的批改结果 JSON
+    import json
+    logger.info(f"[grade_batch] 📝 批次 {batch_index + 1} 批改完成，AI 返回的完整结果 JSON:")
+    logger.info(f"[grade_batch] Page Results: {json.dumps(page_results, ensure_ascii=False, indent=2)}")
+    logger.info(f"[grade_batch] Student Results: {json.dumps(student_results, ensure_ascii=False, indent=2)}")
 
     # 返回结果（使用 add reducer 聚合，直接输出 student_results）
     return {
@@ -5464,15 +5475,123 @@ async def export_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     if has_failures:
         logger.warning(f"[export] 检测到 {len(failed_pages)} 个失败页面，" f"将保存部分结果")
 
-    # 检查数据库可用性（留作持久化扩展）
-    # 注意：当前未实现持久化逻辑，保持 persisted=False 以确保 JSON 备份落盘
+    # 检查数据库可用性并实现持久化逻辑
     persisted = False
     try:
-        from src.utils.database import get_db_pool, db
+        from src.utils.database import db
 
-        db_pool = await get_db_pool()
-        if db_pool is not None or db.is_available:
-            logger.info("[export] 数据库连接可用，但未实现持久化逻辑，继续导出 JSON 以确保数据安全")
+        # 使用 db.is_available 检查数据库可用性
+        if db.is_available:
+            logger.info("[export] 数据库连接可用，开始持久化批改结果...")
+            
+            try:
+                from src.db.postgres_grading import (
+                    GradingHistory,
+                    StudentGradingResult,
+                    save_grading_history,
+                    save_student_result,
+                )
+                import uuid
+                
+                # 1. 保存批改历史
+                history_id = str(uuid.uuid4())
+                total_students = len(student_results)
+                
+                # 计算平均分
+                total_scores = [s.get("total_score", 0) for s in student_results]
+                average_score = sum(total_scores) / total_students if total_students > 0 else 0
+                
+                grading_history = GradingHistory(
+                    id=history_id,
+                    batch_id=batch_id,
+                    status="completed" if not has_failures else "partial",
+                    class_ids=None,  # 可以从 state 中获取 class_ids
+                    created_at=datetime.now().isoformat(),
+                    completed_at=datetime.now().isoformat(),
+                    total_students=total_students,
+                    average_score=average_score,
+                    result_data={
+                        "has_failures": has_failures,
+                        "failed_pages_count": len(failed_pages),
+                        "cross_page_questions": cross_page_questions,
+                        "merged_questions": merged_questions,
+                    }
+                )
+                
+                await save_grading_history(grading_history)
+                logger.info(f"[export] 批改历史已保存到数据库: history_id={history_id}")
+                
+                # 2. 保存每个学生的批改结果和页面图像
+                saved_students = 0
+                saved_images = 0
+                
+                from src.db.postgres_grading import GradingPageImage, save_page_image
+                
+                for student in student_results:
+                    try:
+                        # 获取学生标识，优先使用 student_key，然后是 student_name
+                        student_key = (
+                            student.get("student_key") 
+                            or student.get("student_name") 
+                            or f"student_{saved_students + 1}"
+                        )
+                        
+                        student_result = StudentGradingResult(
+                            id=str(uuid.uuid4()),
+                            grading_history_id=history_id,
+                            student_key=student_key,
+                            score=student.get("total_score"),
+                            max_score=student.get("max_total_score"),
+                            class_id=None,  # 可以从 state 中获取
+                            student_id=student.get("student_id"),
+                            summary=student.get("student_summary"),
+                            self_report=student.get("self_audit"),
+                            result_data={
+                                "question_results": student.get("question_details", []),
+                                "percentage": student.get("percentage", 0),
+                            },
+                            imported_at=datetime.now().isoformat(),
+                        )
+                        
+                        await save_student_result(student_result)
+                        saved_students += 1
+                        
+                        # 3. 保存该学生的页面图像
+                        page_results = student.get("page_results", [])
+                        
+                        for page_result in page_results:
+                            page_index = page_result.get("page_index", 0)
+                            image_bytes = page_result.get("image")
+                            
+                            if image_bytes and isinstance(image_bytes, bytes):
+                                try:
+                                    page_image = GradingPageImage(
+                                        id=str(uuid.uuid4()),
+                                        grading_history_id=history_id,
+                                        student_key=student_key,
+                                        page_index=page_index,
+                                        image_data=image_bytes,
+                                        image_format="png",
+                                        created_at=datetime.now().isoformat(),
+                                    )
+                                    
+                                    await save_page_image(page_image)
+                                    saved_images += 1
+                                except Exception as e:
+                                    logger.error(f"[export] 保存页面图像失败 (student={student_key}, page={page_index}): {e}")
+                        
+                    except Exception as e:
+                        logger.error(f"[export] 保存学生结果失败: {e}")
+                
+                logger.info(f"[export] 已保存 {saved_students}/{total_students} 个学生结果到数据库")
+                logger.info(f"[export] 已保存 {saved_images} 张页面图像到数据库")
+                persisted = True
+                
+            except Exception as e:
+                logger.error(f"[export] 数据库持久化失败: {e}", exc_info=True)
+                persisted = False
+        else:
+            logger.info("[export] 数据库不可用，跳过持久化")
     except Exception as e:
         logger.warning(f"[export] 数据库连接检查失败（离线模式）: {e}")
 
