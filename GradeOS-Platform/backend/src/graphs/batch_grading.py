@@ -5962,23 +5962,37 @@ def create_batch_grading_graph(
     graph.add_edge("intake", "preprocess")
     graph.add_edge("preprocess", "rubric_parse")
     
+    # ✅ 先添加占位节点,用于跳过 review 时的路由
+    async def grading_fanout_placeholder_node(state: BatchGradingGraphState) -> Dict[str, Any]:
+        """占位节点,用于跳过 review 时直接进入 grading_fanout"""
+        batch_id = state.get("batch_id", "unknown")
+        logger.info(f"[grading_fanout_placeholder] 跳过 review,准备进入批改: batch_id={batch_id}")
+        return {
+            "current_stage": "grading_fanout_placeholder",
+            "percentage": 20.0,
+        }
+    
+    graph.add_node("grading_fanout_placeholder", grading_fanout_placeholder_node)
+    
     # ✅ 修复:添加条件路由,根据 enable_review 决定是否需要 rubric_review
     def should_review_rubric(state: BatchGradingGraphState) -> str:
         """决定是否需要 rubric review"""
+        batch_id = state.get("batch_id", "unknown")
         enable_review = state.get("inputs", {}).get("enable_review", True)
         parsed_rubric = state.get("parsed_rubric", {})
         grading_mode = _resolve_grading_mode(state.get("inputs", {}), parsed_rubric)
         
         # 如果是 assist 模式或 review 被禁用,直接跳到 grading_fanout
         if grading_mode.startswith("assist") or not enable_review:
-            logger.info(f"[should_review_rubric] 跳过 review,直接进入批改: mode={grading_mode}, enable_review={enable_review}")
+            logger.info(f"[should_review_rubric] 跳过 review,直接进入批改: batch_id={batch_id}, mode={grading_mode}, enable_review={enable_review}")
             return "skip_review"
         
         # 如果没有 rubric,也跳过
         if not parsed_rubric or not parsed_rubric.get("questions"):
-            logger.info(f"[should_review_rubric] 没有 rubric,跳过 review")
+            logger.info(f"[should_review_rubric] 没有 rubric,跳过 review: batch_id={batch_id}")
             return "skip_review"
         
+        logger.info(f"[should_review_rubric] 需要 review: batch_id={batch_id}")
         return "do_review"
     
     graph.add_conditional_edges(
@@ -5989,13 +6003,6 @@ def create_batch_grading_graph(
             "skip_review": "grading_fanout_placeholder",
         },
     )
-    
-    # 添加一个占位节点,用于跳过 review 时的路由
-    async def grading_fanout_placeholder_node(state: BatchGradingGraphState) -> Dict[str, Any]:
-        """占位节点,用于跳过 review 时直接进入 grading_fanout"""
-        return {}
-    
-    graph.add_node("grading_fanout_placeholder", grading_fanout_placeholder_node)
 
     # rubric_review 后也进入 grading_fanout
     graph.add_conditional_edges(
