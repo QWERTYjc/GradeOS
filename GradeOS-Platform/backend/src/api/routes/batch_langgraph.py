@@ -2476,21 +2476,36 @@ async def websocket_endpoint(websocket: WebSocket, batch_id: str):
                     teacher_key=teacher_key,
                 )
     except Exception as e:
+        # #region agent log
+        import sys; sys.stdout.write(f'[DEBUG_LOG] {{"hypothesisId":"H5","location":"batch_langgraph.py:websocket_endpoint:snapshot_error","message":"发送状态快照失败","data":{{"batch_id":"{batch_id}","ws_id":{ws_id},"error":"{str(e)[:100]}"}},"timestamp":{int(__import__("time").time()*1000)},"sessionId":"debug-session"}}\n'); sys.stdout.flush()
+        # #endregion
         logger.debug(f"发送状态快照失败: {e}")
 
     try:
         # 保持连接，等待客户端消息或断开
+        # #region agent log
+        import sys; sys.stdout.write(f'[DEBUG_LOG] {{"hypothesisId":"H5","location":"batch_langgraph.py:websocket_endpoint:before_while","message":"进入while循环前","data":{{"batch_id":"{batch_id}","ws_id":{ws_id}}},"timestamp":{int(__import__("time").time()*1000)},"sessionId":"debug-session"}}\n'); sys.stdout.flush()
+        # #endregion
         while True:
             if not _is_ws_connected(websocket):
+                # #region agent log
+                import sys; sys.stdout.write(f'[DEBUG_LOG] {{"hypothesisId":"H6","location":"batch_langgraph.py:websocket_endpoint:not_connected","message":"_is_ws_connected返回False","data":{{"batch_id":"{batch_id}","ws_id":{ws_id}}},"timestamp":{int(__import__("time").time()*1000)},"sessionId":"debug-session"}}\n'); sys.stdout.flush()
+                # #endregion
                 break
             data = await websocket.receive_text()
             logger.debug(f"收到 WebSocket 消息: batch_id={batch_id}, data={data}")
 
     except (WebSocketDisconnect, RuntimeError) as exc:
+        # #region agent log
+        import sys; sys.stdout.write(f'[DEBUG_LOG] {{"hypothesisId":"H8","location":"batch_langgraph.py:websocket_endpoint:disconnect_exception","message":"WebSocket断开异常","data":{{"batch_id":"{batch_id}","ws_id":{ws_id},"error":"{str(exc)[:100]}"}},"timestamp":{int(__import__("time").time()*1000)},"sessionId":"debug-session"}}\n'); sys.stdout.flush()
+        # #endregion
         logger.info(f"WebSocket 连接断开: batch_id={batch_id}, reason={exc}")
         _discard_connection(batch_id, websocket)
         return
     except Exception as exc:
+        # #region agent log
+        import sys; sys.stdout.write(f'[DEBUG_LOG] {{"hypothesisId":"H8","location":"batch_langgraph.py:websocket_endpoint:other_exception","message":"WebSocket其他异常","data":{{"batch_id":"{batch_id}","ws_id":{ws_id},"error":"{str(exc)[:100]}"}},"timestamp":{int(__import__("time").time()*1000)},"sessionId":"debug-session"}}\n'); sys.stdout.flush()
+        # #endregion
         logger.debug(f"WebSocket 接收异常: batch_id={batch_id}, error={exc}")
         logger.info(f"WebSocket 连接断开: batch_id={batch_id}")
         _discard_connection(batch_id, websocket)
