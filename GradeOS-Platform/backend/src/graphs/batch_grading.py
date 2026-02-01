@@ -6493,16 +6493,13 @@ def create_batch_grading_graph(
         ],
     )
 
-    # 并行批改后通过汇聚门控进入 confession
-    # 只有当所有页面都批改完成后，才继续执行
-    graph.add_conditional_edges(
-        "grade_batch",
-        grading_merge_gate,
-        {
-            "continue": "confession",
-            "wait": END,
-        },
-    )
+    # 🔥 修复：移除有问题的 grading_merge_gate 条件边
+    # 问题：并行 Send 任务完成时，每个任务都会独立触发条件边，
+    # 导致状态聚合前就检查 student_results 数量，产生竞态条件。
+    # 
+    # 解决方案：直接使用普通边，LangGraph 会自动等待所有 Send 任务完成、
+    # 状态聚合后，再进入下一个节点（confession）。
+    graph.add_edge("grade_batch", "confession")
 
     # 简化流程：confession → logic_review → review → export → END
     graph.add_edge("confession", "logic_review")
@@ -6544,10 +6541,18 @@ def _count_graded_pages(grading_results: List[Dict[str, Any]]) -> int:
 
 def grading_merge_gate(state: BatchGradingGraphState) -> str:
     """
-    批改汇聚门控
+    批改汇聚门控（已弃用）
 
-    检查是否所有并行批改任务都已完成。
-    🔧 修复：支持 grade_student 模式（使用 student_results）和 grade_page 模式（使用 grading_results）
+    ⚠️ 此函数当前未被使用！
+    
+    原问题：当使用 Send 进行并行批改时，每个并行任务完成后都会独立触发此条件边，
+    但此时状态聚合可能还未完成，导致 student_results 数量检查失败，返回 "wait" → END，
+    整个图被提前标记为 "completed"，跳过了 confession 和 logic_review。
+    
+    修复方案：移除条件边，改为直接使用普通边 (add_edge)，让 LangGraph 自动等待
+    所有 Send 任务完成并聚合状态后，再进入下一个节点。
+    
+    保留此函数以便未来调试或参考。
     """
     batch_id = state.get("batch_id", "unknown")
     grading_results = state.get("grading_results") or []
