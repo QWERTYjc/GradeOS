@@ -464,7 +464,7 @@ const QuestionDetail: React.FC<{
                                                     {spr.awarded}
                                                 </span>
                                                 <span className="text-[10px] opacity-80">
-                                                    / {spr.maxPoints ?? spr.scoringPoint?.score ?? 0}
+                                                    / {spr.maxPoints ?? (spr as any).max_points ?? spr.scoringPoint?.score ?? spr.awarded ?? 1}
                                                 </span>
                                             </div>
                                         </div>
