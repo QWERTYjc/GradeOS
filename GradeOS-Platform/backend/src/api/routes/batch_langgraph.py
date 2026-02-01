@@ -100,12 +100,14 @@ def _discard_connection(batch_id: str, websocket: WebSocket) -> None:
 
 
 def _write_debug_log(payload: Dict[str, Any]) -> None:
-    if not DEBUG_LOG_PATH:
-        return
+    """写入调试日志到标准输出（Railway可见）"""
+    import sys
+    from datetime import datetime
     try:
-        Path(DEBUG_LOG_PATH).parent.mkdir(parents=True, exist_ok=True)
-        with open(DEBUG_LOG_PATH, "a", encoding="utf-8") as log_file:
-            log_file.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        payload["timestamp"] = payload.get("timestamp", int(datetime.now().timestamp() * 1000))
+        payload["sessionId"] = payload.get("sessionId", "debug-session")
+        # 直接打印到 stdout，Railway 会捕获
+        print(f"[DEBUG_LOG] {json.dumps(payload, ensure_ascii=False)}", file=sys.stdout, flush=True)
     except Exception as exc:
         logger.debug(f"Failed to write debug log: {exc}")
 
@@ -460,6 +462,19 @@ async def _start_run_with_teacher_limit(
     homework_id: Optional[str],
     student_mapping: List[dict],
 ) -> Optional[str]:
+    # #region agent log - 假设L: _start_run_with_teacher_limit 入口
+    _write_debug_log({
+        "hypothesisId": "L",
+        "location": "batch_langgraph.py:_start_run_with_teacher_limit:entry",
+        "message": "_start_run_with_teacher_limit被调用",
+        "data": {
+            "batch_id": batch_id,
+            "teacher_key": teacher_key,
+            "answer_images_count": len(payload.get("answer_images", [])),
+            "rubric_images_count": len(payload.get("rubric_images", [])),
+        },
+    })
+    # #endregion
     logger.info(f"[_start_run_with_teacher_limit] 开始执行: batch_id={batch_id}")
     logger.info(f"[_start_run_with_teacher_limit] payload keys: {list(payload.keys())}")
     logger.info(f"[_start_run_with_teacher_limit] answer_images count: {len(payload.get('answer_images', []))}")
@@ -537,10 +552,26 @@ async def _start_run_with_teacher_limit(
     
     run_id: Optional[str] = None
     try:
+        # #region agent log - 假设M: 准备启动 LangGraph
+        _write_debug_log({
+            "hypothesisId": "M",
+            "location": "batch_langgraph.py:_start_run_with_teacher_limit:before_start_run",
+            "message": "准备调用orchestrator.start_run",
+            "data": {"batch_id": batch_id},
+        })
+        # #endregion
         logger.info(f"[_start_run_with_teacher_limit] 准备启动 LangGraph run")
         run_id = await orchestrator.start_run(
             graph_name="batch_grading", payload=payload, idempotency_key=batch_id
         )
+        # #region agent log - 假设M: LangGraph 启动成功
+        _write_debug_log({
+            "hypothesisId": "M",
+            "location": "batch_langgraph.py:_start_run_with_teacher_limit:after_start_run",
+            "message": "orchestrator.start_run返回成功",
+            "data": {"batch_id": batch_id, "run_id": run_id},
+        })
+        # #endregion
         logger.info(f"[_start_run_with_teacher_limit] LangGraph 启动成功: batch_id={batch_id}, run_id={run_id}")
         
         stream_task = asyncio.create_task(
@@ -975,11 +1006,31 @@ async def stream_langgraph_progress(
     logger.info(f"开始流式监听 LangGraph 进度: batch_id={batch_id}, run_id={run_id}")
 
     try:
+        # #region agent log - 假设N: 开始监听事件流
+        _write_debug_log({
+            "hypothesisId": "N",
+            "location": "batch_langgraph.py:stream_langgraph_progress:before_stream",
+            "message": "准备开始监听orchestrator.stream_run",
+            "data": {"batch_id": batch_id, "run_id": run_id},
+        })
+        # #endregion
         # 🔥 使用 LangGraph 的流式 API
+        event_count = 0
         async for event in orchestrator.stream_run(run_id):
+            event_count += 1
             event_type = event.get("type")
             node_name = event.get("node")
             data = event.get("data", {})
+            
+            # #region agent log - 假设N: 收到事件
+            if event_count <= 5:  # 只记录前5个事件
+                _write_debug_log({
+                    "hypothesisId": "N",
+                    "location": "batch_langgraph.py:stream_langgraph_progress:event_received",
+                    "message": f"收到第{event_count}个事件",
+                    "data": {"batch_id": batch_id, "event_type": event_type, "node_name": node_name},
+                })
+            # #endregion
 
             logger.debug(
                 f"LangGraph 事件: batch_id={batch_id}, type={event_type}, node={node_name}"
