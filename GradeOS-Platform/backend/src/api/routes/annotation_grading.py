@@ -84,6 +84,10 @@ async def annotate_page(request: AnnotateRequest):
     - 输入：图片 Base64 + 评分标准
     - 输出：批注坐标列表（分数位置、错误圈选、讲解位置等）
     """
+    raise HTTPException(
+        status_code=410,
+        detail="后端批注渲染已禁用，请改为前端 Canvas 渲染。",
+    )
     try:
         # 解码图片
         try:
@@ -144,6 +148,10 @@ async def annotate_batch(request: BatchAnnotateRequest):
     """
     批量批改多页图片并返回带坐标的批注信息
     """
+    raise HTTPException(
+        status_code=410,
+        detail="后端批注渲染已禁用，请改为前端 Canvas 渲染。",
+    )
     try:
         # 解码所有图片
         pages = []

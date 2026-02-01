@@ -1008,13 +1008,26 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
             // 收集该页的所有批注
             const pageAnnotations: VisualAnnotation[] = [];
             student.questionResults?.forEach(q => {
-                const questionPages = q.pageIndices || [];
-                if (questionPages.length === 0) return;
-                if (!questionPages.includes(pageIdx)) return;
+                const questionPages = Array.isArray(q.pageIndices) ? q.pageIndices : [];
+                const questionHasPage = questionPages.includes(pageIdx);
+                const isMultiPage = questionPages.length > 1;
+
+                const matchesQuestionPage = (pageValue?: number | null) => {
+                    if (pageValue !== null && pageValue !== undefined && !Number.isNaN(Number(pageValue))) {
+                        return Number(pageValue) === pageIdx;
+                    }
+                    if (isMultiPage) {
+                        return false;
+                    }
+                    return questionHasPage;
+                };
 
                 if (q.steps && q.steps.length > 0) {
                     q.steps.forEach(step => {
-                        if (step.step_region) {
+                        const stepRegion = step.step_region;
+                        const stepPage = stepRegion?.page_index ?? stepRegion?.pageIndex ?? step.page_index ?? step.pageIndex;
+                        if (!matchesQuestionPage(stepPage)) return;
+                        if (stepRegion) {
                             const markText = step.mark_type === 'M'
                                 ? `M${step.mark_value}`
                                 : `A${step.mark_value}`;
@@ -1022,7 +1035,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
 
                             pageAnnotations.push({
                                 annotation_type: annotationType,
-                                bounding_box: step.step_region,
+                                bounding_box: stepRegion,
                                 text: markText,
                                 color: step.is_correct ? '#00AA00' : '#FF0000',
                             } as VisualAnnotation);
@@ -1031,10 +1044,10 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                                 pageAnnotations.push({
                                     annotation_type: 'comment',
                                     bounding_box: {
-                                        x_min: Math.min((step.step_region.x_max || 0.8) + 0.02, 0.95),
-                                        y_min: step.step_region.y_min,
-                                        x_max: Math.min((step.step_region.x_max || 0.8) + 0.25, 1.0),
-                                        y_max: step.step_region.y_max,
+                                        x_min: Math.min((stepRegion.x_max || 0.8) + 0.02, 0.95),
+                                        y_min: stepRegion.y_min,
+                                        x_max: Math.min((stepRegion.x_max || 0.8) + 0.25, 1.0),
+                                        y_max: stepRegion.y_max,
                                     },
                                     text: step.feedback,
                                     color: '#0066FF',
@@ -1045,8 +1058,10 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                 }
 
                 q.scoringPointResults?.forEach((spr: any) => {
-                    if (spr.errorRegion || spr.error_region) {
-                        const errorRegion = spr.errorRegion || spr.error_region;
+                    const errorRegion = spr.errorRegion || spr.error_region;
+                    const errorPage = errorRegion?.page_index ?? errorRegion?.pageIndex ?? spr.page_index ?? spr.pageIndex;
+                    if (!matchesQuestionPage(errorPage)) return;
+                    if (errorRegion) {
                         pageAnnotations.push({
                             annotation_type: 'error_circle',
                             bounding_box: errorRegion,
@@ -1056,7 +1071,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                     }
                 });
 
-                if (q.answerRegion) {
+                if (q.answerRegion && matchesQuestionPage(q.answerRegion.page_index ?? q.answerRegion.pageIndex ?? q.page_index ?? q.pageIndex)) {
                     pageAnnotations.push({
                         annotation_type: 'score',
                         bounding_box: {

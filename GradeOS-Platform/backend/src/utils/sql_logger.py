@@ -2,7 +2,7 @@
 import logging
 import json
 import os
-from typing import Optional
+from typing import Optional, Iterable, Any
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +21,20 @@ def _sensitive_table_name(query: str) -> Optional[str]:
         if table in lowered:
             return table
     return None
+
+
+def _looks_sensitive_payload(params: Optional[Iterable[Any]]) -> bool:
+    if not params:
+        return False
+    try:
+        for item in params:
+            if isinstance(item, (dict, list, bytes, bytearray)):
+                return True
+            if isinstance(item, str) and len(item) > 500:
+                return True
+    except Exception:
+        return True
+    return False
 
 
 def log_sql_operation(
@@ -46,16 +60,18 @@ def log_sql_operation(
         "true",
         "yes",
     )
-    sensitive_table = _sensitive_table_name(query)
-    if sensitive_table:
+    query_text = (query or "").strip()
+    sensitive_table = _sensitive_table_name(query_text)
+    if sensitive_table or _looks_sensitive_payload(params):
         if error:
-            logger.error(f"[SQL] ✗ {operation} failed on {sensitive_table}: {error}")
+            target = sensitive_table or "sensitive_payload"
+            logger.error(f"[SQL] ✗ {operation} failed on {target}: {error}")
         return
     log_data = {
         "operation": operation,
-        "query": query.strip(),
+        "query": query_text,
     }
-    if log_params and params:
+    if log_params and params and not _looks_sensitive_payload(params):
         log_data["params"] = params
     
     if result_count is not None:

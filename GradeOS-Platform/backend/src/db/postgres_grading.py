@@ -3,6 +3,7 @@
 import uuid
 import json
 import logging
+import os
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 from dataclasses import dataclass, asdict
@@ -62,6 +63,57 @@ class GradingPageImage:
 
 
 _PAGE_IMAGES_TABLE_READY = False
+
+
+def _build_file_url(file_id: str) -> Optional[str]:
+    if not file_id:
+        return None
+    public_base = (
+        os.getenv("BACKEND_PUBLIC_URL")
+        or os.getenv("PUBLIC_BACKEND_URL")
+        or os.getenv("PUBLIC_API_BASE_URL")
+        or ""
+    )
+    if public_base:
+        return public_base.rstrip("/") + f"/api/batch/files/{file_id}/download"
+    return f"/api/batch/files/{file_id}/download"
+
+
+def _sanitize_result_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Strip heavy/duplicate fields before persisting to DB."""
+    sanitized = dict(payload)
+    drop_keys = {
+        "grading_annotations",
+        "gradingAnnotations",
+        "annotations",
+        "annotation",
+        "image",
+        "image_bytes",
+        "image_url",
+        "imageUrl",
+        "answer_images",
+        "rubric_images",
+    }
+    for key in list(drop_keys):
+        sanitized.pop(key, None)
+    for list_key in ("question_details", "question_results", "questionResults"):
+        items = sanitized.get(list_key)
+        if not isinstance(items, list):
+            continue
+        cleaned_items: List[Dict[str, Any]] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            cleaned = {
+                k: v
+                for k, v in item.items()
+                if k not in drop_keys and not isinstance(v, (bytes, bytearray))
+            }
+            cleaned.pop("image_url", None)
+            cleaned.pop("imageUrl", None)
+            cleaned_items.append(cleaned)
+        sanitized[list_key] = cleaned_items
+    return sanitized
 
 
 async def ensure_page_images_table() -> None:
@@ -305,7 +357,7 @@ async def save_student_result(result: StudentGradingResult) -> None:
     result_data_payload = result.result_data
     confession_value = result.confession
     if isinstance(result_data_payload, dict):
-        payload = dict(result_data_payload)
+        payload = _sanitize_result_payload(result_data_payload)
         if confession_value is None:
             confession_value = payload.get("confession")
         elif "confession" not in payload:
@@ -564,7 +616,7 @@ async def get_page_images(
                     student_key=row["student_key"],
                     page_index=row["page_index"],
                     file_id=row["file_id"] or "",
-                    file_url=row["file_url"],
+                    file_url=row["file_url"] or _build_file_url(row["file_id"] or ""),
                     content_type=row["content_type"],
                     created_at=created_at_value,
                 )

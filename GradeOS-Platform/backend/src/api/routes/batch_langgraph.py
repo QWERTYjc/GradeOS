@@ -1803,8 +1803,6 @@ def _merge_question_results(existing: Dict[str, Any], incoming: Dict[str, Any]) 
         merged["pageIndices"] = sorted(pages)
     if not merged.get("scoring_point_results") and incoming.get("scoring_point_results"):
         merged["scoring_point_results"] = incoming.get("scoring_point_results")
-    if not merged.get("annotations") and incoming.get("annotations"):
-        merged["annotations"] = incoming.get("annotations")
     if not merged.get("steps") and incoming.get("steps"):
         merged["steps"] = incoming.get("steps")
     return merged
@@ -3773,8 +3771,23 @@ async def get_batch_confession(
             raise HTTPException(status_code=404, detail="Batch not found")
 
         state = run_info.state or {}
-        student_results = state.get("student_results", [])
+        student_results = (
+            state.get("reviewed_results")
+            or state.get("confessed_results")
+            or state.get("student_results", [])
+        )
 
+        if not student_results:
+            try:
+                final_output = await orchestrator.get_final_output(run_id)
+                if final_output:
+                    student_results = (
+                        final_output.get("reviewed_results")
+                        or final_output.get("confessed_results")
+                        or final_output.get("student_results", [])
+                    )
+            except Exception:
+                student_results = []
         if not student_results:
             raise HTTPException(status_code=404, detail="No grading results")
 

@@ -745,14 +745,23 @@ const waitForPostConfessionResults = async (batchId: string, initialResults: Stu
     const maxAttempts = 30;
     for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
         await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+        let fetchedResults: StudentResult[] | null = null;
         try {
             const response = await gradingApi.getBatchResults(batchId);
-            const results = extractResultsPayload(response);
-            if (hasPostConfessionResults(results)) {
-                return results;
-            }
+            fetchedResults = extractResultsPayload(response);
         } catch (error) {
             console.warn('Polling post-confession results failed:', error);
+        }
+        if (!fetchedResults) {
+            try {
+                const reviewContext = await gradingApi.getResultsReviewContext(batchId);
+                fetchedResults = extractResultsPayload(reviewContext) || (reviewContext as any)?.student_results || null;
+            } catch (error) {
+                console.warn('Polling results-review fallback failed:', error);
+            }
+        }
+        if (hasPostConfessionResults(fetchedResults)) {
+            return fetchedResults;
         }
     }
     return null;
