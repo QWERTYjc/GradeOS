@@ -1483,6 +1483,10 @@ async def get_grading_history(
         # 使用异步版本获取批改历史
         histories = await list_grading_history_async(class_id=class_id, limit=50)
         for history in histories:
+            # 🔧 过滤失败的批次
+            if history.status in ('failed', 'error'):
+                continue
+            
             class_ids = history.class_ids or []
             if isinstance(class_ids, str):
                 class_ids = [class_ids]
@@ -1567,6 +1571,11 @@ async def get_grading_history(
                 except Exception:
                     result_meta = {}
 
+            # 🔧 过滤失败的批次
+            row_status = row.get("status") or ""
+            if row_status in ('failed', 'error'):
+                continue
+                
             if allowed_class_ids is not None:
                 teacher_match = row.get("teacher_id") or result_meta.get("teacher_id") or result_meta.get("teacherId")
                 if teacher_match and teacher_id and teacher_match == teacher_id:
