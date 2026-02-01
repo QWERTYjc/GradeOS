@@ -296,6 +296,7 @@ class ResultsReviewContextResponse(BaseModel):
     current_stage: Optional[str] = None
     student_results: List[dict] = []
     answer_images: List[str] = []
+    parsed_rubric: Optional[dict] = None  # 添加 parsed_rubric 字段
 
 
 def _pdf_to_images(pdf_path: str, dpi: int = 150) -> List[bytes]:
@@ -2774,6 +2775,11 @@ async def get_results_review_context(
                     data["confession"] = confession_value
             raw_results.append(data)
 
+        # 从 history.result_data 中获取 parsed_rubric
+        parsed_rubric = None
+        if history.result_data and isinstance(history.result_data, dict):
+            parsed_rubric = history.result_data.get("parsed_rubric")
+
         answer_images = await _load_answer_images_from_db(history.id)
         if not answer_images:
             answer_images = await _load_answer_images_from_storage()
@@ -2783,6 +2789,7 @@ async def get_results_review_context(
             current_stage=None,
             student_results=_format_results_for_frontend(raw_results),
             answer_images=answer_images,
+            parsed_rubric=parsed_rubric,
         )
 
     try:
@@ -2900,12 +2907,17 @@ async def get_results_review_context(
                         answer_images = db_images
         if not answer_images:
             answer_images = await _load_answer_images_from_storage()
+        
+        # 从 state 中获取 parsed_rubric
+        parsed_rubric = state.get("parsed_rubric")
+        
         return ResultsReviewContextResponse(
             batch_id=batch_id,
             status=run_info.status.value if run_info.status else None,
             current_stage=state.get("current_stage"),
             student_results=_format_results_for_frontend(student_results),
             answer_images=answer_images,
+            parsed_rubric=parsed_rubric,
         )
     except HTTPException:
         raise

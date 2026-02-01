@@ -925,17 +925,36 @@ class LLMReasoningClient:
         page_context: Optional[Dict[str, Any]] = None,
     ) -> str:
         """构建评分提示词（精简版）"""
+        
+        # 检查是否有评分标准
+        if not rubric and not parsed_rubric:
+            raise ValueError("❌ 未收到评分标准，无法进行批改")
+        
         rubric_info = self._build_compact_rubric_info(parsed_rubric, rubric)
         index_context = self._format_page_index_context(page_context)
 
-        return f"""## 评分标准
+        return f"""## ⚠️ 重要：严格按评分标准批改
+
+你必须**严格遵守**以下评分标准，不得随意发挥或主观臆断。
+
+## 评分标准（必须严格遵守）
 {rubric_info}
 {index_context}
+
+## 批改原则（必须遵守）
+1. **严格依据评分标准**：每个得分点必须在评分标准中有明确依据
+2. **不得超出标准范围**：不能给评分标准之外的分数
+3. **不得合并给分点**：评分标准中的每个得分点必须单独评判，不能将多个得分点合并评分
+4. **得分点默认1分**：除非评分标准明确标注某得分点值2分或以上，否则每个得分点默认为1分
+5. **证据必须充分**：每个得分点必须有明确的原文引用作为证据
+6. **标准答案为准**：学生答案必须与标准答案一致或等价才能得分
+7. **不得主观臆断**：不能根据"可能"、"应该"等主观判断给分
 
 ## 任务
 1. 判断页面类型（空白页/封面页直接返回is_blank_page=true）
 2. 识别题目并定位作答区域（坐标0-1）
-3. 按评分标准逐题批改，输出JSON格式
+3. **严格按评分标准**逐题批改，输出JSON格式
+4. 每个得分点必须有明确的 evidence（原文引用）
 
 ## 输出JSON格式
 ```json
@@ -1220,6 +1239,10 @@ class LLMReasoningClient:
             logger.info(
                 f"批改完成: score={result.get('score')}, confidence={result.get('confidence')}"
             )
+            
+            # 输出完整 JSON 结果用于调试
+            import json
+            logger.info(f"📄 批改结果完整JSON:\n{json.dumps(result, ensure_ascii=False, indent=2)}")
 
             return result
 
@@ -3246,6 +3269,18 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
                 "confidence": 0,
                 "question_details": [],
             }
+        
+        # 检查是否有评分标准
+        if not parsed_rubric or not parsed_rubric.get("questions"):
+            logger.error(f"[grade_student] ❌ 未收到评分标准，无法批改学生 {student_key}")
+            return {
+                "status": "failed",
+                "error": "❌ 未收到评分标准，无法进行批改",
+                "total_score": 0,
+                "max_score": 0,
+                "confidence": 0,
+                "question_details": [],
+            }
 
         logger.info(f"[grade_student] 开始批改学生 {student_key}，共 {len(images)} 页")
 
@@ -3301,27 +3336,45 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
         # 构建批改提示词
         prompt = f"""你是一位专业的阅卷教师，请仔细分析以下学生的答题图像并进行精确评分，同时输出**逐步骤**的批注坐标信息。
 
+## ⚠️ 重要：严格按评分标准批改
+
+你必须**严格遵守**以下评分标准，不得随意发挥或主观臆断。
+
 ## 学生信息
 - 学生标识：{student_key}
 - 答题页数：{len(images)} 页
 
-## 评分标准
+## 评分标准（必须严格遵守）
 {rubric_context}
 
 {page_context_info}
 
+## 批改原则（必须遵守）
+1. **严格依据评分标准**：每个得分点必须在评分标准中有明确依据
+2. **不得超出标准范围**：不能给评分标准之外的分数
+3. **不得合并给分点**：评分标准中的每个得分点必须单独评判，不能将多个得分点合并评分
+4. **得分点默认1分**：除非评分标准明确标注某得分点值2分或以上，否则每个得分点默认为1分
+5. **证据必须充分**：每个得分点必须有明确的原文引用作为证据
+6. **标准答案为准**：学生答案必须与标准答案一致或等价才能得分
+7. **不得主观臆断**：不能根据"可能"、"应该"等主观判断给分
+
 ## 批改要求
 1. **逐题评分**：对每道题目进行独立评分
 2. **得分点核对**：严格按照评分标准的得分点给分
-3. **跨页处理**：如果一道题跨越多页，需要综合所有页面的内容评分
-4. **另类解法**：如果学生使用了有效的另类解法，同样给分
-5. **详细反馈**：为每道题提供具体的评分说明
-6. **完整记录学生作答**：student_answer 字段必须完整记录学生的原始作答内容，不要省略
-7. **自白与置信度**：每道题必须输出 self_critique（自我反思）和 self_critique_confidence（置信度）
+3. **⚠️ 关键：每个得分点必须单独输出**：
+   - scoring_point_results 数组中必须包含评分标准中的**所有得分点**
+   - 不能合并多个得分点为一个
+   - 不能省略任何得分点
+   - 每个得分点必须有独立的 point_id、awarded、evidence
+4. **跨页处理**：如果一道题跨越多页，需要综合所有页面的内容评分
+5. **另类解法**：如果学生使用了有效的另类解法，同样给分
+6. **详细反馈**：为每道题提供具体的评分说明
+7. **完整记录学生作答**：student_answer 字段必须完整记录学生的原始作答内容，不要省略
+8. **自白与置信度**：每道题必须输出 self_critique（自我反思）和 self_critique_confidence（置信度）
    - 自白需诚实指出不确定之处、证据不足的地方
    - 如果对某道题的评分不确定，必须在 self_critique 中说明
-8. **逐步骤批注**：识别学生作答的每一个步骤，标注坐标和得分情况
-9. **区分 A mark 和 M mark**：
+9. **逐步骤批注**：识别学生作答的每一个步骤，标注坐标和得分情况
+10. **区分 A mark 和 M mark**：
    - **A mark（Answer mark）**：答案分，只看最终答案是否正确
    - **M mark（Method mark）**：方法分，看解题步骤/方法是否正确
 
@@ -3402,15 +3455,18 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
                 }}
             ],
             "scoring_point_results": [
+                // ⚠️ 重要：必须包含评分标准中的所有得分点，不能合并或省略
+                // 例如：如果评分标准有 13 个得分点，这里必须输出 13 个元素
                 {{
-                    "point_id": "得分点ID",
+                    "point_id": "得分点ID（必须与评分标准中的 point_id 一致）",
                     "description": "得分点描述",
                     "mark_type": "M 或 A",
                     "max_score": 该得分点满分,
                     "awarded": 获得的分数,
                     "evidence": "【必须引用原文】评分依据，引用学生答案中的具体内容",
                     "error_region": {{"x_min": 0.3, "y_min": 0.26, "x_max": 0.5, "y_max": 0.31}}
-                }}
+                }},
+                // ... 继续输出所有得分点，不能省略
             ],
             "annotations": [
                 {{
@@ -3619,6 +3675,10 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
                 f"score={result.get('total_score')}/{result.get('max_score')}, "
                 f"questions={len(result.get('question_details', []))}"
             )
+            
+            # 输出完整学生批改结果 JSON（用于调试）
+            import json
+            logger.info(f"📄 学生 {student_key} 批改结果完整JSON:\n{json.dumps(result, ensure_ascii=False, indent=2)}")
 
             return result
 

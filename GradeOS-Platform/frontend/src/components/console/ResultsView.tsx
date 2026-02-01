@@ -2079,7 +2079,16 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                                             Page {pageIdx + 1}
                                         </div>
                                         {imageUrl ? (
-                                            <img src={imageUrl} alt={`Page ${pageIdx + 1}`} className="w-full h-auto" />
+                                            // 检查是否是 base64 数据，如果是则添加 data URI 前缀
+                                            imageUrl.startsWith('data:') || imageUrl.startsWith('/9j/') ? (
+                                                <img 
+                                                    src={imageUrl.startsWith('data:') ? imageUrl : `data:image/jpeg;base64,${imageUrl}`} 
+                                                    alt={`Page ${pageIdx + 1}`} 
+                                                    className="w-full h-auto" 
+                                                />
+                                            ) : (
+                                                <img src={imageUrl} alt={`Page ${pageIdx + 1}`} className="w-full h-auto" />
+                                            )
                                         ) : (
                                             <div className="p-10 text-center text-slate-400">Image missing</div>
                                         )}
@@ -2366,7 +2375,16 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                                             showText={true}
                                         />
                                     ) : originalImageUrl ? (
-                                        <img src={originalImageUrl} alt={`Page ${pageIdx + 1}`} className="w-full h-auto" />
+                                        // 检查是否是 base64 数据 URL，如果是则直接使用，否则作为普通 URL
+                                        originalImageUrl.startsWith('data:') || originalImageUrl.startsWith('/9j/') ? (
+                                            <img 
+                                                src={originalImageUrl.startsWith('data:') ? originalImageUrl : `data:image/jpeg;base64,${originalImageUrl}`} 
+                                                alt={`Page ${pageIdx + 1}`} 
+                                                className="w-full h-auto" 
+                                            />
+                                        ) : (
+                                            <img src={originalImageUrl} alt={`Page ${pageIdx + 1}`} className="w-full h-auto" />
+                                        )
                                     ) : (
                                         <div className="p-10 text-center text-slate-400">Image missing</div>
                                     )}

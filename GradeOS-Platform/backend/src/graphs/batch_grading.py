@@ -2646,6 +2646,11 @@ async def _grade_batch_node_impl(state: Dict[str, Any]) -> Dict[str, Any]:
                         page_context=page_context,
                         stream_callback=stream_callback,
                     )
+                    
+                    # 输出完整页面批改结果 JSON（用于调试）
+                    import json
+                    logger.info(f"📄 页面 {page_index} 批改结果完整JSON:\n{json.dumps(page_result, ensure_ascii=False, indent=2)}")
+                    
                 except Exception as exc:
                     logger.warning(f"[grade_batch] page {page_index} grading failed: {exc}")
                     page_results.append(
@@ -4461,6 +4466,54 @@ def _build_confession_prompt(
     return "\n".join(lines)
 
 
+def _extract_json_from_response(text: str) -> str:
+    """
+    从 LLM 响应中提取 JSON 内容
+    
+    支持以下格式：
+    1. ```json ... ```
+    2. 纯 JSON（以 { 开头）
+    3. 包含其他文本的混合内容
+    """
+    if not text:
+        return "{}"
+    
+    # 尝试提取 ```json ... ``` 块
+    json_match = re.search(r'```json\s*\n(.*?)\n```', text, re.DOTALL)
+    if json_match:
+        return json_match.group(1).strip()
+    
+    # 尝试提取 ``` ... ``` 块（不带 json 标记）
+    code_match = re.search(r'```\s*\n(.*?)\n```', text, re.DOTALL)
+    if code_match:
+        content = code_match.group(1).strip()
+        if content.startswith('{') or content.startswith('['):
+            return content
+    
+    # 尝试提取 { ... } 或 [ ... ]
+    start = text.find('{')
+    if start == -1:
+        start = text.find('[')
+    
+    if start != -1:
+        # 找到匹配的结束括号
+        bracket_count = 0
+        is_array = text[start] == '['
+        end_char = ']' if is_array else '}'
+        start_char = '[' if is_array else '{'
+        
+        for i in range(start, len(text)):
+            if text[i] == start_char:
+                bracket_count += 1
+            elif text[i] == end_char:
+                bracket_count -= 1
+                if bracket_count == 0:
+                    return text[start:i+1]
+    
+    # 如果都失败了，返回原文本
+    return text.strip()
+
+
 async def confession_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     """
     忏悔/自白节点 (Confession Node) - 集成共享记忆系统
@@ -4769,6 +4822,10 @@ async def confession_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                 try:
                     json_text = _extract_json_from_response(response_text)
                     payload = json.loads(json_text)
+                    
+                    # 输出完整 confession JSON（用于调试）
+                    logger.info(f"🔍 Confession 完整JSON (学生={student_key}):\n{json.dumps(payload, ensure_ascii=False, indent=2)}")
+                    
                     # LLM ???? confession ? confession ??
                     confession_data = (
                         payload.get("confession") or payload
@@ -5404,6 +5461,10 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                 try:
                     json_text = reasoning_client._extract_json_from_text(response_text)
                     payload_data = json.loads(json_text)
+                    
+                    # 输出完整 logic_review JSON（用于调试）
+                    logger.info(f"🔍 Logic Review 完整JSON (学生={student_key}):\n{json.dumps(payload_data, ensure_ascii=False, indent=2)}")
+                    
                 except Exception as exc:
                     logger.warning(f"[logic_review] parse failed student={student_key}: {exc}")
 
@@ -5730,6 +5791,9 @@ async def export_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                 if state_class_id:
                     class_ids = [state_class_id]
 
+                # 从 state 中获取 parsed_rubric
+                parsed_rubric = state.get("parsed_rubric")
+                
                 grading_history = GradingHistory(
                     id=history_id,
                     batch_id=batch_id,
@@ -5744,6 +5808,7 @@ async def export_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                         "failed_pages_count": len(failed_pages),
                         "cross_page_questions": cross_page_questions,
                         "merged_questions": merged_questions,
+                        "parsed_rubric": parsed_rubric,  # 添加 parsed_rubric
                     },
                 )
 

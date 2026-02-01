@@ -28,6 +28,7 @@ export default function ResultsReviewPage() {
   const setSubmissionId = useConsoleStore((state) => state.setSubmissionId);
   const setStatus = useConsoleStore((state) => state.setStatus);
   const setCurrentTab = useConsoleStore((state) => state.setCurrentTab);
+  const setParsedRubric = useConsoleStore((state) => state.setParsedRubric); // 添加 setParsedRubric
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -121,6 +122,12 @@ export default function ResultsReviewPage() {
         if (!active) return;
         setSubmissionId(data.batch_id || batchId);
         setFinalResults(normalizeStudentResults(data.student_results || []));
+        
+        // 设置 parsedRubric（如果存在）
+        if (data.parsed_rubric) {
+          setParsedRubric(data.parsed_rubric as any);
+        }
+        
         const normalizedImages = (data.answer_images || []).map((img) => {
           if (!img) return img;
           const trimmed = img.trim();
@@ -150,7 +157,7 @@ export default function ResultsReviewPage() {
     return () => {
       active = false;
     };
-  }, [batchId, setFinalResults, setUploadedImages, setSubmissionId, setStatus, setCurrentTab, router, user?.id]);
+  }, [batchId, setFinalResults, setUploadedImages, setSubmissionId, setStatus, setCurrentTab, setParsedRubric, router, user?.id]);
 
   return (
     <div className="h-screen bg-white flex flex-col">
