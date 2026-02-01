@@ -2603,6 +2603,23 @@ async def _grade_batch_node_impl(state: Dict[str, Any]) -> Dict[str, Any]:
                 page_index = page_indices[idx] if idx < len(page_indices) else idx
                 page_context = page_index_contexts.get(page_index)
                 page_max_score = _estimate_page_max_score(local_parsed_rubric, page_context)
+                
+                # 为每个页面创建独立的 stream callback，避免输出混淆
+                async def page_stream_callback(stream_type: str, chunk: str, _page_idx: int = page_index) -> None:
+                    await _broadcast_progress(
+                        batch_id,
+                        {
+                            "type": "llm_stream_chunk",
+                            "nodeId": "grade_batch",
+                            "nodeName": f"Page {_page_idx + 1}",
+                            "agentId": f"batch_{batch_index}_page_{_page_idx}",
+                            "agentLabel": f"{batch_student_key} - P{_page_idx + 1}",
+                            "pageIndex": _page_idx,
+                            "streamType": stream_type,
+                            "chunk": chunk,
+                        },
+                    )
+                
                 try:
                     page_result = await reasoning_client.grade_page(
                         image=image,
@@ -2610,7 +2627,7 @@ async def _grade_batch_node_impl(state: Dict[str, Any]) -> Dict[str, Any]:
                         max_score=page_max_score,
                         parsed_rubric=local_parsed_rubric,
                         page_context=page_context,
-                        stream_callback=stream_callback,
+                        stream_callback=page_stream_callback,
                     )
                     
                     # 输出完整页面批改结果 JSON（用于调试）
