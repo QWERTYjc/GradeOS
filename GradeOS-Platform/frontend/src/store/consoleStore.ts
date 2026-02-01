@@ -1213,6 +1213,17 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
         }),
 
         connectWs: (batchId) => {
+            // 🔧 修复：连接新批次时重置工作流节点状态，避免旧状态残留
+            set({
+                workflowNodes: initialNodes.map(n => ({
+                    ...n,
+                    status: 'pending' as NodeStatus,
+                    message: undefined,
+                    children: n.isParallelContainer ? [] : undefined
+                })),
+                llmThoughts: [],  // 清空 LLM 思考记录
+            });
+            
             wsClient.connect(buildWsUrl(`/api/batch/ws/${batchId}`));
             // 使用 store 内部状态而不是全局变量
             if (handlersRegistered) {
