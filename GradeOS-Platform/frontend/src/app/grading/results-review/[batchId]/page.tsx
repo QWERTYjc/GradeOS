@@ -3,20 +3,12 @@
 import React, { useEffect, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { useRouter, useParams } from 'next/navigation';
-import { gradingApi, ActiveRunItem } from '@/services/api';
+import { gradingApi, ActiveRunItem, ResultsReviewContext } from '@/services/api';
 import { useConsoleStore } from '@/store/consoleStore';
 import { normalizeStudentResults } from '@/lib/gradingResults';
 import { useAuthStore } from '@/store/authStore';
 
 const ResultsView = dynamic(() => import('@/components/console/ResultsView'), { ssr: false });
-
-type ResultsReviewContext = {
-  batch_id: string;
-  status?: string;
-  current_stage?: string;
-  student_results: Array<Record<string, unknown>>;
-  answer_images: string[];
-};
 
 export default function ResultsReviewPage() {
   const router = useRouter();
