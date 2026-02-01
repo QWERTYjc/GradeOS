@@ -352,7 +352,17 @@ const QuestionDetail: React.FC<{
                                     <Target className="w-3.5 h-3.5" />
                                     评分标准对照
                                 </div>
-                                {question.scoringPointResults.map((spr, idx) => (
+                                {question.scoringPointResults.map((spr, idx) => {
+                                    // 🔍 DEBUG: 打印 rubricReference 数据
+                                    if (idx === 0) {
+                                        console.log('[DEBUG] scoringPointResult:', {
+                                            pointId: spr.pointId,
+                                            rubricReference: spr.rubricReference,
+                                            rubricReferenceSource: spr.rubricReferenceSource,
+                                            fullData: spr
+                                        });
+                                    }
+                                    return (
                                     <div key={idx} className={clsx(
                                         "rounded-lg border p-3 transition-all",
                                         spr.awarded > 0 
@@ -409,7 +419,7 @@ const QuestionDetail: React.FC<{
                                             </div>
                                         </div>
                                     </div>
-                                ))}
+                                )})}
                             </div>
                         ) : question.scoringPoints && question.scoringPoints.length > 0 ? (
                             // Fallback for simple scoring points list without rich results
@@ -2520,6 +2530,14 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                                             annotations={pageAnnotations}
                                             className="w-full h-auto"
                                             showText={true}
+                                            onAnnotationClick={(annotation) => {
+                                                console.log('[批注点击]', annotation);
+                                                // 如果批注关联了题目和得分点，滚动到对应位置
+                                                if (annotation.question_id) {
+                                                    const questionElement = document.getElementById(`question-${annotation.question_id}`);
+                                                    questionElement?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                                }
+                                            }}
                                         />
                                     ) : originalImageUrl ? (
                                         // 检查是否是 base64 数据 URL，如果是则直接使用，否则作为普通 URL
