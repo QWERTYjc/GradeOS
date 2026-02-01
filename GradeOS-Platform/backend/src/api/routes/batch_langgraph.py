@@ -72,7 +72,8 @@ _active_stream_tasks: Dict[str, asyncio.Task] = {}
 DEBUG_LOG_PATH = os.getenv("GRADEOS_DEBUG_LOG_PATH")
 TEACHER_MAX_ACTIVE_RUNS = int(os.getenv("TEACHER_MAX_ACTIVE_RUNS", "3"))
 RUN_QUEUE_POLL_SECONDS = float(os.getenv("GRADING_RUN_POLL_SECONDS", "2.0"))
-RUN_QUEUE_TIMEOUT_SECONDS = float(os.getenv("GRADING_RUN_WAIT_TIMEOUT_SECONDS", "0"))
+# 修复：设置默认超时为 60 秒，避免无限等待
+RUN_QUEUE_TIMEOUT_SECONDS = float(os.getenv("GRADING_RUN_WAIT_TIMEOUT_SECONDS", "60"))
 REDIS_PROGRESS_TTL_SECONDS = int(os.getenv("REDIS_PROGRESS_TTL_SECONDS", "86400"))
 REDIS_PROGRESS_KEY_PREFIX = os.getenv("REDIS_PROGRESS_KEY_PREFIX", "batch_progress")
 _REDIS_CACHE_SKIP_TYPES = {"images_ready", "rubric_images_ready", "llm_stream_chunk"}
@@ -580,22 +581,50 @@ async def _start_run_with_teacher_limit(
             })
             # #endregion
             if not acquired:
-                logger.info(f"[_start_run_with_teacher_limit] 等待超时，任务失败")
-                await run_controller.update_run(
-                    batch_id,
-                    {"status": "failed", "updated_at": datetime.now().isoformat()},
-                )
-                await run_controller.remove_from_queue(teacher_key, batch_id)
-                await broadcast_progress(
-                    batch_id,
-                    {
-                        "type": "workflow_update",
-                        "nodeId": "rubric_parse",
-                        "status": "failed",
-                        "message": "Queued run timed out",
-                    },
-                )
-                return None
+                # 修复：等待超时后，强制清理该教师的所有活动槽位并重新尝试
+                logger.info(f"[_start_run_with_teacher_limit] 等待超时，尝试强制清理旧槽位并重新获取")
+                _write_debug_log({
+                    "hypothesisId": "R",
+                    "location": "batch_langgraph.py:_start_run_with_teacher_limit:timeout_cleanup",
+                    "message": "等待超时，尝试强制清理旧槽位",
+                    "data": {"batch_id": batch_id, "teacher_key": teacher_key},
+                })
+                # 强制清理该教师的所有活动槽位
+                try:
+                    await run_controller.force_clear_teacher_slots(teacher_key)
+                    # 清理后重新尝试获取槽位
+                    acquired = await run_controller.try_acquire_slot(
+                        teacher_key,
+                        batch_id,
+                        TEACHER_MAX_ACTIVE_RUNS,
+                    )
+                    _write_debug_log({
+                        "hypothesisId": "R",
+                        "location": "batch_langgraph.py:_start_run_with_teacher_limit:after_cleanup_retry",
+                        "message": f"清理后重新获取槽位: {acquired}",
+                        "data": {"batch_id": batch_id, "acquired": acquired},
+                    })
+                except Exception as cleanup_err:
+                    logger.error(f"[_start_run_with_teacher_limit] 清理槽位失败: {cleanup_err}")
+                    acquired = False
+                
+                if not acquired:
+                    logger.info(f"[_start_run_with_teacher_limit] 清理后仍无法获取槽位，任务失败")
+                    await run_controller.update_run(
+                        batch_id,
+                        {"status": "failed", "updated_at": datetime.now().isoformat()},
+                    )
+                    await run_controller.remove_from_queue(teacher_key, batch_id)
+                    await broadcast_progress(
+                        batch_id,
+                        {
+                            "type": "workflow_update",
+                            "nodeId": "rubric_parse",
+                            "status": "failed",
+                            "message": "Queued run timed out - please try again",
+                        },
+                    )
+                    return None
         
         logger.info(f"[_start_run_with_teacher_limit] 成功获取 slot，更新运行状态")
         await run_controller.update_run(

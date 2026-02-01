@@ -250,6 +250,19 @@ class RedisGradingRunController:
             log_redis_operation("ZREM", f"{active_key},{queue_key}", error=exc)
             logger.debug("Failed to release grading slot: %s", exc)
 
+    async def force_clear_teacher_slots(self, teacher_key: str) -> None:
+        """强制清理该教师的所有活动槽位（用于超时后恢复）"""
+        active_key = self._active_set_key(teacher_key)
+        try:
+            log_redis_operation("DEL", active_key, value="force_clear")
+            await self._redis.delete(active_key)
+            log_redis_operation("DEL", active_key, result="success")
+            logger.info(f"Force cleared all active slots for teacher: {teacher_key}")
+        except RedisError as exc:
+            log_redis_operation("DEL", active_key, error=exc)
+            logger.debug("Failed to force clear teacher slots: %s", exc)
+            raise
+
     async def remove_from_queue(self, teacher_key: str, batch_id: str) -> None:
         queue_key = self._queue_key(teacher_key)
         try:
