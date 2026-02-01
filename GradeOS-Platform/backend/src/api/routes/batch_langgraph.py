@@ -2404,7 +2404,7 @@ async def websocket_endpoint(websocket: WebSocket, batch_id: str):
             run_id = f"batch_grading_{batch_id}"
             run_info = await orchestrator.get_run_info(run_id)
             if run_info and run_info.state:
-                state = run_info.state or {}
+        state = run_info.state or {}
                 current_stage = state.get("current_stage", "")
                 percentage = state.get("percentage", 0)
                 if current_stage or percentage:
@@ -2918,17 +2918,52 @@ async def get_batch_results(batch_id: str, orchestrator: Orchestrator = Depends(
         state = run_info.state or {}
 
         # 优先从 student_results 获取结果
-        student_results = state.get("student_results", [])
+        student_results = (
+            state.get("reviewed_results")
+            or state.get("confessed_results")
+            or state.get("student_results", [])
+        )
 
         # 如果没有 student_results，尝试从 orchestrator 获取最终输出
         if not student_results:
             try:
                 final_output = await orchestrator.get_final_output(run_id)
                 if final_output:
-                    student_results = final_output.get("student_results", [])
+                    student_results = (
+                        final_output.get("reviewed_results")
+                        or final_output.get("confessed_results")
+                        or final_output.get("student_results", [])
+                    )
             except Exception as e:
                 logger.debug(f"获取最终输出失败: {e}")
 
+        
+        # Attach logic review payloads from state when missing on student_results.
+        logic_review_by_student: Dict[str, Any] = {}
+        for item in state.get("logic_review_results") or []:
+            if not isinstance(item, dict):
+                continue
+            key = item.get("student_key") or item.get("studentKey")
+            if key:
+                logic_review_by_student[key] = item
+        if logic_review_by_student:
+            for student in student_results:
+                if not isinstance(student, dict):
+                    continue
+                if student.get("logic_review") or student.get("logicReview"):
+                    continue
+                key = (
+                    student.get("student_key")
+                    or student.get("studentKey")
+                    or student.get("student_name")
+                    or student.get("studentName")
+                )
+                payload = logic_review_by_student.get(key)
+                if payload:
+                    student["logic_review"] = payload
+                    student["logicReview"] = payload
+                    if not student.get("logic_reviewed_at") and payload.get("reviewed_at"):
+                        student["logic_reviewed_at"] = payload.get("reviewed_at")
         return {
             "batch_id": batch_id,
             "status": run_info.status.value,
@@ -3032,17 +3067,54 @@ async def get_full_batch_results(
             return await _load_from_db()
 
         state = run_info.state or {}
-        student_results = state.get("student_results", []) or []
+        student_results = (
+            state.get("reviewed_results")
+            or state.get("confessed_results")
+            or state.get("student_results", [])
+        ) or []
         cross_page_questions = state.get("cross_page_questions", []) or []
         parsed_rubric = state.get("parsed_rubric", {}) or {}
         class_report = state.get("class_report") or state.get("export_data", {}).get("class_report")
         final_output: Optional[Dict[str, Any]] = None
+
+        # Attach logic review payloads from state when missing on student_results.
+        logic_review_by_student: Dict[str, Any] = {}
+        for item in state.get("logic_review_results") or []:
+            if not isinstance(item, dict):
+                continue
+            key = item.get("student_key") or item.get("studentKey")
+            if key:
+                logic_review_by_student[key] = item
+        if logic_review_by_student:
+            for student in student_results:
+                if not isinstance(student, dict):
+                    continue
+                if student.get("logic_review") or student.get("logicReview"):
+                    continue
+                key = (
+                    student.get("student_key")
+                    or student.get("studentKey")
+                    or student.get("student_name")
+                    or student.get("studentName")
+                )
+                payload = logic_review_by_student.get(key)
+                if payload:
+                    student["logic_review"] = payload
+                    student["logicReview"] = payload
+                    if not student.get("logic_reviewed_at") and payload.get("reviewed_at"):
+                        student["logic_reviewed_at"] = payload.get("reviewed_at")
+
         if not student_results or not parsed_rubric:
             final_output = await orchestrator.get_final_output(run_id)
             if final_output:
-                student_results = student_results or final_output.get("student_results") or final_output.get(
-                    "results"
-                ) or []
+                student_results = (
+                    student_results
+                    or final_output.get("reviewed_results")
+                    or final_output.get("confessed_results")
+                    or final_output.get("student_results")
+                    or final_output.get("results")
+                    or []
+                )
                 parsed_rubric = parsed_rubric or final_output.get("parsed_rubric", {}) or {}
                 cross_page_questions = cross_page_questions or final_output.get("cross_page_questions", []) or []
 

@@ -3886,7 +3886,17 @@ def _extract_logic_review_questions(student: Dict[str, Any]) -> List[Dict[str, A
                 flagged_question_ids.add(qid)
 
     if not flagged_question_ids:
-        return []
+        force_all = os.getenv("LOGIC_REVIEW_FORCE_ALL", "true").lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+        if not force_all:
+            return []
+        max_questions = int(os.getenv("LOGIC_REVIEW_MAX_QUESTIONS", "0"))
+        if max_questions > 0:
+            return details[:max_questions]
+        return details
 
     review_questions: List[Dict[str, Any]] = []
     for q in details:
