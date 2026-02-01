@@ -207,14 +207,7 @@ export default function GlobalNavLauncher() {
       let runs = activeRuns;
       if (runs.length === 0 && user?.id) {
         try {
-          if (!user?.id) {
-          if (mounted) {
-            setActiveRuns([]);
-            setRunsError(null);
-          }
-          return;
-        }
-        const response = await gradingApi.getActiveRuns(user.id);
+          const response = await gradingApi.getActiveRuns(user.id);
           runs = response.runs || [];
         } catch {
           return null;
