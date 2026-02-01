@@ -2331,7 +2331,18 @@ async def websocket_endpoint(websocket: WebSocket, batch_id: str):
     active_connections[batch_id].append(websocket)
 
     # #region agent log
-    import sys; sys.stdout.write(f'[DEBUG_LOG] {{"hypothesisId":"H2","location":"batch_langgraph.py:websocket_endpoint:connected","message":"WebSocket连接已建立并注册","data":{{"batch_id":"{batch_id}","ws_id":{ws_id},"total_connections":{len(active_connections[batch_id])}}},"timestamp":{int(__import__("time").time()*1000)},"sessionId":"debug-session"}}\n'); sys.stdout.flush()
+    # 检查该批次是否有活跃的 LangGraph 运行
+    orchestrator_check = await get_orchestrator()
+    run_exists = False
+    run_status = "unknown"
+    if orchestrator_check:
+        try:
+            run_info = await orchestrator_check.get_run_info(f"batch_grading_{batch_id}")
+            run_exists = run_info is not None
+            run_status = run_info.status.value if run_info and run_info.status else "no_status"
+        except Exception:
+            pass
+    import sys; sys.stdout.write(f'[DEBUG_LOG] {{"hypothesisId":"H9","location":"batch_langgraph.py:websocket_endpoint:connected","message":"WebSocket连接已建立","data":{{"batch_id":"{batch_id}","ws_id":{ws_id},"total_connections":{len(active_connections[batch_id])},"run_exists":{str(run_exists).lower()},"run_status":"{run_status}"}},"timestamp":{int(__import__("time").time()*1000)},"sessionId":"debug-session"}}\n'); sys.stdout.flush()
     # #endregion
     logger.info(f"WebSocket 连接建立: batch_id={batch_id}")
 
