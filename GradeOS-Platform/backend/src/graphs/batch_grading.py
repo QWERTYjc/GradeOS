@@ -6524,61 +6524,43 @@ def grading_merge_gate(state: BatchGradingGraphState) -> str:
     批改汇聚门控
 
     检查是否所有并行批改任务都已完成。
-    使用 student_results 来判断完成状态（因为 processed_images 可能丢失）。
+    🔧 修复：支持 grade_student 模式（使用 student_results）和 grade_page 模式（使用 grading_results）
     """
     batch_id = state.get("batch_id", "unknown")
     grading_results = state.get("grading_results") or []
     student_results = state.get("student_results") or []
     student_boundaries = state.get("student_boundaries") or []
     
-    # 🔧 修复：从多个来源获取总页数，避免 processed_images 丢失导致的问题
-    processed_images = state.get("processed_images") or []
-    answer_images = state.get("answer_images") or []
-    inputs = state.get("inputs") or {}
-    input_answer_images = inputs.get("answer_images") or []
-    
-    # 优先级：processed_images > answer_images > inputs.answer_images
-    total_pages = len(processed_images) or len(answer_images) or len(input_answer_images)
-    
-    # 如果还是无法获取总页数，使用 student_boundaries 计算
-    if total_pages == 0 and student_boundaries:
-        total_pages = sum(
-            len(b.get("page_indices", [])) or (b.get("end", 0) - b.get("start", 0) + 1)
-            for b in student_boundaries
-        )
-    
-    graded_pages = _count_graded_pages(grading_results)
+    total_students = len(student_boundaries) if student_boundaries else 0
+    completed_students = len(student_results)
     
     logger.info(
         f"[grading_merge] 诊断: batch_id={batch_id}, "
-        f"graded_pages={graded_pages}, total_pages={total_pages}, "
-        f"student_results={len(student_results)}, "
-        f"processed_images={len(processed_images)}, answer_images={len(answer_images)}"
+        f"completed_students={completed_students}, total_students={total_students}, "
+        f"student_results={len(student_results)}, grading_results={len(grading_results)}"
     )
 
-    # 如果有 student_results 且没有更多待处理的页面，直接进入 confession
-    if student_results and total_pages == 0:
-        logger.info(f"[grading_merge] ✅ 有 {len(student_results)} 个学生结果，进入自白阶段")
-        return "continue"
-
-    # 如果总页数为0（异常情况），且有结果（可能逻辑错误），或者都没结果
-    if total_pages == 0:
-        logger.warning("[grading_merge] 总页数为 0，直接继续")
-        return "continue"
-
-    progress = (graded_pages / total_pages) * 100
-    # 降低日志级别以减少冗余，只在关键节点打日志
-    if graded_pages % 5 == 0 or graded_pages >= total_pages:
-        logger.info(
-            f"[grading_merge] 进度检查: {graded_pages}/{total_pages} ({progress:.1f}%)"
-        )
-
-    # 检查是否全部完成
-    if graded_pages >= total_pages:
-        logger.info("[grading_merge] ✅ 所有批次完成，进入自白阶段")
+    # 🔧 修复：优先检查 student_results（grade_student 模式）
+    # 如果有 student_boundaries，就按学生数量判断
+    if total_students > 0:
+        if completed_students >= total_students:
+            logger.info(f"[grading_merge] ✅ 所有 {total_students} 个学生批改完成，进入自白阶段")
+            return "continue"
+        else:
+            logger.info(f"[grading_merge] ⏳ 学生批改进度: {completed_students}/{total_students}")
+            return "wait"
+    
+    # 🔧 Fallback：如果没有 student_boundaries，检查是否有任何批改结果
+    if student_results:
+        logger.info(f"[grading_merge] ✅ 有 {len(student_results)} 个学生结果（无边界信息），进入自白阶段")
         return "continue"
     
-    # 还有未完成的任务，当前分支结束
+    if grading_results:
+        logger.info(f"[grading_merge] ✅ 有 {len(grading_results)} 个页面结果，进入自白阶段")
+        return "continue"
+    
+    # 没有任何结果，继续等待（可能还在处理中）
+    logger.warning("[grading_merge] ⚠️ 没有批改结果，继续等待")
     return "wait"
 
 

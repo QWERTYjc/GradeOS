@@ -268,8 +268,11 @@ export default function LLMThoughtsPanel({ className, onClose }: LLMThoughtsPane
         onScroll={handleScroll}
         onWheel={handleWheel}
         onTouchMove={handleTouchMove}
-        className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain px-4 py-3 space-y-3 bg-slate-50/30 pointer-events-auto custom-scrollbar"
-        style={{ WebkitOverflowScrolling: 'touch' }}
+        className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain px-4 py-3 space-y-3 bg-slate-50/30 pointer-events-auto"
+        style={{ 
+          WebkitOverflowScrolling: 'touch',
+          maxHeight: 'calc(100vh - 200px)',  // 确保有固定最大高度以启用滚动
+        }}
       >
         <AnimatePresence initial={false}>
           {thoughts.length === 0 ? (
