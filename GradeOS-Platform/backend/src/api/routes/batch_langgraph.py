@@ -798,9 +798,10 @@ async def submit_batch(
 
         # 📁 持久化存储原始文件（可选，通过环境变量 ENABLE_FILE_STORAGE 控制）
         stored_files: List[StoredFile] = []
+        if os.getenv("ENABLE_FILE_STORAGE", "true").lower() == "true":
             try:
                 file_storage = get_file_storage_service()
-                
+
                 # 保存答题文件（以处理后的图片形式）
                 answer_filenames = [f"answer_page_{i+1}.jpg" for i in range(len(answer_images))]
                 stored_answers = await file_storage.save_answer_files(
@@ -809,7 +810,7 @@ async def submit_batch(
                     filenames=answer_filenames,
                 )
                 stored_files.extend(stored_answers)
-                
+
                 # 保存评分标准文件（如果有）
                 if rubric_images:
                     rubric_filenames = [f"rubric_page_{i+1}.jpg" for i in range(len(rubric_images))]
@@ -819,7 +820,7 @@ async def submit_batch(
                         filenames=rubric_filenames,
                     )
                     stored_files.extend(stored_rubrics)
-                
+
                 logger.info(
                     f"[FileStorage] 文件存储完成: batch_id={batch_id}, "
                     f"共保存 {len(stored_files)} 个文件"
@@ -2404,7 +2405,7 @@ async def websocket_endpoint(websocket: WebSocket, batch_id: str):
             run_id = f"batch_grading_{batch_id}"
             run_info = await orchestrator.get_run_info(run_id)
             if run_info and run_info.state:
-        state = run_info.state or {}
+                state = run_info.state or {}
                 current_stage = state.get("current_stage", "")
                 percentage = state.get("percentage", 0)
                 if current_stage or percentage:
@@ -2673,7 +2674,6 @@ async def get_results_review_context(
     """获取 results review 页面上下文"""
 
     async def _load_answer_images_from_storage() -> List[str]:
-            return []
         try:
             file_storage = get_file_storage_service()
             stored_files = await file_storage.list_batch_files(batch_id)
@@ -3600,7 +3600,11 @@ async def export_excel(
             raise HTTPException(status_code=404, detail="批次不存在")
 
         state = run_info.state or {}
-        student_results = state.get("student_results", [])
+        student_results = (
+            state.get("reviewed_results")
+            or state.get("confessed_results")
+            or state.get("student_results", [])
+        )
         class_report = state.get("class_report") or state.get("export_data", {}).get("class_report")
 
         if not student_results:
@@ -3794,7 +3798,12 @@ async def get_batch_confession(
             warnings = confession.get("warnings", [])
             all_warnings.extend(warnings)
 
-            conf = confession.get("overall_confidence") or self_audit.get("overall_confidence")
+            conf = (
+                confession.get("overall_confidence")
+                or confession.get("overallConfidence")
+                or self_audit.get("overall_confidence")
+                or self_audit.get("overallConfidence")
+            )
             if conf:
                 total_confidence += float(conf)
                 student_count += 1
@@ -3814,6 +3823,24 @@ async def get_batch_confession(
         memory_updates: List[Dict[str, Any]] = []
         if include_memory_updates:
             try:
+                for student in student_results:
+                    confession = student.get("confession") or {}
+                    updates = confession.get("memory_updates") or []
+                    if not isinstance(updates, list):
+                        continue
+                    student_key = (
+                        student.get("student_key")
+                        or student.get("studentKey")
+                        or student.get("student_name")
+                        or student.get("studentName")
+                        or "Unknown"
+                    )
+                    for update in updates:
+                        if isinstance(update, dict):
+                            update_copy = dict(update)
+                            update_copy.setdefault("student_key", student_key)
+                            memory_updates.append(update_copy)
+
                 from src.services.grading_memory import get_memory_service
 
                 memory_service = get_memory_service()

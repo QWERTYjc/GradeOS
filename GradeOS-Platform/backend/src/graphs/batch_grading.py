@@ -3794,16 +3794,10 @@ def _apply_student_result_overrides(
     return updated_results
 
 
-def _extract_logic_review_questions(student: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """
-    Extract questions that require logic review based on confession signals.
-
-    - Only review questions flagged by confession (low confidence / risk signals).
-    - If confession is empty, skip logic review to save tokens.
-    """
+def _collect_question_details(student: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Collect question details from student or page_results with page index fallback."""
     details = student.get("question_details") or []
     if not isinstance(details, list) or not details:
-        # Fallback: collect from page_results
         fallback: List[Dict[str, Any]] = []
         for page in student.get("page_results", []) or []:
             for q in page.get("question_details", []) or []:
@@ -3812,14 +3806,76 @@ def _extract_logic_review_questions(student: Dict[str, Any]) -> List[Dict[str, A
                     merged["page_indices"] = [page.get("page_index")]
                 fallback.append(merged)
         details = fallback
+    return details if isinstance(details, list) else []
+
+
+def _extract_confession_questions(student: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Select questions for confession analysis (risk-prioritized, but never empty)."""
+    details = _collect_question_details(student)
+    if not details:
+        return []
+
+    max_questions = int(os.getenv("CONFESSION_MAX_QUESTIONS", "20"))
+    if max_questions <= 0:
+        max_questions = len(details)
+
+    scored: List[tuple] = []
+    for idx, q in enumerate(details):
+        score = 0
+        max_score = q.get("max_score") or q.get("maxScore") or 0
+        awarded = q.get("score") or 0
+        confidence = q.get("confidence")
+        if max_score and awarded >= max_score:
+            score += 2
+        if max_score and awarded == 0:
+            score += 2
+        if confidence is not None:
+            try:
+                conf_val = float(confidence)
+                if conf_val < 0.7:
+                    score += 1
+                if conf_val < 0.5:
+                    score += 2
+            except Exception:
+                pass
+
+        scoring_points = q.get("scoring_point_results") or q.get("scoring_results") or []
+        for sp in scoring_points or []:
+            if not isinstance(sp, dict):
+                continue
+            evidence = (sp.get("evidence") or "").strip()
+            if not evidence or evidence.lower() in ("n/a", "null", "none", "无"):
+                score += 1
+                break
+
+        if q.get("used_alternative_solution"):
+            score += 1
+
+        scored.append((score, idx, q))
+
+    if not scored or all(item[0] == 0 for item in scored):
+        return details[:max_questions]
+
+    scored.sort(key=lambda item: (-item[0], item[1]))
+    ordered = [item[2] for item in scored]
+    return ordered[:max_questions]
+
+
+def _extract_logic_review_questions(student: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """
+    Extract questions that require logic review based on confession signals.
+
+    - Only review questions flagged by confession (low confidence / risk signals).
+    - If confession is empty, skip logic review to save tokens.
+    """
+    details = _collect_question_details(student)
 
     if not details:
         return []
 
     confession_data = student.get("confession") or {}
     if not confession_data:
-        logger.debug("[_extract_logic_review_questions] no confession, skip logic review")
-        return []
+        logger.debug("[_extract_logic_review_questions] no confession, fallback to heuristics")
 
     flagged_question_ids: set = set()
 
@@ -3885,6 +3941,7 @@ def _extract_logic_review_questions(student: Dict[str, Any]) -> List[Dict[str, A
             if any(kw in self_critique.lower() for kw in uncertainty_keywords):
                 flagged_question_ids.add(qid)
 
+    max_questions = int(os.getenv("LOGIC_REVIEW_MAX_QUESTIONS", "0"))
     if not flagged_question_ids:
         force_all = os.getenv("LOGIC_REVIEW_FORCE_ALL", "true").lower() in (
             "1",
@@ -3893,7 +3950,6 @@ def _extract_logic_review_questions(student: Dict[str, Any]) -> List[Dict[str, A
         )
         if not force_all:
             return []
-        max_questions = int(os.getenv("LOGIC_REVIEW_MAX_QUESTIONS", "0"))
         if max_questions > 0:
             return details[:max_questions]
         return details
@@ -3904,7 +3960,64 @@ def _extract_logic_review_questions(student: Dict[str, Any]) -> List[Dict[str, A
         if qid in flagged_question_ids:
             review_questions.append(q)
 
+    if max_questions > 0:
+        return review_questions[:max_questions]
     return review_questions
+
+
+def _derive_memory_candidates(
+    confession_data: Dict[str, Any],
+    student_key: str,
+) -> List[Dict[str, Any]]:
+    """Derive memory candidates from confession payload when LLM omitted them."""
+    existing = confession_data.get("memory_candidates")
+    if isinstance(existing, list) and existing:
+        return existing
+
+    max_candidates = int(os.getenv("CONFESSION_MEMORY_MAX_CANDIDATES", "6"))
+    candidates: List[Dict[str, Any]] = []
+
+    def _add_candidate(item: Dict[str, Any], memory_type: str, pattern: str, lesson: str) -> None:
+        if not pattern or len(candidates) >= max_candidates:
+            return
+        issue_id = item.get("issue_id") or f"{student_key}-{len(candidates)+1}"
+        candidates.append(
+            {
+                "issue_id": issue_id,
+                "memory_type": memory_type,
+                "memory_pattern": pattern,
+                "memory_lesson": lesson,
+            }
+        )
+
+    for err in confession_data.get("potential_errors", []) or []:
+        if not isinstance(err, dict):
+            continue
+        likelihood = err.get("likelihood", "medium")
+        if likelihood not in ("high", "medium"):
+            continue
+        pattern = f"{err.get('error_type', 'error')}: {err.get('description', '')}".strip()
+        lesson = err.get("lesson") or "高风险错误模式需要优先复核"
+        _add_candidate(err, "error_pattern", pattern, lesson)
+
+    for gap in confession_data.get("evidence_gaps", []) or []:
+        if not isinstance(gap, dict):
+            continue
+        severity = gap.get("severity", "medium")
+        if severity not in ("high", "critical"):
+            continue
+        pattern = f"evidence_gap: {gap.get('gap', '')}".strip()
+        lesson = gap.get("lesson") or "证据不足时应降低置信度并标记复核"
+        _add_candidate(gap, "risk_signal", pattern, lesson)
+
+    for anomaly in confession_data.get("score_anomalies", []) or []:
+        if not isinstance(anomaly, dict):
+            continue
+        pattern = f"score_anomaly: {anomaly.get('anomaly_type', '')}".strip()
+        lesson = anomaly.get("lesson") or anomaly.get("explanation") or "异常分数需要二次核验"
+        _add_candidate(anomaly, "calibration", pattern, lesson)
+
+    return candidates
 
 
 def _build_confession_prompt(
@@ -3930,6 +4043,7 @@ def _build_confession_prompt(
         "## 核心任务",
         "你是一位经验丰富的质量审计师，拥有**共享记忆**能力，能够基于历史批改经验进行风险分析。",
         "你的任务是**披露批改风险**，并结合历史教训提出警示。",
+        "你必须对评分目标/约束进行逐条合规自查（confession），说明是否满足与原因。",
         "交代：'我凭什么这么说 / 我哪里不确定 / 我可能在瞎猜 / 历史上类似情况如何'",
         "",
         "## 严格约束",
@@ -3937,13 +4051,17 @@ def _build_confession_prompt(
         '2. **禁止编造证据**：禁止说"我查过/我看到了/根据图片..."等',
         "3. **只允许披露**：假设、信息缺口、不确定点、可能出错点、置信度",
         "4. **诚实校准**：如果不确定，必须明确说明不确定程度",
+        "5. **具体可核验**：每条风险必须绑定 question_id/point_id，并给出可复核线索",
         "",
         "## 需要披露的内容类型",
+        "- **目标合规自查 (objective_checks)**：对评分目标/约束逐条说明是否达成",
         "- **假设清单 (assumptions)**：批改时做了哪些隐含假设？",
         "- **信息缺口 (information_gaps)**：缺少什么信息导致判断困难？",
         "- **证据缺口 (evidence_gaps)**：哪些评分点缺乏充分证据？",
         "- **不确定点 (uncertainties)**：哪些判断置信度低？为什么？",
         "- **可能出错点 (potential_errors)**：哪些地方最可能是幻觉或误判？",
+        "- **复核建议 (review_actions)**：需要人工复核的具体动作与优先级",
+        "- **记忆候选 (memory_candidates)**：可沉淀为长期经验的模式",
         "- **整体置信度 (overall_confidence)**：0.0-1.0，校准后的置信度",
         "",
         "## 高风险信号识别（重点关注）",
@@ -4121,6 +4239,13 @@ def _build_confession_prompt(
     schema_hint = {
         "student_key": student_key,
         "confession": {
+            "objective_checks": [
+                {
+                    "objective": "按评分标准给分、避免幻觉",
+                    "status": "complied | partial | violated | unknown",
+                    "notes": "是否满足及原因",
+                }
+            ],
             "assumptions": [
                 {"question_id": "1", "assumption": "假设描述", "impact": "如果假设错误的影响"}
             ],
@@ -4158,6 +4283,22 @@ def _build_confession_prompt(
                     "explanation": "为什么这个分数可能有问题",
                 }
             ],
+            "review_actions": [
+                {
+                    "question_id": "1",
+                    "action": "建议人工复核某个评分点",
+                    "priority": "high | medium | low",
+                    "why": "原因说明",
+                }
+            ],
+            "memory_candidates": [
+                {
+                    "issue_id": "issue_1",
+                    "memory_type": "error_pattern | calibration | scoring_insight | risk_signal",
+                    "memory_pattern": "可复用的错误模式/经验",
+                    "memory_lesson": "对应的教训",
+                }
+            ],
             "overall_confidence": 0.0,
             "calibration_note": "置信度校准说明：考虑了哪些因素",
             "high_risk_questions": ["1", "2"],
@@ -4170,6 +4311,7 @@ def _build_confession_prompt(
     lines.append("请仅输出 JSON，不要添加额外说明或 markdown。")
     lines.append("记住：你是在做'风险说明书'，不是审计报告。")
     lines.append("**重点**：务必披露所有满分、零分、低置信度、空证据的题目！")
+    lines.append("必须包含 objective_checks；如存在高风险/证据缺口，给出 review_actions 与 memory_candidates。")
     lines.append("")
     lines.append("输出 JSON 模板：")
     lines.append(json.dumps(schema_hint, ensure_ascii=False, indent=2))
@@ -4217,6 +4359,35 @@ async def confession_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                 f"[confession] batch memory persist failed: batch_id={batch_id}, stage={stage}, error={exc}"
             )
 
+    async def _apply_confession_memory(
+        confession_payload: Dict[str, Any],
+        student_key: str,
+    ) -> None:
+        if not confession_payload or not isinstance(confession_payload, dict):
+            return
+        if not confession_payload.get("memory_candidates"):
+            confession_payload["memory_candidates"] = _derive_memory_candidates(
+                confession_payload, student_key
+            )
+        try:
+            from src.services.grading_confession import update_memory_from_confession
+
+            updates = await update_memory_from_confession(
+                confession=confession_payload,
+                memory_service=memory_service,
+                batch_id=batch_id,
+                subject=subject,
+            )
+            confession_payload["memory_updates"] = updates.get("memory_updates", [])
+            confession_payload["memory_update_summary"] = {
+                "created": updates.get("total_created", 0),
+                "confirmed": updates.get("total_confirmed", 0),
+            }
+        except Exception as exc:
+            logger.warning(
+                f"[confession] memory update failed student={student_key}: {exc}"
+            )
+
     def _build_confession_skip_results(reason: str) -> List[Dict[str, Any]]:
         if not student_results:
             return []
@@ -4261,6 +4432,7 @@ async def confession_node(state: BatchGradingGraphState) -> Dict[str, Any]:
         await _persist_batch_memory("assist")
         return {
             "confessed_results": skipped_results,
+            "student_results": skipped_results,
             "current_stage": "confession_completed",
             "percentage": 80.0,
             "timestamps": {
@@ -4274,6 +4446,7 @@ async def confession_node(state: BatchGradingGraphState) -> Dict[str, Any]:
         await _persist_batch_memory("no student_results")
         return {
             "confessed_results": [],
+            "student_results": [],
             "current_stage": "confession_completed",
             "percentage": 80.0,
             "timestamps": {
@@ -4292,7 +4465,13 @@ async def confession_node(state: BatchGradingGraphState) -> Dict[str, Any]:
         updated_results = []
         for student in student_results:
             updated = dict(student)
-            question_details = _extract_logic_review_questions(student)
+            student_key = (
+                updated.get("student_key")
+                or updated.get("student_name")
+                or updated.get("studentName")
+                or "Unknown"
+            )
+            question_details = _extract_confession_questions(student)
             if question_details:
                 # 为每个题目生成规则自白
                 for q in question_details:
@@ -4306,6 +4485,8 @@ async def confession_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                     else:
                         updated["confession"]["issues"].extend(rule_report.get("issues", []))
                         updated["confession"]["warnings"].extend(rule_report.get("warnings", []))
+            if updated.get("confession"):
+                await _apply_confession_memory(updated["confession"], student_key)
             updated_results.append(updated)
         _log_confession_done("rule-based", len(updated_results))
         await _persist_batch_memory("rule-based")
@@ -4349,7 +4530,7 @@ async def confession_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                 },
             )
 
-            question_details = _extract_logic_review_questions(student)
+            question_details = _extract_confession_questions(student)
             if not question_details:
                 updated_student = dict(student)
                 updated_student["confession"] = {
@@ -4503,6 +4684,7 @@ async def confession_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                         )
                 except Exception as mem_exc:
                     logger.warning(f"[confession] ??????: {mem_exc}")
+                await _apply_confession_memory(confession_data, student_key)
             else:
                 # ???????
                 from src.services.grading_confession import generate_confession
@@ -4514,6 +4696,7 @@ async def confession_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                 )
                 fallback_report["source"] = "rule_fallback"
                 updated_student["confession"] = fallback_report
+                await _apply_confession_memory(fallback_report, student_key)
 
             await _broadcast_progress(
                 batch_id,
@@ -4558,6 +4741,7 @@ async def confession_node(state: BatchGradingGraphState) -> Dict[str, Any]:
 
     return {
         "confessed_results": final_results,
+        "student_results": final_results,
         "current_stage": "confession_completed",
         "percentage": 80.0,
         "timestamps": {
@@ -4890,6 +5074,7 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
         await _persist_batch_memory("assist")
         return {
             "reviewed_results": skipped_results,
+            "student_results": skipped_results,
             "logic_review_results": [],
             "current_stage": "logic_review_completed",
             "percentage": 85.0,
@@ -4904,6 +5089,7 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
         await _persist_batch_memory("no student_results")
         return {
             "reviewed_results": [],
+            "student_results": [],
             "logic_review_results": [],
             "current_stage": "logic_review_completed",
             "percentage": 85.0,
@@ -5189,6 +5375,7 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     _log_logic_review_done("llm", len(final_results), len(logic_review_results))
     return {
         "reviewed_results": final_results,  # 使用新字段，避免 operator.add 问题
+        "student_results": final_results,
         "logic_review_results": logic_review_results,
         "current_stage": "logic_review_completed",
         "percentage": 85.0,
@@ -5424,7 +5611,7 @@ async def export_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                             file_index_by_page[int(raw_idx)] = stored
                         except Exception:
                             continue
-                if os.getenv("ENABLE_FILE_STORAGE", "false").lower() == "true":
+                if os.getenv("ENABLE_FILE_STORAGE", "true").lower() == "true":
                     try:
                         from src.services.file_storage import get_file_storage_service
 

@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { wsClient, buildWsUrl } from '@/services/ws';
 import { GradingAnnotationResult } from '@/types/annotation';
+import { gradingApi } from '@/services/api';
 
 export type WorkflowStatus = 'IDLE' | 'UPLOADING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'REVIEWING';
 export type NodeStatus = 'pending' | 'running' | 'completed' | 'failed';
@@ -721,6 +722,40 @@ const normalizeClassReport = (report: any): ClassReport | null => {
         summary: report.summary,
         generatedAt: report.generatedAt || report.generated_at,
     };
+};
+
+const extractResultsPayload = (payload: any): StudentResult[] | null => {
+    if (!payload) return null;
+    const results = payload.results || payload.studentResults || payload.student_results;
+    return Array.isArray(results) ? results : null;
+};
+
+const hasPostConfessionResults = (results: StudentResult[] | null): boolean => {
+    if (!results || results.length === 0) return false;
+    return results.every((item) =>
+        Boolean(item.confession) && Boolean(item.logicReview || (item as any).logic_review || item.logicReviewedAt || (item as any).logic_reviewed_at)
+    );
+};
+
+const waitForPostConfessionResults = async (batchId: string, initialResults: StudentResult[] | null) => {
+    if (hasPostConfessionResults(initialResults)) {
+        return initialResults;
+    }
+    const pollIntervalMs = 4000;
+    const maxAttempts = 30;
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+        try {
+            const response = await gradingApi.getBatchResults(batchId);
+            const results = extractResultsPayload(response);
+            if (hasPostConfessionResults(results)) {
+                return results;
+            }
+        } catch (error) {
+            console.warn('Polling post-confession results failed:', error);
+        }
+    }
+    return null;
 };
 
 
@@ -1568,16 +1603,15 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
 
             // 处理工作流完�?
 
-            wsClient.on('workflow_completed', (data: any) => {
+            wsClient.on('workflow_completed', async (data: any) => {
                 console.log('Workflow Completed:', data);
                 const message = data.message || 'Workflow completed';
                 get().addLog(message, 'SUCCESS');
 
-                const results = data.results || data.studentResults || data.student_results;
-                if (Array.isArray(results)) {
-                    const formattedResults = results as StudentResult[];
-                    get().setFinalResults(formattedResults);
-                    get().addLog(`Saved results for ${formattedResults.length} students`, 'SUCCESS');
+                const initialResults = extractResultsPayload(data);
+                if (initialResults) {
+                    get().setFinalResults(initialResults);
+                    get().addLog(`Saved results for ${initialResults.length} students`, 'SUCCESS');
                 }
 
                 const classReport = data.classReport || data.class_report;
@@ -1602,6 +1636,28 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                     'export'
                 ];
                 orderedNodes.forEach((nodeId) => get().updateNodeStatus(nodeId, 'completed'));
+
+                const batchId =
+                    data.batchId ||
+                    data.batch_id ||
+                    get().submissionId;
+                if (!batchId) {
+                    get().addLog('Missing batch_id; cannot verify confession/logic review completion.', 'WARNING');
+                    return;
+                }
+
+                if (!hasPostConfessionResults(initialResults)) {
+                    get().addLog('等待自白与逻辑复核完成后再进入结果页...', 'INFO');
+                    const gatedResults = await waitForPostConfessionResults(batchId, initialResults);
+                    if (gatedResults) {
+                        get().setFinalResults(gatedResults);
+                        get().addLog('自白与逻辑复核已完成，进入结果页。', 'SUCCESS');
+                        set({ currentTab: 'results' });
+                    } else {
+                        get().addLog('自白/逻辑复核仍未完成，已停止自动跳转结果页。', 'WARNING');
+                    }
+                    return;
+                }
 
                 setTimeout(() => {
                     set({ currentTab: 'results' });
