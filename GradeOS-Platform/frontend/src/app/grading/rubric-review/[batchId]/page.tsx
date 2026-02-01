@@ -368,29 +368,17 @@ export default function RubricReviewPage() {
   }, []);
 
   const handleApprove = async () => {
-    // #region agent log
-    fetch('http://127.0.0.1:7243/ingest/d3774369-fa2a-47d6-942e-f6ca73e4f32f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'rubric-review/page.tsx:handleApprove:entry',message:'handleApprove called',data:{batchId},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A,C'})}).catch(()=>{});
-    // #endregion
     if (!batchId) return;
     setIsSubmitting(true);
     setSuccessMessage(null);
     setError(null);
     try {
-      // #region agent log
-      fetch('http://127.0.0.1:7243/ingest/d3774369-fa2a-47d6-942e-f6ca73e4f32f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'rubric-review/page.tsx:handleApprove:beforeAPI',message:'calling submitRubricReview API',data:{batchId,action:'approve'},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A'})}).catch(()=>{});
-      // #endregion
       await gradingApi.submitRubricReview({ batch_id: batchId, action: "approve" });
-      // #region agent log
-      fetch('http://127.0.0.1:7243/ingest/d3774369-fa2a-47d6-942e-f6ca73e4f32f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'rubric-review/page.tsx:handleApprove:afterAPI',message:'API returned, setting states before redirect',data:{batchId},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A,C'})}).catch(()=>{});
-      // #endregion
       setSuccessMessage("已确认解析结果，批改流程继续进行。");
       setPendingReview(null);
       setConsoleStatus('RUNNING');
       setCurrentTab('process');
       setReviewFocus(null);
-      // #region agent log
-      fetch('http://127.0.0.1:7243/ingest/d3774369-fa2a-47d6-942e-f6ca73e4f32f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'rubric-review/page.tsx:handleApprove:beforeRedirect',message:'about to router.push to console',data:{batchId,targetUrl:`/console?batchId=${batchId}`},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'C'})}).catch(()=>{});
-      // #endregion
       router.push(`/console?batchId=${batchId}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "提交失败");

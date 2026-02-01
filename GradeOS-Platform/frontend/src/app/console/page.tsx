@@ -668,21 +668,12 @@ export default function ConsolePage() {
 
     useEffect(() => {
         const batchId = searchParams.get('batchId');
-        // #region agent log
-        fetch('http://127.0.0.1:7243/ingest/d3774369-fa2a-47d6-942e-f6ca73e4f32f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'console/page.tsx:useEffect:batchIdCheck',message:'useEffect triggered for batchId',data:{batchId,currentSubmissionId:submissionId,currentStatus:status,currentTab},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'D'})}).catch(()=>{});
-        // #endregion
         if (!batchId) {
             return;
         }
         if (submissionId !== batchId) {
-            // #region agent log
-            fetch('http://127.0.0.1:7243/ingest/d3774369-fa2a-47d6-942e-f6ca73e4f32f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'console/page.tsx:useEffect:reset',message:'calling reset() because submissionId differs',data:{oldSubmissionId:submissionId,newBatchId:batchId},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'D'})}).catch(()=>{});
-            // #endregion
             reset();
         }
-        // #region agent log
-        fetch('http://127.0.0.1:7243/ingest/d3774369-fa2a-47d6-942e-f6ca73e4f32f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'console/page.tsx:useEffect:afterSetup',message:'setting submissionId, connecting WS, setting RUNNING',data:{batchId},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'D'})}).catch(()=>{});
-        // #endregion
         useConsoleStore.getState().setSubmissionId(batchId);
         useConsoleStore.getState().connectWs(batchId);
         useConsoleStore.getState().setStatus('RUNNING');

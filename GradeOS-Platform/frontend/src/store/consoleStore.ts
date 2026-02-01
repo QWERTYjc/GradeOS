@@ -1213,15 +1213,9 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
         }),
 
         connectWs: (batchId) => {
-            // #region agent log
-            fetch('http://127.0.0.1:7243/ingest/d3774369-fa2a-47d6-942e-f6ca73e4f32f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'consoleStore.ts:connectWs:entry',message:'connectWs called',data:{batchId,handlersRegistered,currentStatus:get().status,currentTab:get().currentTab},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'B,D'})}).catch(()=>{});
-            // #endregion
             wsClient.connect(buildWsUrl(`/api/batch/ws/${batchId}`));
-            // 使用 store 内部状态而不是全局变量，避�?SSR 环境中的状态污�?
+            // 使用 store 内部状态而不是全局变量
             if (handlersRegistered) {
-                // #region agent log
-                fetch('http://127.0.0.1:7243/ingest/d3774369-fa2a-47d6-942e-f6ca73e4f32f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'consoleStore.ts:connectWs:handlersSkipped',message:'handlers already registered, skipping',data:{batchId},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'B'})}).catch(()=>{});
-                // #endregion
                 return;
             }
             handlersRegistered = true;
@@ -1631,9 +1625,6 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
             // 处理工作流完�?
 
             wsClient.on('workflow_completed', async (data: any) => {
-                // #region agent log
-                fetch('http://127.0.0.1:7243/ingest/d3774369-fa2a-47d6-942e-f6ca73e4f32f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'consoleStore.ts:workflow_completed:entry',message:'workflow_completed event received',data:{eventData:data,currentStatus:get().status,currentTab:get().currentTab,submissionId:get().submissionId},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A,B'})}).catch(()=>{});
-                // #endregion
                 console.log('Workflow Completed:', data);
                 const message = data.message || 'Workflow completed';
                 get().addLog(message, 'SUCCESS');
@@ -1676,18 +1667,12 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                     return;
                 }
 
-                // #region agent log
-                fetch('http://127.0.0.1:7243/ingest/d3774369-fa2a-47d6-942e-f6ca73e4f32f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'consoleStore.ts:workflow_completed:hasPostConfession',message:'checking hasPostConfessionResults',data:{hasResults:!!initialResults,resultCount:initialResults?.length,hasPostConfession:hasPostConfessionResults(initialResults)},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A'})}).catch(()=>{});
-                // #endregion
                 if (!hasPostConfessionResults(initialResults)) {
                     get().addLog('等待自白与逻辑复核完成后再进入结果页...', 'INFO');
                     const gatedResults = await waitForPostConfessionResults(batchId, initialResults);
                     if (gatedResults) {
                         get().setFinalResults(gatedResults);
                         get().addLog('自白与逻辑复核已完成，进入结果页。', 'SUCCESS');
-                        // #region agent log
-                        fetch('http://127.0.0.1:7243/ingest/d3774369-fa2a-47d6-942e-f6ca73e4f32f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'consoleStore.ts:workflow_completed:gatedTabSwitch',message:'switching to results after waitForPostConfession',data:{},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A'})}).catch(()=>{});
-                        // #endregion
                         set({ currentTab: 'results' });
                     } else {
                         get().addLog('自白/逻辑复核仍未完成，已停止自动跳转结果页。', 'WARNING');
@@ -1695,13 +1680,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                     return;
                 }
 
-                // #region agent log
-                fetch('http://127.0.0.1:7243/ingest/d3774369-fa2a-47d6-942e-f6ca73e4f32f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'consoleStore.ts:workflow_completed:beforeTabSwitch',message:'about to switch to results tab after 800ms',data:{currentTab:get().currentTab,currentStatus:get().status},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A,C'})}).catch(()=>{});
-                // #endregion
                 setTimeout(() => {
-                    // #region agent log
-                    fetch('http://127.0.0.1:7243/ingest/d3774369-fa2a-47d6-942e-f6ca73e4f32f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'consoleStore.ts:workflow_completed:tabSwitchExecuted',message:'switching currentTab to results NOW',data:{previousTab:get().currentTab},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'C'})}).catch(()=>{});
-                    // #endregion
                     set({ currentTab: 'results' });
                 }, 800);
             });

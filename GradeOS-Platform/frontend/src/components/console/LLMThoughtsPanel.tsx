@@ -70,6 +70,16 @@ export default function LLMThoughtsPanel({ className, onClose }: LLMThoughtsPane
     setIsPinned(distanceFromBottom < 40);
   }, []);
 
+  const handleWheel = useCallback((event: React.WheelEvent<HTMLDivElement>) => {
+    if (event.deltaY < 0) {
+      setIsPinned(false);
+    }
+  }, []);
+
+  const handleTouchMove = useCallback(() => {
+    setIsPinned(false);
+  }, []);
+
   useEffect(() => {
     if (isPinned) {
       scrollToBottom();
@@ -147,6 +157,8 @@ export default function LLMThoughtsPanel({ className, onClose }: LLMThoughtsPane
       <div
         ref={scrollRef}
         onScroll={handleScroll}
+        onWheel={handleWheel}
+        onTouchMove={handleTouchMove}
         className="flex-1 min-h-0 overflow-y-auto px-4 py-3 space-y-3 custom-scrollbar bg-slate-50/30"
       >
         <AnimatePresence initial={false}>

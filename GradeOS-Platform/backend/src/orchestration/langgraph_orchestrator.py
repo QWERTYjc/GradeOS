@@ -22,22 +22,6 @@ from src.orchestration.base import Orchestrator, RunStatus, RunInfo
 
 
 logger = logging.getLogger(__name__)
-DEBUG_LOG_PATH = os.getenv("GRADEOS_DEBUG_LOG_PATH")
-
-
-def _write_debug_log(payload: Dict[str, Any]) -> None:
-    """写入调试日志（支持本地文件或标准输出）"""
-    try:
-        log_line = json.dumps(payload, ensure_ascii=False)
-        if DEBUG_LOG_PATH:
-            # 写入本地文件
-            with open(DEBUG_LOG_PATH, "a", encoding="utf-8") as log_file:
-                log_file.write(log_line + "\n")
-        else:
-            # 输出到标准日志（Railway 可见）
-            logger.info(f"[DEBUG_LOG] {log_line}")
-    except Exception as exc:
-        logger.debug(f"Failed to write debug log: {exc}")
 
 
 class LangGraphOrchestrator(Orchestrator):
@@ -300,29 +284,6 @@ class LangGraphOrchestrator(Orchestrator):
                     if isinstance(output, dict):
                         # 合并输出到累积状态
                         for key, value in output.items():
-                            # #region agent log - 假设F: 累积状态
-                            if key == "student_results":
-                                existing = accumulated_state.get(key, [])
-                                _write_debug_log(
-                                    {
-                                        "hypothesisId": "F",
-                                        "location": "langgraph_orchestrator.py:accumulate",
-                                        "message": f"累积student_results from {event_name}",
-                                        "data": {
-                                            "event_name": event_name,
-                                            "existing_count": (
-                                                len(existing) if isinstance(existing, list) else 0
-                                            ),
-                                            "new_count": (
-                                                len(value) if isinstance(value, list) else 0
-                                            ),
-                                        },
-                                        "timestamp": int(datetime.now().timestamp() * 1000),
-                                        "sessionId": "debug-session",
-                                    }
-                                )
-                            # #endregion
-
                             # 对使用 operator.add reducer 的字段使用追加逻辑
                             # grading_results 和 student_results 都使用了 operator.add reducer
                             if (
@@ -375,30 +336,6 @@ class LangGraphOrchestrator(Orchestrator):
 
             # 执行完成 - 使用累积的完整状态
             logger.info(f"Graph 执行完成: run_id={run_id}")
-
-            # #region agent log - 假设G: completed 事件发送前的 accumulated_state
-            student_results = accumulated_state.get("student_results", [])
-            _write_debug_log(
-                {
-                    "hypothesisId": "G",
-                    "location": "langgraph_orchestrator.py:completed:before_push",
-                    "message": "completed事件发送前的student_results",
-                    "data": {
-                        "count": len(student_results),
-                        "students": [
-                            {
-                                "key": r.get("student_key"),
-                                "score": r.get("total_score"),
-                                "max": r.get("max_total_score"),
-                            }
-                            for r in student_results
-                        ],
-                    },
-                    "timestamp": int(datetime.now().timestamp() * 1000),
-                    "sessionId": "debug-session",
-                }
-            )
-            # #endregion
 
             await self._update_run_status(run_id, "completed", output_data=accumulated_state)
 
@@ -1049,55 +986,6 @@ class LangGraphOrchestrator(Orchestrator):
                 if run and run.get("input_data"):
                     accumulated_state = dict(run["input_data"])
 
-            # #region agent log - 假设A: 恢复执行时的状态检查
-            _write_debug_log({
-                "hypothesisId": "A",
-                "location": "langgraph_orchestrator.py:_resume_graph_background:entry",
-                "message": "恢复执行时的状态检查",
-                "data": {
-                    "run_id": run_id,
-                    "accumulated_state_keys": list(accumulated_state.keys()) if accumulated_state else [],
-                    "processed_images_count": len(accumulated_state.get("processed_images", []) or []) if accumulated_state else 0,
-                    "answer_images_count": len(accumulated_state.get("answer_images", []) or []) if accumulated_state else 0,
-                    "student_boundaries_count": len(accumulated_state.get("student_boundaries", []) or []) if accumulated_state else 0,
-                    "resume_command_resume": str(resume_command.resume)[:200] if resume_command and resume_command.resume else None,
-                },
-                "timestamp": int(datetime.now().timestamp() * 1000),
-                "sessionId": "debug-session",
-            })
-            # #endregion
-
-            # #region agent log - 假设A2: 检查 checkpointer 中的 Graph 状态
-            try:
-                checkpoint_state = await compiled_graph.aget_state(config)
-                checkpoint_values = checkpoint_state.values if checkpoint_state else {}
-                _write_debug_log({
-                    "hypothesisId": "A2",
-                    "location": "langgraph_orchestrator.py:_resume_graph_background:checkpoint_state",
-                    "message": "checkpointer中的Graph状态",
-                    "data": {
-                        "run_id": run_id,
-                        "has_checkpoint": bool(checkpoint_state),
-                        "checkpoint_keys": list(checkpoint_values.keys()) if checkpoint_values else [],
-                        "processed_images_count": len(checkpoint_values.get("processed_images", []) or []) if checkpoint_values else 0,
-                        "answer_images_count": len(checkpoint_values.get("answer_images", []) or []) if checkpoint_values else 0,
-                        "student_boundaries_count": len(checkpoint_values.get("student_boundaries", []) or []) if checkpoint_values else 0,
-                        "next_nodes": list(checkpoint_state.next) if checkpoint_state and checkpoint_state.next else [],
-                    },
-                    "timestamp": int(datetime.now().timestamp() * 1000),
-                    "sessionId": "debug-session",
-                })
-            except Exception as e:
-                _write_debug_log({
-                    "hypothesisId": "A2",
-                    "location": "langgraph_orchestrator.py:_resume_graph_background:checkpoint_error",
-                    "message": f"获取checkpoint状态失败: {str(e)}",
-                    "data": {"run_id": run_id, "error": str(e)},
-                    "timestamp": int(datetime.now().timestamp() * 1000),
-                    "sessionId": "debug-session",
-                })
-            # #endregion
-
             result = None
             async for event in compiled_graph.astream_events(
                 resume_command, config=config, version="v2"
@@ -1159,37 +1047,6 @@ class LangGraphOrchestrator(Orchestrator):
 
                 if event_kind == "on_chain_end" and event_name == graph_name:
                     result = event_data.get("output", {})
-
-                # #region agent log - 假设H: 跟踪关键节点事件
-                if event_kind == "on_chain_end" and event_name in ("logic_review", "review", "export"):
-                    _write_debug_log({
-                        "hypothesisId": "H",
-                        "location": "langgraph_orchestrator.py:_resume_graph_background:node_end",
-                        "message": f"节点完成: {event_name}",
-                        "data": {
-                            "run_id": run_id,
-                            "node_name": event_name,
-                            "output_keys": list(event_data.get("output", {}).keys()) if isinstance(event_data.get("output"), dict) else None,
-                        },
-                        "timestamp": int(datetime.now().timestamp() * 1000),
-                        "sessionId": "debug-session",
-                    })
-                # #endregion
-
-            # #region agent log - 假设H: 事件循环结束
-            _write_debug_log({
-                "hypothesisId": "H",
-                "location": "langgraph_orchestrator.py:_resume_graph_background:loop_end",
-                "message": "事件循环结束",
-                "data": {
-                    "run_id": run_id,
-                    "accumulated_state_keys": list(accumulated_state.keys()),
-                    "has_result": bool(result),
-                },
-                "timestamp": int(datetime.now().timestamp() * 1000),
-                "sessionId": "debug-session",
-            })
-            # #endregion
 
             # 执行完成
             logger.info(f"Graph 恢复执行完成: run_id={run_id}")

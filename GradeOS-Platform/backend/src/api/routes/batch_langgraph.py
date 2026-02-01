@@ -100,17 +100,6 @@ def _discard_connection(batch_id: str, websocket: WebSocket) -> None:
         active_connections.pop(batch_id, None)
 
 
-def _write_debug_log(payload: Dict[str, Any]) -> None:
-    """写入调试日志到标准输出（Railway可见）"""
-    import sys
-    from datetime import datetime
-    try:
-        payload["timestamp"] = payload.get("timestamp", int(datetime.now().timestamp() * 1000))
-        payload["sessionId"] = payload.get("sessionId", "debug-session")
-        # 直接打印到 stdout，Railway 会捕获
-        print(f"[DEBUG_LOG] {json.dumps(payload, ensure_ascii=False)}", file=sys.stdout, flush=True)
-    except Exception as exc:
-        logger.debug(f"Failed to write debug log: {exc}")
 
 
 def _progress_cache_key(batch_id: str) -> str:
@@ -321,7 +310,6 @@ def _pdf_to_images(pdf_path: str, dpi: int = 150) -> List[bytes]:
 
 async def broadcast_progress(batch_id: str, message: dict):
     """向所有连接的 WebSocket 客户端广播进度"""
-    # #region agent log - 假设J: broadcast_progress 被调用
     msg_type = message.get("type", "unknown")
     if msg_type in ("images_ready", "rubric_images_ready", "review_required"):
         cached = batch_image_cache.setdefault(batch_id, {})
@@ -354,25 +342,6 @@ async def broadcast_progress(batch_id: str, message: dict):
             cached.pop("review_required", None)
         if cached and "llm_stream_cache" in cached:
             cached.pop("llm_stream_cache", None)
-    if msg_type == "workflow_completed":
-        import traceback as _tb_j
-
-        stack = "".join(_tb_j.format_stack()[-5:-1])  # 获取调用栈
-        _write_debug_log(
-            {
-                "hypothesisId": "J",
-                "location": "batch_langgraph.py:broadcast_progress",
-                "message": "broadcast_progress发送workflow_completed",
-                "data": {
-                    "batch_id": batch_id,
-                    "results_count": len(message.get("results", [])),
-                    "stack_trace": stack[:500],
-                },
-                "timestamp": int(datetime.now().timestamp() * 1000),
-                "sessionId": "debug-session",
-            }
-        )
-    # #endregion
     if msg_type in (
         "workflow_update",
         "grading_progress",
@@ -463,90 +432,26 @@ async def _start_run_with_teacher_limit(
     homework_id: Optional[str],
     student_mapping: List[dict],
 ) -> Optional[str]:
-    # #region agent log - 假设L: _start_run_with_teacher_limit 入口
-    _write_debug_log({
-        "hypothesisId": "L",
-        "location": "batch_langgraph.py:_start_run_with_teacher_limit:entry",
-        "message": "_start_run_with_teacher_limit被调用",
-        "data": {
-            "batch_id": batch_id,
-            "teacher_key": teacher_key,
-            "answer_images_count": len(payload.get("answer_images", [])),
-            "rubric_images_count": len(payload.get("rubric_images", [])),
-        },
-    })
-    # #endregion
     logger.info(f"[_start_run_with_teacher_limit] 开始执行: batch_id={batch_id}")
-    
-    # #region agent log - 假设P: 准备获取 run_controller
-    _write_debug_log({
-        "hypothesisId": "P",
-        "location": "batch_langgraph.py:_start_run_with_teacher_limit:before_get_run_controller",
-        "message": "准备调用get_run_controller()",
-        "data": {"batch_id": batch_id},
-    })
-    # #endregion
     
     try:
         run_controller = await get_run_controller()
-        # #region agent log - 假设P: get_run_controller 返回
-        _write_debug_log({
-            "hypothesisId": "P",
-            "location": "batch_langgraph.py:_start_run_with_teacher_limit:after_get_run_controller",
-            "message": f"get_run_controller返回: {run_controller is not None}",
-            "data": {"batch_id": batch_id, "has_controller": run_controller is not None},
-        })
-        # #endregion
     except Exception as e:
-        _write_debug_log({
-            "hypothesisId": "P",
-            "location": "batch_langgraph.py:_start_run_with_teacher_limit:get_run_controller_error",
-            "message": f"get_run_controller异常: {str(e)}",
-            "data": {"batch_id": batch_id, "error": str(e)},
-        })
+        logger.error(f"[_start_run_with_teacher_limit] get_run_controller异常: {e}")
         run_controller = None
     
     if run_controller:
-        # #region agent log - 假设Q: 准备获取 slot
-        _write_debug_log({
-            "hypothesisId": "Q",
-            "location": "batch_langgraph.py:_start_run_with_teacher_limit:before_try_acquire_slot",
-            "message": "准备调用try_acquire_slot",
-            "data": {"batch_id": batch_id, "teacher_key": teacher_key, "max_runs": TEACHER_MAX_ACTIVE_RUNS},
-        })
-        # #endregion
         try:
             acquired = await run_controller.try_acquire_slot(
                 teacher_key,
                 batch_id,
                 TEACHER_MAX_ACTIVE_RUNS,
             )
-            # #region agent log - 假设Q: try_acquire_slot 返回
-            _write_debug_log({
-                "hypothesisId": "Q",
-                "location": "batch_langgraph.py:_start_run_with_teacher_limit:after_try_acquire_slot",
-                "message": f"try_acquire_slot返回: {acquired}",
-                "data": {"batch_id": batch_id, "acquired": acquired},
-            })
-            # #endregion
         except Exception as e:
-            _write_debug_log({
-                "hypothesisId": "Q",
-                "location": "batch_langgraph.py:_start_run_with_teacher_limit:try_acquire_slot_error",
-                "message": f"try_acquire_slot异常: {str(e)}",
-                "data": {"batch_id": batch_id, "error": str(e)},
-            })
+            logger.error(f"[_start_run_with_teacher_limit] try_acquire_slot异常: {e}")
             acquired = False
         
         if not acquired:
-            # #region agent log - 假设R: 进入等待队列
-            _write_debug_log({
-                "hypothesisId": "R",
-                "location": "batch_langgraph.py:_start_run_with_teacher_limit:entering_wait_queue",
-                "message": "未获取到slot，进入等待队列",
-                "data": {"batch_id": batch_id, "teacher_key": teacher_key},
-            })
-            # #endregion
             await broadcast_progress(
                 batch_id,
                 {
@@ -557,14 +462,6 @@ async def _start_run_with_teacher_limit(
                 },
             )
             max_wait = RUN_QUEUE_TIMEOUT_SECONDS if RUN_QUEUE_TIMEOUT_SECONDS > 0 else None
-            # #region agent log - 假设R: 开始等待 slot
-            _write_debug_log({
-                "hypothesisId": "R",
-                "location": "batch_langgraph.py:_start_run_with_teacher_limit:before_wait_for_slot",
-                "message": f"开始等待slot, max_wait={max_wait}",
-                "data": {"batch_id": batch_id, "max_wait": max_wait},
-            })
-            # #endregion
             acquired = await run_controller.wait_for_slot(
                 teacher_key,
                 batch_id,
@@ -572,38 +469,16 @@ async def _start_run_with_teacher_limit(
                 RUN_QUEUE_POLL_SECONDS,
                 max_wait,
             )
-            # #region agent log - 假设R: wait_for_slot 返回
-            _write_debug_log({
-                "hypothesisId": "R",
-                "location": "batch_langgraph.py:_start_run_with_teacher_limit:after_wait_for_slot",
-                "message": f"wait_for_slot返回: {acquired}",
-                "data": {"batch_id": batch_id, "acquired": acquired},
-            })
-            # #endregion
             if not acquired:
-                # 修复：等待超时后，强制清理该教师的所有活动槽位并重新尝试
+                # 等待超时后，强制清理该教师的所有活动槽位并重新尝试
                 logger.info(f"[_start_run_with_teacher_limit] 等待超时，尝试强制清理旧槽位并重新获取")
-                _write_debug_log({
-                    "hypothesisId": "R",
-                    "location": "batch_langgraph.py:_start_run_with_teacher_limit:timeout_cleanup",
-                    "message": "等待超时，尝试强制清理旧槽位",
-                    "data": {"batch_id": batch_id, "teacher_key": teacher_key},
-                })
-                # 强制清理该教师的所有活动槽位
                 try:
                     await run_controller.force_clear_teacher_slots(teacher_key)
-                    # 清理后重新尝试获取槽位
                     acquired = await run_controller.try_acquire_slot(
                         teacher_key,
                         batch_id,
                         TEACHER_MAX_ACTIVE_RUNS,
                     )
-                    _write_debug_log({
-                        "hypothesisId": "R",
-                        "location": "batch_langgraph.py:_start_run_with_teacher_limit:after_cleanup_retry",
-                        "message": f"清理后重新获取槽位: {acquired}",
-                        "data": {"batch_id": batch_id, "acquired": acquired},
-                    })
                 except Exception as cleanup_err:
                     logger.error(f"[_start_run_with_teacher_limit] 清理槽位失败: {cleanup_err}")
                     acquired = False
@@ -638,26 +513,10 @@ async def _start_run_with_teacher_limit(
     
     run_id: Optional[str] = None
     try:
-        # #region agent log - 假设M: 准备启动 LangGraph
-        _write_debug_log({
-            "hypothesisId": "M",
-            "location": "batch_langgraph.py:_start_run_with_teacher_limit:before_start_run",
-            "message": "准备调用orchestrator.start_run",
-            "data": {"batch_id": batch_id},
-        })
-        # #endregion
         logger.info(f"[_start_run_with_teacher_limit] 准备启动 LangGraph run")
         run_id = await orchestrator.start_run(
             graph_name="batch_grading", payload=payload, idempotency_key=batch_id
         )
-        # #region agent log - 假设M: LangGraph 启动成功
-        _write_debug_log({
-            "hypothesisId": "M",
-            "location": "batch_langgraph.py:_start_run_with_teacher_limit:after_start_run",
-            "message": "orchestrator.start_run返回成功",
-            "data": {"batch_id": batch_id, "run_id": run_id},
-        })
-        # #endregion
         logger.info(f"[_start_run_with_teacher_limit] LangGraph 启动成功: batch_id={batch_id}, run_id={run_id}")
         
         stream_task = asyncio.create_task(
@@ -740,18 +599,6 @@ async def submit_batch(
     Returns:
         BatchSubmissionResponse: 批次信息
     """
-    # #region agent log - 假设K: submit_batch 被调用
-    _write_debug_log(
-        {
-            "hypothesisId": "K",
-            "location": "batch_langgraph.py:submit_batch:entry",
-            "message": "submit_batch端点被调用",
-            "data": {"files_count": len(files), "rubrics_count": len(rubrics)},
-            "timestamp": int(datetime.now().timestamp() * 1000),
-            "sessionId": "debug-session",
-        }
-    )
-    # #endregion
     # 检查 orchestrator 是否可用
     if not orchestrator:
         raise HTTPException(status_code=503, detail="批改服务未初始化，请稍后重试或检查服务配置")
@@ -1077,46 +924,14 @@ async def stream_langgraph_progress(
         run_id: LangGraph 运行 ID
         orchestrator: LangGraph Orchestrator
     """
-    # #region agent log - 假设G: stream_langgraph_progress 入口
-    _write_debug_log(
-        {
-            "hypothesisId": "G",
-            "location": "batch_langgraph.py:stream_langgraph_progress:entry",
-            "message": "stream_langgraph_progress函数被调用",
-            "data": {"batch_id": batch_id, "run_id": run_id},
-            "timestamp": int(datetime.now().timestamp() * 1000),
-            "sessionId": "debug-session",
-        }
-    )
-    # #endregion
     logger.info(f"开始流式监听 LangGraph 进度: batch_id={batch_id}, run_id={run_id}")
 
     try:
-        # #region agent log - 假设N: 开始监听事件流
-        _write_debug_log({
-            "hypothesisId": "N",
-            "location": "batch_langgraph.py:stream_langgraph_progress:before_stream",
-            "message": "准备开始监听orchestrator.stream_run",
-            "data": {"batch_id": batch_id, "run_id": run_id},
-        })
-        # #endregion
         # 🔥 使用 LangGraph 的流式 API
-        event_count = 0
         async for event in orchestrator.stream_run(run_id):
-            event_count += 1
             event_type = event.get("type")
             node_name = event.get("node")
             data = event.get("data", {})
-            
-            # #region agent log - 假设N: 收到事件
-            if event_count <= 5:  # 只记录前5个事件
-                _write_debug_log({
-                    "hypothesisId": "N",
-                    "location": "batch_langgraph.py:stream_langgraph_progress:event_received",
-                    "message": f"收到第{event_count}个事件",
-                    "data": {"batch_id": batch_id, "event_type": event_type, "node_name": node_name},
-                })
-            # #endregion
 
             logger.debug(
                 f"LangGraph 事件: batch_id={batch_id}, type={event_type}, node={node_name}"
@@ -1409,47 +1224,11 @@ async def stream_langgraph_progress(
                 )
 
             elif event_type == "completed":
-                # #region agent log - 假设H: completed 事件
-                _write_debug_log(
-                    {
-                        "hypothesisId": "H",
-                        "location": "batch_langgraph.py:event_completed",
-                        "message": "收到completed事件",
-                        "data": {
-                            "event_type": event_type,
-                            "data_keys": (
-                                list(data.keys()) if isinstance(data, dict) else str(type(data))
-                            ),
-                        },
-                        "timestamp": int(datetime.now().timestamp() * 1000),
-                        "sessionId": "debug-session",
-                    }
-                )
-                # #endregion
                 # 工作流完成 - 获取完整的最终状态
                 final_state = data.get("state", {})
 
                 # 从 student_results 获取结果
                 student_results = final_state.get("student_results", [])
-
-                # #region agent log - 假设I: student_results 原始数据
-                _write_debug_log(
-                    {
-                        "hypothesisId": "I",
-                        "location": "batch_langgraph.py:student_results_raw",
-                        "message": "student_results原始数据",
-                        "data": {
-                            "count": len(student_results),
-                            "students": [
-                                {"key": r.get("student_key"), "score": r.get("total_score")}
-                                for r in student_results
-                            ],
-                        },
-                        "timestamp": int(datetime.now().timestamp() * 1000),
-                        "sessionId": "debug-session",
-                    }
-                )
-                # #endregion
 
                 # 如果没有 student_results，尝试从 orchestrator 获取最终输出
                 if not student_results:
@@ -1616,25 +1395,6 @@ async def stream_langgraph_progress(
                     logger.info(f"批改结果已保存: history_id={history_id}")
                 except Exception as e:
                     logger.error(f"保存批改结果失败: {e}", exc_info=True)
-
-                # #region agent log - 假设E: WebSocket 消息发送
-                _write_debug_log(
-                    {
-                        "hypothesisId": "E",
-                        "location": "batch_langgraph.py:workflow_completed",
-                        "message": "发送workflow_completed",
-                        "data": {
-                            "student_count": len(formatted_results),
-                            "students": [
-                                {"name": f.get("studentName"), "score": f.get("score")}
-                                for f in formatted_results
-                            ],
-                        },
-                        "timestamp": int(datetime.now().timestamp() * 1000),
-                        "sessionId": "debug-session",
-                    }
-                )
-                # #endregion
 
                 await broadcast_progress(
                     batch_id,
@@ -2057,23 +1817,6 @@ def _dedupe_formatted_results(results: List[Dict[str, Any]]) -> List[Dict[str, A
 
 def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
     """格式化批改结果为前端格式"""
-    # #region agent log - 假设D: _format_results_for_frontend 输入
-    _write_debug_log(
-        {
-            "hypothesisId": "D",
-            "location": "batch_langgraph.py:_format_results_for_frontend:input",
-            "message": "输入的results",
-            "data": {
-                "count": len(results),
-                "students": [
-                    {"key": r.get("student_key"), "score": r.get("total_score")} for r in results
-                ],
-            },
-            "timestamp": int(datetime.now().timestamp() * 1000),
-            "sessionId": "debug-session",
-        }
-    )
-    # #endregion
     formatted = []
     for r in results:
         # 处理 question_details 格式
@@ -2485,23 +2228,6 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
                 
             }
         )
-    # #region agent log - 假设D: _format_results_for_frontend 输出
-    _write_debug_log(
-        {
-            "hypothesisId": "D",
-            "location": "batch_langgraph.py:_format_results_for_frontend:output",
-            "message": "输出的formatted",
-            "data": {
-                "count": len(formatted),
-                "students": [
-                    {"name": f.get("studentName"), "score": f.get("score")} for f in formatted
-                ],
-            },
-            "timestamp": int(datetime.now().timestamp() * 1000),
-            "sessionId": "debug-session",
-        }
-    )
-    # #endregion
     formatted = _dedupe_formatted_results(formatted)
     return formatted
 
@@ -2534,18 +2260,7 @@ async def websocket_endpoint(websocket: WebSocket, batch_id: str):
         try:
             cached_progress = await _load_cached_progress_messages(batch_id)
             for message in cached_progress:
-                # #region agent log - 假设F: 缓存消息重放
-                _write_debug_log({
-                    "hypothesisId": "F",
-                    "location": "batch_langgraph.py:websocket_endpoint:cache_replay",
-                    "message": "重放缓存消息",
-                    "data": {"batch_id": batch_id, "msg_type": message.get("type")},
-                    "timestamp": int(datetime.now().timestamp() * 1000),
-                    "sessionId": "debug-session",
-                })
-                # #endregion
-                # 🔥 FIX: 不重放 workflow_completed，避免错误跳转到结果页
-                # workflow_completed 应该只在工作流真正完成时由流式任务发送
+                # 不重放 workflow_completed，避免错误跳转到结果页
                 if message.get("type") == "workflow_completed":
                     logger.debug(f"跳过重放 workflow_completed 缓存: batch_id={batch_id}")
                     continue
