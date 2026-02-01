@@ -54,6 +54,9 @@ from src.db import (
     get_grading_history,
     get_student_results,
     get_page_images,
+    # PostgreSQL 图片存储
+    save_batch_images_concurrent,
+    get_batch_images_as_bytes_list,
 )
 
 
@@ -778,9 +781,38 @@ async def submit_batch(
             f"answer_pages={total_pages}"
         )
 
-        # 📁 持久化存储原始文件（可选，通过环境变量 ENABLE_FILE_STORAGE 控制）
+        # 📁 持久化存储原始文件到 PostgreSQL（高性能，替代本地文件存储）
+        # 使用 PostgreSQL BYTEA 存储，避免本地文件系统瓶颈
         stored_files: List[StoredFile] = []
-        if os.getenv("ENABLE_FILE_STORAGE", "true").lower() == "true":
+        use_pg_storage = os.getenv("USE_PG_IMAGE_STORAGE", "true").lower() == "true"
+        
+        if use_pg_storage:
+            try:
+                # 并发保存图片到 PostgreSQL（比本地文件快很多）
+                answer_count = await save_batch_images_concurrent(
+                    batch_id=batch_id,
+                    images=answer_images,
+                    image_type="answer",
+                    max_concurrent=20,  # 高并发写入
+                )
+                logger.info(f"[PG-Storage] 答题图片保存完成: batch_id={batch_id}, count={answer_count}")
+                
+                # 保存评分标准图片
+                if rubric_images:
+                    rubric_count = await save_batch_images_concurrent(
+                        batch_id=batch_id,
+                        images=rubric_images,
+                        image_type="rubric",
+                        max_concurrent=10,
+                    )
+                    logger.info(f"[PG-Storage] 评分标准保存完成: batch_id={batch_id}, count={rubric_count}")
+                
+            except Exception as e:
+                logger.warning(f"[PG-Storage] PostgreSQL 存储失败，回退到本地存储: {e}")
+                use_pg_storage = False  # 回退标记
+        
+        # 回退到本地文件存储（如果 PostgreSQL 存储失败或禁用）
+        if not use_pg_storage and os.getenv("ENABLE_FILE_STORAGE", "true").lower() == "true":
             try:
                 file_storage = get_file_storage_service()
 

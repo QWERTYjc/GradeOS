@@ -51,6 +51,17 @@ from .postgres_grading import (
     get_page_images,
 )
 
+# PostgreSQL 图片存储
+from .postgres_images import (
+    BatchImage,
+    save_batch_images,
+    save_batch_images_concurrent,
+    get_batch_images,
+    get_batch_images_as_bytes_list,
+    delete_batch_images,
+    get_batch_image_count,
+)
+
 __all__ = [
     "init_db",
     "get_connection",
@@ -95,4 +106,12 @@ __all__ = [
     "list_assistant_concepts",
     "save_assistant_mastery_snapshot",
     "list_assistant_mastery_snapshots",
+    # PostgreSQL 图片存储
+    "BatchImage",
+    "save_batch_images",
+    "save_batch_images_concurrent",
+    "get_batch_images",
+    "get_batch_images_as_bytes_list",
+    "delete_batch_images",
+    "get_batch_image_count",
 ]

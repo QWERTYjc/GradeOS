@@ -20,6 +20,16 @@ from src.utils.llm_thinking import split_thinking_content
 
 logger = logging.getLogger(__name__)
 
+
+# PostgreSQL 图片存储（延迟导入以避免循环依赖）
+def _get_pg_image_reader():
+    """获取 PostgreSQL 图片读取函数"""
+    try:
+        from src.db.postgres_images import get_batch_images_as_bytes_list
+        return get_batch_images_as_bytes_list
+    except ImportError:
+        return None
+
 # Stdout-visible workflow markers for Railway verification.
 workflow_logger = logging.getLogger("gradeos.workflow")
 
@@ -1121,17 +1131,45 @@ def grading_fanout_router(state: BatchGradingGraphState) -> List[Send]:
             logger.info(f"[grading_fanout] 生成 {len(student_boundaries)} 个学生边界")
 
     if not images_to_use:
-        logger.error(f"[grading_fanout] ❌ 没有待批改的图像: batch_id={batch_id}")
-        logger.error(f"[grading_fanout] 🔍 诊断: state keys={sorted(list(state.keys()))}")
-        logger.error(f"[grading_fanout] 🔍 inputs keys={sorted(list(inputs.keys())) if inputs else 'None'}")
-        # 尝试从 inputs 中恢复图片（最后一道防线）
+        logger.warning(f"[grading_fanout] ⚠️ state 中没有图片，尝试恢复: batch_id={batch_id}")
+        logger.debug(f"[grading_fanout] 🔍 诊断: state keys={sorted(list(state.keys()))}")
+        logger.debug(f"[grading_fanout] 🔍 inputs keys={sorted(list(inputs.keys())) if inputs else 'None'}")
+        
+        # 1. 先尝试从 inputs 中恢复
         input_answer_images = inputs.get("answer_images") or []
         if input_answer_images:
-            logger.warning(f"[grading_fanout] ⚠️ 从 inputs 恢复 {len(input_answer_images)} 张图片")
+            logger.info(f"[grading_fanout] ✅ 从 inputs 恢复 {len(input_answer_images)} 张图片")
             images_to_use = input_answer_images
         else:
-            logger.error(f"[grading_fanout] ❌ 无法恢复图片，跳过批改直接进入 confession")
-            return [Send("confession", state)]
+            # 2. 尝试从 PostgreSQL 读取（最后一道防线）
+            pg_reader = _get_pg_image_reader()
+            if pg_reader:
+                try:
+                    # 在同步上下文中运行异步函数
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        # 如果已有事件循环，创建新任务
+                        import concurrent.futures
+                        with concurrent.futures.ThreadPoolExecutor() as executor:
+                            future = executor.submit(asyncio.run, pg_reader(batch_id, "answer"))
+                            pg_images = future.result(timeout=60)
+                    else:
+                        pg_images = loop.run_until_complete(pg_reader(batch_id, "answer"))
+                    
+                    if pg_images:
+                        logger.info(f"[grading_fanout] ✅ 从 PostgreSQL 恢复 {len(pg_images)} 张图片")
+                        # 转换为 base64 格式（与 answer_images 格式一致）
+                        import base64
+                        images_to_use = [
+                            f"data:image/jpeg;base64,{base64.b64encode(img).decode('utf-8')}"
+                            for img in pg_images
+                        ]
+                except Exception as e:
+                    logger.error(f"[grading_fanout] ❌ PostgreSQL 读取图片失败: {e}")
+            
+            if not images_to_use:
+                logger.error(f"[grading_fanout] ❌ 无法恢复图片，跳过批改直接进入 confession")
+                return [Send("confession", state)]
     
     # 更新变量名以保持后续代码兼容
     processed_images = images_to_use
