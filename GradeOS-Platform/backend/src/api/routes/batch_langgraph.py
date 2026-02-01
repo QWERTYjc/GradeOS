@@ -894,6 +894,7 @@ async def submit_batch(
                 "expected_total_score": expected_total_score,
                 "enable_review": enable_review,
                 "grading_mode": grading_mode or "auto",
+                "teacher_id": teacher_key,
             },
         }
 
