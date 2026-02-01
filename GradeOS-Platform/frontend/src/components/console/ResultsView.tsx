@@ -3,7 +3,7 @@
 import React, { useState, useContext, useMemo, useEffect, useCallback } from 'react';
 import { useConsoleStore, StudentResult, QuestionResult } from '@/store/consoleStore';
 import clsx from 'clsx';
-import { ArrowLeft, ChevronDown, ChevronUp, CheckCircle, XCircle, Download, GitMerge, AlertCircle, Layers, FileText, Info, X, AlertTriangle, BookOpen, ListOrdered, Loader2, Shield, Pencil } from 'lucide-react';
+import { ArrowLeft, ChevronDown, ChevronUp, CheckCircle, XCircle, Download, GitMerge, AlertCircle, Layers, FileText, Info, X, AlertTriangle, BookOpen, ListOrdered, Loader2, Shield, Pencil, Target, BrainCircuit } from 'lucide-react';
 import { CrownOutlined, BarChartOutlined, UsergroupAddOutlined, CheckCircleOutlined, ExclamationCircleOutlined, RocketOutlined } from '@ant-design/icons';
 import { Popover } from 'antd';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -211,7 +211,12 @@ const renderParagraphs = (text: string) => {
     ));
 };
 
-const QuestionDetail: React.FC<{ question: QuestionResult; gradingMode?: string; defaultExpanded?: boolean }> = ({ question, gradingMode, defaultExpanded = false }) => {
+const QuestionDetail: React.FC<{ 
+    question: QuestionResult; 
+    gradingMode?: string; 
+    defaultExpanded?: boolean;
+    confession?: StudentResult['confession'];
+}> = ({ question, gradingMode, defaultExpanded = false, confession }) => {
     const percentage = question.maxScore > 0 ? (question.score / question.maxScore) * 100 : 0;
     const questionLabel = question.questionId === 'unknown' ? '未识别' : question.questionId;
     const normalizedType = (question.questionType || '').toLowerCase();
@@ -231,6 +236,7 @@ const QuestionDetail: React.FC<{ question: QuestionResult; gradingMode?: string;
     const hasDetails = Boolean(question.studentAnswer)
         || (showScoringDetails && ((question.scoringPointResults?.length || 0) > 0 || (question.scoringPoints?.length || 0) > 0));
     const [detailsOpen, setDetailsOpen] = useState(defaultExpanded);
+    const [analysisOpen, setAnalysisOpen] = useState(false);
     const scoreLabel = isAssist ? 'Assist' : (question.maxScore > 0 ? `${question.score} / ${question.maxScore}` : 'N/A');
     const scoreClass = isAssist || question.maxScore <= 0
         ? 'text-slate-400'
@@ -242,6 +248,17 @@ const QuestionDetail: React.FC<{ question: QuestionResult; gradingMode?: string;
         if (normalizedType === 'subjective') return { label: 'Subjective', className: 'border-amber-200 text-amber-600 bg-amber-50' };
         return { label: normalizedType, className: 'border-slate-200 text-slate-500 bg-slate-50' };
     })();
+    
+    // 提取当前题目的 AI 解析信息
+    const questionAnalysis = useMemo(() => {
+        if (!confession) return null;
+        const qid = question.questionId?.toString();
+        const issues = (confession.issues || []).filter(i => i.questionId === qid);
+        const highRisk = (confession.highRiskQuestions || []).filter(h => h.questionId === qid);
+        const errors = (confession.potentialErrors || []).filter(e => e.questionId === qid);
+        if (issues.length === 0 && highRisk.length === 0 && errors.length === 0) return null;
+        return { issues, highRisk, errors };
+    }, [confession, question.questionId]);
 
     return (
         <div className="p-4 space-y-3">
@@ -331,56 +348,64 @@ const QuestionDetail: React.FC<{ question: QuestionResult; gradingMode?: string;
                     {showScoringDetails ? (
                         question.scoringPointResults && question.scoringPointResults.length > 0 ? (
                             <div className="mt-3 space-y-2">
-                                <div className="text-xs font-semibold text-slate-500">评分步骤</div>
+                                <div className="text-xs font-semibold text-slate-500 flex items-center gap-2">
+                                    <Target className="w-3.5 h-3.5" />
+                                    评分标准对照
+                                </div>
                                 {question.scoringPointResults.map((spr, idx) => (
-                                    <div key={idx} className="rounded-md border border-slate-200 p-3">
-                                        <div className="flex items-start justify-between gap-4">
-                                            <div className="space-y-1 flex-1">
-                                                <div className="text-xs text-slate-700 font-medium leading-relaxed">
-                                                    {spr.pointId && <span className="font-mono text-slate-400 mr-2 text-[10px]">[{spr.pointId}]</span>}
-                                                    <MathText className="inline" text={spr.scoringPoint?.description || spr.description || "N/A"} />
-                                                    <Popover
-                                                        title={<span className="font-semibold">评分标准详情</span>}
-                                                        content={
-                                                            <div className="max-w-xs text-xs space-y-2 p-1">
-                                                                <div className="font-medium text-slate-700">{spr.scoringPoint?.description || spr.description}</div>
-                                                                <div className="flex justify-between text-slate-500">
-                                                                    <span>Max: {spr.maxPoints ?? spr.scoringPoint?.score ?? 0}</span>
-                                                                    <span>{spr.scoringPoint?.isRequired ? 'Required' : 'Optional'}</span>
-                                                                </div>
-                                                                {spr.rubricReference && (
-                                                                    <div className="mt-2 pt-2 border-t border-slate-100">
-                                                                        <div className="text-[10px] text-blue-600 font-semibold mb-1">评分标准引用</div>
-                                                                        <div className="text-slate-600 bg-blue-50 p-1.5 rounded text-[10px]">
-                                                                            <span className="font-mono text-blue-700">[{spr.rubricReference}]</span>
-                                                                            {spr.rubricReferenceSource && (
-                                                                                <span className="ml-1 text-slate-500">{spr.rubricReferenceSource}</span>
-                                                                            )}
-                                                                        </div>
-                                                                    </div>
-                                                                )}
-                                                            </div>
-                                                        }
-                                                    >
-                                                        <Info className="w-3 h-3 inline ml-1.5 text-slate-300 hover:text-blue-400 cursor-help" />
-                                                    </Popover>
-                                                </div>
-                                                <div className="text-[11px] text-slate-500">
-                                                    判定: {spr.decision || (spr.awarded > 0 ? '得分' : '不得分')}
-                                                    {spr.reason && <span className="ml-1 opacity-75">- {spr.reason}</span>}
-                                                </div>
-                                                {/* 评分标准引用标签 */}
-                                                {spr.rubricReference && (
-                                                    <div className="flex items-center gap-1.5 mt-1">
-                                                        <BookOpen className="w-3 h-3 text-blue-500" />
-                                                        <span className="text-[10px] font-mono text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded">
-                                                            引用: {spr.rubricReference}
+                                    <div key={idx} className={clsx(
+                                        "rounded-lg border p-3 transition-all",
+                                        spr.awarded > 0 
+                                            ? "border-emerald-200 bg-emerald-50/30" 
+                                            : "border-slate-200 bg-slate-50/30"
+                                    )}>
+                                        <div className="flex items-start justify-between gap-3">
+                                            {/* 左侧：评分标准内容 */}
+                                            <div className="flex-1 space-y-2">
+                                                {/* 评分标准引用标签 - 放在顶部更醒目 */}
+                                                <div className="flex items-center gap-2 flex-wrap">
+                                                    {spr.pointId && (
+                                                        <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-indigo-100 text-indigo-700 border border-indigo-200">
+                                                            得分点 {spr.pointId}
                                                         </span>
-                                                    </div>
-                                                )}
+                                                    )}
+                                                    {spr.rubricReference && (
+                                                        <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-blue-100 text-blue-700 border border-blue-200 flex items-center gap-1">
+                                                            <BookOpen className="w-3 h-3" />
+                                                            标准 {spr.rubricReference}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                
+                                                {/* 评分标准描述 */}
+                                                <div className="text-xs text-slate-700 leading-relaxed">
+                                                    <MathText className="inline" text={spr.scoringPoint?.description || spr.description || "N/A"} />
+                                                </div>
+                                                
+                                                {/* 判定理由 */}
+                                                <div className={clsx(
+                                                    "text-[11px] px-2 py-1.5 rounded",
+                                                    spr.awarded > 0 ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-600"
+                                                )}>
+                                                    <span className="font-semibold">
+                                                        {spr.awarded > 0 ? '✓ ' : '✗ '}
+                                                        {spr.decision || (spr.awarded > 0 ? '得分' : '不得分')}
+                                                    </span>
+                                                    {spr.reason && <span className="ml-1.5 opacity-80">— {spr.reason}</span>}
+                                                </div>
                                             </div>
-                                            <div className={clsx("font-mono font-semibold text-sm whitespace-nowrap", spr.awarded > 0 ? "text-emerald-600" : "text-slate-400")}>
-                                                {spr.awarded}/{spr.maxPoints ?? spr.scoringPoint?.score ?? 0}
+                                            
+                                            {/* 右侧：分数 */}
+                                            <div className={clsx(
+                                                "flex flex-col items-center justify-center px-3 py-2 rounded-lg min-w-[60px]",
+                                                spr.awarded > 0 ? "bg-emerald-500 text-white" : "bg-slate-200 text-slate-500"
+                                            )}>
+                                                <span className="font-mono font-bold text-lg leading-none">
+                                                    {spr.awarded}
+                                                </span>
+                                                <span className="text-[10px] opacity-80">
+                                                    / {spr.maxPoints ?? spr.scoringPoint?.score ?? 0}
+                                                </span>
                                             </div>
                                         </div>
                                     </div>
@@ -415,6 +440,54 @@ const QuestionDetail: React.FC<{ question: QuestionResult; gradingMode?: string;
                         <div className="mt-2 text-xs text-slate-500 italic">
                             {isAssist ? 'No scoring breakdown in Assist mode.' : 'No detailed analysis for this question type.'}
                         </div>
+                    )}
+                    
+                    {/* AI 解析区块 - 可折叠 */}
+                    {questionAnalysis && (
+                        <details className="mt-3 rounded-lg border border-amber-200 bg-amber-50/50 overflow-hidden" open={analysisOpen}>
+                            <summary 
+                                onClick={(e) => { e.preventDefault(); setAnalysisOpen(!analysisOpen); }}
+                                className="px-3 py-2 cursor-pointer hover:bg-amber-100/50 transition-colors flex items-center justify-between"
+                            >
+                                <span className="text-[11px] font-semibold text-amber-700 flex items-center gap-1.5">
+                                    <BrainCircuit className="w-3.5 h-3.5" />
+                                    AI 解析 ({(questionAnalysis.issues.length + questionAnalysis.highRisk.length + questionAnalysis.errors.length)})
+                                </span>
+                                <ChevronDown className={clsx("w-4 h-4 text-amber-500 transition-transform", analysisOpen && "rotate-180")} />
+                            </summary>
+                            <div className="px-3 pb-3 space-y-2">
+                                {questionAnalysis.highRisk.length > 0 && (
+                                    <div className="space-y-1">
+                                        {questionAnalysis.highRisk.map((item, i) => (
+                                            <div key={i} className="text-[11px] text-rose-700 bg-rose-50 px-2 py-1.5 rounded border border-rose-200 flex items-start gap-1.5">
+                                                <XCircle className="w-3 h-3 mt-0.5 flex-shrink-0" />
+                                                <span>{item.description || '需要人工复核'}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                                {questionAnalysis.errors.length > 0 && (
+                                    <div className="space-y-1">
+                                        {questionAnalysis.errors.map((item, i) => (
+                                            <div key={i} className="text-[11px] text-orange-700 bg-orange-50 px-2 py-1.5 rounded border border-orange-200 flex items-start gap-1.5">
+                                                <AlertTriangle className="w-3 h-3 mt-0.5 flex-shrink-0" />
+                                                <span>{item.description || '潜在错误'}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                                {questionAnalysis.issues.length > 0 && (
+                                    <div className="space-y-1">
+                                        {questionAnalysis.issues.map((item, i) => (
+                                            <div key={i} className="text-[11px] text-amber-700 bg-amber-100/50 px-2 py-1.5 rounded border border-amber-200 flex items-start gap-1.5">
+                                                <Info className="w-3 h-3 mt-0.5 flex-shrink-0" />
+                                                <span>{item.message || '提示信息'}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        </details>
                     )}
 
                 </>
@@ -2523,7 +2596,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                                 </div>
                                 {detailViewStudent.questionResults?.map((q, idx) => (
                                     <div key={`question-${q.questionId || 'unknown'}-${detailViewStudent.studentName}-${idx}`} className="border-b border-slate-100 pb-4 last:border-b-0">
-                                        <QuestionDetail question={q} gradingMode={detailViewStudent.gradingMode} defaultExpanded={defaultExpandDetails} />
+                                        <QuestionDetail question={q} gradingMode={detailViewStudent.gradingMode} defaultExpanded={defaultExpandDetails} confession={detailViewStudent.confession} />
                                     </div>
                                 ))}
                             </div>
