@@ -1586,7 +1586,8 @@ def _infer_question_type(question: Dict[str, Any]) -> str:
 
     if standard_answer:
         answer_clean = re.sub(r"\s+", "", standard_answer)
-        if len(answer_clean) <= 4 and re.fullmatch(r"[0-9A-Za-z\\-+.=()（）/]+", answer_clean):
+        # 注意: 在字符类中 - 需要放在末尾避免被解释为范围
+        if len(answer_clean) <= 4 and re.fullmatch(r"[0-9A-Za-z+.=()（）/\\-]+", answer_clean):
             return "objective"
         if len(standard_answer) > 30 or "\n" in standard_answer:
             return "subjective"

@@ -26,7 +26,8 @@ export default function LLMThoughtsPanel({ className, onClose }: LLMThoughtsPane
   const workflowNodes = useConsoleStore((state) => state.workflowNodes);
   const [focusAgentLabel, setFocusAgentLabel] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<StreamTab>('output');
-  const [isPinned, setIsPinned] = useState(true);
+  const [isPinned, setIsPinned] = useState(false); // 默认不自动滚动，让用户控制
+  const [userScrolled, setUserScrolled] = useState(false); // 用户是否手动滚动过
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const activeLabel = useMemo(() => {
@@ -82,24 +83,33 @@ export default function LLMThoughtsPanel({ className, onClose }: LLMThoughtsPane
     const container = scrollRef.current;
     if (!container) return;
     const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
-    setIsPinned(distanceFromBottom < 40);
+    // 用户滚动到底部附近时才允许自动滚动
+    if (distanceFromBottom < 40) {
+      setIsPinned(true);
+      setUserScrolled(false);
+    } else {
+      setIsPinned(false);
+    }
   }, []);
 
   const handleWheel = useCallback((event: React.WheelEvent<HTMLDivElement>) => {
+    setUserScrolled(true);
     if (event.deltaY < 0) {
       setIsPinned(false);
     }
   }, []);
 
   const handleTouchMove = useCallback(() => {
+    setUserScrolled(true);
     setIsPinned(false);
   }, []);
 
   useEffect(() => {
-    if (isPinned) {
+    // 只在用户没有主动滚动且处于 pinned 状态时才自动滚动
+    if (isPinned && !userScrolled) {
       scrollToBottom();
     }
-  }, [thoughts, isPinned, scrollToBottom]);
+  }, [thoughts, isPinned, userScrolled, scrollToBottom]);
 
   useEffect(() => {
     if (selectedAgentId) {
@@ -214,8 +224,8 @@ export default function LLMThoughtsPanel({ className, onClose }: LLMThoughtsPane
         onScroll={handleScroll}
         onWheel={handleWheel}
         onTouchMove={handleTouchMove}
-        className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain px-4 py-3 space-y-3 bg-slate-50/30 pointer-events-auto"
-        style={{ maxHeight: 'calc(100% - 120px)', WebkitOverflowScrolling: 'touch' }}
+        className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain px-4 py-3 space-y-3 bg-slate-50/30 pointer-events-auto custom-scrollbar"
+        style={{ WebkitOverflowScrolling: 'touch' }}
       >
         <AnimatePresence initial={false}>
           {thoughts.length === 0 ? (

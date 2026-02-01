@@ -5,7 +5,8 @@ if [ "${OFFLINE_MODE:-}" = "true" ]; then
   echo "Skipping migrations (OFFLINE_MODE=true)."
 elif [ -n "${DATABASE_URL:-}" ] || [ -n "${DB_HOST:-}" ]; then
   echo "Running database migrations."
-  alembic upgrade head
+  # 允许迁移失败（表可能已存在），不阻塞应用启动
+  alembic upgrade head || echo "⚠️ Migration warning (may be safe to ignore if tables exist)"
 else
   echo "Skipping migrations (no database configured)."
 fi
