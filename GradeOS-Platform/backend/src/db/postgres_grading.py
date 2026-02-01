@@ -322,7 +322,7 @@ async def save_student_result(result: StudentGradingResult) -> None:
         elif "confession" not in payload:
             payload["confession"] = confession_value
 
-        for key in ("confession_data", "confessionData", "self_report", "selfReport"):
+        for key in ("confession_data", "confessionData"):
             payload.pop(key, None)
         result_data_payload = payload
 

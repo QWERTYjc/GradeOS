@@ -798,34 +798,43 @@ async def submit_batch(
 
         # 📁 持久化存储原始文件（可选，通过环境变量 ENABLE_FILE_STORAGE 控制）
         stored_files: List[StoredFile] = []
-        try:
-            file_storage = get_file_storage_service()
-            
-            # 保存答题文件（以处理后的图片形式）
-            answer_filenames = [f"answer_page_{i+1}.jpg" for i in range(len(answer_images))]
-            stored_answers = await file_storage.save_answer_files(
-                batch_id=batch_id,
-                files=answer_images,
-                filenames=answer_filenames,
-            )
-            stored_files.extend(stored_answers)
-            
-            # 保存评分标准文件（如果有）
-            if rubric_images:
-                rubric_filenames = [f"rubric_page_{i+1}.jpg" for i in range(len(rubric_images))]
-                stored_rubrics = await file_storage.save_rubric_files(
+        if os.getenv("ENABLE_FILE_STORAGE", "true").lower() == "true":
+            try:
+                file_storage = get_file_storage_service()
+
+                # 保存答题文件（以处理后的图片形式）
+                answer_filenames = [f"answer_page_{i+1}.jpg" for i in range(len(answer_images))]
+                stored_answers = await file_storage.save_answer_files(
                     batch_id=batch_id,
-                    files=rubric_images,
-                    filenames=rubric_filenames,
+                    files=answer_images,
+                    filenames=answer_filenames,
                 )
-                stored_files.extend(stored_rubrics)
-            
-            logger.info(
-                f"[FileStorage] 文件存储完成: batch_id={batch_id}, "
-                f"共保存 {len(stored_files)} 个文件"
-            )
-        except Exception as e:
-            logger.warning(f"[FileStorage] 文件存储失败（不影响批改流程）: {e}")
+                stored_files.extend(stored_answers)
+
+                # 保存评分标准文件（如果有）
+                if rubric_images:
+                    rubric_filenames = [f"rubric_page_{i+1}.jpg" for i in range(len(rubric_images))]
+                    stored_rubrics = await file_storage.save_rubric_files(
+                        batch_id=batch_id,
+                        files=rubric_images,
+                        filenames=rubric_filenames,
+                    )
+                    stored_files.extend(stored_rubrics)
+
+                logger.info(
+                    f"[FileStorage] 文件存储完成: batch_id={batch_id}, "
+                    f"共保存 {len(stored_files)} 个文件"
+                )
+            except Exception as e:
+                logger.warning(f"[FileStorage] 文件存储失败（不影响批改流程）: {e}")
+                    stored_files.extend(stored_rubrics)
+
+                logger.info(
+                    f"[FileStorage] 文件存储完成: batch_id={batch_id}, "
+                    f"共保存 {len(stored_files)} 个文件"
+                )
+            except Exception as e:
+                logger.warning(f"[FileStorage] 文件存储失败（不影响批改流程）: {e}")
 
         file_index_by_page: Dict[int, Dict[str, Any]] = {}
         if stored_files:
@@ -3634,7 +3643,11 @@ async def export_excel(
             raise HTTPException(status_code=404, detail="批次不存在")
 
         state = run_info.state or {}
-        student_results = state.get("student_results", [])
+        student_results = (
+            state.get("reviewed_results")
+            or state.get("confessed_results")
+            or state.get("student_results", [])
+        )
         class_report = state.get("class_report") or state.get("export_data", {}).get("class_report")
 
         if not student_results:
@@ -3828,7 +3841,12 @@ async def get_batch_confession(
             warnings = confession.get("warnings", [])
             all_warnings.extend(warnings)
 
-            conf = confession.get("overall_confidence") or self_audit.get("overall_confidence")
+            conf = (
+                confession.get("overall_confidence")
+                or confession.get("overallConfidence")
+                or self_audit.get("overall_confidence")
+                or self_audit.get("overallConfidence")
+            )
             if conf:
                 total_confidence += float(conf)
                 student_count += 1
@@ -3848,6 +3866,24 @@ async def get_batch_confession(
         memory_updates: List[Dict[str, Any]] = []
         if include_memory_updates:
             try:
+                for student in student_results:
+                    confession = student.get("confession") or {}
+                    updates = confession.get("memory_updates") or []
+                    if not isinstance(updates, list):
+                        continue
+                    student_key = (
+                        student.get("student_key")
+                        or student.get("studentKey")
+                        or student.get("student_name")
+                        or student.get("studentName")
+                        or "Unknown"
+                    )
+                    for update in updates:
+                        if isinstance(update, dict):
+                            update_copy = dict(update)
+                            update_copy.setdefault("student_key", student_key)
+                            memory_updates.append(update_copy)
+
                 from src.services.grading_memory import get_memory_service
 
                 memory_service = get_memory_service()
