@@ -1,12 +1,21 @@
 # Implementation Plan
 
-- [ ] 1. 创建工具函数基础架构
+- [x] 1. 创建工具函数基础架构
+
+
+
+
+
   - 创建 `src/services/assistant_tools.py` 文件
   - 实现 `ToolParameter`, `ToolDefinition`, `ToolRegistry` 类
   - 实现 `to_gemini_schema()` 方法将工具定义转换为 Gemini function calling schema
   - _Requirements: 7.1, 7.3_
 
 - [ ] 2. 实现核心工具函数
+
+
+
+
   - 实现 `get_grading_history()` 工具函数
   - 实现 `get_knowledge_mastery()` 工具函数
   - 实现 `get_error_records()` 工具函数

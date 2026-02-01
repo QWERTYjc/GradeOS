@@ -6188,8 +6188,6 @@ async def export_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     # 无数据库模式或有失败时都导出
     if not persisted or has_failures:
         try:
-            import os
-
             # 创建导出目录
             export_dir = os.getenv("EXPORT_DIR", "./exports")
             os.makedirs(export_dir, exist_ok=True)
@@ -6246,8 +6244,6 @@ async def export_node(state: BatchGradingGraphState) -> Dict[str, Any]:
 
         batch_errors = error_manager.get_errors_by_batch(batch_id)
         if batch_errors:
-            import os
-
             export_dir = os.getenv("EXPORT_DIR", "./exports")
             os.makedirs(export_dir, exist_ok=True)
 

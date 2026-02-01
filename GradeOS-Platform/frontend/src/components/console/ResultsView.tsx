@@ -338,14 +338,25 @@ const QuestionDetail: React.FC<{ question: QuestionResult; gradingMode?: string;
                                             <div className="space-y-1 flex-1">
                                                 <div className="text-xs text-slate-700 font-medium leading-relaxed">
                                                     {spr.pointId && <span className="font-mono text-slate-400 mr-2 text-[10px]">[{spr.pointId}]</span>}
-                                                    <MathText className="inline" text={spr.scoringPoint?.description || spr.description || "N/A"} />
+                                                    <MathText className="inline" text={spr.evidence || spr.scoringPoint?.description || spr.description || "N/A"} />
                                                     <Popover
                                                         title={<span className="font-semibold">评分标准详情</span>}
                                                         content={
                                                             <div className="max-w-xs text-xs space-y-2 p-1">
-                                                                <div className="font-medium text-slate-700">{spr.scoringPoint?.description || spr.description}</div>
+                                                                <div className="font-medium text-slate-700 mb-2">
+                                                                    <div className="text-[10px] text-slate-500 mb-1">评分标准</div>
+                                                                    {spr.scoringPoint?.description || spr.description}
+                                                                </div>
+                                                                {spr.evidence && (
+                                                                    <div className="pt-2 border-t border-slate-100">
+                                                                        <div className="text-[10px] text-emerald-600 font-semibold mb-1">学生答案证据</div>
+                                                                        <div className="text-slate-700 bg-emerald-50 p-1.5 rounded text-[10px]">
+                                                                            {spr.evidence}
+                                                                        </div>
+                                                                    </div>
+                                                                )}
                                                                 <div className="flex justify-between text-slate-500">
-                                                                    <span>Max: {spr.maxPoints ?? spr.scoringPoint?.score ?? 0}</span>
+                                                                    <span>Max: {spr.maxPoints ?? spr.max_score ?? spr.scoringPoint?.score ?? 1}</span>
                                                                     <span>{spr.scoringPoint?.isRequired ? 'Required' : 'Optional'}</span>
                                                                 </div>
                                                                 {spr.rubricReference && (
@@ -366,7 +377,11 @@ const QuestionDetail: React.FC<{ question: QuestionResult; gradingMode?: string;
                                                     </Popover>
                                                 </div>
                                                 <div className="text-[11px] text-slate-500">
-                                                    判定: {spr.decision || (spr.awarded > 0 ? '得分' : '不得分')}
+                                                    {spr.evidence ? (
+                                                        <>标准: <MathText className="inline opacity-75" text={spr.scoringPoint?.description || spr.description || "N/A"} /></>
+                                                    ) : (
+                                                        <>判定: {spr.decision || (spr.awarded > 0 ? '得分' : '不得分')}</>
+                                                    )}
                                                     {spr.reason && <span className="ml-1 opacity-75">- {spr.reason}</span>}
                                                 </div>
                                                 {/* 评分标准引用标签 */}
@@ -380,7 +395,7 @@ const QuestionDetail: React.FC<{ question: QuestionResult; gradingMode?: string;
                                                 )}
                                             </div>
                                             <div className={clsx("font-mono font-semibold text-sm whitespace-nowrap", spr.awarded > 0 ? "text-emerald-600" : "text-slate-400")}>
-                                                {spr.awarded}/{spr.maxPoints ?? spr.scoringPoint?.score ?? 0}
+                                                {spr.awarded}/{spr.maxPoints ?? spr.max_score ?? spr.scoringPoint?.score ?? 1}
                                             </div>
                                         </div>
                                     </div>
@@ -838,7 +853,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                                         pointId: spr.pointId || spr.scoringPoint?.pointId,
                                         description: spr.description || spr.scoringPoint?.description || '',
                                         awarded: spr.awarded ?? 0,
-                                        maxPoints: spr.maxPoints ?? spr.scoringPoint?.score ?? 0,
+                                        maxPoints: spr.maxPoints ?? spr.max_score ?? spr.scoringPoint?.score ?? 1,
                                         evidence: spr.evidence || '',
                                         rubricReference: spr.rubricReference,
                                         rubricReferenceSource: spr.rubricReferenceSource,
@@ -1240,15 +1255,33 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
     // ==================== 导出处理函数 ====================
 
     const handleExportExcel = async () => {
-        if (!submissionId) return;
+        if (!submissionId) {
+            alert('请先完成批改任务');
+            return;
+        }
         setExportLoading('excel');
         try {
-            const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || ''}/batch/export/excel/${submissionId}`, {
+            const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || ''}/api/batch/export/excel/${submissionId}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({}),
             });
-            if (!response.ok) throw new Error('导出失败');
+            if (!response.ok) {
+                const errorText = await response.text();
+                console.error('导出失败响应:', errorText);
+                let errorMessage = '导出失败';
+                try {
+                    const errorJson = JSON.parse(errorText);
+                    if (errorJson.detail === '批次不存在') {
+                        errorMessage = '批改任务不存在或已过期，请重新批改';
+                    } else {
+                        errorMessage = errorJson.detail || errorJson.message || errorMessage;
+                    }
+                } catch {
+                    errorMessage = `导出失败: ${response.status} ${response.statusText}`;
+                }
+                throw new Error(errorMessage);
+            }
             const blob = await response.blob();
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
@@ -1256,8 +1289,10 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
             a.download = `grading_report_${submissionId}.xlsx`;
             a.click();
             URL.revokeObjectURL(url);
+            console.log('Excel 导出成功');
         } catch (error) {
             console.error('导出 Excel 失败:', error);
+            alert(`导出失败: ${error instanceof Error ? error.message : '未知错误'}`);
         } finally {
             setExportLoading(null);
             setExportMenuOpen(false);
@@ -1265,7 +1300,10 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
     };
 
     const handleSmartExcelSubmit = async () => {
-        if (!submissionId || !smartExcelPrompt.trim()) return;
+        if (!submissionId || !smartExcelPrompt.trim()) {
+            alert('请输入生成要求');
+            return;
+        }
         setSmartExcelLoading(true);
         try {
             let templateBase64: string | undefined;
@@ -1277,7 +1315,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                 });
             }
 
-            const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || ''}/batch/export/smart-excel/${submissionId}`, {
+            const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || ''}/api/batch/export/smart-excel/${submissionId}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -1285,7 +1323,22 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                     template_base64: templateBase64,
                 }),
             });
-            if (!response.ok) throw new Error('生成失败');
+            if (!response.ok) {
+                const errorText = await response.text();
+                console.error('智能 Excel 生成失败响应:', errorText);
+                let errorMessage = '生成失败';
+                try {
+                    const errorJson = JSON.parse(errorText);
+                    if (errorJson.detail === '批次不存在') {
+                        errorMessage = '批改任务不存在或已过期，请重新批改';
+                    } else {
+                        errorMessage = errorJson.detail || errorJson.message || errorMessage;
+                    }
+                } catch {
+                    errorMessage = `生成失败: ${response.status} ${response.statusText}`;
+                }
+                throw new Error(errorMessage);
+            }
             const blob = await response.blob();
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
@@ -1296,8 +1349,10 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
             setSmartExcelOpen(false);
             setSmartExcelPrompt('');
             setSmartExcelTemplate(null);
+            console.log('智能 Excel 生成成功');
         } catch (error) {
             console.error('智能 Excel 生成失败:', error);
+            alert(`生成失败: ${error instanceof Error ? error.message : '未知错误'}`);
         } finally {
             setSmartExcelLoading(false);
         }
@@ -1681,7 +1736,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                                     pointId: spr.pointId || spr.scoringPoint?.pointId,
                                     description: spr.description || spr.scoringPoint?.description || '',
                                     awarded: spr.awarded ?? 0,
-                                    maxPoints: spr.maxPoints ?? spr.scoringPoint?.score ?? 0,
+                                    maxPoints: spr.maxPoints ?? spr.max_score ?? spr.scoringPoint?.score ?? 1,
                                     evidence: spr.evidence || '',
                                     rubricReference: spr.rubricReference,
                                     rubricReferenceSource: spr.rubricReferenceSource,

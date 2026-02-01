@@ -3335,6 +3335,25 @@ async def submit_rubric_review(
         if not run_info:
             raise HTTPException(status_code=404, detail="批次不存在")
 
+        # 检查当前状态，提供更详细的错误信息
+        current_status = run_info.status if run_info else "unknown"
+        if current_status not in ("paused", "running"):
+            if current_status == "completed":
+                raise HTTPException(
+                    status_code=409, 
+                    detail="批改已完成，无法再次复核。请重新提交批改任务。"
+                )
+            elif current_status == "failed":
+                raise HTTPException(
+                    status_code=409, 
+                    detail="批改任务已失败，无法复核。请重新提交批改任务。"
+                )
+            else:
+                raise HTTPException(
+                    status_code=409, 
+                    detail=f"批次状态异常（{current_status}），无法复核"
+                )
+
         payload: Dict[str, Any] = {
             "action": action,
         }
@@ -3347,7 +3366,11 @@ async def submit_rubric_review(
 
         success = await orchestrator.send_event(run_id, "review_signal", payload)
         if not success:
-            raise HTTPException(status_code=409, detail="批次未处于可复核状态")
+            # 如果 send_event 失败，说明不在 interrupt 点
+            raise HTTPException(
+                status_code=409, 
+                detail=f"批次未处于可复核状态（当前状态：{current_status}）。可能原因：批改正在进行中，或已经提交过复核。"
+            )
 
         cached = batch_image_cache.get(request.batch_id)
         if cached and "review_required" in cached:
