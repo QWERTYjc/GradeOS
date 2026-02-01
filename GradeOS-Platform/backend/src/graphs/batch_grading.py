@@ -2510,11 +2510,7 @@ async def _grade_batch_node_impl(state: Dict[str, Any]) -> Dict[str, Any]:
                 second_pass_used += 1
                 return True
 
-        max_pages_per_student = int(os.getenv("GRADING_MAX_PAGES_PER_STUDENT", "12"))
-        use_student_grading = len(images) <= max_pages_per_student
-        student_error = None
-
-        # 🚀 使用 grade_student 一次 LLM call 批改整个学生
+        # 🚀 始终使用 grade_student 一次 LLM call 批改整个学生（避免逐页浪费 token）
         async def stream_callback(stream_type: str, chunk: str) -> None:
             await _broadcast_progress(
                 batch_id,
@@ -2543,10 +2539,10 @@ async def _grade_batch_node_impl(state: Dict[str, Any]) -> Dict[str, Any]:
             },
         )
 
-        if use_student_grading:
+        try:
             logger.info(f"[grade_batch] grade_student for {batch_student_key} pages={len(images)}")
 
-            # grade_student
+            # grade_student - 一次性批改整个学生
             student_result = await reasoning_client.grade_student(
                 images=images,
                 student_key=batch_student_key,
@@ -2556,7 +2552,7 @@ async def _grade_batch_node_impl(state: Dict[str, Any]) -> Dict[str, Any]:
                 stream_callback=stream_callback,
             )
 
-            # Convert to legacy page result format.
+            # Convert to legacy page result format
             if student_result.get("status") == "completed":
                 total_score = student_result.get("total_score", 0)
                 max_score = student_result.get("max_score", 0)
@@ -2578,128 +2574,62 @@ async def _grade_batch_node_impl(state: Dict[str, Any]) -> Dict[str, Any]:
                         "batch_index": batch_index,
                     }
                 )
-            else:
-                student_error = student_result.get("error", "Unknown error")
-                logger.warning(
-                    f"[grade_batch] grade_student failed for {batch_student_key}: {student_error}"
-                )
-                use_student_grading = False
-
-        if not use_student_grading:
-            if student_error:
-                logger.warning(f"[grade_batch] fallback to per-page grading: {student_error}")
-            else:
-                logger.info(
-                    "[grade_batch] page count exceeds limit; "
-                    f"fallback to per-page: pages={len(images)} limit={max_pages_per_student}"
-                )
-
-            await emit_agent_update(
-                "running",
-                "Fallback to per-page grading",
-                progress=10,
-            )
-
-            for idx, image in enumerate(images):
-                page_index = page_indices[idx] if idx < len(page_indices) else idx
-                page_context = page_index_contexts.get(page_index)
-                page_max_score = _estimate_page_max_score(local_parsed_rubric, page_context)
                 
-                # 为每个页面创建独立的 stream callback，避免输出混淆
-                async def page_stream_callback(stream_type: str, chunk: str, _page_idx: int = page_index) -> None:
-                    await _broadcast_progress(
-                        batch_id,
-                        {
-                            "type": "llm_stream_chunk",
-                            "nodeId": "grade_batch",
-                            "nodeName": f"Page {_page_idx + 1}",
-                            "agentId": f"batch_{batch_index}_page_{_page_idx}",
-                            "agentLabel": f"{batch_student_key} - P{_page_idx + 1}",
-                            "pageIndex": _page_idx,
-                            "streamType": stream_type,
-                            "chunk": chunk,
-                        },
-                    )
+                await emit_agent_update(
+                    "completed",
+                    f"Grading completed: {total_score}/{max_score}",
+                    progress=100,
+                )
+            else:
+                error_msg = student_result.get("error", "Unknown error")
+                logger.error(
+                    f"[grade_batch] grade_student failed for {batch_student_key}: {error_msg}"
+                )
                 
-                try:
-                    page_result = await reasoning_client.grade_page(
-                        image=image,
-                        rubric=rubric,
-                        max_score=page_max_score,
-                        parsed_rubric=local_parsed_rubric,
-                        page_context=page_context,
-                        stream_callback=page_stream_callback,
-                    )
-                    
-                    # 输出完整页面批改结果 JSON（用于调试）- 已禁用避免日志噪音
-                    # import json
-                    # logger.debug(f"📄 页面 {page_index} 批改结果完整JSON:\n{json.dumps(page_result, ensure_ascii=False, indent=2)}")
-                    
-                except Exception as exc:
-                    logger.warning(f"[grade_batch] page {page_index} grading failed: {exc}")
-                    page_results.append(
-                        {
-                            "page_index": page_index,
-                            "page_indices": [page_index],
-                            "status": "failed",
-                            "error": str(exc),
-                            "score": 0,
-                            "max_score": page_max_score,
-                            "confidence": 0,
-                            "feedback": "",
-                            "question_details": [],
-                            "question_numbers": [],
-                            "student_key": batch_student_key,
-                            "student_name": batch_student_name,
-                            "student_id": batch_student_id,
-                            "batch_index": batch_index,
-                            "is_blank_page": bool(
-                                page_context and page_context.get("is_cover_page")
-                            ),
-                        }
-                    )
-                    await mark_page_done(page_index, f"Graded page {idx + 1}/{len(images)}")
-                    continue
-
-                question_numbers = page_result.get("question_numbers")
-                if not question_numbers and page_context:
-                    question_numbers = page_context.get("question_numbers", [])
-
-                status = "completed"
-                if page_result.get("confidence", 0) <= 0 and not page_result.get(
-                    "question_details"
-                ):
-                    status = "failed"
-
-                question_details = page_result.get("question_details", [])
-                if isinstance(question_details, list):
-                    for item in question_details:
-                        if not isinstance(item, dict):
-                            continue
-                        if not item.get("page_indices") and item.get("page_index") is None and item.get("pageIndex") is None:
-                            item["page_indices"] = [page_index]
-                            item["pageIndices"] = [page_index]
-
+                await emit_agent_update(
+                    "failed",
+                    f"Grading failed: {error_msg}",
+                    progress=0,
+                )
+                
                 page_results.append(
                     {
-                        "page_index": page_index,
-                        "page_indices": [page_index],
-                        "status": status,
-                        "score": page_result.get("score", 0),
-                        "max_score": page_result.get("max_score", page_max_score),
-                        "confidence": page_result.get("confidence", 0),
-                        "feedback": page_result.get("feedback", ""),
-                        "question_details": question_details,
-                        "question_numbers": question_numbers or [],
+                        "page_index": page_indices[0] if page_indices else 0,
+                        "page_indices": page_indices,
+                        "status": "failed",
+                        "error": error_msg,
                         "student_key": batch_student_key,
                         "student_name": batch_student_name,
                         "student_id": batch_student_id,
                         "batch_index": batch_index,
-                        "is_blank_page": bool(page_context and page_context.get("is_cover_page")),
                     }
                 )
 
-                await mark_page_done(page_index, f"Graded page {idx + 1}/{len(images)}")
+        except Exception as exc:
+            logger.error(
+                f"[grade_batch] Unexpected exception for {batch_student_key}: {exc}",
+                exc_info=True
+            )
+            
+            await emit_agent_update(
+                "failed",
+                f"System error: {str(exc)[:100]}",
+                progress=0,
+            )
+            
+            page_results.append(
+                {
+                    "page_index": page_indices[0] if page_indices else 0,
+                    "page_indices": page_indices,
+                    "status": "failed",
+                    "error": f"System exception: {str(exc)}",
+                    "student_key": batch_student_key,
+                    "student_name": batch_student_name,
+                    "student_id": batch_student_id,
+                    "batch_index": batch_index,
+                }
+            )
+
     except Exception as e:
         batch_error = str(e)
         logger.error(f"[grade_batch] 批次 {batch_index} 批改失败: {e}", exc_info=True)
