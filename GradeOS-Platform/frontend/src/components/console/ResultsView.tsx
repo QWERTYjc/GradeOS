@@ -1011,6 +1011,10 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                 const questionPages = Array.isArray(q.pageIndices) ? q.pageIndices : [];
                 const questionHasPage = questionPages.includes(pageIdx);
                 const isMultiPage = questionPages.length > 1;
+                const hasSinglePageFallback = student.startPage !== undefined
+                    && student.endPage !== undefined
+                    && student.startPage === student.endPage
+                    && student.startPage === pageIdx;
 
                 const matchesQuestionPage = (pageValue?: number | null) => {
                     if (pageValue !== null && pageValue !== undefined && !Number.isNaN(Number(pageValue))) {
@@ -1019,7 +1023,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                     if (isMultiPage) {
                         return false;
                     }
-                    return questionHasPage;
+                    return questionHasPage || hasSinglePageFallback;
                 };
 
                 if (q.steps && q.steps.length > 0) {
