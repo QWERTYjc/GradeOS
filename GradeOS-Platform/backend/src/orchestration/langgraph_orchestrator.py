@@ -1208,8 +1208,47 @@ class LangGraphOrchestrator(Orchestrator):
                     # 超时，检查是否已完成
                     is_complete = self._is_event_stream_complete(run_id)
                     if is_complete:
-                        _write_debug_log("ORC7", "stream_run:timeout_complete", "超时检测到事件流完成", {"run_id": run_id})
-                        logger.info(f"事件流已完成（超时检测）: run_id={run_id}")
+                        # 🔥 修复竞态条件：先 drain 队列中的剩余事件
+                        _write_debug_log("ORC7", "stream_run:timeout_complete", "超时检测到事件流完成，开始drain队列", {
+                            "run_id": run_id,
+                            "queue_size": queue.qsize(),
+                        })
+                        # Drain 队列中的剩余事件
+                        drained_count = 0
+                        while not queue.empty():
+                            try:
+                                remaining_event = queue.get_nowait()
+                                drained_count += 1
+                                if remaining_event.get("kind") == "__end__":
+                                    break
+                                
+                                # 处理剩余事件
+                                evt_kind = remaining_event.get("kind")
+                                evt_name = remaining_event.get("name", "")
+                                evt_data = remaining_event.get("data", {})
+                                
+                                if evt_kind == "on_chain_start":
+                                    yield {"type": "node_start", "node": evt_name, "data": evt_data}
+                                elif evt_kind == "on_chain_end":
+                                    yield {"type": "node_end", "node": evt_name, "data": {"output": evt_data.get("output", {})}}
+                                elif evt_kind == "on_chain_stream":
+                                    yield {"type": "stream", "node": evt_name, "data": evt_data}
+                                elif evt_kind == "completed":
+                                    _write_debug_log("ORC6", "stream_run:completed", "drain时收到completed事件", {"run_id": run_id})
+                                    yield {"type": "completed", "node": None, "data": evt_data}
+                                elif evt_kind == "error":
+                                    yield {"type": "error", "node": None, "data": evt_data}
+                                
+                                # 状态更新
+                                if "output" in evt_data:
+                                    output = evt_data["output"]
+                                    if isinstance(output, dict):
+                                        yield {"type": "state_update", "node": evt_name, "data": {"state": output}}
+                            except asyncio.QueueEmpty:
+                                break
+                        
+                        _write_debug_log("ORC7B", "stream_run:drain_done", f"drain完成，处理了{drained_count}个事件", {"run_id": run_id, "drained_count": drained_count})
+                        logger.info(f"事件流已完成（超时检测，drain {drained_count} 个事件）: run_id={run_id}")
                         break
                     # 否则继续等待
                     continue
