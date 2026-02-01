@@ -2397,6 +2397,21 @@ async def websocket_endpoint(websocket: WebSocket, batch_id: str):
         try:
             cached_progress = await _load_cached_progress_messages(batch_id)
             for message in cached_progress:
+                # #region agent log - 假设F: 缓存消息重放
+                _write_debug_log({
+                    "hypothesisId": "F",
+                    "location": "batch_langgraph.py:websocket_endpoint:cache_replay",
+                    "message": "重放缓存消息",
+                    "data": {"batch_id": batch_id, "msg_type": message.get("type")},
+                    "timestamp": int(datetime.now().timestamp() * 1000),
+                    "sessionId": "debug-session",
+                })
+                # #endregion
+                # 🔥 FIX: 不重放 workflow_completed，避免错误跳转到结果页
+                # workflow_completed 应该只在工作流真正完成时由流式任务发送
+                if message.get("type") == "workflow_completed":
+                    logger.debug(f"跳过重放 workflow_completed 缓存: batch_id={batch_id}")
+                    continue
                 await websocket.send_json(message)
         except Exception as e:
             logger.debug(f"发送缓存进度失败: {e}")
@@ -2521,18 +2536,23 @@ async def websocket_endpoint(websocket: WebSocket, batch_id: str):
                 if run_info.status and run_info.status.value == "completed":
                     student_results = state.get("student_results", [])
                     formatted_results = _format_results_for_frontend(student_results)
-                    class_report = state.get("class_report")
-                    if not class_report and state.get("export_data"):
-                        class_report = state.get("export_data", {}).get("class_report")
-                    await websocket.send_json(
-                        {
-                            "type": "workflow_completed",
-                            "message": f"Grading completed, processed {len(formatted_results)} students",
-                            "results": formatted_results,
-                            "cross_page_questions": state.get("cross_page_questions", []),
-                            "classReport": class_report,
-                        }
-                    )
+                    # 🔥 FIX: 只有在有实际结果数据时才发送 workflow_completed
+                    # 避免在工作流异常完成（如跳过批改）时错误发送完成事件
+                    if formatted_results and len(formatted_results) > 0:
+                        class_report = state.get("class_report")
+                        if not class_report and state.get("export_data"):
+                            class_report = state.get("export_data", {}).get("class_report")
+                        await websocket.send_json(
+                            {
+                                "type": "workflow_completed",
+                                "message": f"Grading completed, processed {len(formatted_results)} students",
+                                "results": formatted_results,
+                                "cross_page_questions": state.get("cross_page_questions", []),
+                                "classReport": class_report,
+                            }
+                        )
+                    else:
+                        logger.warning(f"跳过发送 workflow_completed: 状态为 completed 但没有结果数据, batch_id={batch_id}")
             if run_info and run_info.status and run_info.status.value in ("running", "pending"):
                 run_controller = await get_run_controller()
                 teacher_key = None
