@@ -522,7 +522,7 @@ export interface ResultsReviewContext {
   current_stage?: string;
   student_results: Array<Record<string, unknown>>;
   answer_images: string[];
-  parsed_rubric?: Record<string, unknown>; // 添加 parsed_rubric 字段
+  parsed_rubric?: Record<string, unknown>;
 }
 
 export interface ActiveRunItem {
