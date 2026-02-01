@@ -2624,8 +2624,21 @@ async def get_rubric_review_context(
 ):
     """获取 rubric review 页面上下文（支持从文件存储和数据库读取）"""
     
+    async def _load_rubric_images_from_pg() -> List[str]:
+        """从 PostgreSQL batch_images 表加载 rubric 图片（优先）"""
+        try:
+            images_bytes = await get_batch_images_as_bytes_list(batch_id, "rubric")
+            if not images_bytes:
+                return []
+            images = [base64.b64encode(img).decode("utf-8") for img in images_bytes]
+            logger.info(f"[PG-Storage] 从 PostgreSQL 加载了 {len(images)} 张 rubric 图片")
+            return images
+        except Exception as exc:
+            logger.debug(f"从 PostgreSQL 加载 rubric 图片失败: {exc}")
+            return []
+    
     async def _load_rubric_images_from_storage() -> List[str]:
-        """从文件存储加载 rubric 图片"""
+        """从文件存储加载 rubric 图片（备用）"""
         try:
             file_storage = get_file_storage_service()
             stored_files = await file_storage.list_batch_files(batch_id)
@@ -2669,7 +2682,10 @@ async def get_rubric_review_context(
             except Exception as exc:
                 logger.debug(f"解析数据库中的 rubric_data 失败: {exc}")
         
-        rubric_images = await _load_rubric_images_from_storage()
+        # 优先从 PostgreSQL 加载图片
+        rubric_images = await _load_rubric_images_from_pg()
+        if not rubric_images:
+            rubric_images = await _load_rubric_images_from_storage()
         
         logger.info(f"从数据库加载 rubric 上下文: parsed_rubric={'有' if parsed_rubric else '无'}, images={len(rubric_images)}")
         
@@ -2736,7 +2752,22 @@ async def get_results_review_context(
 ):
     """获取 results review 页面上下文"""
 
+    async def _load_answer_images_from_pg() -> List[str]:
+        """从 PostgreSQL batch_images 表加载答题图片（优先）"""
+        try:
+            images_bytes = await get_batch_images_as_bytes_list(batch_id, "answer")
+            if not images_bytes:
+                return []
+            # 转换为 base64 字符串
+            images = [base64.b64encode(img).decode("utf-8") for img in images_bytes]
+            logger.info(f"[PG-Storage] 从 PostgreSQL 加载了 {len(images)} 张答题图片")
+            return images
+        except Exception as exc:
+            logger.debug(f"Failed to load answer images from PostgreSQL: {exc}")
+            return []
+
     async def _load_answer_images_from_storage() -> List[str]:
+        """从本地文件存储加载答题图片（备用）"""
         try:
             file_storage = get_file_storage_service()
             stored_files = await file_storage.list_batch_files(batch_id)
@@ -2945,6 +2976,10 @@ async def get_results_review_context(
                     if db_images:
                         answer_images = db_images
         if not answer_images:
+            # 优先从 PostgreSQL batch_images 表加载
+            answer_images = await _load_answer_images_from_pg()
+        if not answer_images:
+            # 回退到本地文件存储
             answer_images = await _load_answer_images_from_storage()
         
         # 从 state 中获取 parsed_rubric
