@@ -933,7 +933,8 @@ async def rubric_parse_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     # 注意：不序列化 RubricRegistry，因为 grade_batch_node 会从 parsed_rubric 重建
     # 这样可以避免类型转换问题
 
-    return {
+    # 🔧 修复：显式传递图片数据，防止在 state 传递中丢失（大批量图片场景）
+    result = {
         "parsed_rubric": parsed_rubric,
         "current_stage": "rubric_parse_completed",
         "percentage": 15.0,
@@ -942,6 +943,27 @@ async def rubric_parse_node(state: BatchGradingGraphState) -> Dict[str, Any]:
             "rubric_parse_at": datetime.now().isoformat(),
         },
     }
+    
+    # 确保图片数据不丢失
+    if state.get("processed_images"):
+        result["processed_images"] = state.get("processed_images")
+    if state.get("answer_images"):
+        result["answer_images"] = state.get("answer_images")
+    if state.get("student_boundaries"):
+        result["student_boundaries"] = state.get("student_boundaries")
+    
+    return result
+
+
+def _preserve_images_in_result(state: BatchGradingGraphState, result: Dict[str, Any]) -> Dict[str, Any]:
+    """确保图片数据在节点返回时不丢失（修复大批量图片场景）"""
+    if state.get("processed_images"):
+        result["processed_images"] = state.get("processed_images")
+    if state.get("answer_images"):
+        result["answer_images"] = state.get("answer_images")
+    if state.get("student_boundaries"):
+        result["student_boundaries"] = state.get("student_boundaries")
+    return result
 
 
 async def rubric_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
@@ -956,36 +978,36 @@ async def rubric_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
 
     if grading_mode.startswith("assist"):
         logger.info(f"[rubric_review] skip (assist mode): batch_id={batch_id}")
-        return {
+        return _preserve_images_in_result(state, {
             "current_stage": "rubric_review_skipped",
             "percentage": 18.0,
             "timestamps": {
                 **state.get("timestamps", {}),
                 "rubric_review_at": datetime.now().isoformat(),
             },
-        }
+        })
 
     if not parsed_rubric or not parsed_rubric.get("questions"):
         logger.info(f"[rubric_review] skip (no rubric): batch_id={batch_id}")
-        return {
+        return _preserve_images_in_result(state, {
             "current_stage": "rubric_review_skipped",
             "percentage": 18.0,
             "timestamps": {
                 **state.get("timestamps", {}),
                 "rubric_review_at": datetime.now().isoformat(),
             },
-        }
+        })
 
     if not enable_review:
         logger.info(f"[rubric_review] skip (review disabled): batch_id={batch_id}")
-        return {
+        return _preserve_images_in_result(state, {
             "current_stage": "rubric_review_skipped",
             "percentage": 18.0,
             "timestamps": {
                 **state.get("timestamps", {}),
                 "rubric_review_at": datetime.now().isoformat(),
             },
-        }
+        })
 
     review_request = {
         "type": "rubric_review_required",
@@ -1047,7 +1069,7 @@ async def rubric_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
         )
         updated_rubric["rubric_context"] = _format_rubric_context_from_dict(updated_rubric)
 
-    return {
+    return _preserve_images_in_result(state, {
         "parsed_rubric": updated_rubric,
         "rubric_review_result": review_response,
         "current_stage": "rubric_review_completed",
@@ -1056,7 +1078,7 @@ async def rubric_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
             **state.get("timestamps", {}),
             "rubric_review_at": datetime.now().isoformat(),
         },
-    }
+    })
 
 
 def grading_fanout_router(state: BatchGradingGraphState) -> List[Send]:
@@ -1075,23 +1097,44 @@ def grading_fanout_router(state: BatchGradingGraphState) -> List[Send]:
 
     batch_id = state["batch_id"]
     inputs = state.get("inputs", {})
-    processed_images = state.get("processed_images") or state.get("answer_images") or []
     rubric = state.get("rubric", "")
     parsed_rubric = state.get("parsed_rubric", {})
     api_key = state.get("api_key", "")
     student_boundaries = state.get("student_boundaries")
     
+    # 🔧 修复：从多个来源获取图片，并添加详细日志诊断大批量图片丢失问题
+    processed_images = state.get("processed_images") or []
+    answer_images = state.get("answer_images") or []
+    
+    # 优先使用 processed_images（已预处理），fallback 到 answer_images（原始）
+    images_to_use = processed_images if processed_images else answer_images
+    
+    logger.info(
+        f"[grading_fanout] 图片来源诊断: batch_id={batch_id}, "
+        f"processed_images={len(processed_images)}, answer_images={len(answer_images)}, "
+        f"state_keys={list(state.keys())}"
+    )
+    
     if not student_boundaries:
-        student_boundaries = _build_student_boundaries(state, len(processed_images))
+        student_boundaries = _build_student_boundaries(state, len(images_to_use))
         if student_boundaries:
             logger.info(f"[grading_fanout] 生成 {len(student_boundaries)} 个学生边界")
 
-    if not processed_images:
-        logger.warning(f"[grading_fanout] ⚠️ 没有待批改的图像: batch_id={batch_id}")
-        logger.warning(f"[grading_fanout] 🔍 调试: state keys={list(state.keys())}")
-        logger.warning(f"[grading_fanout] 🔍 answer_images count={len(state.get('answer_images', []))}")
-        logger.warning(f"[grading_fanout] 🔍 processed_images count={len(state.get('processed_images', []))}")
-        return [Send("confession", state)]
+    if not images_to_use:
+        logger.error(f"[grading_fanout] ❌ 没有待批改的图像: batch_id={batch_id}")
+        logger.error(f"[grading_fanout] 🔍 诊断: state keys={sorted(list(state.keys()))}")
+        logger.error(f"[grading_fanout] 🔍 inputs keys={sorted(list(inputs.keys())) if inputs else 'None'}")
+        # 尝试从 inputs 中恢复图片（最后一道防线）
+        input_answer_images = inputs.get("answer_images") or []
+        if input_answer_images:
+            logger.warning(f"[grading_fanout] ⚠️ 从 inputs 恢复 {len(input_answer_images)} 张图片")
+            images_to_use = input_answer_images
+        else:
+            logger.error(f"[grading_fanout] ❌ 无法恢复图片，跳过批改直接进入 confession")
+            return [Send("confession", state)]
+    
+    # 更新变量名以保持后续代码兼容
+    processed_images = images_to_use
 
     # 不再从 page_index_contexts 推导 student_boundaries
     # 如果前端没有提供 student_mapping，则按批次大小分配
