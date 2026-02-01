@@ -681,7 +681,11 @@ export const gradingApi = {
     }),
 
   getGradingHistory: (params?: { class_id?: string; assignment_id?: string; teacher_id?: string }) => {
-    const query = new URLSearchParams(params as Record<string, string>).toString();
+    // 🔧 过滤掉 undefined 值，避免传递 "undefined" 字符串
+    const filteredParams = Object.fromEntries(
+      Object.entries(params || {}).filter(([_, v]) => v !== undefined && v !== '')
+    );
+    const query = new URLSearchParams(filteredParams as Record<string, string>).toString();
     return request<GradingHistoryResponse>(`/grading/history${query ? `?${query}` : ''}`);
   },
 
