@@ -127,7 +127,7 @@ export default function AnnotationEditor({
         canvas.width,
         canvas.height
       );
-      const color = ann.color || getAnnotationColor(ann.annotation_type);
+      const color = ann.color || getAnnotationColor(ann.annotation_type as any);
       const isSelected = selectedId === ann.id;
 
       ctx.strokeStyle = color;
