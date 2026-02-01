@@ -2349,6 +2349,9 @@ async def websocket_endpoint(websocket: WebSocket, batch_id: str):
     # 🔥 FIX: 如果批次不存在活跃的运行，发送 batch_not_found 消息并关闭连接
     # 这可以防止前端无限重连到已完成或不存在的批次
     if not run_exists:
+        # #region agent log
+        import sys; sys.stdout.write(f'[DEBUG_LOG] {{"hypothesisId":"H10","location":"batch_langgraph.py:websocket_endpoint:batch_not_found","message":"准备发送batch_not_found消息","data":{{"batch_id":"{batch_id}","ws_id":{ws_id}}},"timestamp":{int(__import__("time").time()*1000)},"sessionId":"debug-session"}}\n'); sys.stdout.flush()
+        # #endregion
         try:
             async with ws_locks[ws_id]:
                 await websocket.send_json({
@@ -2356,10 +2359,23 @@ async def websocket_endpoint(websocket: WebSocket, batch_id: str):
                     "message": f"Batch {batch_id} has no active run. It may have completed or does not exist.",
                     "batchId": batch_id,
                 })
+            # #region agent log
+            import sys; sys.stdout.write(f'[DEBUG_LOG] {{"hypothesisId":"H10","location":"batch_langgraph.py:websocket_endpoint:batch_not_found_sent","message":"batch_not_found消息发送成功","data":{{"batch_id":"{batch_id}","ws_id":{ws_id}}},"timestamp":{int(__import__("time").time()*1000)},"sessionId":"debug-session"}}\n'); sys.stdout.flush()
+            # #endregion
             logger.info(f"批次无活跃运行，已通知前端: batch_id={batch_id}")
         except Exception as e:
+            # #region agent log
+            import sys; sys.stdout.write(f'[DEBUG_LOG] {{"hypothesisId":"H10","location":"batch_langgraph.py:websocket_endpoint:batch_not_found_failed","message":"batch_not_found消息发送失败","data":{{"batch_id":"{batch_id}","ws_id":{ws_id},"error":"{str(e)[:100]}"}},"timestamp":{int(__import__("time").time()*1000)},"sessionId":"debug-session"}}\n'); sys.stdout.flush()
+            # #endregion
             logger.debug(f"发送 batch_not_found 失败: {e}")
-        # 不立即关闭连接，让前端有机会处理消息后自己关闭
+        # 主动关闭连接，防止无限重连
+        _discard_connection(batch_id, websocket)
+        ws_locks.pop(ws_id, None)
+        try:
+            await websocket.close(code=1000, reason="Batch not found")
+        except Exception:
+            pass
+        return  # 直接返回，不进入 while 循环
 
     # 连接建立后尝试发送当前状态快照，避免前端错过早期事件导致卡住
     try:
@@ -2526,15 +2542,16 @@ async def websocket_endpoint(websocket: WebSocket, batch_id: str):
         import sys; sys.stdout.write(f'[DEBUG_LOG] {{"hypothesisId":"H8","location":"batch_langgraph.py:websocket_endpoint:disconnect_exception","message":"WebSocket断开异常","data":{{"batch_id":"{batch_id}","ws_id":{ws_id},"error":"{str(exc)[:100]}"}},"timestamp":{int(__import__("time").time()*1000)},"sessionId":"debug-session"}}\n'); sys.stdout.flush()
         # #endregion
         logger.info(f"WebSocket 连接断开: batch_id={batch_id}, reason={exc}")
-        _discard_connection(batch_id, websocket)
-        return
     except Exception as exc:
         # #region agent log
         import sys; sys.stdout.write(f'[DEBUG_LOG] {{"hypothesisId":"H8","location":"batch_langgraph.py:websocket_endpoint:other_exception","message":"WebSocket其他异常","data":{{"batch_id":"{batch_id}","ws_id":{ws_id},"error":"{str(exc)[:100]}"}},"timestamp":{int(__import__("time").time()*1000)},"sessionId":"debug-session"}}\n'); sys.stdout.flush()
         # #endregion
         logger.debug(f"WebSocket 接收异常: batch_id={batch_id}, error={exc}")
         logger.info(f"WebSocket 连接断开: batch_id={batch_id}")
+    finally:
+        # 🔥 FIX: 无论如何都要清理连接，防止连接泄漏
         _discard_connection(batch_id, websocket)
+        ws_locks.pop(ws_id, None)
 
 
 @router.get("/active", response_model=ActiveRunsResponse)
