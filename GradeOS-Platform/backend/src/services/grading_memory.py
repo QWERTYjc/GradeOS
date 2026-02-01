@@ -75,7 +75,7 @@ class MemoryEntry:
     扩展字段（记忆验证与审计）：
     - verification_status: 验证状态（待验证/已验证/核心/可疑/已废弃）
     - verification_history: 验证历史记录
-    - source_self_report_id: 来源自白ID
+    - source_confession_id: 来源自白ID
     - is_soft_deleted: 是否软删除
     - deleted_at: 删除时间
     - deleted_reason: 删除原因
@@ -115,7 +115,7 @@ class MemoryEntry:
     # 新增字段：验证状态与审计
     verification_status: MemoryVerificationStatus = MemoryVerificationStatus.PENDING
     verification_history: List[Dict[str, Any]] = field(default_factory=list)
-    source_self_report_id: Optional[str] = None  # 来源自白ID
+    source_confession_id: Optional[str] = None  # 来源自白ID
     is_soft_deleted: bool = False
     deleted_at: Optional[str] = None
     deleted_reason: Optional[str] = None

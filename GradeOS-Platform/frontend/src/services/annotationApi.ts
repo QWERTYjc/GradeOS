@@ -10,8 +10,6 @@ import type {
   AnnotateResponse,
   BatchAnnotateRequest,
   BatchAnnotateResponse,
-  RenderRequest,
-  VisualAnnotation,
   QuestionRubricInput,
 } from '@/types/annotation';
 
@@ -57,70 +55,6 @@ export async function annotateSubmissionWithCoords(
   const response = await axios.post<BatchAnnotateResponse>(
     `${API_BASE}/grading/annotate/batch`,
     request
-  );
-
-  return response.data;
-}
-
-/**
- * 渲染批注到图片（返回 PNG Blob）
- */
-export async function renderAnnotationsToImage(
-  imageBase64: string,
-  annotations: VisualAnnotation[]
-): Promise<Blob> {
-  const request: RenderRequest = {
-    image_base64: imageBase64,
-    annotations,
-  };
-
-  const response = await axios.post(
-    `${API_BASE}/grading/render`,
-    request,
-    { responseType: 'blob' }
-  );
-
-  return response.data;
-}
-
-/**
- * 渲染批注到图片（返回 Base64）
- */
-export async function renderAnnotationsToBase64(
-  imageBase64: string,
-  annotations: VisualAnnotation[]
-): Promise<{ success: boolean; image_base64?: string; error?: string }> {
-  const request: RenderRequest = {
-    image_base64: imageBase64,
-    annotations,
-  };
-
-  const response = await axios.post(
-    `${API_BASE}/grading/render/base64`,
-    request
-  );
-
-  return response.data;
-}
-
-/**
- * 一步完成批改并渲染（返回 PNG Blob）
- */
-export async function annotateAndRender(
-  imageBase64: string,
-  rubrics: QuestionRubricInput[],
-  pageIndex: number = 0
-): Promise<Blob> {
-  const request: AnnotateRequest = {
-    image_base64: imageBase64,
-    rubrics,
-    page_index: pageIndex,
-  };
-
-  const response = await axios.post(
-    `${API_BASE}/grading/annotate-and-render`,
-    request,
-    { responseType: 'blob' }
   );
 
   return response.data;

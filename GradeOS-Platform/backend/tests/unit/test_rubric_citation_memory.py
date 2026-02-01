@@ -27,9 +27,9 @@ from src.services.confidence_calculator import (
     calculate_question_confidence,
     calculate_student_confidence,
 )
-from src.services.grading_self_report import (
-    SelfReportIssue,
-    generate_self_report,
+from src.services.grading_confession import (
+    ConfessionIssue,
+    generate_confession,
     review_memory_conflict,
 )
 
@@ -240,12 +240,12 @@ class TestConfidenceCalculation:
         assert abs(confidence - expected) < 0.001
 
 
-class TestSelfReportMemoryIntegration:
+class TestConfessionMemoryIntegration:
     """测试自白-记忆集成 (P4)"""
     
-    def test_self_report_issue_with_memory_fields(self):
-        """测试 SelfReportIssue 包含记忆字段"""
-        issue = SelfReportIssue(
+    def test_confession_issue_with_memory_fields(self):
+        """测试 ConfessionIssue 包含记忆字段"""
+        issue = ConfessionIssue(
             issue_id="test_001",
             type="low_confidence",
             severity="warning",
@@ -261,8 +261,8 @@ class TestSelfReportMemoryIntegration:
         assert issue.memory_type == "error_pattern"
         assert issue.memory_pattern == "测试模式"
     
-    def test_generate_self_report_marks_memory_candidates(self):
-        """测试 generate_self_report 标记记忆候选"""
+    def test_generate_confession_marks_memory_candidates(self):
+        """测试 generate_confession 标记记忆候选"""
         evidence = {"warnings": []}
         score_result = {
             "question_details": [
@@ -274,7 +274,7 @@ class TestSelfReportMemoryIntegration:
             ]
         }
         
-        report = generate_self_report(evidence, score_result, page_index=0)
+        report = generate_confession(evidence, score_result, page_index=0)
         
         # 应该有记忆候选
         assert "memory_candidates" in report

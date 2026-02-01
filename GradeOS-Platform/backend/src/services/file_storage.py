@@ -391,14 +391,14 @@ class FileStorageService:
     ) -> List[StoredFile]:
         """保存答题文件"""
         stored_files = []
-        for file_data, filename in zip(files, filenames):
+        for index, (file_data, filename) in enumerate(zip(files, filenames)):
             content_type = self._guess_content_type(filename)
             stored_file = await self.backend.save(
                 file_data=file_data,
                 filename=filename,
                 batch_id=batch_id,
                 content_type=content_type,
-                metadata={"type": "answer"},
+                metadata={"type": "answer", "page_index": index},
             )
             stored_files.append(stored_file)
         return stored_files
@@ -411,14 +411,14 @@ class FileStorageService:
     ) -> List[StoredFile]:
         """保存评分标准文件"""
         stored_files = []
-        for file_data, filename in zip(files, filenames):
+        for index, (file_data, filename) in enumerate(zip(files, filenames)):
             content_type = self._guess_content_type(filename)
             stored_file = await self.backend.save(
                 file_data=file_data,
                 filename=filename,
                 batch_id=batch_id,
                 content_type=content_type,
-                metadata={"type": "rubric"},
+                metadata={"type": "rubric", "page_index": index},
             )
             stored_files.append(stored_file)
         return stored_files

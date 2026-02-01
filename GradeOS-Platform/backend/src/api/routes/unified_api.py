@@ -1403,22 +1403,17 @@ async def import_grading_results(
                     or result.get("student_summary")
                     or result.get("summary")
                 )
-                self_report_data = (
-                    result.get("selfReport")
-                    or result.get("self_report")
-                    or result.get("selfAudit")
-                    or result.get("self_audit")
-                )
+                confession_payload = result.get("confession")
                 summary_text = None
                 if isinstance(summary_data, dict):
                     summary_text = summary_data.get("overall")
                 elif isinstance(summary_data, str):
                     summary_text = summary_data
-                self_report_text = None
-                if isinstance(self_report_data, dict):
-                    self_report_text = self_report_data.get("summary")
-                elif isinstance(self_report_data, str):
-                    self_report_text = self_report_data
+                confession_text = None
+                if isinstance(confession_payload, dict):
+                    confession_text = confession_payload.get("summary")
+                elif isinstance(confession_payload, str):
+                    confession_text = confession_payload
                 identity_token = student_id or student_key or student_name
                 stable_key = f"{history_id}:{identity_token}"
                 result_id = str(uuid.uuid5(uuid.NAMESPACE_URL, stable_key))
@@ -1442,7 +1437,7 @@ async def import_grading_results(
                     class_id=target.class_id,
                     student_id=student_id,
                     summary=summary_text,
-                    self_report=self_report_text,
+                    confession=confession_text,
                     result_data=result,
                     imported_at=now,
                 )

@@ -209,7 +209,7 @@ logger.info(f"[grading_fanout_placeholder] 跳过 review,准备进入批改: bat
 修复后的批改流程应该:
 
 1. **题目识别准确**: 19道题正确识别为19道,不会因子题而重复计数
-2. **流程执行完整**: 从 `rubric_parse` → `grading_fanout_placeholder` → `grade_batch` → `self_report` 完整执行
+2. **流程执行完整**: 从 `rubric_parse` → `grading_fanout_placeholder` → `grade_batch` → `confession` 完整执行
 3. **批改结果正确**: 批改结果页面正常显示,数据完整
 
 ---

@@ -3,16 +3,16 @@
 import React, { useState, useContext, useMemo, useEffect, useCallback } from 'react';
 import { useConsoleStore, StudentResult, QuestionResult } from '@/store/consoleStore';
 import clsx from 'clsx';
-import { ArrowLeft, ChevronDown, ChevronUp, CheckCircle, XCircle, Download, GitMerge, AlertCircle, Layers, FileText, Info, X, AlertTriangle, BookOpen, ListOrdered, Pencil, Loader2 } from 'lucide-react';
+import { ArrowLeft, ChevronDown, ChevronUp, CheckCircle, XCircle, Download, GitMerge, AlertCircle, Layers, FileText, Info, X, AlertTriangle, BookOpen, ListOrdered, Loader2, Shield, Pencil } from 'lucide-react';
 import { CrownOutlined, BarChartOutlined, UsergroupAddOutlined, CheckCircleOutlined, ExclamationCircleOutlined, RocketOutlined } from '@ant-design/icons';
 import { Popover } from 'antd';
 import { motion, AnimatePresence } from 'framer-motion';
 import { RubricOverview } from './RubricOverview';
+import { GlassCard } from '@/components/design-system/GlassCard';
 import { AppContext, AppContextType } from '../bookscan/AppContext';
 import { MathText } from '@/components/common/MathText';
 import { SmoothButton } from '@/components/design-system/SmoothButton';
 import { gradingApi } from '@/services/api';
-import { renderAnnotationsToBase64 } from '@/services/annotationApi';
 import type { VisualAnnotation } from '@/types/annotation';
 import AnnotationCanvas from '@/components/grading/AnnotationCanvas';
 
@@ -421,7 +421,7 @@ const QuestionDetail: React.FC<{ question: QuestionResult; gradingMode?: string;
             )}
             {isLowConfidence && (
                 <div className="mt-3 p-3 rounded-md border border-amber-200 bg-amber-50">
-                    <div className="text-[11px] font-semibold text-amber-700 mb-1">自白提示</div>
+                    <div className="text-[11px] font-semibold text-amber-700 mb-1">Confession Hint</div>
                     <p className="text-xs text-amber-800 leading-relaxed">
                         <MathText text={confessionText} />
                     </p>
@@ -461,45 +461,60 @@ const ResultCard: React.FC<ResultCardProps> = ({ result, rank, onExpand }) => {
     const pageRange = result.pageRange || result.pages || '';
 
     return (
-        <div
+        <GlassCard
             className={clsx(
-                'grid grid-cols-[56px_1fr_auto] items-center gap-4 px-4 py-3 border-b border-slate-100 hover:bg-slate-50/60 transition',
-                result.needsConfirmation && 'bg-amber-50/50'
+                'grid grid-cols-[56px_1fr_auto] items-center gap-4 px-4 py-3 border-b border-white/20 transition-all cursor-pointer mb-3',
+                result.needsConfirmation ? 'bg-amber-50/40 border-amber-200/50' : 'bg-white/40 hover:bg-white/60'
             )}
             onClick={() => onExpand?.()}
+            hoverEffect={true}
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            layout
         >
-            <div className="h-10 w-10 rounded-md border border-slate-200 bg-slate-50 text-slate-700 font-mono font-bold text-sm flex items-center justify-center">
+            <div className='h-10 w-10 rounded-md border border-slate-200 bg-white/50 text-slate-700 font-mono font-bold text-sm flex items-center justify-center'>
                 {rank}
             </div>
 
-            <div className="min-w-0">
-                <div className="flex items-center gap-3">
-                    <h3 className="font-semibold text-slate-900 truncate">{result.studentName}</h3>
-                    <span className="text-[11px] font-medium text-slate-500">{gradeLabel}</span>
+            <div className='min-w-0'>
+                <div className='flex items-center gap-3'>
+                    <h3 className='font-semibold text-slate-900 truncate'>{result.studentName}</h3>
+                    <span className='text-[11px] font-medium text-slate-500'>{gradeLabel}</span>
                 </div>
-                <div className="mt-1 text-[11px] text-slate-500 flex flex-wrap gap-3">
+                <div className='mt-1 text-[11px] text-slate-500 flex flex-wrap gap-3 items-center'>
                     {pageRange && <span>Pages {pageRange}</span>}
                     {result.totalRevisions !== undefined && result.totalRevisions > 0 && (
                         <span>Revisions {result.totalRevisions}</span>
                     )}
                     {crossPageCount > 0 && <span>Cross-page {crossPageCount}</span>}
-                    {result.needsConfirmation && <span className="text-amber-600">Needs confirmation</span>}
+                    {result.needsConfirmation && <span className='text-amber-600 bg-amber-100/50 px-2 py-0.5 rounded-md border border-amber-200/50'>Needs verification</span>}
+                        {result.confession?.overallStatus === 'caution' && (
+                            <span className='text-orange-600 bg-orange-100/50 px-2 py-0.5 rounded-md border border-orange-200/50 flex items-center gap-1'>
+                                <AlertTriangle className='w-3 h-3' /> Confession
+                            </span>
+                        )}
+                    {result.logicReviewedAt && (
+                        <span className='text-indigo-600 bg-indigo-100/50 px-2 py-0.5 rounded-md border border-indigo-200/50 flex items-center gap-1'>
+                            <Shield className='w-3 h-3' /> Logic Review
+                        </span>
+                    )}
                 </div>
             </div>
 
-            <div className="text-right">
+            <div className='text-right'>
                 {isAssist ? (
-                    <div className="text-xs font-semibold text-slate-500">Assist</div>
+                    <div className='text-xs font-semibold text-slate-500'>Assist</div>
                 ) : (
-                    <div className="text-lg font-bold text-slate-900">
-                        {result.score.toFixed(1)}<span className="text-xs text-slate-400">/{result.maxScore}</span>
+                    <div className='text-lg font-bold text-slate-900'>
+                        {result.score.toFixed(1)}<span className='text-xs text-slate-400'>/{result.maxScore}</span>
                     </div>
                 )}
                 {!isAssist && (
-                    <div className="text-[11px] text-slate-500">{percentage.toFixed(0)}%</div>
+                    <div className='text-[11px] text-slate-500'>{percentage.toFixed(0)}%</div>
                 )}
             </div>
-        </div>
+        </GlassCard>
     );
 };
 
@@ -553,6 +568,47 @@ const normalizeQuestionResults = (questionResults?: QuestionResult[]) => {
     });
 };
 
+const normalizeConfession = (confession: any) => {
+    if (!confession || typeof confession !== 'object') return undefined;
+    const normalizeIssue = (item: any) => ({
+        questionId: item.questionId ?? item.question_id,
+        message: item.message ?? item.description ?? item.note ?? '',
+    });
+    const normalizeWarning = (item: any) => {
+        if (typeof item === 'string') {
+            return { message: item };
+        }
+        return {
+            questionId: item.questionId ?? item.question_id,
+            message: item.message ?? item.description ?? '',
+        };
+    };
+    const normalizeRisk = (item: any) => {
+        if (typeof item === 'string') {
+            return { questionId: item, description: '' };
+        }
+        return {
+            questionId: item.questionId ?? item.question_id,
+            description: item.description ?? item.message ?? '',
+        };
+    };
+    return {
+        overallStatus: confession.overallStatus || confession.overall_status,
+        overallConfidence: confession.overallConfidence ?? confession.overall_confidence,
+        summary: confession.summary || '',
+        issues: Array.isArray(confession.issues) ? confession.issues.map(normalizeIssue) : [],
+        warnings: Array.isArray(confession.warnings) ? confession.warnings.map(normalizeWarning) : [],
+        highRiskQuestions: Array.isArray(confession.highRiskQuestions || confession.high_risk_questions)
+            ? (confession.highRiskQuestions || confession.high_risk_questions).map(normalizeRisk)
+            : [],
+        potentialErrors: Array.isArray(confession.potentialErrors || confession.potential_errors)
+            ? (confession.potentialErrors || confession.potential_errors).map(normalizeRisk)
+            : [],
+        generatedAt: confession.generatedAt || confession.generated_at,
+        source: confession.source,
+    };
+};
+
 export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails = false, hideGradingTransparency = false }) => {
     const {
         finalResults,
@@ -600,7 +656,6 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
 
     // 批注渲染状态 - 默认开启
     const [showAnnotations, setShowAnnotations] = useState(true);
-    const [annotatedImages, setAnnotatedImages] = useState<Map<number, string>>(new Map());
     const [annotationLoading, setAnnotationLoading] = useState<Set<number>>(new Set());
     // 🔥 新增：存储每页的批注数据，用于 Canvas 直接渲染
     const [pageAnnotationsData, setPageAnnotationsData] = useState<Map<number, VisualAnnotation[]>>(new Map());
@@ -644,6 +699,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                 mergeSource: (q as any).mergeSource,
                 scoringPointResults: (q as any).scoringPointResults
             })),
+            confession: (agent.output as any)?.confession,
             startPage: (agent.output as any)?.startPage,
             endPage: (agent.output as any)?.endPage,
         }));
@@ -651,6 +707,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
     const normalizedResults = useMemo(() => (
         results.map((result) => ({
             ...result,
+            confession: normalizeConfession(result.confession),
             questionResults: normalizeQuestionResults(result.questionResults)
         }))
     ), [results]);
@@ -703,7 +760,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
             status,
             alreadyAttempted: submissionId ? apiFallbackAttemptedRef.current.has(submissionId) : false
         });
-        
+
         // 条件：有 submissionId，没有结果，状态为 COMPLETED，且未尝试过
         if (!submissionId || finalResults.length > 0 || status !== 'COMPLETED') {
             console.log('[API Fallback] Skipping - conditions not met');
@@ -713,26 +770,26 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
             console.log('[API Fallback] Skipping - already attempted for this submissionId');
             return;
         }
-        
+
         const fetchResultsFromApi = async () => {
             apiFallbackAttemptedRef.current.add(submissionId);
             setApiFallbackLoading(true);
             setApiFallbackError(null);
-            
+
             try {
                 console.log('[API Fallback] Fetching results for batch:', submissionId);
                 const response = await gradingApi.getBatchResults(submissionId);
-                
+
                 // 后端可能返回 results（camelCase）或 student_results（snake_case）
                 const rawResults = (response as any).results || response.student_results || [];
                 console.log('[API Fallback] Raw results:', rawResults.length, 'items');
-                
+
                 if (rawResults.length > 0) {
                     // 检测数据格式（camelCase 或 snake_case）
                     const firstResult = rawResults[0];
                     const isCamelCase = 'studentName' in firstResult;
                     console.log('[API Fallback] Data format:', isCamelCase ? 'camelCase' : 'snake_case');
-                    
+
                     // 转换 API 响应格式到前端格式
                     const formattedResults: StudentResult[] = rawResults.map((r: any) => {
                         if (isCamelCase) {
@@ -749,7 +806,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                                 gradingMode: r.gradingMode,
                                 studentSummary: r.studentSummary,
                                 selfAudit: r.selfAudit,
-                                selfReport: r.selfReport,
+                                confession: r.confession,
                                 questionResults: (r.questionResults || []).map((q: any) => ({
                                     questionId: q.questionId || '',
                                     score: q.score || 0,
@@ -832,7 +889,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                             };
                         }
                     });
-                    
+
                     console.log('[API Fallback] Successfully fetched', formattedResults.length, 'results');
                     setFinalResults(formattedResults);
                 } else {
@@ -846,7 +903,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                 setApiFallbackLoading(false);
             }
         };
-        
+
         // 延迟执行，给 WebSocket 一些时间
         const timer = setTimeout(fetchResultsFromApi, 2000);
         return () => clearTimeout(timer);
@@ -929,7 +986,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
     // 获取存储的评分标准
     const parsedRubric = useConsoleStore((state) => state.parsedRubric);
 
-    // 批注渲染函数 - 调用后端 API 生成带批注的图片
+    // 批注渲染函数 - 前端 Canvas 渲染批注
     const renderAnnotationsForPage = useCallback(async (pageIdx: number, imageUrl: string, studentKey: string, studentData: StudentResult | null) => {
         // 使用 studentKey + pageIdx 作为唯一标识，避免重复渲染
         const renderKey = `${studentKey}-${pageIdx}`;
@@ -950,57 +1007,17 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
 
             // 收集该页的所有批注
             const pageAnnotations: VisualAnnotation[] = [];
-            const gradingAnnotations = student.gradingAnnotations || (student as any).annotations || (student as any).annotation_result;
-            const annotationPages = gradingAnnotations?.pages || [];
-            const matchedPage = Array.isArray(annotationPages)
-                ? annotationPages.find((page: any) => page.page_index === pageIdx || page.pageIndex === pageIdx)
-                : null;
-            if (matchedPage?.annotations && Array.isArray(matchedPage.annotations)) {
-                matchedPage.annotations.forEach((ann: any) => {
-                    pageAnnotations.push({
-                        annotation_type: ann.annotation_type || ann.type,
-                        bounding_box: ann.bounding_box || ann.boundingBox,
-                        text: ann.text || '',
-                        color: ann.color || '#FF0000',
-                        question_id: ann.question_id || ann.questionId,
-                        scoring_point_id: ann.scoring_point_id || ann.scoringPointId,
-                        arrow_end: ann.arrow_end || ann.arrowEnd,
-                        metadata: ann.metadata,
-                    } as VisualAnnotation);
-                });
-            }
-
-            // 从 questionResults 中提取批注
-            if (pageAnnotations.length === 0) {
-                student.questionResults?.forEach(q => {
-                // 检查该题目是否在当前页
+            student.questionResults?.forEach(q => {
                 const questionPages = q.pageIndices || [];
-                if (!questionPages.includes(pageIdx) && questionPages.length > 0) return;
+                if (questionPages.length === 0) return;
+                if (!questionPages.includes(pageIdx)) return;
 
-                // 优先使用后端返回的 annotations 字段
-                if (q.annotations && q.annotations.length > 0) {
-                    q.annotations.forEach(ann => {
-                        // 只添加当前页的批注
-                        if (ann.page_index === undefined || ann.page_index === pageIdx) {
-                            pageAnnotations.push({
-                                annotation_type: ann.type,
-                                bounding_box: ann.bounding_box,
-                                text: ann.text || '',
-                                color: ann.color || '#FF0000',
-                            } as VisualAnnotation);
-                        }
-                    });
-                }
-
-                // 从 steps 字段提取步骤批注
                 if (q.steps && q.steps.length > 0) {
                     q.steps.forEach(step => {
                         if (step.step_region) {
-                            // 构建 M/A mark 文本（如 "M1", "M0", "A1", "A0"）
                             const markText = step.mark_type === 'M'
                                 ? `M${step.mark_value}`
                                 : `A${step.mark_value}`;
-                            // 使用 m_mark 或 a_mark 类型，根据 mark_type 决定
                             const annotationType = step.mark_type === 'M' ? 'm_mark' : 'a_mark';
 
                             pageAnnotations.push({
@@ -1010,7 +1027,6 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                                 color: step.is_correct ? '#00AA00' : '#FF0000',
                             } as VisualAnnotation);
 
-                            // 如果步骤错误，额外添加错误圈选
                             if (!step.is_correct && step.feedback) {
                                 pageAnnotations.push({
                                     annotation_type: 'comment',
@@ -1028,9 +1044,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                     });
                 }
 
-                // 从 scoringPointResults 中提取错误区域批注
                 q.scoringPointResults?.forEach((spr: any) => {
-                    // 如果有错误区域坐标，创建错误圈选批注
                     if (spr.errorRegion || spr.error_region) {
                         const errorRegion = spr.errorRegion || spr.error_region;
                         pageAnnotations.push({
@@ -1042,7 +1056,6 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                     }
                 });
 
-                // 添加答案区域的分数批注
                 if (q.answerRegion) {
                     pageAnnotations.push({
                         annotation_type: 'score',
@@ -1056,18 +1069,14 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                         color: q.score >= q.maxScore * 0.8 ? '#00AA00' : q.score >= q.maxScore * 0.5 ? '#FF8800' : '#FF0000',
                     } as VisualAnnotation);
                 }
-                });
-            }
+            });
 
-            // 🔥 如果有批注坐标，存储批注数据用于 Canvas 直接渲染（快速路径）
             if (pageAnnotations.length > 0) {
-                console.log(`[Canvas渲染] 页面 ${pageIdx} 有 ${pageAnnotations.length} 个批注，使用前端 Canvas 直接渲染`);
                 setPageAnnotationsData(prev => {
                     const next = new Map(prev);
                     next.set(pageIdx, pageAnnotations);
                     return next;
                 });
-                // 标记为已完成（不需要 annotatedImages，因为会用 Canvas 渲染）
                 setAnnotationLoading(prev => {
                     const next = new Set(prev);
                     next.delete(pageIdx);
@@ -1076,68 +1085,9 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                 return;
             }
 
-            // 获取图片的 base64（仅在需要调用 API 时才获取）
-            let imageBase64 = imageUrl;
-            if (imageUrl.startsWith('data:')) {
-                imageBase64 = imageUrl.split(',')[1] || imageUrl;
-            } else if (imageUrl.startsWith('http')) {
-                // 如果是 URL，需要先获取图片
-                const response = await fetch(imageUrl);
-                const blob = await response.blob();
-                const reader = new FileReader();
-                imageBase64 = await new Promise((resolve) => {
-                    reader.onload = () => {
-                        const result = reader.result as string;
-                        resolve(result.split(',')[1] || result);
-                    };
-                    reader.readAsDataURL(blob);
-                });
-            }
-
-            // 如果没有批注坐标但有评分标准，调用 annotate-and-render API
-            if (parsedRubric?.questions && parsedRubric.questions.length > 0) {
-                const { annotateAndRender } = await import('@/services/annotationApi');
-
-                // 构建评分标准
-                const rubrics = parsedRubric.questions.map(q => ({
-                    question_id: q.questionId,
-                    max_score: q.maxScore,
-                    question_text: q.questionText || '',
-                    standard_answer: q.standardAnswer || '',
-                    scoring_points: (q.scoringPoints || []).map(sp => ({
-                        description: sp.description,
-                        score: sp.score || 1,
-                        point_id: sp.pointId || '',
-                        is_required: sp.isRequired ?? true,
-                    })),
-                    grading_notes: q.gradingNotes || '',
-                }));
-
-                try {
-                    const blob = await annotateAndRender(imageBase64, rubrics, pageIdx);
-                    const reader = new FileReader();
-                    const dataUrl = await new Promise<string>((resolve) => {
-                        reader.onload = () => resolve(reader.result as string);
-                        reader.readAsDataURL(blob);
-                    });
-
-                    setAnnotatedImages(prev => {
-                        const next = new Map(prev);
-                        next.set(pageIdx, dataUrl);
-                        return next;
-                    });
-                    return;
-                } catch (err) {
-                    console.error('调用 annotate-and-render API 失败:', err);
-                }
-            }
-
-            // 如果是 Assist 模式且没有批注数据，生成演示批注
             const isAssistMode = (student.gradingMode || '').startsWith('assist') || student.maxScore <= 0;
             if (isAssistMode && pageAnnotations.length === 0) {
-                console.log('Assist 模式：生成演示批注');
-                // 生成一些演示批注来展示功能
-                // BoundingBox 使用 {x_min, y_min, x_max, y_max} 格式（归一化坐标 0.0-1.0）
+                console.log('Assist mode: using demo annotations');
                 const demoAnnotations: VisualAnnotation[] = [
                     {
                         annotation_type: 'step_check',
@@ -1166,23 +1116,16 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                     {
                         annotation_type: 'comment',
                         bounding_box: { x_min: 0.70, y_min: 0.55, x_max: 0.95, y_max: 0.63 },
-                        text: '演示批注',
+                        text: '示例批注',
                         color: '#0066CC',
                     },
                 ];
 
-                try {
-                    const result = await renderAnnotationsToBase64(imageBase64, demoAnnotations);
-                    if (result.success && result.image_base64) {
-                        setAnnotatedImages(prev => {
-                            const next = new Map(prev);
-                            next.set(pageIdx, `data:image/png;base64,${result.image_base64}`);
-                            return next;
-                        });
-                    }
-                } catch (err) {
-                    console.error('渲染演示批注失败:', err);
-                }
+                setPageAnnotationsData(prev => {
+                    const next = new Map(prev);
+                    next.set(pageIdx, demoAnnotations);
+                    return next;
+                });
             }
         } catch (error) {
             console.error('渲染批注失败:', error);
@@ -1233,7 +1176,6 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
     useEffect(() => {
         if (!showAnnotations) {
             // 关闭批注时清理
-            setAnnotatedImages(new Map());
             setPageAnnotationsData(new Map());
             renderedPagesRef.current.clear();
         }
@@ -1241,8 +1183,6 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
 
     // 切换学生时清理该学生的渲染缓存
     useEffect(() => {
-        // 切换学生时，清理 annotatedImages 和 pageAnnotationsData
-        setAnnotatedImages(new Map());
         setPageAnnotationsData(new Map());
         renderedPagesRef.current.clear();
     }, [detailViewIndex]);
@@ -1266,31 +1206,6 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
     }, [detailViewIndex]);
 
     // ==================== 导出处理函数 ====================
-
-    const handleExportAnnotatedImages = async () => {
-        if (!submissionId) return;
-        setExportLoading('images');
-        try {
-            const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || ''}/batch/export/annotated-images/${submissionId}`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ include_original: false }),
-            });
-            if (!response.ok) throw new Error('导出失败');
-            const blob = await response.blob();
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `grading_annotated_${submissionId}.zip`;
-            a.click();
-            URL.revokeObjectURL(url);
-        } catch (error) {
-            console.error('导出带批注图片失败:', error);
-        } finally {
-            setExportLoading(null);
-            setExportMenuOpen(false);
-        }
-    };
 
     const handleExportExcel = async () => {
         if (!submissionId) return;
@@ -1664,30 +1579,30 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
         const index = sortedResults.findIndex(r => r.studentName === student.studentName);
         setDetailViewIndex(index >= 0 ? index : 0);
     }, [sortedResults]);
-    
+
     // 手动重试获取结果
     const handleRetryFetch = useCallback(async () => {
         if (!submissionId) return;
-        
+
         // 清除已尝试标记，允许重试
         apiFallbackAttemptedRef.current.delete(submissionId);
         setApiFallbackLoading(true);
         setApiFallbackError(null);
-        
+
         try {
             console.log('[Manual Retry] Fetching results for batch:', submissionId);
             const response = await gradingApi.getBatchResults(submissionId);
-            
+
             // 后端可能返回 results（camelCase）或 student_results（snake_case）
             const rawResults = (response as any).results || response.student_results || [];
             console.log('[Manual Retry] Raw results:', rawResults.length, 'items');
-            
+
             if (rawResults.length > 0) {
                 // 检测数据格式（camelCase 或 snake_case）
                 const firstResult = rawResults[0];
                 const isCamelCase = 'studentName' in firstResult;
                 console.log('[Manual Retry] Data format:', isCamelCase ? 'camelCase' : 'snake_case');
-                
+
                 // 转换 API 响应格式到前端格式
                 const formattedResults: StudentResult[] = rawResults.map((r: any) => {
                     if (isCamelCase) {
@@ -1703,7 +1618,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                             gradingMode: r.gradingMode,
                             studentSummary: r.studentSummary,
                             selfAudit: r.selfAudit,
-                            selfReport: r.selfReport,
+                            confession: r.confession,
                             questionResults: (r.questionResults || []).map((q: any) => ({
                                 questionId: q.questionId || '',
                                 score: q.score || 0,
@@ -1785,7 +1700,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                         };
                     }
                 });
-                
+
                 console.log('[Manual Retry] Successfully fetched', formattedResults.length, 'results');
                 setFinalResults(formattedResults);
             } else {
@@ -2369,7 +2284,6 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                                         onChange={(e) => {
                                             setShowAnnotations(e.target.checked);
                                             if (!e.target.checked) {
-                                                setAnnotatedImages(new Map());
                                                 setPageAnnotationsData(new Map());
                                             }
                                         }}
@@ -2388,11 +2302,9 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                         )}
                         {uniquePages.map((pageIdx, pageIdxIndex) => {
                             const originalImageUrl = uploadedImages[pageIdx] || currentSession?.images[pageIdx]?.url;
-                            const annotatedImageUrl = annotatedImages.get(pageIdx);
                             const pageAnnotations = pageAnnotationsData.get(pageIdx);
                             const isLoading = annotationLoading.has(pageIdx);
                             const hasCanvasAnnotations = showAnnotations && pageAnnotations && pageAnnotations.length > 0;
-                            const displayImageUrl = showAnnotations && annotatedImageUrl ? annotatedImageUrl : originalImageUrl;
                             const isLastPage = pageIdxIndex === uniquePages.length - 1;
                             return (
                                 <div key={pageIdx} className={clsx("pb-6 border-b border-slate-100/80 space-y-2", isLastPage && "border-b-0 pb-0")}>
@@ -2403,17 +2315,17 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                                         {showAnnotations && isLoading && (
                                             <div className="flex items-center gap-1 text-xs text-blue-500">
                                                 <Loader2 className="w-3 h-3 animate-spin" />
-                                                渲染中...
+                                                加载批注中...
                                             </div>
                                         )}
-                                        {showAnnotations && (annotatedImageUrl || hasCanvasAnnotations) && !isLoading && (
+                                        {showAnnotations && hasCanvasAnnotations && !isLoading && (
                                             <div className="flex items-center gap-1 text-xs text-emerald-500">
                                                 <Pencil className="w-3 h-3" />
-                                                已批注{hasCanvasAnnotations ? ' (Canvas)' : ''}
+                                                已标注 (Canvas)
                                             </div>
                                         )}
                                     </div>
-                                    {/* 🔥 优先使用 Canvas 渲染批注（快速路径） */}
+                                    {/* Canvas 渲染批注 */}
                                     {hasCanvasAnnotations && originalImageUrl ? (
                                         <AnnotationCanvas
                                             imageSrc={originalImageUrl}
@@ -2421,8 +2333,8 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                                             className="w-full h-auto"
                                             showText={true}
                                         />
-                                    ) : displayImageUrl ? (
-                                        <img src={displayImageUrl} alt={`Page ${pageIdx + 1}`} className="w-full h-auto" />
+                                    ) : originalImageUrl ? (
+                                        <img src={originalImageUrl} alt={`Page ${pageIdx + 1}`} className="w-full h-auto" />
                                     ) : (
                                         <div className="p-10 text-center text-slate-400">Image missing</div>
                                     )}
@@ -2444,7 +2356,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                             </div>
 
                             {/* 🔥 批改透明度区块 - 显示第一次批改、自白、逻辑复核 */}
-                            {(detailViewStudent.draftQuestionDetails || detailViewStudent.selfReport || detailViewStudent.logicReviewedAt) && (
+                            {(detailViewStudent.draftQuestionDetails || detailViewStudent.confession || detailViewStudent.logicReviewedAt) && (
                                 <div className="border border-blue-100 bg-blue-50/30 rounded-xl p-4 space-y-4">
                                     <div className="flex items-center gap-2 text-blue-700 font-semibold text-sm">
                                         <AlertCircle className="w-4 h-4" />
@@ -2452,66 +2364,66 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                                     </div>
 
                                     {/* 自白报告 - 增强版 */}
-                                    {detailViewStudent.selfReport && (
+                                    {detailViewStudent.confession && (
                                         <div className="bg-amber-50 rounded-lg p-4 border border-amber-200">
                                             <div className="flex items-center justify-between mb-3">
                                                 <div className="text-xs font-semibold text-amber-700 flex items-center gap-1.5">
                                                     <AlertTriangle className="w-4 h-4" />
-                                                    AI 自白报告
+                                                    AI Confession Report
                                                 </div>
-                                                {detailViewStudent.selfReport.generatedAt && (
+                                                {detailViewStudent.confession.generatedAt && (
                                                     <div className="text-[10px] text-amber-500">
-                                                        {new Date(detailViewStudent.selfReport.generatedAt).toLocaleString('zh-CN')}
+                                                        {new Date(detailViewStudent.confession.generatedAt).toLocaleString('zh-CN')}
                                                     </div>
                                                 )}
                                             </div>
 
                                             {/* 状态和置信度 */}
                                             <div className="flex items-center gap-4 mb-3">
-                                                {detailViewStudent.selfReport.overallStatus && (
+                                                {detailViewStudent.confession.overallStatus && (
                                                     <div className={clsx(
                                                         "px-2.5 py-1 rounded-full text-xs font-semibold",
-                                                        detailViewStudent.selfReport.overallStatus === 'ok'
+                                                        detailViewStudent.confession.overallStatus === 'ok'
                                                             ? "bg-emerald-100 text-emerald-700"
-                                                            : detailViewStudent.selfReport.overallStatus === 'caution'
+                                                            : detailViewStudent.confession.overallStatus === 'caution'
                                                                 ? "bg-amber-100 text-amber-700"
                                                                 : "bg-rose-100 text-rose-700"
                                                     )}>
-                                                        状态: {detailViewStudent.selfReport.overallStatus === 'ok' ? '✓ 正常'
-                                                            : detailViewStudent.selfReport.overallStatus === 'caution' ? '⚠ 需注意'
+                                                        状态: {detailViewStudent.confession.overallStatus === 'ok' ? '✓ 正常'
+                                                            : detailViewStudent.confession.overallStatus === 'caution' ? '⚠ 需注意'
                                                                 : '⚠ 需复核'}
                                                     </div>
                                                 )}
-                                                {detailViewStudent.selfReport.overallConfidence !== undefined && (
+                                                {detailViewStudent.confession.overallConfidence !== undefined && (
                                                     <div className="flex items-center gap-2">
                                                         <span className="text-xs text-amber-600">置信度:</span>
                                                         <div className="w-20 h-2 bg-amber-200 rounded-full overflow-hidden">
                                                             <div
                                                                 className={clsx(
                                                                     "h-full rounded-full transition-all",
-                                                                    detailViewStudent.selfReport.overallConfidence >= 0.8 ? "bg-emerald-500"
-                                                                        : detailViewStudent.selfReport.overallConfidence >= 0.5 ? "bg-amber-500"
+                                                                    detailViewStudent.confession.overallConfidence >= 0.8 ? "bg-emerald-500"
+                                                                        : detailViewStudent.confession.overallConfidence >= 0.5 ? "bg-amber-500"
                                                                             : "bg-rose-500"
                                                                 )}
-                                                                style={{ width: `${detailViewStudent.selfReport.overallConfidence * 100}%` }}
+                                                                style={{ width: `${detailViewStudent.confession.overallConfidence * 100}%` }}
                                                             />
                                                         </div>
                                                         <span className="text-xs font-mono text-amber-700">
-                                                            {(detailViewStudent.selfReport.overallConfidence * 100).toFixed(0)}%
+                                                            {(detailViewStudent.confession.overallConfidence * 100).toFixed(0)}%
                                                         </span>
                                                     </div>
                                                 )}
                                             </div>
 
                                             {/* 高风险题目 */}
-                                            {detailViewStudent.selfReport.highRiskQuestions && detailViewStudent.selfReport.highRiskQuestions.length > 0 && (
+                                            {detailViewStudent.confession.highRiskQuestions && detailViewStudent.confession.highRiskQuestions.length > 0 && (
                                                 <div className="mb-3 p-2.5 bg-rose-50 rounded-lg border border-rose-200">
                                                     <div className="text-[10px] uppercase tracking-wider text-rose-600 font-semibold mb-2 flex items-center gap-1">
                                                         <XCircle className="w-3 h-3" />
-                                                        高风险题目 ({detailViewStudent.selfReport.highRiskQuestions.length})
+                                                        高风险题目 ({detailViewStudent.confession.highRiskQuestions.length})
                                                     </div>
                                                     <div className="space-y-1.5">
-                                                        {detailViewStudent.selfReport.highRiskQuestions.map((item, idx) => (
+                                                        {detailViewStudent.confession.highRiskQuestions.map((item, idx) => (
                                                             <div key={idx} className="text-xs text-rose-700 flex items-start gap-2 bg-white/50 rounded px-2 py-1">
                                                                 <span className="font-mono font-semibold text-rose-500 shrink-0">Q{item.questionId}</span>
                                                                 <span className="text-rose-600">{item.description || '需要人工复核'}</span>
@@ -2522,14 +2434,14 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                                             )}
 
                                             {/* 潜在问题 */}
-                                            {detailViewStudent.selfReport.potentialErrors && detailViewStudent.selfReport.potentialErrors.length > 0 && (
+                                            {detailViewStudent.confession.potentialErrors && detailViewStudent.confession.potentialErrors.length > 0 && (
                                                 <div className="mb-3 p-2.5 bg-orange-50 rounded-lg border border-orange-200">
                                                     <div className="text-[10px] uppercase tracking-wider text-orange-600 font-semibold mb-2 flex items-center gap-1">
                                                         <AlertTriangle className="w-3 h-3" />
-                                                        潜在错误 ({detailViewStudent.selfReport.potentialErrors.length})
+                                                        潜在错误 ({detailViewStudent.confession.potentialErrors.length})
                                                     </div>
                                                     <div className="space-y-1.5">
-                                                        {detailViewStudent.selfReport.potentialErrors.map((item: any, idx: number) => (
+                                                        {detailViewStudent.confession.potentialErrors.map((item: any, idx: number) => (
                                                             <div key={idx} className="text-xs text-orange-700 flex items-start gap-2 bg-white/50 rounded px-2 py-1">
                                                                 {item.questionId && <span className="font-mono font-semibold text-orange-500 shrink-0">Q{item.questionId}</span>}
                                                                 <span className="text-orange-600">{item.description || item.message}</span>
@@ -2540,14 +2452,14 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                                             )}
 
                                             {/* 问题/警告 */}
-                                            {detailViewStudent.selfReport.issues && detailViewStudent.selfReport.issues.length > 0 && (
+                                            {detailViewStudent.confession.issues && detailViewStudent.confession.issues.length > 0 && (
                                                 <div className="p-2.5 bg-amber-100/50 rounded-lg border border-amber-300">
                                                     <div className="text-[10px] uppercase tracking-wider text-amber-600 font-semibold mb-2 flex items-center gap-1">
                                                         <Info className="w-3 h-3" />
-                                                        问题提示 ({detailViewStudent.selfReport.issues.length})
+                                                        问题提示 ({detailViewStudent.confession.issues.length})
                                                     </div>
                                                     <div className="space-y-1.5">
-                                                        {detailViewStudent.selfReport.issues.map((item, idx) => (
+                                                        {detailViewStudent.confession.issues.map((item, idx) => (
                                                             <div key={idx} className="text-xs text-amber-700 flex items-start gap-2 bg-white/50 rounded px-2 py-1">
                                                                 {item.questionId && <span className="font-mono font-semibold text-amber-500 shrink-0">Q{item.questionId}:</span>}
                                                                 <span>{item.message}</span>
@@ -2558,13 +2470,13 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                                             )}
 
                                             {/* 警告 */}
-                                            {detailViewStudent.selfReport.warnings && detailViewStudent.selfReport.warnings.length > 0 && (
+                                            {detailViewStudent.confession.warnings && detailViewStudent.confession.warnings.length > 0 && (
                                                 <div className="mt-2 p-2.5 bg-yellow-50 rounded-lg border border-yellow-200">
                                                     <div className="text-[10px] uppercase tracking-wider text-yellow-600 font-semibold mb-2">
-                                                        警告 ({detailViewStudent.selfReport.warnings.length})
+                                                        警告 ({detailViewStudent.confession.warnings.length})
                                                     </div>
                                                     <div className="space-y-1">
-                                                        {detailViewStudent.selfReport.warnings.map((item: any, idx: number) => (
+                                                        {detailViewStudent.confession.warnings.map((item: any, idx: number) => (
                                                             <div key={idx} className="text-xs text-yellow-700">
                                                                 {item.questionId && <span className="font-mono text-yellow-500 mr-1">Q{item.questionId}:</span>}
                                                                 {item.message}
@@ -2575,9 +2487,9 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                                             )}
 
                                             {/* 来源标识 */}
-                                            {detailViewStudent.selfReport.source && (
+                                            {detailViewStudent.confession.source && (
                                                 <div className="mt-2 text-[10px] text-amber-400 text-right">
-                                                    来源: {detailViewStudent.selfReport.source}
+                                                    来源: {detailViewStudent.confession.source}
                                                 </div>
                                             )}
                                         </div>
@@ -2668,7 +2580,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                                                             </div>
                                                             {dq.selfCritique && (
                                                                 <div className="mt-1 text-[11px] text-amber-700 italic">
-                                                                    自白: {dq.selfCritique}
+                                                                    Confession: {dq.selfCritique}
                                                                 </div>
                                                             )}
                                                         </div>
@@ -2806,7 +2718,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
             apiFallbackLoading,
             apiFallbackError
         });
-        
+
         return (
             <div className="flex flex-col items-center justify-center h-full text-slate-400 gap-4">
                 <div className="p-8 flex flex-col items-center gap-4">
@@ -2837,6 +2749,20 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
             </div>
         );
     }
+
+    const containerVariants = {
+        hidden: { opacity: 0 },
+        visible: {
+            opacity: 1,
+            transition: {
+                staggerChildren: 0.1
+            }
+        }
+    };
+    const itemVariants = {
+        hidden: { opacity: 0, y: 20 },
+        visible: { opacity: 1, y: 0 }
+    };
 
     return (
         <div className="h-full overflow-y-auto p-6 space-y-8 custom-scrollbar bg-white">
@@ -2939,21 +2865,6 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                             {exportMenuOpen && (
                                 <div className="absolute right-0 top-full mt-1 w-56 bg-white rounded-lg shadow-lg border border-slate-200 py-1 z-50">
                                     <button
-                                        onClick={handleExportAnnotatedImages}
-                                        disabled={exportLoading === 'images'}
-                                        className="w-full px-4 py-2.5 text-left text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-3 disabled:opacity-50"
-                                    >
-                                        {exportLoading === 'images' ? (
-                                            <Loader2 className="w-4 h-4 animate-spin" />
-                                        ) : (
-                                            <Pencil className="w-4 h-4 text-slate-400" />
-                                        )}
-                                        <div>
-                                            <div className="font-medium">带批注图片</div>
-                                            <div className="text-[10px] text-slate-400">ZIP 打包下载</div>
-                                        </div>
-                                    </button>
-                                    <button
                                         onClick={handleExportExcel}
                                         disabled={exportLoading === 'excel'}
                                         className="w-full px-4 py-2.5 text-left text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-3 disabled:opacity-50"
@@ -3042,13 +2953,13 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                     )}
                 </div>
 
-                <div className="bg-white">
+                <motion.div className='bg-transparent space-y-3' variants={containerVariants} initial='hidden' animate='visible'>
                     {sortedResults.map((result, index) => (
-                        <div key={`${result.studentName}-${index}`} onClick={() => handleViewDetail(result)} className="cursor-pointer">
+                        <motion.div key={`${result.studentName}-${index}`} variants={itemVariants} onClick={() => handleViewDetail(result)} className='cursor-pointer'>
                             <ResultCard result={result} rank={index + 1} isExpanded={false} onExpand={() => { }} />
-                        </div>
+                        </motion.div>
                     ))}
-                </div>
+                </motion.div>
             </div>
 
             {/* Cross Page Alerts */}

@@ -128,7 +128,8 @@ export default function ResultsReviewPage() {
             trimmed.startsWith('data:') ||
             trimmed.startsWith('http://') ||
             trimmed.startsWith('https://') ||
-            trimmed.startsWith('blob:')
+            trimmed.startsWith('blob:') ||
+            trimmed.startsWith('/')
           ) {
             return trimmed;
           }

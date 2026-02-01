@@ -239,7 +239,7 @@ const NodeCard: React.FC<{
         && node.id !== 'rubric_review'
         && node.id !== 'review'
         && node.id !== 'logic_review'
-        && node.id !== 'self_report'
+        && node.id !== 'confession'
     );
     const inferredStatus = shouldAutoComplete ? 'completed' : node.status;
     const effectiveStatus = (node as {isVisualCompleted?: boolean}).isVisualCompleted ? 'completed' : inferredStatus;
@@ -249,14 +249,14 @@ const NodeCard: React.FC<{
     const isLogicReview = node.id === 'logic_review';
     const isRubricReview = node.id === 'rubric_review';
     const isResultsReview = node.id === 'review';
-    const isSelfReport = node.id === 'self_report';
+    const isConfession = node.id === 'confession';
 
     // Custom Icons
     let NodeIcon = styles.icon;
     if (isCrossPageMerge) NodeIcon = <GitMerge className="w-5 h-5" />;
     else if (isLogicReview) NodeIcon = <ShieldCheck className="w-5 h-5" />;
     else if (isRubricReview || isResultsReview) NodeIcon = <UserCheck className="w-5 h-5" />;
-    else if (isSelfReport) NodeIcon = <FileText className="w-5 h-5" />;
+    else if (isConfession) NodeIcon = <FileText className="w-5 h-5" />;
 
     return (
         <motion.div

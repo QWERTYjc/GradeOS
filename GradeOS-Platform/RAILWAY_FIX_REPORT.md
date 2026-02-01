@@ -71,7 +71,7 @@ else:
 
 **可能原因**:
 1. `grading_fanout_router` 没有正确创建批改任务
-2. `processed_images` 为空,导致直接跳转到 `self_report`
+2. `processed_images` 为空,导致直接跳转到 `confession`
 3. `student_boundaries` 配置错误
 
 **添加的调试日志**:
@@ -82,7 +82,7 @@ if not processed_images:
     logger.warning(f"[grading_fanout] 🔍 调试: state keys={list(state.keys())}")
     logger.warning(f"[grading_fanout] 🔍 answer_images count={len(state.get('answer_images', []))}")
     logger.warning(f"[grading_fanout] 🔍 processed_images count={len(state.get('processed_images', []))}")
-    return [Send("self_report", state)]
+    return [Send("confession", state)]
 
 # 在学生批次创建后添加:
 if sends:

@@ -196,7 +196,7 @@ export interface StudentResult {
     /** 是否需要人工确认 */
     needsConfirmation?: boolean;
     /** 自白报告 */
-    selfReport?: {
+    confession?: {  // confession report
         overallStatus?: string;
         issues?: Array<{ questionId?: string; message?: string }>;
         warnings?: Array<{ questionId?: string; message?: string }>;
@@ -358,7 +358,7 @@ export interface ParsedRubric {
     rubricFormat?: string;
     // 解析自白相关字段
     overallParseConfidence?: number;
-    parseSelfReport?: {
+    parseConfession?: {  // confession parse report
         overallStatus: 'ok' | 'caution' | 'error';
         overallConfidence: number;
         summary: string;
@@ -540,7 +540,7 @@ const normalizeImageSource = (value: string) => {
     if (!value) {
         return value;
     }
-    if (value.startsWith('data:') || value.startsWith('http') || value.startsWith('blob:')) {
+    if (value.startsWith('data:') || value.startsWith('http') || value.startsWith('blob:') || value.startsWith('/')) {
         return value;
     }
     return `data:image/jpeg;base64,${value}`;
@@ -575,7 +575,7 @@ const initialNodes: WorkflowNode[] = [
     { id: 'rubric_parse', label: 'Rubric Parse', status: 'pending', isParallelContainer: true, children: [] },
     { id: 'rubric_review', label: 'Rubric Review', status: 'pending' },
     { id: 'grade_batch', label: 'Student Grading', status: 'pending', isParallelContainer: true, children: [] },
-    { id: 'self_report', label: 'Self Report', status: 'pending' },
+    { id: 'confession', label: 'Confession', status: 'pending' },
     { id: 'logic_review', label: 'Logic Review', status: 'pending' },
     { id: 'review', label: 'Results Review', status: 'pending' },
     { id: 'export', label: 'Export', status: 'pending' },
@@ -643,26 +643,28 @@ const normalizeParsedRubricPayload = (data: any): ParsedRubric | null => {
         : undefined;
 
     // 规范化自白报�?
-    const rawSelfReport = data.parseSelfReport || data.parse_self_report;
-    const parseSelfReport = rawSelfReport ? {
-        overallStatus: rawSelfReport.overallStatus || rawSelfReport.overall_status || 'ok',
-        overallConfidence: rawSelfReport.overallConfidence ?? rawSelfReport.overall_confidence ?? 1.0,
-        summary: rawSelfReport.summary || '',
-        issues: (rawSelfReport.issues || []).map((issue: any) => ({
+    const rawConfession =
+        data.parseConfession ||
+        data.parse_confession;
+    const parseConfession = rawConfession ? {
+        overallStatus: rawConfession.overallStatus || rawConfession.overall_status || 'ok',
+        overallConfidence: rawConfession.overallConfidence ?? rawConfession.overall_confidence ?? 1.0,
+        summary: rawConfession.summary || '',
+        issues: (rawConfession.issues || []).map((issue: any) => ({
             type: issue.type || '',
             message: issue.message || '',
             questionId: issue.questionId || issue.question_id,
             severity: issue.severity || 'low',
         })),
-        uncertainties: rawSelfReport.uncertainties || [],
-        qualityChecks: (rawSelfReport.qualityChecks || rawSelfReport.quality_checks || []).map((check: any) => ({
+        uncertainties: rawConfession.uncertainties || [],
+        qualityChecks: (rawConfession.qualityChecks || rawConfession.quality_checks || []).map((check: any) => ({
             check: check.check || '',
             passed: check.passed ?? false,
             detail: check.detail || '',
         })),
-        questionsWithIssues: rawSelfReport.questionsWithIssues || rawSelfReport.questions_with_issues || [],
-        generatedAt: rawSelfReport.generatedAt || rawSelfReport.generated_at || '',
-        parseMethod: rawSelfReport.parseMethod || rawSelfReport.parse_method || '',
+        questionsWithIssues: rawConfession.questionsWithIssues || rawConfession.questions_with_issues || [],
+        generatedAt: rawConfession.generatedAt || rawConfession.generated_at || '',
+        parseMethod: rawConfession.parseMethod || rawConfession.parse_method || '',
     } : undefined;
 
     return {
@@ -672,7 +674,7 @@ const normalizeParsedRubricPayload = (data: any): ParsedRubric | null => {
         generalNotes: data.generalNotes || data.general_notes || '',
         rubricFormat: data.rubricFormat || data.rubric_format || '',
         overallParseConfidence: data.overallParseConfidence ?? data.overall_parse_confidence ?? 1.0,
-        parseSelfReport,
+        parseConfession,
     };
 };
 
@@ -859,13 +861,13 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
             const isWorker = agentId.startsWith('worker-');
             const isBatch = agentId.startsWith('batch_');
             const isReview = agentId.startsWith('review-worker-') || parentNodeId === 'logic_review';
-            const isSelfReport = agentId.startsWith('report-worker-') || parentNodeId === 'self_report';
+            const isConfession = agentId.startsWith('report-worker-') || parentNodeId === 'confession';
             const isRubricReview = agentId.startsWith('rubric-review-batch-') || parentNodeId === 'rubric_review';
             const isRubricBatch = agentId.startsWith('rubric-batch-') || parentNodeId === 'rubric_parse';
             const targetNodeId = parentNodeId || (
                 isWorker || isBatch ? 'grade_batch' :
                     isReview ? 'logic_review' :
-                        isSelfReport ? 'self_report' :
+                        isConfession ? 'confession' :
                             isRubricReview ? 'rubric_review' :
                                 isRubricBatch ? 'rubric_parse' :
                                     null
@@ -873,7 +875,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
             if (!targetNodeId) {
                 return {};
             }
-            const shouldAutoCreate = isWorker || isBatch || isReview || isSelfReport || isRubricReview || isRubricBatch;
+            const shouldAutoCreate = isWorker || isBatch || isReview || isConfession || isRubricReview || isRubricBatch;
             const parsedIndex = (() => {
                 const parts = agentId.split('-');
                 const last = parts[parts.length - 1];
@@ -886,13 +888,13 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                     ? `Student ${parsedIndex + 1}`
                     : isReview && parsedIndex !== null
                         ? `Review ${parsedIndex + 1}`
-                        : isSelfReport && parsedIndex !== null
-                            ? `Self Report ${parsedIndex + 1}`
-                        : isRubricReview && parsedIndex !== null
-                            ? `Rubric Review ${parsedIndex + 1}`
-                            : isRubricBatch && parsedIndex !== null
-                                ? `Rubric Page ${parsedIndex + 1}`
-                                : agentId;
+                          : isConfession && parsedIndex !== null
+                              ? `Confession ${parsedIndex + 1}`
+                            : isRubricReview && parsedIndex !== null
+                                ? `Rubric Review ${parsedIndex + 1}`
+                                : isRubricBatch && parsedIndex !== null
+                                    ? `Rubric Page ${parsedIndex + 1}`
+                                    : agentId;
 
             return {
                 workflowNodes: state.workflowNodes.map((node) => {
@@ -1057,49 +1059,49 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                 return state; // KEEPALIVE
             }
 
-                const normalizedNodeId = normalizeNodeId(nodeId);
-                if (normalizedNodeId === 'index') {
-                    return state;
-                }
-                const normalizedAgentId = agentId || undefined;
-                const baseNodeName = nodeName || normalizedNodeId;
-                const normalizedNodeName = agentLabel ? `${baseNodeName} - ${agentLabel}` : baseNodeName;
-                const normalizedPageIndex = pageIndex;
+            const normalizedNodeId = normalizeNodeId(nodeId);
+            if (normalizedNodeId === 'index') {
+                return state;
+            }
+            const normalizedAgentId = agentId || undefined;
+            const baseNodeName = nodeName || normalizedNodeId;
+            const normalizedNodeName = agentLabel ? `${baseNodeName} - ${agentLabel}` : baseNodeName;
+            const normalizedPageIndex = pageIndex;
 
-                const agentKey = normalizedAgentId || 'all';
-                const thoughtId = normalizedPageIndex !== undefined
-                    ? `${normalizedNodeId}-${agentKey}-${normalizedStreamType}-${normalizedPageIndex}`
-                    : `${normalizedNodeId}-${agentKey}-${normalizedStreamType}`;
-                const existingIdx = state.llmThoughts.findIndex(t => t.id === thoughtId && !t.isComplete);
+            const agentKey = normalizedAgentId || 'all';
+            const thoughtId = normalizedPageIndex !== undefined
+                ? `${normalizedNodeId}-${agentKey}-${normalizedStreamType}-${normalizedPageIndex}`
+                : `${normalizedNodeId}-${agentKey}-${normalizedStreamType}`;
+            const existingIdx = state.llmThoughts.findIndex(t => t.id === thoughtId && !t.isComplete);
 
-                if (existingIdx >= 0) {
-                    // 追加到现有思�?
-                    const updated = [...state.llmThoughts];
-                    const combined = updated[existingIdx].content + contentStr;
-                    updated[existingIdx] = {
-                        ...updated[existingIdx],
-                        content: combined.length > maxChars ? combined.slice(-maxChars) : combined
-                    };
-                    return { llmThoughts: updated };
-                } else {
-                    // 创建新思�?
-                    const truncated = contentStr.length > maxChars ? contentStr.slice(-maxChars) : contentStr;
-                    return {
-                        llmThoughts: [...state.llmThoughts, {
-                            id: thoughtId,
-                            nodeId: normalizedNodeId,
-                            nodeName: normalizedNodeName,
-                            agentId: normalizedAgentId,
-                            agentLabel,
-                            streamType: normalizedStreamType,
-                            pageIndex: normalizedPageIndex,
-                            content: truncated,
-                            timestamp: Date.now(),
-                            isComplete: false
-                        }]
-                    };
-                }
-            }),
+            if (existingIdx >= 0) {
+                // 追加到现有思�?
+                const updated = [...state.llmThoughts];
+                const combined = updated[existingIdx].content + contentStr;
+                updated[existingIdx] = {
+                    ...updated[existingIdx],
+                    content: combined.length > maxChars ? combined.slice(-maxChars) : combined
+                };
+                return { llmThoughts: updated };
+            } else {
+                // 创建新思�?
+                const truncated = contentStr.length > maxChars ? contentStr.slice(-maxChars) : contentStr;
+                return {
+                    llmThoughts: [...state.llmThoughts, {
+                        id: thoughtId,
+                        nodeId: normalizedNodeId,
+                        nodeName: normalizedNodeName,
+                        agentId: normalizedAgentId,
+                        agentLabel,
+                        streamType: normalizedStreamType,
+                        pageIndex: normalizedPageIndex,
+                        content: truncated,
+                        timestamp: Date.now(),
+                        isComplete: false
+                    }]
+                };
+            }
+        }),
 
         completeLLMThought: (nodeId, pageIndex, streamType, agentId) => set((state) => {
             const normalizedNodeId = normalizeNodeId(nodeId);
@@ -1164,550 +1166,551 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
 
             // 处理工作流节点更�?
             wsClient.on('workflow_update', (data: any) => {
-            console.log('Workflow Update:', data);
-            const { nodeId, status, message } = data as {
-                nodeId?: string;
-                status?: unknown;
-                message?: string;
-            };
-            // 后端节点 ID 映射到前端（兼容旧名称）
-            const mappedNodeId = nodeId === 'grading' ? 'grade_batch' : nodeId;
-            const normalizedStatus = isNodeStatus(status) ? status : undefined;
-            if (!mappedNodeId || !normalizedStatus) {
-                return;
-            }
-            if (mappedNodeId === 'intake' || mappedNodeId === 'preprocess' || mappedNodeId === 'index') {
-                return;
-            }
-            if (message) {
-                get().updateNodeStatus(mappedNodeId, normalizedStatus, message);
-                get().addLog(message, 'INFO');
-            } else {
-                get().updateNodeStatus(mappedNodeId, normalizedStatus);
-            }
-        });
+                console.log('Workflow Update:', data);
+                const { nodeId, status, message } = data as {
+                    nodeId?: string;
+                    status?: unknown;
+                    message?: string;
+                };
+                // 后端节点 ID 映射到前端（兼容旧名称）
+                const mappedNodeId = nodeId === 'grading' ? 'grade_batch' : nodeId;
+                const normalizedStatus = isNodeStatus(status) ? status : undefined;
+                if (!mappedNodeId || !normalizedStatus) {
+                    return;
+                }
+                if (mappedNodeId === 'intake' || mappedNodeId === 'preprocess' || mappedNodeId === 'index') {
+                    return;
+                }
+                if (message) {
+                    get().updateNodeStatus(mappedNodeId, normalizedStatus, message);
+                    get().addLog(message, 'INFO');
+                } else {
+                    get().updateNodeStatus(mappedNodeId, normalizedStatus);
+                }
+            });
 
-// 处理并行 Agent 创建
-wsClient.on('parallel_agents_created', (data: any) => {
-    console.log('Parallel Agents Created:', data);
-    const { parentNodeId, agents } = data as {
-        parentNodeId?: string;
-        agents?: GradingAgent[];
-    };
-    if (!parentNodeId || !Array.isArray(agents)) {
-        return;
-    }
-    // 后端节点 ID 映射到前�?
-    const mappedNodeId = parentNodeId === 'grading' ? 'grade_batch' : parentNodeId;
-    get().setParallelAgents(mappedNodeId, agents);
-    get().addLog(`Created ${agents.length} grading agents`, 'INFO');
-});
+            // 处理并行 Agent 创建
+            wsClient.on('parallel_agents_created', (data: any) => {
+                console.log('Parallel Agents Created:', data);
+                const { parentNodeId, agents } = data as {
+                    parentNodeId?: string;
+                    agents?: GradingAgent[];
+                };
+                if (!parentNodeId || !Array.isArray(agents)) {
+                    return;
+                }
+                // 后端节点 ID 映射到前�?
+                const mappedNodeId = parentNodeId === 'grading' ? 'grade_batch' : parentNodeId;
+                get().setParallelAgents(mappedNodeId, agents);
+                get().addLog(`Created ${agents.length} grading agents`, 'INFO');
+            });
 
-// 处理单个 Agent 更新
-wsClient.on('agent_update', (data: any) => {
-    console.log('Agent Update:', data);
-    const payload = data as any;
-    const { agentId, status, progress, message, output, logs, error } = payload;
-    const label = payload.agentLabel || payload.agent_label || payload.agentName || payload.agent_name;
-    const rawParentNodeId = payload.parentNodeId || payload.nodeId;
-    const parentNodeId = rawParentNodeId === 'grading' ? 'grade_batch' : rawParentNodeId;
-    if (parentNodeId) {
-        const node = get().workflowNodes.find((n) => n.id === parentNodeId);
-        if (node && node.status === 'pending') {
-            get().updateNodeStatus(parentNodeId, 'running', message);
-        }
-    }
-    get().updateAgentStatus(agentId, { status, progress, output, error, label }, parentNodeId);
-    if (logs && logs.length > 0) {
-        logs.forEach((log: string) => get().addAgentLog(agentId, log));
-    }
-    if (message) {
-        get().addLog(message, 'INFO');
-    }
-    // 如果有错误，也记录到日志
-    if (error && error.details) {
-        error.details.forEach((detail: string) => get().addLog(`[Error] ${detail}`, 'ERROR'));
-    }
-});
+            // 处理单个 Agent 更新
+            wsClient.on('agent_update', (data: any) => {
+                console.log('Agent Update:', data);
+                const payload = data as any;
+                const { agentId, status, progress, message, output, logs, error } = payload;
+                const label = payload.agentLabel || payload.agent_label || payload.agentName || payload.agent_name;
+                const rawParentNodeId = payload.parentNodeId || payload.nodeId;
+                const parentNodeId = rawParentNodeId === 'grading' ? 'grade_batch' : rawParentNodeId;
+                if (parentNodeId) {
+                    const node = get().workflowNodes.find((n) => n.id === parentNodeId);
+                    if (node && node.status === 'pending') {
+                        get().updateNodeStatus(parentNodeId, 'running', message);
+                    }
+                }
+                get().updateAgentStatus(agentId, { status, progress, output, error, label }, parentNodeId);
+                if (logs && logs.length > 0) {
+                    logs.forEach((log: string) => get().addAgentLog(agentId, log));
+                }
+                if (message) {
+                    get().addLog(message, 'INFO');
+                }
+                // 如果有错误，也记录到日志
+                if (error && error.details) {
+                    error.details.forEach((detail: string) => get().addLog(`[Error] ${detail}`, 'ERROR'));
+                }
+            });
 
-// ===== 设计文档新增事件类型 =====
+            // ===== 设计文档新增事件类型 =====
 
-// 处理评分标准解析完成事件
-wsClient.on('rubric_parsed', (data: any) => {
-    console.log('Rubric Parsed:', data);
-    const normalized = normalizeParsedRubricPayload(data);
-    if (normalized) {
-        const expectedTotalScore = get().expectedTotalScore;
-        if (typeof expectedTotalScore === 'number' && expectedTotalScore > 0) {
-            const parsedTotalScore = normalized.totalScore ?? 0;
-            if (parsedTotalScore > 0 && parsedTotalScore < expectedTotalScore) {
-                const message = `Parsed total (${parsedTotalScore}) is lower than expected (${expectedTotalScore}). Please re-upload the rubric.`;
-                get().setRubricScoreMismatch({
-                    expectedTotalScore,
-                    parsedTotalScore,
+            // 处理评分标准解析完成事件
+            wsClient.on('rubric_parsed', (data: any) => {
+                console.log('Rubric Parsed:', data);
+                const normalized = normalizeParsedRubricPayload(data);
+                if (normalized) {
+                    const expectedTotalScore = get().expectedTotalScore;
+                    if (typeof expectedTotalScore === 'number' && expectedTotalScore > 0) {
+                        const parsedTotalScore = normalized.totalScore ?? 0;
+                        if (parsedTotalScore > 0 && parsedTotalScore < expectedTotalScore) {
+                            const message = `Parsed total (${parsedTotalScore}) is lower than expected (${expectedTotalScore}). Please re-upload the rubric.`;
+                            get().setRubricScoreMismatch({
+                                expectedTotalScore,
+                                parsedTotalScore,
+                                message,
+                            });
+                            get().setRubricParseError(null);
+                            set({
+                                status: 'IDLE',
+                                currentTab: 'process',
+                                submissionId: null,
+                            });
+                            get().addLog(message, 'ERROR');
+                            return;
+                        }
+                    }
+                    get().setParsedRubric(normalized);
+                    get().addLog(
+                        `Rubric parsed: ${normalized.totalQuestions} questions, total ${normalized.totalScore} points`,
+                        'INFO'
+                    );
+                }
+            });
+            wsClient.on('rubric_score_mismatch', (data: any) => {
+                console.log('Rubric Score Mismatch:', data);
+                const expectedTotalScore = Number(data.expectedTotalScore ?? data.expected_total_score);
+                const parsedTotalScore = Number(data.parsedTotalScore ?? data.parsed_total_score);
+                if (Number.isFinite(expectedTotalScore) && Number.isFinite(parsedTotalScore)) {
+                    const message = data.message
+                        || `Parsed total (${parsedTotalScore}) is lower than expected (${expectedTotalScore}). Please re-upload the rubric.`;
+                    get().setRubricScoreMismatch({
+                        expectedTotalScore,
+                        parsedTotalScore,
+                        message,
+                    });
+                    get().setRubricParseError(null);
+                    set({
+                        status: 'IDLE',
+                        currentTab: 'process',
+                        submissionId: null,
+                    });
+                    get().addLog(message, 'ERROR');
+                }
+            });
+            wsClient.on('rubric_parse_failed', (data: any) => {
+                console.log('Rubric Parse Failed:', data);
+                const message = data.message || 'Rubric parse failed. Please re-upload a clear rubric.';
+                get().setRubricParseError({
                     message,
+                    details: data.error,
                 });
-                get().setRubricParseError(null);
+                get().setRubricScoreMismatch(null);
                 set({
                     status: 'IDLE',
                     currentTab: 'process',
                     submissionId: null,
                 });
                 get().addLog(message, 'ERROR');
-                return;
-            }
-        }
-        get().setParsedRubric(normalized);
-        get().addLog(
-            `Rubric parsed: ${normalized.totalQuestions} questions, total ${normalized.totalScore} points`,
-            'INFO'
-        );
-    }
-});
-wsClient.on('rubric_score_mismatch', (data: any) => {
-    console.log('Rubric Score Mismatch:', data);
-    const expectedTotalScore = Number(data.expectedTotalScore ?? data.expected_total_score);
-    const parsedTotalScore = Number(data.parsedTotalScore ?? data.parsed_total_score);
-    if (Number.isFinite(expectedTotalScore) && Number.isFinite(parsedTotalScore)) {
-        const message = data.message
-            || `Parsed total (${parsedTotalScore}) is lower than expected (${expectedTotalScore}). Please re-upload the rubric.`;
-        get().setRubricScoreMismatch({
-            expectedTotalScore,
-            parsedTotalScore,
-            message,
-        });
-        get().setRubricParseError(null);
-        set({
-            status: 'IDLE',
-            currentTab: 'process',
-            submissionId: null,
-        });
-        get().addLog(message, 'ERROR');
-    }
-});
-wsClient.on('rubric_parse_failed', (data: any) => {
-    console.log('Rubric Parse Failed:', data);
-    const message = data.message || 'Rubric parse failed. Please re-upload a clear rubric.';
-    get().setRubricParseError({
-        message,
-        details: data.error,
-    });
-    get().setRubricScoreMismatch(null);
-    set({
-        status: 'IDLE',
-        currentTab: 'process',
-        submissionId: null,
-    });
-    get().addLog(message, 'ERROR');
-});
+            });
 
-// 🔥 处理图片预处理完成事�?- 用于结果页显示答题图�?
-wsClient.on('images_ready', (data: any) => {
-console.log('Images Ready:', data);
-const { images, totalCount } = data as any;
-if (images && Array.isArray(images)) {
-    get().setUploadedImages(images);
-    get().addLog(`Loaded ${images.length}/${totalCount} answer images`, 'INFO');
-}
-        });
-
-wsClient.on('rubric_images_ready', (data: any) => {
-    console.log('Rubric Images Ready:', data);
-    const { images } = data as any;
-    if (images && Array.isArray(images)) {
-        get().setRubricImages(images);
-        get().addLog(`Loaded ${images.length} rubric images`, 'INFO');
-    }
-});
-
-// 处理批次开始事件（对应设计文档 EventType.BATCH_START�?
-wsClient.on('batch_start', (data: any) => {
-console.log('Batch Start:', data);
-const { batchIndex, totalBatches } = data as any;
-if (typeof batchIndex === 'number' && typeof totalBatches === 'number') {
-    get().setBatchProgress({
-        batchIndex,
-        totalBatches,
-        successCount: 0,
-        failureCount: 0,
-    });
-    get().addLog(`Starting run ${batchIndex + 1}/${totalBatches}`, 'INFO');
-}
-        });
-
-// 处理批次进度事件（后�?state_update -> batch_progress�?
-wsClient.on('batch_progress', (data: any) => {
-console.log('Batch Progress:', data);
-const batchIndex = data.batchIndex ?? data.batch_index;
-const totalBatches = data.totalBatches ?? data.total_batches;
-const successCount = data.successCount ?? data.success_count ?? 0;
-const failureCount = data.failureCount ?? data.failure_count ?? 0;
-if (typeof batchIndex === 'number' && typeof totalBatches === 'number') {
-    get().setBatchProgress({
-        batchIndex,
-        totalBatches,
-        successCount,
-        failureCount,
-    });
-}
-        });
-
-// 处理单页完成事件（对应设计文�?EventType.PAGE_COMPLETE�?
-wsClient.on('page_complete', (data: any) => {
-console.log('Page Complete:', data);
-const { pageIndex, success, batchIndex, revisionCount } = data as any;
-const currentProgress = get().batchProgress;
-
-// 更新批次进度
-if (currentProgress) {
-    get().setBatchProgress({
-        ...currentProgress,
-        successCount: success ? currentProgress.successCount + 1 : currentProgress.successCount,
-        failureCount: success ? currentProgress.failureCount : currentProgress.failureCount + 1,
-    });
-}
-
-// 更新对应 Agent 的自我修正次�?
-if (revisionCount && revisionCount > 0) {
-    const agentId = `batch_${batchIndex}`;
-    const nodes = get().workflowNodes;
-    const gradingNode = nodes.find(n => n.id === 'grade_batch');
-
-    if (gradingNode && gradingNode.children) {
-        const agent = gradingNode.children.find(a => a.id === agentId);
-        if (agent) {
-            const currentRevisions = agent.output?.totalRevisions || 0;
-            get().updateAgentStatus(agentId, {
-                output: {
-                    ...agent.output,
-                    totalRevisions: currentRevisions + revisionCount
+            // 🔥 处理图片预处理完成事�?- 用于结果页显示答题图�?
+            wsClient.on('images_ready', (data: any) => {
+                console.log('Images Ready:', data);
+                const { images, totalCount } = data as any;
+                if (images && Array.isArray(images)) {
+                    get().setUploadedImages(images);
+                    get().addLog(`Loaded ${images.length}/${totalCount} answer images`, 'INFO');
                 }
             });
-            get().addAgentLog(agentId, `Page ${pageIndex} triggered ${revisionCount} self-revisions`);
-        }
-    }
-}
-        });
 
-// 处理 LLM 流式输出消息 (P4) - 统一流式输出展示
-wsClient.on('llm_stream_chunk', (data: any) => {
-    const rawNodeId = data.nodeId || data.node || 'unknown';
-    const normalizedNodeId = normalizeNodeId(rawNodeId);
-    const nodeName = data.nodeName;
-    const { pageIndex, chunk } = data as any;
-    const agentId = data.agentId || data.agent_id;
-    const agentLabel = data.agentLabel || data.agent_label;
-    const rawStreamType = data.streamType || data.stream_type;
-    const streamType = rawStreamType === 'thinking' ? 'thinking' : 'output';
+            wsClient.on('rubric_images_ready', (data: any) => {
+                console.log('Rubric Images Ready:', data);
+                const { images } = data as any;
+                if (images && Array.isArray(images)) {
+                    get().setRubricImages(images);
+                    get().addLog(`Loaded ${images.length} rubric images`, 'INFO');
+                }
+            });
 
-    // 防御性处理：确保 chunk 是字符串
-    let contentStr = '';
-    if (typeof chunk === 'string') {
-        contentStr = chunk;
-    } else if (chunk && typeof chunk === 'object') {
-        contentStr = (chunk as any).text || (chunk as any).content || JSON.stringify(chunk);
-    } else {
-        contentStr = String(chunk || '');
-    }
+            // 处理批次开始事件（对应设计文档 EventType.BATCH_START�?
+            wsClient.on('batch_start', (data: any) => {
+                console.log('Batch Start:', data);
+                const { batchIndex, totalBatches } = data as any;
+                if (typeof batchIndex === 'number' && typeof totalBatches === 'number') {
+                    get().setBatchProgress({
+                        batchIndex,
+                        totalBatches,
+                        successCount: 0,
+                        failureCount: 0,
+                    });
+                    get().addLog(`Starting run ${batchIndex + 1}/${totalBatches}`, 'INFO');
+                }
+            });
 
-    // 使用统一�?LLM 思考追加方�?
-    const displayNodeName = nodeName || (
-    normalizedNodeId === 'rubric_parse' ? 'Rubric Parse' :
-        normalizedNodeId === 'rubric_review' ? 'Rubric Review' :
-            normalizedNodeId === 'self_report' ? 'Self Report' :
-                normalizedNodeId === 'logic_review' ? 'Logic Review' :
-                    normalizedNodeId === 'grade_batch' ? `Student Page ${pageIndex !== undefined ? pageIndex + 1 : ''}` :
-                        normalizedNodeId || 'Node'
-            );
-get().appendLLMThought(normalizedNodeId, displayNodeName, contentStr, pageIndex, streamType, agentId, agentLabel);
-const nodeForStream = get().workflowNodes.find((n) => n.id === normalizedNodeId);
-if (nodeForStream && nodeForStream.status === 'pending') {
-    get().updateNodeStatus(normalizedNodeId, 'running');
-}
+            // 处理批次进度事件（后�?state_update -> batch_progress�?
+            wsClient.on('batch_progress', (data: any) => {
+                console.log('Batch Progress:', data);
+                const batchIndex = data.batchIndex ?? data.batch_index;
+                const totalBatches = data.totalBatches ?? data.total_batches;
+                const successCount = data.successCount ?? data.success_count ?? 0;
+                const failureCount = data.failureCount ?? data.failure_count ?? 0;
+                if (typeof batchIndex === 'number' && typeof totalBatches === 'number') {
+                    get().setBatchProgress({
+                        batchIndex,
+                        totalBatches,
+                        successCount,
+                        failureCount,
+                    });
+                }
+            });
 
-// 同时更新 Agent 状态（兼容旧逻辑�?
-if (streamType !== 'thinking' && normalizedNodeId === 'grade_batch') {
-    const nodes = get().workflowNodes;
-    const gradingNode = nodes.find(n => n.id === 'grade_batch');
-    if (gradingNode && gradingNode.children) {
-        const agentById = agentId
-            ? gradingNode.children.find(a => a.id === agentId)
-            : undefined;
-        const agent = agentById || gradingNode.children.find(a => a.status === 'running');
-        if (!agent) {
-            return;
-        }
-        const currentText = agent.output?.streamingText || '';
-        const combined = currentText + contentStr;
-        const maxChars = 8000;
-        get().updateAgentStatus(agent.id, {
-            output: {
-                ...agent.output,
-                streamingText: combined.length > maxChars ? combined.slice(-maxChars) : combined
-            }
-        });
-    }
-}
-        });
+            // 处理单页完成事件（对应设计文�?EventType.PAGE_COMPLETE�?
+            wsClient.on('page_complete', (data: any) => {
+                console.log('Page Complete:', data);
+                const { pageIndex, success, batchIndex, revisionCount } = data as any;
+                const currentProgress = get().batchProgress;
 
-// 处理 LLM 思考完成事�?
-wsClient.on('llm_thought_complete', (data: any) => {
-const { nodeId, pageIndex, agentId } = data as any;
-const rawStreamType = data.streamType || data.stream_type;
-const streamType = rawStreamType === 'thinking' ? 'thinking' : 'output';
-get().completeLLMThought(nodeId || "unknown", pageIndex, streamType, agentId);
-        });
+                // 更新批次进度
+                if (currentProgress) {
+                    get().setBatchProgress({
+                        ...currentProgress,
+                        successCount: success ? currentProgress.successCount + 1 : currentProgress.successCount,
+                        failureCount: success ? currentProgress.failureCount : currentProgress.failureCount + 1,
+                    });
+                }
 
-// 处理批次完成事件（对应设计文�?EventType.BATCH_COMPLETE�?
-wsClient.on('batch_complete', (data: any) => {
-console.log('Batch Complete:', data);
-const { batchIndex, successCount, failureCount, processingTimeMs, totalScore, totalBatches } = data as any;
-const resolvedBatchIndex = typeof batchIndex === 'number'
-    ? batchIndex
-    : get().batchProgress?.batchIndex;
-const resolvedTotalBatches = typeof totalBatches === 'number'
-    ? totalBatches
-    : get().batchProgress?.totalBatches;
-if (typeof resolvedBatchIndex === 'number' && typeof resolvedTotalBatches === 'number') {
-    get().setBatchProgress({
-        batchIndex: resolvedBatchIndex,
-        totalBatches: resolvedTotalBatches,
-        successCount: successCount ?? 0,
-        failureCount: failureCount ?? 0,
-        processingTimeMs,
-    });
-}
-if (typeof batchIndex === 'number') {
-    get().addLog(`Run ${batchIndex + 1} completed: success ${successCount}, failed ${failureCount}, total ${totalScore || 0}`, 'INFO');
-} else {
-    get().addLog(`Run completed: success ${successCount ?? 0}, failed ${failureCount ?? 0}, total ${totalScore || 0}`, 'INFO');
-}
-        });
+                // 更新对应 Agent 的自我修正次�?
+                if (revisionCount && revisionCount > 0) {
+                    const agentId = `batch_${batchIndex}`;
+                    const nodes = get().workflowNodes;
+                    const gradingNode = nodes.find(n => n.id === 'grade_batch');
 
-// 处理学生识别事件（对应设计文�?EventType.STUDENT_IDENTIFIED�?
-wsClient.on('students_identified', (data: any) => {
-console.log('Students Identified:', data);
-const { students, studentCount } = data as any;
-if (students && Array.isArray(students)) {
-    get().setStudentBoundaries(students.map((s: any) => ({
-        studentKey: s.studentKey,
-        startPage: s.startPage,
-        endPage: s.endPage,
-        confidence: s.confidence,
-        needsConfirmation: s.needsConfirmation,
-    })));
-    const nodes = get().workflowNodes;
-    const gradingNode = nodes.find(n => n.id === 'grade_batch');
-    if (gradingNode && (!gradingNode.children || gradingNode.children.length === 0)) {
-        const placeholders = students.map((s: any, idx: number) => ({
-            id: `batch_${idx}`,
-            label: s.studentKey || `Student ${idx + 1}`,
-            status: 'pending' as NodeStatus,
-            progress: 0,
-            logs: [],
-        }));
-        get().setParallelAgents('grade_batch', placeholders);
-    }
-    // 统计待确认边�?
-    const needsConfirm = students.filter((s: any) => s.needsConfirmation).length;
-    if (needsConfirm > 0) {
-        get().addLog(`Identified ${studentCount} students, ${needsConfirm} boundaries need confirmation`, 'WARNING');
-    } else {
-        get().addLog(`Identified ${studentCount} students`, 'INFO');
-    }
-}
-        });
+                    if (gradingNode && gradingNode.children) {
+                        const agent = gradingNode.children.find(a => a.id === agentId);
+                        if (agent) {
+                            const currentRevisions = agent.output?.totalRevisions || 0;
+                            get().updateAgentStatus(agentId, {
+                                output: {
+                                    ...agent.output,
+                                    totalRevisions: currentRevisions + revisionCount
+                                }
+                            });
+                            get().addAgentLog(agentId, `Page ${pageIndex} triggered ${revisionCount} self-revisions`);
+                        }
+                    }
+                }
+            });
 
-// 处理审核请求事件
-wsClient.on('review_required', (data: any) => {
-    console.log('Review Required:', data);
-    // 规范化数据结构以匹配 PendingReview 接口
-    const reviewData = {
-        type: data.type || data.reviewType,
-        batchId: data.batchId || data.batch_id,
-        message: data.message,
-        requestedAt: data.requestedAt || data.requested_at,
-        parsedRubric: normalizeParsedRubricPayload(data.payload?.parsed_rubric || data.parsedRubric),
-        // 如果是结果审核，可能需�?studentResults
-        studentResults: data.payload?.student_results || data.studentResults,
-    };
-    get().setPendingReview({
-        reviewType: reviewData.type,
-        batchId: reviewData.batchId,
-        message: reviewData.message,
-        requestedAt: reviewData.requestedAt,
-        payload: {
-            parsed_rubric: reviewData.parsedRubric,
-            student_results: reviewData.studentResults
-        }
-    });
-    // 同时更新状态提�?
-    get().setStatus('REVIEWING');
-    const reviewNodeId = (reviewData.type || '').includes('rubric') ? 'rubric_review' : 'review';
-    get().updateNodeStatus(reviewNodeId, 'running', 'Waiting for interaction');
-    get().setReviewFocus((reviewData.type || '').includes('rubric') ? 'rubric' : 'results');
-    get().addLog(`Review required: ${reviewData.type}`, 'WARNING');
-});
+            // 处理 LLM 流式输出消息 (P4) - 统一流式输出展示
+            wsClient.on('llm_stream_chunk', (data: any) => {
+                const rawNodeId = data.nodeId || data.node || 'unknown';
+                const normalizedNodeId = normalizeNodeId(rawNodeId);
+                const nodeName = data.nodeName;
+                const { pageIndex, chunk } = data as any;
+                const agentId = data.agentId || data.agent_id;
+                const agentLabel = data.agentLabel || data.agent_label;
+                const rawStreamType = data.streamType || data.stream_type;
+                const streamType = rawStreamType === 'thinking' ? 'thinking' : 'output';
 
-// 处理跨页题目检测事�?
-wsClient.on('cross_page_detected', (data: any) => {
-console.log('Cross Page Questions Detected:', data);
-const { questions, mergedCount, crossPageCount } = data as any;
-if (questions && Array.isArray(questions)) {
-    get().setCrossPageQuestions(questions.map((q: any) => ({
-        questionId: q.question_id || q.questionId,
-        pageIndices: q.page_indices || q.pageIndices || [],
-        confidence: q.confidence || 0,
-        mergeReason: q.merge_reason || q.mergeReason || '',
-    })));
-    get().addLog(`Cross-page merge complete: detected ${crossPageCount || questions.length} cross-page questions, merged to ${mergedCount ?? 'unknown'} questions`, 'INFO');
-}
-        });
+                // 防御性处理：确保 chunk 是字符串
+                let contentStr = '';
+                if (typeof chunk === 'string') {
+                    contentStr = chunk;
+                } else if (chunk && typeof chunk === 'object') {
+                    contentStr = (chunk as any).text || (chunk as any).content || JSON.stringify(chunk);
+                } else {
+                    contentStr = String(chunk || '');
+                }
 
-// 处理工作流完�?
+                // 使用统一�?LLM 思考追加方�?
+                const displayNodeName = nodeName || (
+                    normalizedNodeId === 'rubric_parse' ? 'Rubric Parse' :
+                        normalizedNodeId === 'rubric_review' ? 'Rubric Review' :
+                            normalizedNodeId === 'confession' ? 'Confession' :
+                                normalizedNodeId === 'logic_review' ? 'Logic Review' :
+                                    normalizedNodeId === 'grade_batch' ? `Student Page ${pageIndex !== undefined ? pageIndex + 1 : ''}` :
+                                        normalizedNodeId || 'Node'
+                );
+                get().appendLLMThought(normalizedNodeId, displayNodeName, contentStr, pageIndex, streamType, agentId, agentLabel);
+                const nodeForStream = get().workflowNodes.find((n) => n.id === normalizedNodeId);
+                if (nodeForStream && nodeForStream.status === 'pending') {
+                    get().updateNodeStatus(normalizedNodeId, 'running');
+                }
 
-wsClient.on('workflow_completed', (data: any) => {
-    console.log('Workflow Completed:', data);
-    const message = data.message || 'Workflow completed';
-    get().addLog(message, 'SUCCESS');
+                // 同时更新 Agent 状态（兼容旧逻辑�?
+                if (streamType !== 'thinking' && normalizedNodeId === 'grade_batch') {
+                    const nodes = get().workflowNodes;
+                    const gradingNode = nodes.find(n => n.id === 'grade_batch');
+                    if (gradingNode && gradingNode.children) {
+                        const agentById = agentId
+                            ? gradingNode.children.find(a => a.id === agentId)
+                            : undefined;
+                        const agent = agentById || gradingNode.children.find(a => a.status === 'running');
+                        if (!agent) {
+                            return;
+                        }
+                        const currentText = agent.output?.streamingText || '';
+                        const combined = currentText + contentStr;
+                        const maxChars = 8000;
+                        get().updateAgentStatus(agent.id, {
+                            output: {
+                                ...agent.output,
+                                streamingText: combined.length > maxChars ? combined.slice(-maxChars) : combined
+                            }
+                        });
+                    }
+                }
+            });
 
-    const results = data.results || data.studentResults || data.student_results;
-    if (Array.isArray(results)) {
-        const formattedResults = results as StudentResult[];
-        get().setFinalResults(formattedResults);
-        get().addLog(`Saved results for ${formattedResults.length} students`, 'SUCCESS');
-    }
+            // 处理 LLM 思考完成事�?
+            wsClient.on('llm_thought_complete', (data: any) => {
+                const { nodeId, pageIndex, agentId } = data as any;
+                const rawStreamType = data.streamType || data.stream_type;
+                const streamType = rawStreamType === 'thinking' ? 'thinking' : 'output';
+                get().completeLLMThought(nodeId || "unknown", pageIndex, streamType, agentId);
+            });
 
-    const classReport = data.classReport || data.class_report;
-    if (classReport) {
-        const normalizedReport = normalizeClassReport(classReport);
-        if (normalizedReport) {
-            get().setClassReport(normalizedReport);
-        }
-    }
+            // 处理批次完成事件（对应设计文�?EventType.BATCH_COMPLETE�?
+            wsClient.on('batch_complete', (data: any) => {
+                console.log('Batch Complete:', data);
+                const { batchIndex, successCount, failureCount, processingTimeMs, totalScore, totalBatches } = data as any;
+                const resolvedBatchIndex = typeof batchIndex === 'number'
+                    ? batchIndex
+                    : get().batchProgress?.batchIndex;
+                const resolvedTotalBatches = typeof totalBatches === 'number'
+                    ? totalBatches
+                    : get().batchProgress?.totalBatches;
+                if (typeof resolvedBatchIndex === 'number' && typeof resolvedTotalBatches === 'number') {
+                    get().setBatchProgress({
+                        batchIndex: resolvedBatchIndex,
+                        totalBatches: resolvedTotalBatches,
+                        successCount: successCount ?? 0,
+                        failureCount: failureCount ?? 0,
+                        processingTimeMs,
+                    });
+                }
+                if (typeof batchIndex === 'number') {
+                    get().addLog(`Run ${batchIndex + 1} completed: success ${successCount}, failed ${failureCount}, total ${totalScore || 0}`, 'INFO');
+                } else {
+                    get().addLog(`Run completed: success ${successCount ?? 0}, failed ${failureCount ?? 0}, total ${totalScore || 0}`, 'INFO');
+                }
+            });
 
-    get().setStatus('COMPLETED');
-    get().setPendingReview(null);
-    get().setReviewFocus(null);
+            // 处理学生识别事件（对应设计文�?EventType.STUDENT_IDENTIFIED�?
+            wsClient.on('students_identified', (data: any) => {
+                console.log('Students Identified:', data);
+                const { students, studentCount } = data as any;
+                if (students && Array.isArray(students)) {
+                    get().setStudentBoundaries(students.map((s: any) => ({
+                        studentKey: s.studentKey,
+                        startPage: s.startPage,
+                        endPage: s.endPage,
+                        confidence: s.confidence,
+                        needsConfirmation: s.needsConfirmation,
+                    })));
+                    const nodes = get().workflowNodes;
+                    const gradingNode = nodes.find(n => n.id === 'grade_batch');
+                    if (gradingNode && (!gradingNode.children || gradingNode.children.length === 0)) {
+                        const placeholders = students.map((s: any, idx: number) => ({
+                            id: `batch_${idx}`,
+                            label: s.studentKey || `Student ${idx + 1}`,
+                            status: 'pending' as NodeStatus,
+                            progress: 0,
+                            logs: [],
+                        }));
+                        get().setParallelAgents('grade_batch', placeholders);
+                    }
+                    // 统计待确认边�?
+                    const needsConfirm = students.filter((s: any) => s.needsConfirmation).length;
+                    if (needsConfirm > 0) {
+                        get().addLog(`Identified ${studentCount} students, ${needsConfirm} boundaries need confirmation`, 'WARNING');
+                    } else {
+                        get().addLog(`Identified ${studentCount} students`, 'INFO');
+                    }
+                }
+            });
 
-    const orderedNodes = [
-        'rubric_parse',
-        'rubric_review',
-        'grade_batch',
-        'self_report',
-        'logic_review',
-        'review',
-        'export'
-    ];
-    orderedNodes.forEach((nodeId) => get().updateNodeStatus(nodeId, 'completed'));
-
-    setTimeout(() => {
-        set({ currentTab: 'results' });
-    }, 800);
-});
-
-wsClient.on('page_graded', (data: any) => {
-    console.log('Page Graded:', data);
-    const { pageIndex, score, maxScore, questionNumbers } = data as any;
-    get().addLog(
-        `Page ${pageIndex} graded: ${score}/${maxScore} points, questions: ${questionNumbers?.join(', ') || 'unknown'}`,
-                'INFO'
-    );
-});
-
-// 处理批改进度事件
-wsClient.on('grading_progress', (data: any) => {
-    console.log('Grading Progress:', data);
-    const { completedPages, totalPages, percentage } = data as any;
-    // 更新 grading 节点的进�?
-    const nodes =
-    get().workflowNodes;
-    const gradingNode = nodes.find(n => n.id === 'grade_batch');
-    if (gradingNode) {
-        get().updateNodeStatus('grade_batch', 'running', `Grading progress: ${completedPages}/${totalPages} (${percentage}%)`);
-    }
-    const currentStage = data.currentStage || data.current_stage;
-    if (currentStage) {
-        const stageToNode: Record<string, string> = {
-            rubric_parse_completed: 'rubric_parse',
-            rubric_review_completed: 'rubric_review',
-            rubric_review_skipped: 'rubric_review',
-            grade_batch_completed: 'grade_batch',
-            cross_page_merge_completed: 'grade_batch',
-            index_merge_completed: 'grade_batch',
-            self_report_completed: 'self_report',
-            logic_review_completed: 'logic_review',
-            logic_review_skipped: 'logic_review',
-            review_completed: 'review',
-            completed: 'export'
-        };
-        const orderedNodes = [
-            'rubric_parse',
-            'rubric_review',
-            'grade_batch',
-            'self_report',
-            'logic_review',
-            'review',
-            'export'
-        ];
-        const stageNode = stageToNode[currentStage];
-        if (stageNode) {
-            const stageIndex = orderedNodes.indexOf(stageNode);
-            if (stageIndex >= 0) {
-                orderedNodes.forEach((nodeId, idx) => {
-                    if (idx < stageIndex) {
-                        get().updateNodeStatus(nodeId, 'completed');
+            // 处理审核请求事件
+            wsClient.on('review_required', (data: any) => {
+                console.log('Review Required:', data);
+                // 规范化数据结构以匹配 PendingReview 接口
+                const reviewData = {
+                    type: data.type || data.reviewType,
+                    batchId: data.batchId || data.batch_id,
+                    message: data.message,
+                    requestedAt: data.requestedAt || data.requested_at,
+                    parsedRubric: normalizeParsedRubricPayload(data.payload?.parsed_rubric || data.parsedRubric),
+                    // 如果是结果审核，可能需�?studentResults
+                    studentResults: data.payload?.student_results || data.studentResults,
+                };
+                get().setPendingReview({
+                    reviewType: reviewData.type,
+                    batchId: reviewData.batchId,
+                    message: reviewData.message,
+                    requestedAt: reviewData.requestedAt,
+                    payload: {
+                        parsed_rubric: reviewData.parsedRubric,
+                        student_results: reviewData.studentResults
                     }
                 });
-                const pendingReview = get().pendingReview;
-                const holdRubricReview = stageNode === 'rubric_review'
-                    && pendingReview
-                    && (pendingReview.reviewType || '').includes('rubric');
-                if (holdRubricReview) {
-                    get().updateNodeStatus(stageNode, 'running', 'Waiting for interaction');
+                // 同时更新状态提�?
+                get().setStatus('REVIEWING');
+                const reviewNodeId = (reviewData.type || '').includes('rubric') ? 'rubric_review' : 'review';
+                get().updateNodeStatus(reviewNodeId, 'running', 'Waiting for interaction');
+                get().setReviewFocus((reviewData.type || '').includes('rubric') ? 'rubric' : 'results');
+                get().addLog(`Review required: ${reviewData.type}`, 'WARNING');
+            });
+
+            // 处理跨页题目检测事�?
+            wsClient.on('cross_page_detected', (data: any) => {
+                console.log('Cross Page Questions Detected:', data);
+                const { questions, mergedCount, crossPageCount } = data as any;
+                if (questions && Array.isArray(questions)) {
+                    get().setCrossPageQuestions(questions.map((q: any) => ({
+                        questionId: q.question_id || q.questionId,
+                        pageIndices: q.page_indices || q.pageIndices || [],
+                        confidence: q.confidence || 0,
+                        mergeReason: q.merge_reason || q.mergeReason || '',
+                    })));
+                    get().addLog(`Cross-page merge complete: detected ${crossPageCount || questions.length} cross-page questions, merged to ${mergedCount ?? 'unknown'} questions`, 'INFO');
+                }
+            });
+
+            // 处理工作流完�?
+
+            wsClient.on('workflow_completed', (data: any) => {
+                console.log('Workflow Completed:', data);
+                const message = data.message || 'Workflow completed';
+                get().addLog(message, 'SUCCESS');
+
+                const results = data.results || data.studentResults || data.student_results;
+                if (Array.isArray(results)) {
+                    const formattedResults = results as StudentResult[];
+                    get().setFinalResults(formattedResults);
+                    get().addLog(`Saved results for ${formattedResults.length} students`, 'SUCCESS');
+                }
+
+                const classReport = data.classReport || data.class_report;
+                if (classReport) {
+                    const normalizedReport = normalizeClassReport(classReport);
+                    if (normalizedReport) {
+                        get().setClassReport(normalizedReport);
+                    }
+                }
+
+                get().setStatus('COMPLETED');
+                get().setPendingReview(null);
+                get().setReviewFocus(null);
+
+                const orderedNodes = [
+                    'rubric_parse',
+                    'rubric_review',
+                    'grade_batch',
+                    'confession',
+                    'logic_review',
+                    'review',
+                    'export'
+                ];
+                orderedNodes.forEach((nodeId) => get().updateNodeStatus(nodeId, 'completed'));
+
+                setTimeout(() => {
+                    set({ currentTab: 'results' });
+                }, 800);
+            });
+
+            wsClient.on('page_graded', (data: any) => {
+                console.log('Page Graded:', data);
+                const { pageIndex, score, maxScore, questionNumbers } = data as any;
+                get().addLog(
+                    `Page ${pageIndex} graded: ${score}/${maxScore} points, questions: ${questionNumbers?.join(', ') || 'unknown'}`,
+                    'INFO'
+                );
+            });
+
+            // 处理批改进度事件
+            wsClient.on('grading_progress', (data: any) => {
+                console.log('Grading Progress:', data);
+                const { completedPages, totalPages, percentage } = data as any;
+                // 更新 grading 节点的进�?
+                const nodes =
+                    get().workflowNodes;
+                const gradingNode = nodes.find(n => n.id === 'grade_batch');
+                if (gradingNode) {
+                    get().updateNodeStatus('grade_batch', 'running', `Grading progress: ${completedPages}/${totalPages} (${percentage}%)`);
+                }
+                const currentStage = data.currentStage || data.current_stage;
+                if (currentStage) {
+                    const stageToNode: Record<string, string> = {
+                        rubric_parse_completed: 'rubric_parse',
+                        rubric_review_completed: 'rubric_review',
+                        rubric_review_skipped: 'rubric_review',
+                        grade_batch_completed: 'grade_batch',
+                        cross_page_merge_completed: 'grade_batch',
+                        index_merge_completed: 'grade_batch',
+                        confession_completed: 'confession',
+                        logic_review_completed: 'logic_review',
+                        logic_review_skipped: 'logic_review',
+                        review_completed: 'review',
+                        completed: 'export'
+                    };
+                    const orderedNodes = [
+                        'rubric_parse',
+                        'rubric_review',
+                        'grade_batch',
+                        'confession',
+                        'logic_review',
+                        'review',
+                        'export'
+                    ];
+                    const stageNode = stageToNode[currentStage];
+                    if (stageNode) {
+                        const stageIndex = orderedNodes.indexOf(stageNode);
+                        if (stageIndex >= 0) {
+                            orderedNodes.forEach((nodeId, idx) => {
+                                if (idx < stageIndex) {
+                                    get().updateNodeStatus(nodeId, 'completed');
+                                }
+                            });
+                            const pendingReview = get().pendingReview;
+                            const holdRubricReview = stageNode === 'rubric_review'
+                                && pendingReview
+                                && (pendingReview.reviewType || '').includes('rubric');
+                            if (holdRubricReview) {
+                                get().updateNodeStatus(stageNode, 'running', 'Waiting for interaction');
+                                return;
+                            }
+
+                            get().updateNodeStatus(stageNode, 'completed');
+
+                            const nextNode = orderedNodes[stageIndex + 1];
+                            if (nextNode) {
+                                get().updateNodeStatus(nextNode, 'running');
+                            }
+                        } else {
+                            get().updateNodeStatus(stageNode, 'completed');
+                        }
+                    }
+                }
+            });
+
+            // 处理批次完成事件
+            wsClient.on('batch_completed', (data: any) => {
+                console.log('Batch Completed:', data);
+                const { batchSize, successCount, totalScore } = data as any;
+                get().addLog(`Run completed: ${successCount}/${batchSize} pages succeeded, total ${totalScore}`, 'INFO');
+            });
+
+            // 处理审核完成事件
+            wsClient.on('review_completed', (data: any) => {
+                console.log('Review Completed:', data);
+                const { summary } = data as any;
+                if (summary) {
+                    get().addLog(`Review completed: ${summary.total_students} students, ${summary.low_confidence_count} low-confidence results`, 'INFO');
+                }
+                get().setStatus('RUNNING');
+                get().setPendingReview(null);
+                get().setReviewFocus(null);
+            });
+
+            // 处理工作流错误（对应设计文档 EventType.ERROR�?
+            wsClient.on('workflow_error', (data: any) => {
+                console.log('Workflow Error:', data);
+                if (get().rubricScoreMismatch || get().rubricParseError) {
                     return;
                 }
-
-                get().updateNodeStatus(stageNode, 'completed');
-
-                const nextNode = orderedNodes[stageIndex + 1];
-                if (nextNode) {
-                    get().updateNodeStatus(nextNode, 'running');
-                }
-            } else {
-                get().updateNodeStatus(stageNode, 'completed');
-            }
+                set({ status: 'FAILED' });
+                get().addLog(`Error: ${data.message}`, 'ERROR');
+            });
         }
-    }
+    };
 });
-
-// 处理批次完成事件
-wsClient.on('batch_completed', (data: any) => {
-    console.log('Batch Completed:', data);
-    const { batchSize, successCount, totalScore } = data as any;
-    get().addLog(`Run completed: ${successCount}/${batchSize} pages succeeded, total ${totalScore}`, 'INFO');
-});
-
-// 处理审核完成事件
-wsClient.on('review_completed', (data: any) => {
-    console.log('Review Completed:', data);
-    const { summary } = data as any;
-    if (summary) {
-        get().addLog(`Review completed: ${summary.total_students} students, ${summary.low_confidence_count} low-confidence results`, 'INFO');
-    }
-    get().setStatus('RUNNING');
-    get().setPendingReview(null);
-    get().setReviewFocus(null);
-});
-
-// 处理工作流错误（对应设计文档 EventType.ERROR�?
-wsClient.on('workflow_error', (data: any) => {
-console.log('Workflow Error:', data);
-if (get().rubricScoreMismatch || get().rubricParseError) {
-    return;
-}
-set({ status: 'FAILED' });
-get().addLog(`Error: ${data.message}`, 'ERROR');
-        });
-    }
-};});

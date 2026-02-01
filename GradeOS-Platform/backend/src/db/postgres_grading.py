@@ -42,7 +42,7 @@ class StudentGradingResult:
     class_id: Optional[str] = None
     student_id: Optional[str] = None
     summary: Optional[str] = None
-    self_report: Optional[str] = None
+    confession: Optional[str] = None
     result_data: Optional[Dict[str, Any]] = None
     imported_at: Optional[str] = None
     revoked_at: Optional[str] = None
@@ -50,17 +50,64 @@ class StudentGradingResult:
 
 @dataclass
 class GradingPageImage:
-    """批改页面图像"""
+    """批改页面图像索引"""
     
     id: str
     grading_history_id: str
     student_key: str
     page_index: int
-    image_data: bytes  # 图像二进制数据
-    image_format: str = "png"  # 图像格式：png, jpg, webp
+    file_id: str  # file storage id
+    file_url: Optional[str] = None  # file download url
+    content_type: Optional[str] = None  # MIME type
     created_at: str = ""
 
 
+_PAGE_IMAGES_TABLE_READY = False
+
+
+async def ensure_page_images_table() -> None:
+    """Ensure grading_page_images table exists and includes file reference columns."""
+    global _PAGE_IMAGES_TABLE_READY
+    if _PAGE_IMAGES_TABLE_READY:
+        return
+
+    create_query = """
+        CREATE TABLE IF NOT EXISTS grading_page_images (
+            id UUID PRIMARY KEY,
+            grading_history_id UUID NOT NULL,
+            student_key VARCHAR(200) NOT NULL,
+            page_index INTEGER NOT NULL,
+            file_id VARCHAR(200),
+            file_url TEXT,
+            content_type VARCHAR(100),
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (grading_history_id) REFERENCES grading_history(id) ON DELETE CASCADE,
+            CONSTRAINT unique_page_image UNIQUE (grading_history_id, student_key, page_index)
+        )
+    """
+    alter_queries = [
+        "ALTER TABLE grading_page_images ADD COLUMN IF NOT EXISTS file_id VARCHAR(200)",
+        "ALTER TABLE grading_page_images ADD COLUMN IF NOT EXISTS file_url TEXT",
+        "ALTER TABLE grading_page_images ADD COLUMN IF NOT EXISTS content_type VARCHAR(100)",
+    ]
+    index_queries = [
+        "CREATE INDEX IF NOT EXISTS idx_page_images_history ON grading_page_images(grading_history_id)",
+        "CREATE INDEX IF NOT EXISTS idx_page_images_student ON grading_page_images(grading_history_id, student_key)",
+        "CREATE INDEX IF NOT EXISTS idx_page_images_file_id ON grading_page_images(file_id)",
+    ]
+
+    try:
+        async with db.connection() as conn:
+            await conn.execute(create_query)
+            for statement in alter_queries:
+                await conn.execute(statement)
+            for statement in index_queries:
+                await conn.execute(statement)
+            await conn.commit()
+        _PAGE_IMAGES_TABLE_READY = True
+    except Exception as exc:
+        logger.error(f"Ensure grading_page_images failed: {exc}")
+        raise
 async def save_grading_history(history: GradingHistory) -> None:
     """保存批改历史到 PostgreSQL"""
     if not history.created_at:
@@ -94,14 +141,15 @@ async def save_grading_history(history: GradingHistory) -> None:
     )
 
     try:
-        log_sql_operation("INSERT/UPDATE", query, params)
+        # Avoid logging large result_data payloads in deploy logs
+        log_sql_operation("INSERT/UPDATE", "grading_history")
         async with db.connection() as conn:
             await conn.execute(query, params)
             await conn.commit()
         log_sql_operation("INSERT/UPDATE", "grading_history", result_count=1)
         logger.info(f"批改历史已保存到 PostgreSQL: batch_id={history.batch_id}")
     except Exception as e:
-        log_sql_operation("INSERT/UPDATE", query, params, error=e)
+        log_sql_operation("INSERT/UPDATE", "grading_history", error=e)
         logger.error(f"保存批改历史到 PostgreSQL 失败: {e}")
         raise
 
@@ -263,50 +311,37 @@ async def list_grading_history(
 
 
 async def save_student_result(result: StudentGradingResult) -> None:
-    """保存学生批改结果到 PostgreSQL"""
-    # 先尝试更新，如果不存在则插入
-    update_query = """
-        UPDATE student_grading_results 
-        SET id = %s,
-            score = %s,
-            max_score = %s,
-            class_id = %s,
-            student_id = %s,
-            summary = %s,
-            self_report = %s,
-            result_data = %s::jsonb,
-            imported_at = %s,
-            revoked_at = %s
-        WHERE grading_history_id = %s AND student_key = %s
-    """
-    
-    insert_query = """
-        INSERT INTO student_grading_results 
-        (id, grading_history_id, student_key, class_id, student_id,
-         score, max_score, summary, self_report, result_data, 
-         imported_at, revoked_at)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s)
-    """
-    
-    # 确保 result_data 被正确序列化为 JSON 字符串
+    """????????? PostgreSQL"""
+    # Normalize confession payloads and keep result_data in sync.
+    result_data_payload = result.result_data
+    confession_value = result.confession
+    if isinstance(result_data_payload, dict):
+        payload = dict(result_data_payload)
+        if confession_value is None:
+            confession_value = payload.get("confession")
+        elif "confession" not in payload:
+            payload["confession"] = confession_value
+
+        for key in ("confession_data", "confessionData", "self_report", "selfReport"):
+            payload.pop(key, None)
+        result_data_payload = payload
+
+    if confession_value is not None and not isinstance(confession_value, str):
+        try:
+            confession_value = json.dumps(confession_value, ensure_ascii=False)
+        except Exception as e:
+            logger.error(f"??? confession ??: {e}")
+            confession_value = None
+
     result_data_json = None
-    if result.result_data:
+    if result_data_payload is not None:
         try:
-            result_data_json = json.dumps(result.result_data, ensure_ascii=False)
+            result_data_json = json.dumps(result_data_payload, ensure_ascii=False)
         except Exception as e:
-            logger.error(f"序列化 result_data 失败: {e}")
+            logger.error(f"??? result_data ??: {e}")
             result_data_json = "{}"
-    
-    # 确保 self_report 也被正确序列化（如果是 dict）
-    self_report_value = result.self_report
-    if isinstance(self_report_value, dict):
-        try:
-            self_report_value = json.dumps(self_report_value, ensure_ascii=False)
-        except Exception as e:
-            logger.error(f"序列化 self_report 失败: {e}")
-            self_report_value = None
-    
-    # 先尝试更新
+
+    # ?????
     update_params = (
         result.id,
         result.score,
@@ -314,14 +349,14 @@ async def save_student_result(result: StudentGradingResult) -> None:
         result.class_id,
         result.student_id,
         result.summary,
-        self_report_value,
+        confession_value,
         result_data_json,
         result.imported_at,
         result.revoked_at,
         result.grading_history_id,
         result.student_key,
     )
-    
+
     insert_params = (
         result.id,
         result.grading_history_id,
@@ -331,7 +366,7 @@ async def save_student_result(result: StudentGradingResult) -> None:
         result.score,
         result.max_score,
         result.summary,
-        self_report_value,
+        confession_value,
         result_data_json,
         result.imported_at,
         result.revoked_at,
@@ -339,65 +374,94 @@ async def save_student_result(result: StudentGradingResult) -> None:
 
     try:
         async with db.connection() as conn:
-            # 先尝试更新
+            # ??????????????
+            update_query = """
+                UPDATE student_grading_results 
+                SET id = %s,
+                    score = %s,
+                    max_score = %s,
+                    class_id = %s,
+                    student_id = %s,
+                    summary = %s,
+                    confession = %s,
+                    result_data = %s::jsonb,
+                    imported_at = %s,
+                    revoked_at = %s
+                WHERE grading_history_id = %s AND student_key = %s
+            """
+
+            insert_query = """
+                INSERT INTO student_grading_results 
+                (id, grading_history_id, student_key, class_id, student_id,
+                 score, max_score, summary, confession, result_data, 
+                 imported_at, revoked_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s)
+            """
+
+            # ?????
             cursor = await conn.execute(update_query, update_params)
             updated_rows = cursor.rowcount
-            
-            # 如果没有更新任何行，说明记录不存在，执行插入
+
+            # ??????????????????????
             if updated_rows == 0:
-                log_sql_operation("INSERT", insert_query, insert_params)
+                log_sql_operation("INSERT", "student_grading_results")
                 await conn.execute(insert_query, insert_params)
             else:
-                log_sql_operation("UPDATE", update_query, update_params)
-            
+                log_sql_operation("UPDATE", "student_grading_results")
+
             await conn.commit()
-        
+
         log_sql_operation("INSERT/UPDATE", "student_grading_results", result_count=1)
-        logger.debug(f"学生结果已保存: student_key={result.student_key}")
+        logger.debug(f"???????: student_key={result.student_key}")
     except Exception as e:
         log_sql_operation("INSERT/UPDATE", "student_grading_results", error=e)
-        logger.error(f"保存学生结果失败: {e}")
+        logger.error(f"????????: {e}")
         raise
 
 
 async def get_student_results(grading_history_id: str) -> List[StudentGradingResult]:
-    """获取批改历史的所有学生结果"""
+    """?????????????"""
     try:
         query = "SELECT * FROM student_grading_results WHERE grading_history_id = %s"
         params = (grading_history_id,)
         log_sql_operation("SELECT", query, params)
-        
+
         async with db.connection() as conn:
             cursor = await conn.execute(query, params)
             rows = await cursor.fetchall()
-        
+
         log_sql_operation("SELECT", "student_grading_results", result_count=len(rows))
 
         results = []
         for row in rows:
-            # JSONB 字段可能已经是 dict，也可能是 str（取决于驱动）
+            # JSONB ??????? dict????? str???????
             raw_result_data = row["result_data"]
             if isinstance(raw_result_data, str):
                 result_data = json.loads(raw_result_data) if raw_result_data else None
             else:
                 result_data = raw_result_data
 
-            # 处理日期字段（可能是 datetime 对象或字符串）
+            # ?????????? datetime ???????
             imported_at_value = row["imported_at"]
-            if hasattr(imported_at_value, 'isoformat'):
+            if hasattr(imported_at_value, "isoformat"):
                 imported_at_value = imported_at_value.isoformat()
             elif imported_at_value:
                 imported_at_value = str(imported_at_value)
             else:
                 imported_at_value = None
-            
+
             revoked_at_value = row["revoked_at"]
-            if hasattr(revoked_at_value, 'isoformat'):
+            if hasattr(revoked_at_value, "isoformat"):
                 revoked_at_value = revoked_at_value.isoformat()
             elif revoked_at_value:
                 revoked_at_value = str(revoked_at_value)
             else:
                 revoked_at_value = None
+
+            if hasattr(row, "get"):
+                confession_value = row.get("confession")
+            else:
+                confession_value = row["confession"]
 
             results.append(
                 StudentGradingResult(
@@ -409,7 +473,7 @@ async def get_student_results(grading_history_id: str) -> List[StudentGradingRes
                     score=float(row["score"]) if row["score"] else None,
                     max_score=float(row["max_score"]) if row["max_score"] else None,
                     summary=row["summary"],
-                    self_report=row["self_report"],
+                    confession=confession_value,
                     result_data=result_data,
                     imported_at=imported_at_value,
                     revoked_at=revoked_at_value,
@@ -418,7 +482,7 @@ async def get_student_results(grading_history_id: str) -> List[StudentGradingRes
 
         return results
     except Exception as e:
-        logger.error(f"获取学生结果失败: {e}")
+        logger.error(f"????????: {e}")
         return []
 
 
@@ -426,27 +490,33 @@ async def save_page_image(image: GradingPageImage) -> None:
     """保存批改页面图像到 PostgreSQL"""
     if not image.created_at:
         image.created_at = datetime.now().isoformat()
+
+    await ensure_page_images_table()
     
     query = """
         INSERT INTO grading_page_images 
         (id, grading_history_id, student_key, page_index, 
-         image_data, image_format, created_at)
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
-        ON CONFLICT (grading_history_id, student_key, page_index) 
-        DO NOTHING
+         file_id, file_url, content_type, created_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (grading_history_id, student_key, page_index) DO UPDATE SET
+            file_id = EXCLUDED.file_id,
+            file_url = EXCLUDED.file_url,
+            content_type = EXCLUDED.content_type,
+            created_at = EXCLUDED.created_at
     """
     params = (
         image.id,
         image.grading_history_id,
         image.student_key,
         image.page_index,
-        image.image_data,
-        image.image_format,
+        image.file_id,
+        image.file_url,
+        image.content_type,
         image.created_at,
     )
     
     try:
-        log_sql_operation("INSERT", "grading_page_images", {"id": image.id})
+        log_sql_operation("INSERT/UPDATE", "grading_page_images")
         async with db.connection() as conn:
             await conn.execute(query, params)
             await conn.commit()
@@ -504,8 +574,9 @@ async def get_page_images(
                     grading_history_id=str(row["grading_history_id"]),
                     student_key=row["student_key"],
                     page_index=row["page_index"],
-                    image_data=row["image_data"],
-                    image_format=row["image_format"],
+                    file_id=row["file_id"] or "",
+                    file_url=row["file_url"],
+                    content_type=row["content_type"],
                     created_at=created_at_value,
                 )
             )

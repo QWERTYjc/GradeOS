@@ -1,4 +1,4 @@
-"""批改自白生成服务
+"""批改忏悔生成服务
 
 按照 implementation_plan.md 实现：
 在人机交互之前生成，辅助用户查漏补缺，标记可疑位置。
@@ -24,9 +24,9 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class SelfReportIssue:
+class ConfessionIssue:
     """
-    自白问题条目
+    忏悔问题条目
 
     扩展字段（评分标准引用与记忆系统优化）：
     - should_create_memory: 是否应创建记忆
@@ -56,19 +56,19 @@ class SelfReportIssue:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "SelfReportIssue":
+    def from_dict(cls, data: Dict[str, Any]) -> "ConfessionIssue":
         return cls(**data)
 
 
-def generate_self_report(
+def generate_confession(
     evidence: Dict[str, Any],
     score_result: Dict[str, Any],
     page_index: int,
 ) -> Dict[str, Any]:
     """
-    生成单页批改自白
+    生成单页批改忏悔
 
-    批改自白用于辅助人工核查，标记：
+    批改忏悔用于辅助人工核查，标记：
     1. 低置信度评分点
     2. 缺失证据的评分
     3. 逻辑复核修正记录
@@ -82,9 +82,9 @@ def generate_self_report(
         page_index: 页面索引
 
     Returns:
-        批改自白结构
+        批改忏悔结构
     """
-    issues: List[SelfReportIssue] = []
+    issues: List[ConfessionIssue] = []
     warnings: List[str] = []
     issue_counter = 0
 
@@ -106,7 +106,7 @@ def generate_self_report(
         # 低置信度检查
         if confidence and confidence < 0.7:
             issues.append(
-                SelfReportIssue(
+                ConfessionIssue(
                     issue_id=next_issue_id(),
                     type="low_confidence",
                     severity="warning",
@@ -124,7 +124,7 @@ def generate_self_report(
         if q.get("used_alternative_solution"):
             alt_ref = q.get("alternative_solution_ref", "")
             issues.append(
-                SelfReportIssue(
+                ConfessionIssue(
                     issue_id=next_issue_id(),
                     type="alternative_solution",
                     severity="info",
@@ -156,7 +156,7 @@ def generate_self_report(
                 "【原文引用】未找到",
             ]:
                 issues.append(
-                    SelfReportIssue(
+                    ConfessionIssue(
                         issue_id=next_issue_id(),
                         type="missing_evidence",
                         severity="error",
@@ -174,7 +174,7 @@ def generate_self_report(
             # 检查 rubric_reference
             if not rubric_ref:
                 issues.append(
-                    SelfReportIssue(
+                    ConfessionIssue(
                         issue_id=next_issue_id(),
                         type="no_citation",
                         severity="warning",
@@ -195,7 +195,7 @@ def generate_self_report(
             if is_alt_solution:
                 alt_desc = spr.get("alternative_description", "")
                 issues.append(
-                    SelfReportIssue(
+                    ConfessionIssue(
                         issue_id=next_issue_id(),
                         type="alternative_solution",
                         severity="info",
@@ -215,7 +215,7 @@ def generate_self_report(
         typo_notes = q.get("typo_notes", [])
         if typo_notes:
             issues.append(
-                SelfReportIssue(
+                ConfessionIssue(
                     issue_id=next_issue_id(),
                     type="typo_detected",
                     severity="info",
@@ -293,76 +293,19 @@ def _generate_summary(
     return " ".join(parts)
 
 
-def generate_student_self_report(
-    student_key: str,
-    page_results: List[Dict[str, Any]],
-) -> Dict[str, Any]:
-    """
-    生成学生级别的批改自白
-
-    汇总该学生所有页面的批改自白。
-
-    Args:
-        student_key: 学生标识
-        page_results: 该学生的所有页面批改结果
-
-    Returns:
-        学生批改自白
-    """
-    all_issues: List[Dict[str, Any]] = []
-    all_warnings: List[str] = []
-
-    for page_result in page_results:
-        self_report = page_result.get("self_report")
-        if self_report:
-            all_issues.extend(self_report.get("issues", []))
-            all_warnings.extend(self_report.get("warnings", []))
-
-    # 去重 warnings
-    unique_warnings = list(set(all_warnings))
-
-    # 计算整体状态
-    error_count = sum(1 for i in all_issues if i.get("severity") == "error")
-    if error_count > 0:
-        overall_status = "needs_review"
-    elif len(all_issues) > 3:
-        overall_status = "caution"
-    else:
-        overall_status = "ok"
-
-    # 生成总结
-    total_score = sum(p.get("score", 0) for p in page_results)
-    total_max = sum(p.get("max_score", 0) for p in page_results)
-
-    summary_parts = [f"学生 {student_key}: 总分 {total_score}/{total_max}。"]
-    if error_count > 0:
-        summary_parts.append(f"共 {error_count} 处需核查。")
-    if not all_issues:
-        summary_parts.append("批改过程无异常标记。")
-
-    return {
-        "student_key": student_key,
-        "overall_status": overall_status,
-        "issues": all_issues,
-        "warnings": unique_warnings,
-        "summary": " ".join(summary_parts),
-        "generated_at": datetime.now().isoformat(),
-    }
+# ==================== 忏悔驱动的记忆更新 (任务 7) ====================
 
 
-# ==================== 自白驱动的记忆更新 (任务 7) ====================
-
-
-async def update_memory_from_self_report(
-    self_report: Dict[str, Any],
+async def update_memory_from_confession(
+    confession: Dict[str, Any],
     memory_service: "GradingMemoryService",
     batch_id: str,
     subject: str = "general",
 ) -> Dict[str, Any]:
     """
-    从自白结果更新记忆系统
+    从忏悔结果更新记忆系统
 
-    根据自白中标记的 should_create_memory 问题，创建或更新记忆。
+    根据忏悔中标记的 should_create_memory 问题，创建或更新记忆。
 
     属性 P4: 自白-记忆一致性
     - 对于自白中标记 should_create_memory=true 的问题
@@ -370,7 +313,7 @@ async def update_memory_from_self_report(
     - 记录的 action 为 "created" 或 "confirmed"
 
     Args:
-        self_report: 自白结果
+        confession: 忏悔结果
         memory_service: 记忆服务实例
         batch_id: 批次ID
         subject: 科目标识
@@ -383,7 +326,7 @@ async def update_memory_from_self_report(
     memory_updates: List[Dict[str, Any]] = []
 
     # 获取需要创建记忆的候选项
-    memory_candidates = self_report.get("memory_candidates", [])
+    memory_candidates = confession.get("memory_candidates", [])
 
     for candidate in memory_candidates:
         issue_id = candidate.get("issue_id")
@@ -428,7 +371,7 @@ async def update_memory_from_self_report(
                     "pattern": similar_memory.pattern,
                 }
             )
-            logger.info(f"[SelfReport] 确认已有记忆: {similar_memory.memory_id}")
+            logger.info(f"[Confession] 确认已有记忆: {similar_memory.memory_id}")
         else:
             # 创建新记忆（待验证状态）
             memory_id = await memory_service.save_memory_async(
@@ -436,7 +379,7 @@ async def update_memory_from_self_report(
                 pattern=pattern,
                 lesson=lesson or "从自白中学习到的经验",
                 context={
-                    "source": "self_report",
+                    "source": "confession",
                     "issue_id": issue_id,
                     "batch_id": batch_id,
                 },
@@ -452,7 +395,7 @@ async def update_memory_from_self_report(
                     "pattern": pattern,
                 }
             )
-            logger.info(f"[SelfReport] 创建新记忆: {memory_id}")
+            logger.info(f"[Confession] 创建新记忆: {memory_id}")
 
     return {
         "memory_updates": memory_updates,
@@ -591,10 +534,9 @@ def apply_memory_review_result(
 
 # 导出
 __all__ = [
-    "SelfReportIssue",
-    "generate_self_report",
-    "generate_student_self_report",
-    "update_memory_from_self_report",
+    "ConfessionIssue",
+    "generate_confession",
+    "update_memory_from_confession",
     "review_memory_conflict",
     "apply_memory_review_result",
 ]

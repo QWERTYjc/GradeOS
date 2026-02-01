@@ -127,6 +127,16 @@ class BatchGradingGraphState(TypedDict, total=False):
         List[Dict[str, Any]], last_value
     ]  # 按学生聚合的结果（使用 last_value reducer 替换旧值）
 
+    # ===== 自白/忏悔 (Confession) 后的结果 =====
+    confessed_results: Annotated[
+        List[Dict[str, Any]], last_value
+    ]  # 自白节点处理后的学生结果（使用 last_value，非追加）
+
+    # ===== 逻辑复核后的结果 =====
+    reviewed_results: Annotated[
+        List[Dict[str, Any]], last_value
+    ]  # 逻辑复核后的最终学生结果（使用 last_value，非追加）
+
     # ===== 审核结果 =====
     review_summary: Dict[str, Any]  # 审核摘要
     review_result: Optional[Dict[str, Any]]  # 人工审核结果

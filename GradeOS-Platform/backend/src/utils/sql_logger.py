@@ -6,6 +6,22 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+_SENSITIVE_TABLES = (
+    "student_grading_results",
+    "grading_history",
+    "grading_page_images",
+    "grading_results",
+    "grading_logs",
+)
+
+
+def _sensitive_table_name(query: str) -> Optional[str]:
+    lowered = query.lower()
+    for table in _SENSITIVE_TABLES:
+        if table in lowered:
+            return table
+    return None
+
 
 def log_sql_operation(
     operation: str,
@@ -25,6 +41,16 @@ def log_sql_operation(
         error: 错误信息（如果有）
     """
     log_params = os.getenv("SQL_LOG_PARAMS", "false").strip().lower() in ("1", "true", "yes")
+    log_success = os.getenv("SQL_LOG_SUCCESS", "false").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    sensitive_table = _sensitive_table_name(query)
+    if sensitive_table:
+        if error:
+            logger.error(f"[SQL] ✗ {operation} failed on {sensitive_table}: {error}")
+        return
     log_data = {
         "operation": operation,
         "query": query.strip(),
@@ -38,6 +64,6 @@ def log_sql_operation(
     if error:
         log_data["error"] = str(error)
         logger.error(f"[SQL] ❌ {operation} 失败: {json.dumps(log_data, ensure_ascii=False)}")
-    else:
-        # Successful SQL logs are noisy and may contain sensitive data; default to DEBUG.
+    elif log_success:
+        # Successful SQL logs are noisy and may contain sensitive data; default to disabled.
         logger.debug(f"[SQL] ✅ {operation}: {json.dumps(log_data, ensure_ascii=False)}")

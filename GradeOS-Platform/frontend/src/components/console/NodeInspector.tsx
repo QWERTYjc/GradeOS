@@ -197,7 +197,7 @@ export const NodeInspector: React.FC<NodeInspectorProps> = ({ className }) => {
                                                             <BrainCircuit className="w-3 h-3" />
                                                             实时 AI 思考内容...
                                                         </label>
-                                                        <div className="text-sm text-slate-600 leading-relaxed bg-white/70 p-4 rounded-xl border border-blue-100/40 font-mono text-[13px] max-h-[200px] overflow-y-auto custom-scrollbar shadow-inner">
+                                                        <div className="text-sm text-slate-600 leading-relaxed bg-white/70 p-4 rounded-xl border border-blue-100/40 font-mono text-[13px] h-[500px] overflow-y-auto custom-scrollbar shadow-inner">
                                                             {selectedAgent.output.streamingText}
                                                             <span className="inline-block w-1.5 h-4 bg-blue-500 ml-1 animate-pulse align-middle" />
                                                         </div>

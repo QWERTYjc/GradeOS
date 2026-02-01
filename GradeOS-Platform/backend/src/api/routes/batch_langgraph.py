@@ -41,7 +41,6 @@ from src.api.dependencies import get_orchestrator
 from src.utils.image import to_jpeg_bytes, pil_to_jpeg_bytes
 from src.utils.pool_manager import UnifiedPoolManager, PoolNotInitializedError
 from src.services.grading_run_control import GradingRunSnapshot, get_run_controller
-from src.services.annotation_grading import update_annotations_after_review
 from src.services.file_storage import get_file_storage_service, StoredFile
 
 # PostgreSQL 作为主存储
@@ -54,6 +53,7 @@ from src.db import (
     list_class_students,
     get_grading_history,
     get_student_results,
+    get_page_images,
 )
 
 
@@ -798,9 +798,6 @@ async def submit_batch(
 
         # 📁 持久化存储原始文件（可选，通过环境变量 ENABLE_FILE_STORAGE 控制）
         stored_files: List[StoredFile] = []
-        # 📁 持久化存储原始文件（可选，通过环境变量 ENABLE_FILE_STORAGE 控制）
-        stored_files: List[StoredFile] = []
-        if os.getenv("ENABLE_FILE_STORAGE", "false").lower() == "true":
             try:
                 file_storage = get_file_storage_service()
                 
@@ -829,6 +826,33 @@ async def submit_batch(
                 )
             except Exception as e:
                 logger.warning(f"[FileStorage] 文件存储失败（不影响批改流程）: {e}")
+
+        file_index_by_page: Dict[int, Dict[str, Any]] = {}
+        if stored_files:
+            public_base = (
+                os.getenv("BACKEND_PUBLIC_URL")
+                or os.getenv("PUBLIC_BACKEND_URL")
+                or os.getenv("PUBLIC_API_BASE_URL")
+                or ""
+            )
+
+            def _build_file_url(file_id: str) -> str:
+                if public_base:
+                    return public_base.rstrip("/") + f"/api/batch/files/{file_id}/download"
+                return f"/api/batch/files/{file_id}/download"
+
+            for item in stored_files:
+                meta = item.metadata or {}
+                if meta.get("type") == "answer":
+                    page_idx = meta.get("page_index")
+                    if page_idx is not None:
+                        file_index_by_page[int(page_idx)] = {
+                            "file_id": item.file_id,
+                            "file_url": _build_file_url(item.file_id),
+                            "content_type": item.content_type,
+                        }
+
+
 
         # 🚀 使用 LangGraph Orchestrator 启动批改流程
 
@@ -860,6 +884,7 @@ async def submit_batch(
             "temp_dir": str(temp_path),  # 临时目录（用于清理）
             "rubric_images": rubric_images,
             "answer_images": answer_images,
+            "file_index_by_page": file_index_by_page,
             "api_key": api_key,
             # 班级批改上下文（可选）
             "class_id": class_id,
@@ -1394,6 +1419,7 @@ async def stream_langgraph_progress(
                             result.get("studentSummary") or result.get("student_summary") or {}
                         )
                         self_audit = result.get("selfAudit") or result.get("self_audit") or {}
+                        confession_payload = result.get("confession")
                         student_id_value = student_id if class_id else None
                         student_result = StudentGradingResult(
                             id=_make_student_result_id(history_id, student_name, student_id_value),
@@ -1408,9 +1434,7 @@ async def stream_langgraph_progress(
                                 if isinstance(student_summary, dict)
                                 else None
                             ),
-                            self_report=(
-                                self_audit.get("summary") if isinstance(self_audit, dict) else None
-                            ),
+                            confession=confession_payload,
                             result_data=result,
                         )
                         await _maybe_await(save_student_result(student_result))
@@ -1658,25 +1682,6 @@ def _make_student_result_id(
     return str(uuid.uuid5(uuid.NAMESPACE_URL, f"{grading_history_id}:{seed}"))
 
 
-def _normalize_annotation_payload(value: Any) -> Optional[Dict[str, Any]]:
-    if not value:
-        return None
-    if isinstance(value, dict):
-        return value
-    if isinstance(value, (bytes, bytearray)):
-        try:
-            value = value.decode("utf-8")
-        except Exception:
-            return None
-    if isinstance(value, str):
-        try:
-            parsed = json.loads(value)
-            return parsed if isinstance(parsed, dict) else None
-        except Exception:
-            return None
-    return None
-
-
 def _resolve_page_indices(question: Dict[str, Any], fallback_page_index: Optional[int] = None) -> List[int]:
     pages = question.get("page_indices") or question.get("pageIndices")
     if not pages:
@@ -1845,6 +1850,19 @@ def _dedupe_formatted_results(results: List[Dict[str, Any]]) -> List[Dict[str, A
                 merged_questions[qid] = q
         merged["questionResults"] = list(merged_questions.values())
 
+        # Prefer newer post-processing fields when the current entry is missing them.
+        for field in (
+            "confession",
+            "logicReview",
+            "logicReviewedAt",
+            "selfAudit",
+            "draftQuestionDetails",
+            "draftTotalScore",
+            "draftMaxScore",
+        ):
+            if not merged.get(field) and result.get(field):
+                merged[field] = result.get(field)
+
         merged_start = merged.get("startPage")
         merged_end = merged.get("endPage")
         candidate_start = result.get("startPage")
@@ -1956,8 +1974,8 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
                         "page_indices": page_indices,
                         "is_cross_page": q.get("is_cross_page", False),
                         "merge_source": q.get("merge_source"),
-                        # 🔥 批注坐标字段
-                        "annotations": q.get("annotations") or [],
+                        # 🔥 批注坐标字段（后端不再返回，改为前端渲染/按需生成）
+                        "annotations": [],
                         "steps": q.get("steps") or [],
                         "answerRegion": q.get("answer_region") or q.get("answerRegion"),
                     }
@@ -2014,8 +2032,8 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
                         "page_indices": page_indices,
                         "is_cross_page": q.get("is_cross_page", False),
                         "merge_source": q.get("merge_source"),
-                        # 🔥 批注坐标字段
-                        "annotations": q.get("annotations") or [],
+                        # 🔥 批注坐标字段（后端不再返回，改为前端渲染/按需生成）
+                        "annotations": [],
                         "steps": q.get("steps") or [],
                         "answerRegion": q.get("answer_region") or q.get("answerRegion"),
                     }
@@ -2079,8 +2097,8 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
                         "page_indices": page_indices,
                         "is_cross_page": q.get("is_cross_page", False),
                         "merge_source": q.get("merge_source"),
-                        # 🔥 批注坐标字段
-                        "annotations": q.get("annotations") or [],
+                        # 🔥 批注坐标字段（后端不再返回，改为前端渲染/按需生成）
+                        "annotations": [],
                         "steps": q.get("steps") or [],
                         "answerRegion": q.get("answer_region") or q.get("answerRegion"),
                     }
@@ -2143,8 +2161,8 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
                                 "page_indices": page_indices or [],
                                 "is_cross_page": q.get("is_cross_page", False),
                                 "merge_source": q.get("merge_source"),
-                                # 🔥 批注坐标字段
-                                "annotations": q.get("annotations") or [],
+                                # 🔥 批注坐标字段（后端不再返回，改为前端渲染/按需生成）
+                                "annotations": [],
                                 "steps": q.get("steps") or [],
                                 "answerRegion": q.get("answer_region") or q.get("answerRegion"),
                             }
@@ -2159,44 +2177,56 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
 
         student_summary = r.get("student_summary") or r.get("studentSummary")
         self_audit = r.get("self_audit") or r.get("selfAudit")
-        self_report_raw = r.get("self_report") or r.get("selfReport") or r.get("confession")
+        confession_raw = r.get("confession")
+        if isinstance(confession_raw, str):
+            try:
+                confession_raw = json.loads(confession_raw)
+            except Exception:
+                confession_raw = None
 
-        # 标准化 selfReport 格式，确保前端能正确显示
-        self_report = None
-        if self_report_raw and isinstance(self_report_raw, dict):
-            self_report = {}
+        logic_review_raw = r.get("logic_review") or r.get("logicReview")
+        if isinstance(logic_review_raw, str):
+            try:
+                logic_review_raw = json.loads(logic_review_raw)
+            except Exception:
+                logic_review_raw = None
+
+        # 标准化 confession 格式，确保前端能正确显示
+        confession = None
+        if confession_raw and isinstance(confession_raw, dict):
+            confession = {}
             # 复制所有原始字段
-            self_report.update(self_report_raw)
+            confession.update(confession_raw)
             # 确保 overallStatus 存在
-            if "overallStatus" not in self_report and "overall_status" in self_report_raw:
-                self_report["overallStatus"] = self_report_raw["overall_status"]
-            elif "overallStatus" not in self_report and "overall_confidence" in self_report_raw:
-                conf = self_report_raw.get("overall_confidence", 0)
+            if "overallStatus" not in confession and "overall_status" in confession_raw:
+                confession["overallStatus"] = confession_raw["overall_status"]
+            elif "overallStatus" not in confession and "overall_confidence" in confession_raw:
+                conf = confession_raw.get("overall_confidence", 0)
                 if conf >= 0.8:
-                    self_report["overallStatus"] = "ok"
+                    confession["overallStatus"] = "ok"
                 elif conf >= 0.5:
-                    self_report["overallStatus"] = "caution"
+                    confession["overallStatus"] = "caution"
                 else:
-                    self_report["overallStatus"] = "needs_review"
+                    confession["overallStatus"] = "needs_review"
             # 确保 overallConfidence 存在
-            if "overallConfidence" not in self_report and "overall_confidence" in self_report_raw:
-                self_report["overallConfidence"] = self_report_raw["overall_confidence"]
+            if "overallConfidence" not in confession and "overall_confidence" in confession_raw:
+                confession["overallConfidence"] = confession_raw["overall_confidence"]
             # 确保 highRiskQuestions 格式正确
-            hrq = self_report_raw.get("highRiskQuestions") or self_report_raw.get(
+            hrq = confession_raw.get("highRiskQuestions") or confession_raw.get(
                 "high_risk_questions"
             )
             if hrq:
                 if isinstance(hrq, list) and hrq and isinstance(hrq[0], str):
-                    self_report["highRiskQuestions"] = [
+                    confession["highRiskQuestions"] = [
                         {"questionId": q, "description": ""} for q in hrq
                     ]
                 else:
-                    self_report["highRiskQuestions"] = hrq
+                    confession["highRiskQuestions"] = hrq
             # 确保 issues 存在
-            if "issues" not in self_report:
+            if "issues" not in confession:
                 # 从 potential_errors 或 uncertainties 构建 issues
                 issues = []
-                for err in self_report_raw.get("potential_errors", []):
+                for err in confession_raw.get("potential_errors", []):
                     if isinstance(err, dict):
                         issues.append(
                             {
@@ -2204,7 +2234,7 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
                                 "message": err.get("description", ""),
                             }
                         )
-                for unc in self_report_raw.get("uncertainties", []):
+                for unc in confession_raw.get("uncertainties", []):
                     if isinstance(unc, dict):
                         issues.append(
                             {
@@ -2213,7 +2243,7 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
                             }
                         )
                 if issues:
-                    self_report["issues"] = issues
+                    confession["issues"] = issues
 
         # 🔥 第一次批改记录（逻辑复核前的原始结果）
         draft_question_details = r.get("draft_question_details") or r.get("draftQuestionDetails")
@@ -2284,17 +2314,13 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
                 "studentSummary": student_summary,
                 "selfAudit": self_audit,
                 # 🔥 新增：批改透明度字段
-                "selfReport": self_report,
+                "confession": confession,
+                "logicReview": logic_review_raw,
                 "draftQuestionDetails": draft_question_results if draft_question_results else None,
                 "draftTotalScore": r.get("draft_total_score") or r.get("draftTotalScore"),
                 "draftMaxScore": r.get("draft_max_score") or r.get("draftMaxScore"),
                 "logicReviewedAt": r.get("logic_reviewed_at") or r.get("logicReviewedAt"),
-                "gradingAnnotations": _normalize_annotation_payload(
-                    r.get("annotations")
-                    or r.get("grading_annotations")
-                    or r.get("gradingAnnotations")
-                    or r.get("annotation_result")
-                ),
+                
             }
         )
     # #region agent log - 假设D: _format_results_for_frontend 输出
@@ -2378,7 +2404,7 @@ async def websocket_endpoint(websocket: WebSocket, batch_id: str):
             run_id = f"batch_grading_{batch_id}"
             run_info = await orchestrator.get_run_info(run_id)
             if run_info and run_info.state:
-                state = run_info.state or {}
+        state = run_info.state or {}
                 current_stage = state.get("current_stage", "")
                 percentage = state.get("percentage", 0)
                 if current_stage or percentage:
@@ -2682,7 +2708,6 @@ async def get_results_review_context(
     """获取 results review 页面上下文"""
 
     async def _load_answer_images_from_storage() -> List[str]:
-        if os.getenv("ENABLE_FILE_STORAGE", "false").lower() != "true":
             return []
         try:
             file_storage = get_file_storage_service()
@@ -2709,6 +2734,24 @@ async def get_results_review_context(
             logger.debug(f"Failed to load answer images from storage: {exc}")
             return []
 
+    async def _load_answer_images_from_db(history_id: str) -> List[str]:
+        try:
+            images = await _maybe_await(get_page_images(history_id))
+            if not images:
+                return []
+            return [img.file_url for img in images if img.file_url]
+        except Exception as exc:
+            logger.debug(f"Failed to load answer images from DB: {exc}")
+            return []
+
+    def _has_post_confession_fields(results: List[Dict[str, Any]]) -> bool:
+        for item in results:
+            if not isinstance(item, dict):
+                continue
+            if item.get("confession") or item.get("logic_review") or item.get("logicReview"):
+                return True
+        return False
+
     async def _load_from_db() -> ResultsReviewContextResponse:
         """从数据库加载批改结果"""
         history = await _maybe_await(get_grading_history(batch_id))
@@ -2732,9 +2775,20 @@ async def get_results_review_context(
                     "score": row.score,
                     "maxScore": row.max_score,
                 }
+            confession_value = row.confession
+            if confession_value and not data.get("confession"):
+                if isinstance(confession_value, str):
+                    try:
+                        confession_value = json.loads(confession_value)
+                    except Exception:
+                        confession_value = None
+                if confession_value:
+                    data["confession"] = confession_value
             raw_results.append(data)
 
-        answer_images = await _load_answer_images_from_storage()
+        answer_images = await _load_answer_images_from_db(history.id)
+        if not answer_images:
+            answer_images = await _load_answer_images_from_storage()
         return ResultsReviewContextResponse(
             batch_id=batch_id,
             status=history.status,
@@ -2753,7 +2807,11 @@ async def get_results_review_context(
             return await _load_from_db()
 
         state = run_info.state or {}
-        student_results = state.get("student_results", [])
+        student_results = (
+            state.get("reviewed_results")
+            or state.get("confessed_results")
+            or state.get("student_results", [])
+        )
         if not student_results:
             try:
                 final_output = await orchestrator.get_final_output(run_id)
@@ -2783,6 +2841,45 @@ async def get_results_review_context(
                     except HTTPException:
                         student_results = []
 
+        # Attach logic review payloads from state when missing on student_results.
+        logic_review_by_student: Dict[str, Any] = {}
+        for item in state.get("logic_review_results") or []:
+            if not isinstance(item, dict):
+                continue
+            key = item.get("student_key") or item.get("studentKey")
+            if key:
+                logic_review_by_student[key] = item
+        if logic_review_by_student:
+            for student in student_results:
+                if not isinstance(student, dict):
+                    continue
+                if student.get("logic_review") or student.get("logicReview"):
+                    continue
+                key = (
+                    student.get("student_key")
+                    or student.get("studentKey")
+                    or student.get("student_name")
+                    or student.get("studentName")
+                )
+                payload = logic_review_by_student.get(key)
+                if payload:
+                    student["logic_review"] = payload
+                    student["logicReview"] = payload
+                    if not student.get("logic_reviewed_at") and payload.get("reviewed_at"):
+                        student["logic_reviewed_at"] = payload.get("reviewed_at")
+
+        # If the run completed but confession/logic_review is missing, prefer DB results.
+        if (
+            student_results
+            and run_info.status
+            and run_info.status.value == "completed"
+            and not _has_post_confession_fields(student_results)
+        ):
+            try:
+                return await _load_from_db()
+            except HTTPException:
+                pass
+
         cached = batch_image_cache.get(batch_id, {})
         cached_images = cached.get("images_ready", {}).get("images") if cached else None
         answer_images: List[str] = cached_images or []
@@ -2798,6 +2895,21 @@ async def get_results_review_context(
                         answer_images.append(img)
             except Exception as exc:
                 logger.debug(f"Failed to convert answer images: {exc}")
+        if not answer_images:
+            history = await _maybe_await(get_grading_history(batch_id))
+            if history:
+                answer_images = await _load_answer_images_from_db(history.id)
+        else:
+            # Prefer DB image URLs over large base64 blobs when available.
+            if any(
+                isinstance(img, str) and img.startswith("data:")
+                for img in answer_images
+            ):
+                history = await _maybe_await(get_grading_history(batch_id))
+                if history:
+                    db_images = await _load_answer_images_from_db(history.id)
+                    if db_images:
+                        answer_images = db_images
         if not answer_images:
             answer_images = await _load_answer_images_from_storage()
         return ResultsReviewContextResponse(
@@ -2841,17 +2953,52 @@ async def get_batch_results(batch_id: str, orchestrator: Orchestrator = Depends(
         state = run_info.state or {}
 
         # 优先从 student_results 获取结果
-        student_results = state.get("student_results", [])
+        student_results = (
+            state.get("reviewed_results")
+            or state.get("confessed_results")
+            or state.get("student_results", [])
+        )
 
         # 如果没有 student_results，尝试从 orchestrator 获取最终输出
         if not student_results:
             try:
                 final_output = await orchestrator.get_final_output(run_id)
                 if final_output:
-                    student_results = final_output.get("student_results", [])
+                    student_results = (
+                        final_output.get("reviewed_results")
+                        or final_output.get("confessed_results")
+                        or final_output.get("student_results", [])
+                    )
             except Exception as e:
                 logger.debug(f"获取最终输出失败: {e}")
 
+        
+        # Attach logic review payloads from state when missing on student_results.
+        logic_review_by_student: Dict[str, Any] = {}
+        for item in state.get("logic_review_results") or []:
+            if not isinstance(item, dict):
+                continue
+            key = item.get("student_key") or item.get("studentKey")
+            if key:
+                logic_review_by_student[key] = item
+        if logic_review_by_student:
+            for student in student_results:
+                if not isinstance(student, dict):
+                    continue
+                if student.get("logic_review") or student.get("logicReview"):
+                    continue
+                key = (
+                    student.get("student_key")
+                    or student.get("studentKey")
+                    or student.get("student_name")
+                    or student.get("studentName")
+                )
+                payload = logic_review_by_student.get(key)
+                if payload:
+                    student["logic_review"] = payload
+                    student["logicReview"] = payload
+                    if not student.get("logic_reviewed_at") and payload.get("reviewed_at"):
+                        student["logic_reviewed_at"] = payload.get("reviewed_at")
         return {
             "batch_id": batch_id,
             "status": run_info.status.value,
@@ -2880,6 +3027,16 @@ async def get_full_batch_results(
     Returns:
         完整批改结果（包含跨页题目信息）
     """
+
+    async def _load_answer_images_from_db(history_id: str) -> List[str]:
+        try:
+            images = await _maybe_await(get_page_images(history_id))
+            if not images:
+                return []
+            return [img.file_url for img in images if img.file_url]
+        except Exception as exc:
+            logger.debug(f"Failed to load answer images from DB: {exc}")
+            return []
 
     async def _load_from_db() -> Dict[str, Any]:
         history = await get_grading_history(batch_id)
@@ -2945,17 +3102,54 @@ async def get_full_batch_results(
             return await _load_from_db()
 
         state = run_info.state or {}
-        student_results = state.get("student_results", []) or []
+        student_results = (
+            state.get("reviewed_results")
+            or state.get("confessed_results")
+            or state.get("student_results", [])
+        ) or []
         cross_page_questions = state.get("cross_page_questions", []) or []
         parsed_rubric = state.get("parsed_rubric", {}) or {}
         class_report = state.get("class_report") or state.get("export_data", {}).get("class_report")
         final_output: Optional[Dict[str, Any]] = None
+
+        # Attach logic review payloads from state when missing on student_results.
+        logic_review_by_student: Dict[str, Any] = {}
+        for item in state.get("logic_review_results") or []:
+            if not isinstance(item, dict):
+                continue
+            key = item.get("student_key") or item.get("studentKey")
+            if key:
+                logic_review_by_student[key] = item
+        if logic_review_by_student:
+            for student in student_results:
+                if not isinstance(student, dict):
+                    continue
+                if student.get("logic_review") or student.get("logicReview"):
+                    continue
+                key = (
+                    student.get("student_key")
+                    or student.get("studentKey")
+                    or student.get("student_name")
+                    or student.get("studentName")
+                )
+                payload = logic_review_by_student.get(key)
+                if payload:
+                    student["logic_review"] = payload
+                    student["logicReview"] = payload
+                    if not student.get("logic_reviewed_at") and payload.get("reviewed_at"):
+                        student["logic_reviewed_at"] = payload.get("reviewed_at")
+
         if not student_results or not parsed_rubric:
             final_output = await orchestrator.get_final_output(run_id)
             if final_output:
-                student_results = student_results or final_output.get("student_results") or final_output.get(
-                    "results"
-                ) or []
+                student_results = (
+                    student_results
+                    or final_output.get("reviewed_results")
+                    or final_output.get("confessed_results")
+                    or final_output.get("student_results")
+                    or final_output.get("results")
+                    or []
+                )
                 parsed_rubric = parsed_rubric or final_output.get("parsed_rubric", {}) or {}
                 cross_page_questions = cross_page_questions or final_output.get("cross_page_questions", []) or []
 
@@ -3239,23 +3433,6 @@ async def submit_results_review(
                             if updated_feedback is not None:
                                 target["feedback"] = updated_feedback
 
-                            max_score = target.get("maxScore") or target.get("max_score") or 0
-                            annotations = target.get("annotations")
-                            if annotations and isinstance(annotations, list):
-                                try:
-                                    target["annotations"] = update_annotations_after_review(
-                                        annotations,
-                                        float(original_score or 0),
-                                        float(target.get("score") or 0),
-                                        float(max_score or 0),
-                                        question_id,
-                                    )
-                                except Exception as e:
-                                    logger.warning(
-                                        f"Failed to update annotations for Q{question_id}: {e}"
-                                    )
-                                    # 保持原始批注
-
                         existing_data["questionResults"] = question_results
 
                         total_score = sum(_safe_float(q.get("score")) for q in question_results)
@@ -3266,57 +3443,8 @@ async def submit_results_review(
                         existing_data["score"] = total_score
                         if total_max > 0:
                             existing_data["maxScore"] = total_max
-
-                        grading_annotations = _normalize_annotation_payload(
-                            existing_data.get("gradingAnnotations")
-                            or existing_data.get("grading_annotations")
-                            or existing_data.get("annotations")
-                        )
-                        if grading_annotations and isinstance(
-                            grading_annotations.get("pages"), list
-                        ):
-                            for page in grading_annotations["pages"]:
-                                page_annotations = page.get("annotations") or []
-                                for update in updates:
-                                    question_id = str(
-                                        update.get("questionId") or update.get("question_id") or ""
-                                    )
-                                    if not question_id:
-                                        continue
-                                    original_score = original_scores.get(question_id, 0)
-                                    max_score = next(
-                                        (
-                                            q.get("maxScore") or q.get("max_score") or 0
-                                            for q in question_results
-                                            if str(q.get("questionId") or q.get("question_id"))
-                                            == question_id
-                                        ),
-                                        0,
-                                    )
-                                    updated_score = next(
-                                        (
-                                            u.get("score")
-                                            for u in updates
-                                            if str(u.get("questionId") or u.get("question_id"))
-                                            == question_id
-                                        ),
-                                        original_score,
-                                    )
-                                    try:
-                                        page_annotations = update_annotations_after_review(
-                                            page_annotations,
-                                            float(original_score or 0),
-                                            float(updated_score or 0),
-                                            float(max_score or 0),
-                                            question_id,
-                                        )
-                                    except Exception as e:
-                                        logger.warning(
-                                            f"Failed to update page annotations for Q{question_id}: {e}"
-                                        )
-                                        # 保持原始页批注
-                                page["annotations"] = page_annotations
-                            existing_data["gradingAnnotations"] = grading_annotations
+                            existing_data.pop("gradingAnnotations", None)
+                            existing_data.pop("grading_annotations", None)
 
                         updated_scores.append(total_score)
                         updated_keys.add(student_key)
@@ -3331,7 +3459,7 @@ async def submit_results_review(
                             class_id=existing_row.class_id if existing_row else None,
                             student_id=student_id_value,
                             summary=existing_row.summary if existing_row else None,
-                            self_report=existing_row.self_report if existing_row else None,
+                            confession=existing_row.confession if existing_row else None,
                             result_data=existing_data,
                         )
                         save_student_result(student_result)
@@ -3476,65 +3604,10 @@ async def export_annotated_images(
 
     将所有学生的作答图片渲染批注后打包为 ZIP 下载
     """
-    from fastapi.responses import Response
-    from src.services.export_service import AnnotatedImageExporter, ExportConfig
-
-    try:
-        if not orchestrator:
-            raise HTTPException(status_code=503, detail="编排器未初始化")
-
-        run_id = f"batch_grading_{batch_id}"
-        run_info = await orchestrator.get_run_info(run_id)
-
-        if not run_info:
-            raise HTTPException(status_code=404, detail="批次不存在")
-
-        state = run_info.state or {}
-        student_results = state.get("student_results", [])
-
-        if not student_results:
-            raise HTTPException(status_code=404, detail="无批改结果")
-
-        # 获取图片
-        cached = batch_image_cache.get(batch_id, {})
-        images_ready = cached.get("images_ready", {})
-        images_b64 = images_ready.get("images", [])
-
-        if not images_b64:
-            raise HTTPException(status_code=404, detail="无图片数据，请重新上传")
-
-        # 解码图片
-        import base64
-
-        images = []
-        for img_b64 in images_b64:
-            if img_b64.startswith("data:"):
-                img_b64 = img_b64.split(",", 1)[1]
-            images.append(base64.b64decode(img_b64))
-
-        # 格式化结果
-        formatted_results = _format_results_for_frontend(student_results)
-
-        # 导出
-        config = ExportConfig(include_original=request.include_original)
-        exporter = AnnotatedImageExporter(config)
-        zip_bytes = exporter.export_to_zip(formatted_results, images, batch_id)
-
-        filename = f"grading_annotated_{batch_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
-
-        return Response(
-            content=zip_bytes,
-            media_type="application/zip",
-            headers={
-                "Content-Disposition": f'attachment; filename="{filename}"',
-            },
-        )
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"导出带批注图片失败: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"导出失败: {str(e)}")
+    raise HTTPException(
+        status_code=410,
+        detail="后端批注渲染已禁用，请使用前端 Canvas 渲染与导出。",
+    )
 
 
 @router.post("/export/excel/{batch_id}")
@@ -3686,75 +3759,17 @@ async def render_batch_annotations(
 
     返回指定页面的带批注图片 Base64 列表
     """
-    from src.services.export_service import AnnotatedImageExporter
-
-    try:
-        if not orchestrator:
-            raise HTTPException(status_code=503, detail="编排器未初始化")
-
-        run_id = f"batch_grading_{batch_id}"
-        run_info = await orchestrator.get_run_info(run_id)
-
-        if not run_info:
-            raise HTTPException(status_code=404, detail="批次不存在")
-
-        state = run_info.state or {}
-        student_results = state.get("student_results", [])
-
-        # 获取图片
-        cached = batch_image_cache.get(batch_id, {})
-        images_ready = cached.get("images_ready", {})
-        images_b64 = images_ready.get("images", [])
-
-        if not images_b64:
-            raise HTTPException(status_code=404, detail="无图片数据")
-
-        # 解码图片
-        import base64
-
-        images = []
-        for img_b64 in images_b64:
-            if img_b64.startswith("data:"):
-                img_b64 = img_b64.split(",", 1)[1]
-            images.append(base64.b64decode(img_b64))
-
-        # 格式化结果
-        formatted_results = _format_results_for_frontend(student_results)
-
-        # 渲染
-        exporter = AnnotatedImageExporter()
-        rendered_images = {}
-
-        # 确定要渲染的页面
-        target_pages = page_indices if page_indices else list(range(len(images)))
-
-        for student in formatted_results:
-            start_page = student.get("startPage") or 0
-            end_page = student.get("endPage") or len(images) - 1
-
-            for page_idx, rendered_bytes in exporter.render_student_pages(
-                student, images, start_page, end_page
-            ):
-                if page_idx in target_pages:
-                    rendered_images[page_idx] = base64.b64encode(rendered_bytes).decode("utf-8")
-
-        return {
-            "success": True,
-            "rendered_images": rendered_images,
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"批量渲染批注失败: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"渲染失败: {str(e)}")
+    raise HTTPException(
+        status_code=410,
+        detail="后端批注渲染已禁用，请使用前端 Canvas 渲染。",
+    )
 
 
-# ==================== 自白 API (Task 11) ====================
+# ==================== Confession API (Task 11) ====================
 
 
-class SelfReportResponse(BaseModel):
-    """自白报告响应"""
+class ConfessionResponse(BaseModel):
+    """Confession report response"""
 
     batch_id: str
     overall_status: str
@@ -3766,59 +3781,44 @@ class SelfReportResponse(BaseModel):
     generated_at: str
 
 
-@router.get("/self-report/{batch_id}")
-async def get_batch_self_report(
+@router.get("/confession/{batch_id}", response_model=ConfessionResponse)
+async def get_batch_confession(
     batch_id: str,
     include_memory_updates: bool = True,
     orchestrator: Orchestrator = Depends(get_orchestrator),
 ):
     """
-    获取批次批改自白报告（增强版）
-
-    自白报告包含：
-    - 整体状态和置信度
-    - 问题列表（低置信度、缺失证据、另类解法等）
-    - 警告信息
-    - 记忆更新记录（新增）
-
-    Args:
-        batch_id: 批次 ID
-        include_memory_updates: 是否包含记忆更新记录
-        orchestrator: LangGraph Orchestrator
+    Get batch confession report (enhanced).
 
     Returns:
-        自白报告
-
-    Requirements: Task 11 (增强自白 API)
+        Confession report with issues, warnings, and memory updates.
     """
     try:
         if not orchestrator:
-            raise HTTPException(status_code=503, detail="编排器未初始化")
+            raise HTTPException(status_code=503, detail="Orchestrator not initialized")
 
         run_id = f"batch_grading_{batch_id}"
         run_info = await orchestrator.get_run_info(run_id)
 
         if not run_info:
-            raise HTTPException(status_code=404, detail="批次不存在")
+            raise HTTPException(status_code=404, detail="Batch not found")
 
         state = run_info.state or {}
         student_results = state.get("student_results", [])
 
         if not student_results:
-            raise HTTPException(status_code=404, detail="无批改结果")
+            raise HTTPException(status_code=404, detail="No grading results")
 
-        # 汇总所有学生的自白
         all_issues: List[Dict[str, Any]] = []
         all_warnings: List[str] = []
         total_confidence = 0.0
         student_count = 0
 
         for student in student_results:
-            self_report = student.get("self_report") or student.get("selfReport") or {}
+            confession = student.get("confession") or {}
             self_audit = student.get("self_audit") or student.get("selfAudit") or {}
 
-            # 收集问题
-            issues = self_report.get("issues", [])
+            issues = confession.get("issues", [])
             if issues:
                 student_key = student.get("student_key") or student.get("studentKey") or "Unknown"
                 for issue in issues:
@@ -3826,20 +3826,16 @@ async def get_batch_self_report(
                     issue_copy["student_key"] = student_key
                     all_issues.append(issue_copy)
 
-            # 收集警告
-            warnings = self_report.get("warnings", [])
+            warnings = confession.get("warnings", [])
             all_warnings.extend(warnings)
 
-            # 计算置信度
-            conf = self_report.get("overall_confidence") or self_audit.get("overall_confidence")
+            conf = confession.get("overall_confidence") or self_audit.get("overall_confidence")
             if conf:
                 total_confidence += float(conf)
                 student_count += 1
 
-        # 计算整体置信度
         avg_confidence = total_confidence / student_count if student_count > 0 else 0.5
 
-        # 确定整体状态
         error_count = sum(1 for i in all_issues if i.get("severity") == "error")
         warning_count = sum(1 for i in all_issues if i.get("severity") == "warning")
 
@@ -3850,7 +3846,6 @@ async def get_batch_self_report(
         else:
             overall_status = "ok"
 
-        # 获取记忆更新记录
         memory_updates: List[Dict[str, Any]] = []
         if include_memory_updates:
             try:
@@ -3860,7 +3855,6 @@ async def get_batch_self_report(
                 batch_memory = memory_service.get_batch_memory(batch_id)
 
                 if batch_memory:
-                    # 从批次记忆中提取更新记录
                     for correction in batch_memory.corrections:
                         memory_updates.append(
                             {
@@ -3869,54 +3863,28 @@ async def get_batch_self_report(
                                 "original_score": correction.get("original_score"),
                                 "corrected_score": correction.get("corrected_score"),
                                 "reason": correction.get("reason"),
-                                "source": correction.get("source"),
-                                "timestamp": correction.get("timestamp"),
                             }
                         )
-
-                    # 添加错误模式记录
-                    for pattern, count in batch_memory.error_patterns.items():
-                        if count >= 2:
-                            memory_updates.append(
-                                {
-                                    "type": "error_pattern",
-                                    "pattern": pattern,
-                                    "occurrence_count": count,
-                                    "action": "recorded",
-                                }
-                            )
-            except Exception as e:
-                logger.warning(f"获取记忆更新失败: {e}")
-
-        # 生成摘要
-        summary_parts = [f"批次 {batch_id}: 共 {len(student_results)} 名学生"]
-        if error_count > 0:
-            summary_parts.append(f"{error_count} 处需核查")
-        if warning_count > 0:
-            summary_parts.append(f"{warning_count} 条警告")
-        summary_parts.append(f"平均置信度 {avg_confidence:.1%}")
+            except Exception as exc:
+                logger.debug(f"Failed to collect memory updates: {exc}")
 
         return {
             "batch_id": batch_id,
             "overall_status": overall_status,
             "overall_confidence": round(avg_confidence, 3),
             "issues": all_issues,
-            "warnings": list(set(all_warnings)),  # 去重
-            "summary": "，".join(summary_parts),
+            "warnings": list(set(all_warnings)),
+            "summary": f"Batch {batch_id}: {len(student_results)} students, avg confidence {avg_confidence:.1%}",
             "memory_updates": memory_updates,
             "generated_at": datetime.now().isoformat(),
-            "student_count": len(student_results),
-            "issue_count": len(all_issues),
         }
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"获取自白报告失败: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"获取失败: {str(e)}")
+        logger.error(f"Failed to get confession report: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to get confession: {str(e)}")
 
-
-# ==================== 文件存储 API ====================
 
 @router.get("/{batch_id}/files")
 async def list_batch_files(batch_id: str):
@@ -3981,4 +3949,3 @@ async def download_file(file_id: str):
     except Exception as e:
         logger.error(f"下载文件失败: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"下载文件失败: {str(e)}")
-

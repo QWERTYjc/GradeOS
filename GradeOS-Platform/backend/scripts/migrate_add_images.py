@@ -17,7 +17,7 @@ from src.utils.database import db
 
 async def migrate():
     """执行数据库迁移"""
-    print("开始数据库迁移：添加批改页面图像表...")
+    print("开始数据库迁移：添加批改页面图像索引表...")
     
     try:
         # 检查环境变量
@@ -57,7 +57,7 @@ async def migrate():
             await conn.commit()
         
         print("\n✅ 数据库迁移成功！")
-        print("   - 已创建 grading_page_images 表")
+        print("   - 已创建 grading_page_images 表（文件索引）")
         print("   - 已创建相关索引")
         print("   - 已添加外键约束")
         

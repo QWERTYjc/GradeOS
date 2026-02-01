@@ -2,7 +2,7 @@
 
 ## 添加批改页面图像表
 
-本迁移会创建 `grading_page_images` 表，用于存储批改过程中的页面图像。
+本迁移会创建 `grading_page_images` 表，用于存储页面图像的文件索引（file_id/url），避免直接写入图片二进制。
 
 ### 方法 1: 使用 Python 脚本（推荐）
 

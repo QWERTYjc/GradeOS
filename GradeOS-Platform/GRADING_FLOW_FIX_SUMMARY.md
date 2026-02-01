@@ -32,7 +32,7 @@ graph.add_edge("rubric_parse", "rubric_review")  # ❌ 无条件连接
 graph.add_conditional_edges(
     "rubric_review",
     grading_fanout_router,
-    ["grade_batch", "self_report"],
+    ["grade_batch", "confession"],
 )
 ```
 
@@ -158,7 +158,7 @@ intake → preprocess → rubric_parse → [条件判断]
                                          ↓
                               grade_batch (并行)
                                          ↓
-                                   self_report
+                                   confession
 ```
 
 ## 🚀 部署状态

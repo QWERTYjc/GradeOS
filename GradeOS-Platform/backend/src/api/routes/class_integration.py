@@ -278,11 +278,9 @@ async def import_grading_to_class(
         student_key = result.get("studentName") or result.get("studentKey", "")
         student_id = key_to_id.get(student_key)
 
-        # 从 result 中提取 summary 和 self_report
+        # 从 result 中提取 summary 和 confession
         summary_data = result.get("summary") or result.get("studentSummary")
-        self_report_data = (
-            result.get("selfReport") or result.get("self_report") or result.get("selfAudit")
-        )
+        confession_payload = result.get("confession")
 
         for class_id in request.class_ids:
             student_result = StudentGradingResult(
@@ -294,8 +292,10 @@ async def import_grading_to_class(
                 score=result.get("totalScore", result.get("score")),
                 max_score=result.get("maxTotalScore", result.get("maxScore")),
                 summary=summary_data.get("overall") if isinstance(summary_data, dict) else None,
-                self_report=(
-                    self_report_data.get("summary") if isinstance(self_report_data, dict) else None
+                confession=(
+                    confession_payload.get("summary")
+                    if isinstance(confession_payload, dict)
+                    else None
                 ),
                 result_data=result,
                 imported_at=datetime.now().isoformat(),
