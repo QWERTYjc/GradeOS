@@ -5,7 +5,7 @@ import clsx from 'clsx';
 import { useConsoleStore } from '@/store/consoleStore';
 import { GlassCard } from '@/components/design-system/GlassCard';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Sparkles, Terminal, Activity, BrainCircuit, X } from 'lucide-react';
+import { Sparkles, Terminal, Activity, BrainCircuit, X, Users } from 'lucide-react';
 
 type StreamTab = 'output' | 'thinking';
 
@@ -24,6 +24,7 @@ export default function LLMThoughtsPanel({ className, onClose }: LLMThoughtsPane
   const selectedAgentId = useConsoleStore((state) => state.selectedAgentId);
   const selectedNodeId = useConsoleStore((state) => state.selectedNodeId);
   const workflowNodes = useConsoleStore((state) => state.workflowNodes);
+  const [focusAgentLabel, setFocusAgentLabel] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<StreamTab>('output');
   const [isPinned, setIsPinned] = useState(true);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -51,11 +52,26 @@ export default function LLMThoughtsPanel({ className, onClose }: LLMThoughtsPane
       }
       return true;
     });
-    const filteredByTab = filteredByTarget.filter((t) => (t.streamType || 'output') === activeTab);
+    const filteredByFocus = focusAgentLabel
+      ? filteredByTarget.filter((t) => (t.agentLabel || t.agentId) === focusAgentLabel)
+      : filteredByTarget;
+    const filteredByTab = filteredByFocus.filter((t) => (t.streamType || 'output') === activeTab);
     return filteredByTab.sort((a, b) => a.timestamp - b.timestamp);
-  }, [llmThoughts, activeTab, selectedAgentId, selectedNodeId]);
+  }, [llmThoughts, activeTab, selectedAgentId, selectedNodeId, focusAgentLabel]);
 
   const totalCount = llmThoughts.length;
+
+  const agentFilters = useMemo(() => {
+    const counts = new Map<string, number>();
+    llmThoughts.forEach((t) => {
+      const label = t.agentLabel || t.agentId;
+      if (!label) return;
+      counts.set(label, (counts.get(label) || 0) + 1);
+    });
+    return Array.from(counts.entries())
+      .map(([label, count]) => ({ label, count }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [llmThoughts]);
 
   const scrollToBottom = useCallback(() => {
     if (!scrollRef.current) return;
@@ -85,6 +101,12 @@ export default function LLMThoughtsPanel({ className, onClose }: LLMThoughtsPane
     }
   }, [thoughts, isPinned, scrollToBottom]);
 
+  useEffect(() => {
+    if (selectedAgentId) {
+      setFocusAgentLabel(null);
+    }
+  }, [selectedAgentId]);
+
   return (
     <GlassCard
       className={clsx("h-full min-h-0 flex flex-col p-0 overflow-hidden", className)}
@@ -104,6 +126,40 @@ export default function LLMThoughtsPanel({ className, onClose }: LLMThoughtsPane
               </span>
             )}
           </p>
+          {agentFilters.length > 1 && (
+            <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[10px] text-slate-500">
+              <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2 py-0.5 font-semibold uppercase tracking-widest">
+                <Users className="h-3 w-3" />
+                Students
+              </span>
+              <button
+                type="button"
+                onClick={() => setFocusAgentLabel(null)}
+                className={clsx(
+                  'rounded-full px-2 py-0.5 font-semibold border transition',
+                  !focusAgentLabel ? 'bg-indigo-500 text-white border-indigo-500' : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300'
+                )}
+              >
+                All
+              </button>
+              {agentFilters.map((agent) => (
+                <button
+                  key={agent.label}
+                  type="button"
+                  onClick={() => setFocusAgentLabel(agent.label)}
+                  className={clsx(
+                    'rounded-full px-2 py-0.5 font-semibold border transition',
+                    focusAgentLabel === agent.label
+                      ? 'bg-indigo-500 text-white border-indigo-500'
+                      : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300'
+                  )}
+                >
+                  {agent.label}
+                  <span className="ml-1 text-[9px] opacity-70">{agent.count}</span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="flex items-center gap-2">
@@ -158,7 +214,7 @@ export default function LLMThoughtsPanel({ className, onClose }: LLMThoughtsPane
         onScroll={handleScroll}
         onWheel={handleWheel}
         onTouchMove={handleTouchMove}
-        className="flex-1 min-h-0 overflow-y-auto px-4 py-3 space-y-3 custom-scrollbar bg-slate-50/30"
+        className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 py-3 space-y-3 custom-scrollbar bg-slate-50/30 pointer-events-auto"
       >
         <AnimatePresence initial={false}>
           {thoughts.length === 0 ? (
@@ -179,9 +235,16 @@ export default function LLMThoughtsPanel({ className, onClose }: LLMThoughtsPane
                 className="rounded-xl border border-white bg-white/60 shadow-sm p-3 hover:bg-white/80 transition-colors"
               >
                 <div className="flex items-center justify-between text-[11px] text-slate-400 mb-2 font-mono">
-                  <span className="font-bold text-indigo-600/80 bg-indigo-50 px-1.5 py-0.5 rounded">
-                    {thought.nodeName || thought.nodeId}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <span className="font-bold text-indigo-600/80 bg-indigo-50 px-1.5 py-0.5 rounded">
+                      {thought.nodeName || thought.nodeId}
+                    </span>
+                    {thought.agentLabel && (
+                      <span className="bg-emerald-50 text-emerald-600 px-1.5 py-0.5 rounded font-semibold">
+                        {thought.agentLabel}
+                      </span>
+                    )}
+                  </div>
                   <span>{new Date(thought.timestamp).toLocaleTimeString()}</span>
                 </div>
                 <div className="text-xs leading-relaxed text-slate-700 font-mono whitespace-pre-wrap break-words">

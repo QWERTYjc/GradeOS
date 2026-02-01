@@ -280,15 +280,27 @@ class GradingMemoryService:
 
         # 异步锁（用于数据库操作）
         self._async_lock: Optional[asyncio.Lock] = None
+        self._async_lock_loop: Optional[asyncio.AbstractEventLoop] = None
+        self._main_loop: Optional[asyncio.AbstractEventLoop] = None
 
         # 加载持久化的记忆（仅文件存储模式）
         if storage_path and not self._use_db_backend:
             self._load_from_storage()
 
     def _get_async_lock(self) -> asyncio.Lock:
-        """获取异步锁（延迟初始化以避免事件循环问题）"""
-        if self._async_lock is None:
+        """Get async lock bound to the current event loop."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = asyncio.get_event_loop()
+
+        if self._async_lock is None or self._async_lock_loop is not loop:
             self._async_lock = asyncio.Lock()
+            self._async_lock_loop = loop
+
+        if loop.is_running():
+            self._main_loop = loop
+
         return self._async_lock
 
     def set_storage_backend(self, backend: "MemoryStorageBackend") -> None:
@@ -1160,24 +1172,21 @@ class GradingMemoryService:
         # 如果使用数据库后端，尝试异步保存
         if self._use_db_backend and self._storage_backend:
             try:
-                # 尝试在当前事件循环中运行
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    # 如果事件循环正在运行，创建一个任务
+                try:
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    loop = None
+        
+                if loop and loop.is_running():
+                    self._main_loop = loop
                     asyncio.create_task(self.save_to_db())
-                else:
-                    # 如果事件循环不在运行，直接运行
-                    loop.run_until_complete(self.save_to_db())
+                elif self._main_loop and self._main_loop.is_running():
+                    asyncio.run_coroutine_threadsafe(self.save_to_db(), self._main_loop)
                 return
             except RuntimeError:
-                # 没有事件循环，创建一个新的
-                try:
-                    asyncio.run(self.save_to_db())
-                    return
-                except Exception as e:
-                    logger.warning(f"[Memory] 异步保存到数据库失败，回退到文件存储: {e}")
-
-        # 文件存储（后备方案）
+                logger.warning('[Memory] no running event loop, skip async save_to_db')
+            except Exception as e:
+                logger.warning(f"[Memory] async save_to_db failed, falling back to file storage: {e}")
         if not self.storage_path:
             return
 

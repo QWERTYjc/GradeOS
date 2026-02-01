@@ -4466,6 +4466,8 @@ async def confession_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                 timeout_s = float(timeout_raw)
             except ValueError:
                 timeout_s = 2.5
+            if timeout_s <= 0:
+                timeout_s = 2.5
 
             background_raw = os.getenv("CONFESSION_MEMORY_BACKGROUND", "1")
             allow_background = background_raw.lower() not in {"0", "false", "no"}
@@ -4650,6 +4652,7 @@ async def confession_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                     "type": "agent_update",
                     "agentId": agent_id,
                     "agentName": student_key,
+                    "agentLabel": student_key,
                     "parentNodeId": "confession",
                     "status": "running",
                     "progress": 0,
@@ -4669,14 +4672,15 @@ async def confession_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                 }
                 await _broadcast_progress(
                     batch_id,
-                    {
-                        "type": "agent_update",
-                        "agentId": agent_id,
-                        "parentNodeId": "confession",
-                        "status": "completed",
-                        "progress": 100,
-                        "message": "Confession skipped (no questions)",
-                    },
+                {
+                    "type": "agent_update",
+                    "agentId": agent_id,
+                    "agentLabel": student_key,
+                    "parentNodeId": "confession",
+                    "status": "completed",
+                    "progress": 100,
+                    "message": "Confession skipped (no questions)",
+                },
                 )
                 return {"index": index, "result": updated_student}
 
@@ -4726,6 +4730,7 @@ async def confession_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                                 "nodeId": "confession",
                                 "nodeName": "Confession",
                                 "agentId": agent_id,
+                                "agentLabel": student_key,
                                 "streamType": "output",
                                 "chunk": output_text,
                             },
@@ -4835,6 +4840,7 @@ async def confession_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                 {
                     "type": "agent_update",
                     "agentId": agent_id,
+                    "agentLabel": student_key,
                     "parentNodeId": "confession",
                     "status": "completed",
                     "progress": 100,
@@ -5310,6 +5316,7 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                     "type": "agent_update",
                     "agentId": agent_id,
                     "agentName": student_key,
+                    "agentLabel": student_key,
                     "parentNodeId": "logic_review",
                     "status": "running",
                     "progress": 0,
@@ -5332,18 +5339,19 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                 }
                 await _broadcast_progress(
                     batch_id,
-                    {
-                        "type": "agent_update",
-                        "agentId": agent_id,
-                        "parentNodeId": "logic_review",
-                        "status": "completed",
-                        "progress": 100,
-                        "message": "Logic review skipped (no questions)",
-                        "output": {
-                            "reviewSummary": review_summary,
-                            "selfAudit": updated_student.get("self_audit"),
-                        },
+                {
+                    "type": "agent_update",
+                    "agentId": agent_id,
+                    "agentLabel": student_key,
+                    "parentNodeId": "logic_review",
+                    "status": "completed",
+                    "progress": 100,
+                    "message": "Logic review skipped (no questions)",
+                    "output": {
+                        "reviewSummary": review_summary,
+                        "selfAudit": updated_student.get("self_audit"),
                     },
+                },
                 )
                 return {"index": index, "result": updated_student, "review": None}
             prompt = _build_logic_review_prompt(
@@ -5485,6 +5493,7 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                 {
                     "type": "agent_update",
                     "agentId": agent_id,
+                    "agentLabel": student_key,
                     "parentNodeId": "logic_review",
                     "status": "completed",
                     "progress": 100,
@@ -5972,6 +5981,49 @@ async def export_node(state: BatchGradingGraphState) -> Dict[str, Any]:
         logger.warning(f"[export] 数据库连接检查失败（离线模式）: {e}")
 
     # 准备导出数据
+
+    if not persisted:
+        try:
+            from src.db.postgres_store import GradingHistory as SyncGradingHistory
+            from src.db.postgres_store import save_grading_history as save_grading_history_sync
+            import uuid
+
+            total_students = len(student_results)
+            total_scores = [s.get("total_score", 0) for s in student_results]
+            average_score = sum(total_scores) / total_students if total_students > 0 else 0
+            teacher_id = state.get("teacher_id") or state.get("inputs", {}).get("teacher_id")
+            state_class_id = state.get("class_id") or state.get("classId")
+            class_ids = [state_class_id] if state_class_id else None
+
+            history_id = str(uuid.uuid4())
+            created_at = datetime.now().isoformat()
+
+            sync_history = SyncGradingHistory(
+                id=history_id,
+                batch_id=batch_id,
+                teacher_id=teacher_id,
+                status="completed" if not has_failures else "partial",
+                class_ids=class_ids,
+                created_at=created_at,
+                completed_at=datetime.now().isoformat(),
+                total_students=total_students,
+                average_score=average_score,
+                result_data={
+                    "teacher_id": teacher_id,
+                    "has_failures": has_failures,
+                    "failed_pages_count": len(failed_pages),
+                    "cross_page_questions": cross_page_questions,
+                    "merged_questions": merged_questions,
+                },
+            )
+
+            await asyncio.to_thread(save_grading_history_sync, sync_history)
+            logger.info(f"[export] Fallback grading history saved: batch_id={batch_id}")
+            persisted = True
+        except Exception as exc:
+            logger.warning(f"[export] fallback grading history persist failed: {exc}")
+
+
     export_data = {
         "batch_id": batch_id,
         "export_time": datetime.now().isoformat(),
