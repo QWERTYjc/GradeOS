@@ -1,0 +1,102 @@
+async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
+    """
+    逻辑复核节点（文本输入）
+
+    每个学生进行一次纯文本 LLM 复核，输出题目置信度与自白说明。
+
+    ⚠️ 重要：逻辑复核独立性原则 (P3)
+    =========================================
+    逻辑复核必须是"无状态"的，即：
+    1. 评分决策不能依赖记忆系统中的任何数据
+    2. LLM prompt 不能包含历史记忆上下文
+    3. 复核结果完全基于当前评分标准和学生答案
+
+    记忆系统在此节点的使用仅限于：
+    - 记录修正历史（用于未来的批改改进）
+    - 整合批次记忆到长期记忆
+
+    这些操作发生在评分决策之后，不影响评分结果。
+    =========================================
+    """
+    batch_id = state["batch_id"]
+    # 优先读取 confessed_results（confession 节点输出），回退到 student_results
+    student_results = state.get("confessed_results") or state.get("student_results", []) or []
+    parsed_rubric = state.get("parsed_rubric", {}) or {}
+    api_key = state.get("api_key") or os.getenv("LLM_API_KEY") or os.getenv("OPENROUTER_API_KEY")
+    grading_mode = _resolve_grading_mode(state.get("inputs", {}), parsed_rubric)
+
+    def _log_logic_review_done(reason: str, count: int, reviewed: int = 0) -> None:
+        message = (
+            f"[logic_review] OK completed ({reason}): batch_id={batch_id}, "
+            f"students={count}, reviewed={reviewed}"
+        )
+        logger.info(message)
+        workflow_logger.info(message)
+        workflow_logger.info(
+            f"[logic_review_done] batch_id={batch_id}, students={count}, reviewed={reviewed}"
+        )
+
+    # 获取记忆服务
+    from src.services.grading_memory import get_memory_service, MemoryType, MemoryImportance
+
+    memory_service = get_memory_service()
+
+    if grading_mode.startswith("assist"):
+        logger.info(f"[logic_review] skip (assist mode): batch_id={batch_id}")
+        _log_logic_review_done("assist mode", len(student_results), 0)
+        return {
+            "logic_review_results": [],
+            "current_stage": "logic_review_completed",
+            "percentage": 85.0,
+            "timestamps": {
+                **state.get("timestamps", {}),
+                "logic_review_at": datetime.now().isoformat(),
+            },
+        }
+
+    if not student_results:
+        _log_logic_review_done("no student_results", 0, 0)
+        return {
+            "logic_review_results": [],
+            "current_stage": "logic_review_completed",
+            "percentage": 85.0,
+            "timestamps": {
+                **state.get("timestamps", {}),
+                "logic_review_at": datetime.now().isoformat(),
+            },
+        }
+
+    rubric_map = _build_rubric_question_map(parsed_rubric)
+    limits = {
+        "max_questions": int(os.getenv("LOGIC_REVIEW_MAX_QUESTIONS", "0")),
+        "max_answer_chars": int(os.getenv("LOGIC_REVIEW_MAX_ANSWER_CHARS", "4000")),
+        "max_feedback_chars": int(os.getenv("LOGIC_REVIEW_MAX_FEEDBACK_CHARS", "200")),
+        "max_rubric_chars": int(os.getenv("LOGIC_REVIEW_MAX_RUBRIC_CHARS", "240")),
+        "max_scoring_points": int(os.getenv("LOGIC_REVIEW_MAX_SCORING_POINTS", "4")),
+        "max_evidence_chars": int(os.getenv("LOGIC_REVIEW_MAX_EVIDENCE_CHARS", "120")),
+    }
+
+    if not api_key:
+        updated_results = []
+        for student in student_results:
+            updated = dict(student)
+            updated.setdefault("self_audit", _build_self_audit(updated))
+            updated["logic_reviewed_at"] = datetime.now().isoformat()
+            updated["logic_review"] = {
+                "reviewed_at": updated["logic_reviewed_at"],
+                "review_summary": _build_logic_review_summary(
+                    updated.get("question_details") or []
+                ),
+                "question_reviews": [],
+                "self_audit": updated.get("self_audit"),
+            }
+            updated_results.append(updated)
+        _log_logic_review_done("rule-based", len(updated_results), 0)
+        return {
+            "student_results": updated_results,
+            "logic_review_results": [],
+            "current_stage": "logic_review_completed",
+            "percentage": 85.0,
+            "timestamps": {
+                **state.get("timestamps", {}),
+                "logic_revi

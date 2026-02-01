@@ -231,6 +231,10 @@ export interface BoundingBoxCoords {
   y_min: number;
   x_max: number;
   y_max: number;
+  /** 页面索引 (snake_case) */
+  page_index?: number;
+  /** 页面索引 (camelCase) */
+  pageIndex?: number;
 }
 
 /** 跨页题目信息 - 对应后端 CrossPageQuestion */

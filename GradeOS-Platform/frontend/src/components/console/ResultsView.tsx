@@ -489,11 +489,11 @@ const ResultCard: React.FC<ResultCardProps> = ({ result, rank, onExpand }) => {
                     )}
                     {crossPageCount > 0 && <span>Cross-page {crossPageCount}</span>}
                     {result.needsConfirmation && <span className='text-amber-600 bg-amber-100/50 px-2 py-0.5 rounded-md border border-amber-200/50'>Needs verification</span>}
-                        {result.confession?.overallStatus === 'caution' && (
-                            <span className='text-orange-600 bg-orange-100/50 px-2 py-0.5 rounded-md border border-orange-200/50 flex items-center gap-1'>
-                                <AlertTriangle className='w-3 h-3' /> Confession
-                            </span>
-                        )}
+                    {result.confession?.overallStatus === 'caution' && (
+                        <span className='text-orange-600 bg-orange-100/50 px-2 py-0.5 rounded-md border border-orange-200/50 flex items-center gap-1'>
+                            <AlertTriangle className='w-3 h-3' /> Confession
+                        </span>
+                    )}
                     {result.logicReviewedAt && (
                         <span className='text-indigo-600 bg-indigo-100/50 px-2 py-0.5 rounded-md border border-indigo-200/50 flex items-center gap-1'>
                             <Shield className='w-3 h-3' /> Logic Review
@@ -2455,7 +2455,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                                                         高风险题目 ({detailViewStudent.confession.highRiskQuestions.length})
                                                     </div>
                                                     <div className="space-y-1.5">
-                                                        {detailViewStudent.confession.highRiskQuestions.map((item, idx) => (
+                                                        {detailViewStudent.confession.highRiskQuestions.map((item: { questionId?: string; description?: string }, idx: number) => (
                                                             <div key={idx} className="text-xs text-rose-700 flex items-start gap-2 bg-white/50 rounded px-2 py-1">
                                                                 <span className="font-mono font-semibold text-rose-500 shrink-0">Q{item.questionId}</span>
                                                                 <span className="text-rose-600">{item.description || '需要人工复核'}</span>
@@ -2491,7 +2491,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                                                         问题提示 ({detailViewStudent.confession.issues.length})
                                                     </div>
                                                     <div className="space-y-1.5">
-                                                        {detailViewStudent.confession.issues.map((item, idx) => (
+                                                        {detailViewStudent.confession.issues.map((item: { questionId?: string; message?: string }, idx: number) => (
                                                             <div key={idx} className="text-xs text-amber-700 flex items-start gap-2 bg-white/50 rounded px-2 py-1">
                                                                 {item.questionId && <span className="font-mono font-semibold text-amber-500 shrink-0">Q{item.questionId}:</span>}
                                                                 <span>{item.message}</span>

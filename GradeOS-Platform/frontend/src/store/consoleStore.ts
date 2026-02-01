@@ -120,12 +120,16 @@ export interface QuestionResult {
             y_max: number;
         };
     }>;
-    /** 出现在哪些页�?- 新增 */
+    /** 出现在哪些页?- 新增 */
     pageIndices?: number[];
     /** 是否跨页题目 - 新增 */
     isCrossPage?: boolean;
-    /** 合并来源（如果是合并结果�? 新增 */
+    /** 合并来源（如果是合并结果? 新增 */
     mergeSource?: string[];
+    /** 页面索引 (snake_case) */
+    page_index?: number;
+    /** 页面索引 (camelCase) */
+    pageIndex?: number;
     /** 批注坐标列表 */
     annotations?: Array<{
         type: string;
@@ -148,12 +152,16 @@ export interface QuestionResult {
             y_min: number;
             x_max: number;
             y_max: number;
+            page_index?: number;
+            pageIndex?: number;
         };
         is_correct: boolean;
         mark_type: string;
         mark_value: number;
         feedback?: string;
         error_detail?: string;
+        page_index?: number;
+        pageIndex?: number;
     }>;
     /** 答案区域坐标 */
     answerRegion?: {
@@ -161,6 +169,8 @@ export interface QuestionResult {
         y_min: number;
         x_max: number;
         y_max: number;
+        page_index?: number;
+        pageIndex?: number;
     };
 }
 
@@ -213,6 +223,8 @@ export interface StudentResult {
     draftTotalScore?: number;
     /** 第一次批改满分 */
     draftMaxScore?: number;
+    /** 逻辑复核 */
+    logicReview?: any;
     /** 逻辑复核时间 */
     logicReviewedAt?: string;
     /** 页面范围（显示用） */
@@ -932,8 +944,8 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                     ? `Student ${parsedIndex + 1}`
                     : isReview && parsedIndex !== null
                         ? `Review ${parsedIndex + 1}`
-                          : isConfession && parsedIndex !== null
-                              ? `Confession ${parsedIndex + 1}`
+                        : isConfession && parsedIndex !== null
+                            ? `Confession ${parsedIndex + 1}`
                             : isRubricReview && parsedIndex !== null
                                 ? `Rubric Review ${parsedIndex + 1}`
                                 : isRubricBatch && parsedIndex !== null
