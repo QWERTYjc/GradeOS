@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useMemo, useState, useEffect, useRef } from 'react';
+import React, { useMemo, useState, useEffect, useRef, useCallback } from 'react';
 import clsx from 'clsx';
 import { useConsoleStore } from '@/store/consoleStore';
 import { GlassCard } from '@/components/design-system/GlassCard';
@@ -25,6 +25,7 @@ export default function LLMThoughtsPanel({ className, onClose }: LLMThoughtsPane
   const selectedNodeId = useConsoleStore((state) => state.selectedNodeId);
   const workflowNodes = useConsoleStore((state) => state.workflowNodes);
   const [activeTab, setActiveTab] = useState<StreamTab>('output');
+  const [isPinned, setIsPinned] = useState(true);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const activeLabel = useMemo(() => {
@@ -57,11 +58,23 @@ export default function LLMThoughtsPanel({ className, onClose }: LLMThoughtsPane
 
   const totalCount = llmThoughts.length;
 
+  const scrollToBottom = useCallback(() => {
+    if (!scrollRef.current) return;
+    scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+  }, []);
+
+  const handleScroll = useCallback(() => {
+    const container = scrollRef.current;
+    if (!container) return;
+    const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+    setIsPinned(distanceFromBottom < 40);
+  }, []);
+
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    if (isPinned) {
+      scrollToBottom();
     }
-  }, [thoughts]);
+  }, [thoughts, isPinned, scrollToBottom]);
 
   return (
     <GlassCard
@@ -85,6 +98,15 @@ export default function LLMThoughtsPanel({ className, onClose }: LLMThoughtsPane
         </div>
 
         <div className="flex items-center gap-2">
+          {!isPinned && (
+            <button
+              type="button"
+              onClick={scrollToBottom}
+              className="hidden sm:inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-semibold text-slate-500 transition hover:text-slate-700 hover:border-slate-300"
+            >
+              Back to latest
+            </button>
+          )}
           <div className="flex rounded-lg bg-slate-100/80 p-1 relative">
             {(Object.keys(tabLabels) as StreamTab[]).map((tab) => (
               <button
@@ -122,7 +144,11 @@ export default function LLMThoughtsPanel({ className, onClose }: LLMThoughtsPane
         </div>
       </div>
 
-      <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto px-4 py-3 space-y-3 custom-scrollbar bg-slate-50/30">
+      <div
+        ref={scrollRef}
+        onScroll={handleScroll}
+        className="flex-1 min-h-0 overflow-y-auto px-4 py-3 space-y-3 custom-scrollbar bg-slate-50/30"
+      >
         <AnimatePresence initial={false}>
           {thoughts.length === 0 ? (
             <motion.div
