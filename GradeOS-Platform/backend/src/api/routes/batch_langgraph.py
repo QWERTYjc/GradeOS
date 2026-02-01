@@ -66,6 +66,8 @@ router = APIRouter(prefix="/batch", tags=["批量提交"])
 
 # 存储活跃的 WebSocket 连接
 active_connections: Dict[str, List[WebSocket]] = {}
+# WebSocket 锁：防止并发写入导致的竞态条件  
+ws_locks: Dict[int, asyncio.Lock] = {}
 # 缓存图片，避免 images_ready 早于 WebSocket 连接导致前端丢失
 batch_image_cache: Dict[str, Dict[str, dict]] = {}
 _active_stream_tasks: Dict[str, asyncio.Task] = {}
@@ -98,6 +100,9 @@ def _discard_connection(batch_id: str, websocket: WebSocket) -> None:
         return
     if not connections:
         active_connections.pop(batch_id, None)
+    # 清理 WebSocket 锁
+    ws_id = id(websocket)
+    ws_locks.pop(ws_id, None)
 
 
 
@@ -406,8 +411,15 @@ async def broadcast_progress(batch_id: str, message: dict):
             if not _is_ws_connected(ws):
                 disconnected.append(ws)
                 continue
+            
+            # 使用锁保护并发写入
+            ws_id = id(ws)
+            if ws_id not in ws_locks:
+                ws_locks[ws_id] = asyncio.Lock()
+            
             try:
-                await ws.send_json(message)
+                async with ws_locks[ws_id]:
+                    await ws.send_json(message)
             except WebSocketDisconnect:
                 disconnected.append(ws)
             except RuntimeError as exc:
@@ -420,6 +432,9 @@ async def broadcast_progress(batch_id: str, message: dict):
         # 移除断开的连接
         for ws in disconnected:
             _discard_connection(batch_id, ws)
+            # 清理锁
+            ws_id = id(ws)
+            ws_locks.pop(ws_id, None)
 
 
 async def _start_run_with_teacher_limit(
@@ -2242,6 +2257,11 @@ async def websocket_endpoint(websocket: WebSocket, batch_id: str):
     前端通过此端点接收 LangGraph 的实时执行进度
     """
     await websocket.accept()
+    
+    # 为新连接创建锁
+    ws_id = id(websocket)
+    if ws_id not in ws_locks:
+        ws_locks[ws_id] = asyncio.Lock()
 
     redis_client = await _get_redis_client()
     use_redis_cache = redis_client is not None
@@ -2254,7 +2274,8 @@ async def websocket_endpoint(websocket: WebSocket, batch_id: str):
                     continue
                 if use_redis_cache and key not in ("images_ready", "rubric_images_ready"):
                     continue
-                await websocket.send_json(message)
+                async with ws_locks[ws_id]:
+                    await websocket.send_json(message)
         except Exception as e:
             logger.debug(f"发送缓存图片失败: {e}")
 
@@ -2266,7 +2287,8 @@ async def websocket_endpoint(websocket: WebSocket, batch_id: str):
                 if message.get("type") == "workflow_completed":
                     logger.debug(f"跳过重放 workflow_completed 缓存: batch_id={batch_id}")
                     continue
-                await websocket.send_json(message)
+                async with ws_locks[ws_id]:
+                    await websocket.send_json(message)
         except Exception as e:
             logger.debug(f"发送缓存进度失败: {e}")
 
@@ -2275,12 +2297,13 @@ async def websocket_endpoint(websocket: WebSocket, batch_id: str):
             stream_cache = cached_images.get("llm_stream_cache")
             if isinstance(stream_cache, dict):
                 for stream_message in stream_cache.values():
-                    await websocket.send_json(
-                        {
-                            "type": "llm_stream_chunk",
-                            **stream_message,
-                        }
-                    )
+                    async with ws_locks[ws_id]:
+                        await websocket.send_json(
+                            {
+                                "type": "llm_stream_chunk",
+                                **stream_message,
+                            }
+                        )
         except Exception as e:
             logger.debug(f"发送流式缓存失败: {e}")
 
@@ -2302,91 +2325,94 @@ async def websocket_endpoint(websocket: WebSocket, batch_id: str):
                 current_stage = state.get("current_stage", "")
                 percentage = state.get("percentage", 0)
                 if current_stage or percentage:
-                    await websocket.send_json(
-                        {
-                            "type": "grading_progress",
-                            "percentage": percentage or 0,
-                            "currentStage": current_stage,
-                        }
-                    )
+                    async with ws_locks[ws_id]:
+                        await websocket.send_json(
+                            {
+                                "type": "grading_progress",
+                                "percentage": percentage or 0,
+                                "currentStage": current_stage,
+                            }
+                        )
                 if state.get("student_boundaries"):
                     boundaries = state.get("student_boundaries", [])
-                    await websocket.send_json(
-                        {
-                            "type": "students_identified",
-                            "studentCount": len(boundaries),
-                            "students": [
-                                {
-                                    "studentKey": b.get("student_key", ""),
-                                    "startPage": b.get("start_page", 0),
-                                    "endPage": b.get("end_page", 0),
-                                    "confidence": b.get("confidence", 0),
-                                    "needsConfirmation": b.get("needs_confirmation", False),
-                                }
-                                for b in boundaries
-                            ],
-                        }
-                    )
+                    async with ws_locks[ws_id]:
+                        await websocket.send_json(
+                            {
+                                "type": "students_identified",
+                                "studentCount": len(boundaries),
+                                "students": [
+                                    {
+                                        "studentKey": b.get("student_key", ""),
+                                        "startPage": b.get("start_page", 0),
+                                        "endPage": b.get("end_page", 0),
+                                        "confidence": b.get("confidence", 0),
+                                        "needsConfirmation": b.get("needs_confirmation", False),
+                                    }
+                                    for b in boundaries
+                                ],
+                            }
+                        )
                 if state.get("parsed_rubric"):
                     parsed = state.get("parsed_rubric", {})
-                    await websocket.send_json(
-                        {
-                            "type": "rubric_parsed",
-                            "totalQuestions": parsed.get("total_questions", 0),
-                            "totalScore": parsed.get("total_score", 0),
-                            "generalNotes": parsed.get("general_notes", ""),
-                            "rubricFormat": parsed.get("rubric_format", ""),
-                            "questions": [
-                                {
-                                    "questionId": q.get("question_id", ""),
-                                    "maxScore": q.get("max_score", 0),
-                                    "questionText": q.get("question_text", ""),
-                                    "standardAnswer": q.get("standard_answer", ""),
-                                    "gradingNotes": q.get("grading_notes", ""),
-                                    "scoringPoints": [
-                                        {
-                                            "pointId": sp.get("point_id")
-                                            or sp.get("pointId")
-                                            or f"{q.get('question_id')}.{idx + 1}",
-                                            "description": sp.get("description", ""),
-                                            "expectedValue": sp.get("expected_value")
-                                            or sp.get("expectedValue", ""),
-                                            "keywords": sp.get("keywords") or [],
-                                            "score": sp.get("score", 0),
-                                            "isRequired": sp.get("is_required", True),
-                                        }
-                                        for idx, sp in enumerate(q.get("scoring_points", []))
-                                    ],
-                                    "deductionRules": [
-                                        {
-                                            "ruleId": dr.get("rule_id")
-                                            or dr.get("ruleId")
-                                            or f"{q.get('question_id')}.d{idx + 1}",
-                                            "description": dr.get("description", ""),
-                                            "deduction": dr.get("deduction", dr.get("score", 0)),
-                                            "conditions": dr.get("conditions")
-                                            or dr.get("when")
-                                            or "",
-                                        }
-                                        for idx, dr in enumerate(
-                                            q.get("deduction_rules")
-                                            or q.get("deductionRules")
-                                            or []
-                                        )
-                                    ],
-                                    "alternativeSolutions": [
-                                        {
-                                            "description": alt.get("description", ""),
-                                            "scoringCriteria": alt.get("scoring_criteria", ""),
-                                            "note": alt.get("note", ""),
-                                        }
-                                        for alt in q.get("alternative_solutions", [])
-                                    ],
-                                }
-                                for q in parsed.get("questions", [])
-                            ],
-                        }
-                    )
+                    async with ws_locks[ws_id]:
+                        await websocket.send_json(
+                            {
+                                "type": "rubric_parsed",
+                                "totalQuestions": parsed.get("total_questions", 0),
+                                "totalScore": parsed.get("total_score", 0),
+                                "generalNotes": parsed.get("general_notes", ""),
+                                "rubricFormat": parsed.get("rubric_format", ""),
+                                "questions": [
+                                    {
+                                        "questionId": q.get("question_id", ""),
+                                        "maxScore": q.get("max_score", 0),
+                                        "questionText": q.get("question_text", ""),
+                                        "standardAnswer": q.get("standard_answer", ""),
+                                        "gradingNotes": q.get("grading_notes", ""),
+                                        "scoringPoints": [
+                                            {
+                                                "pointId": sp.get("point_id")
+                                                or sp.get("pointId")
+                                                or f"{q.get('question_id')}.{idx + 1}",
+                                                "description": sp.get("description", ""),
+                                                "expectedValue": sp.get("expected_value")
+                                                or sp.get("expectedValue", ""),
+                                                "keywords": sp.get("keywords") or [],
+                                                "score": sp.get("score", 0),
+                                                "isRequired": sp.get("is_required", True),
+                                            }
+                                            for idx, sp in enumerate(q.get("scoring_points", []))
+                                        ],
+                                        "deductionRules": [
+                                            {
+                                                "ruleId": dr.get("rule_id")
+                                                or dr.get("ruleId")
+                                                or f"{q.get('question_id')}.d{idx + 1}",
+                                                "description": dr.get("description", ""),
+                                                "deduction": dr.get("deduction", dr.get("score", 0)),
+                                                "conditions": dr.get("conditions")
+                                                or dr.get("when")
+                                                or "",
+                                            }
+                                            for idx, dr in enumerate(
+                                                q.get("deduction_rules")
+                                                or q.get("deductionRules")
+                                                or []
+                                            )
+                                        ],
+                                        "alternativeSolutions": [
+                                            {
+                                                "description": alt.get("description", ""),
+                                                "scoringCriteria": alt.get("scoring_criteria", ""),
+                                                "note": alt.get("note", ""),
+                                            }
+                                            for alt in q.get("alternative_solutions", [])
+                                        ],
+                                    }
+                                    for q in parsed.get("questions", [])
+                                ],
+                            }
+                        )
                 if run_info.status and run_info.status.value == "completed":
                     student_results = state.get("student_results", [])
                     formatted_results = _format_results_for_frontend(student_results)
@@ -2396,15 +2422,16 @@ async def websocket_endpoint(websocket: WebSocket, batch_id: str):
                         class_report = state.get("class_report")
                         if not class_report and state.get("export_data"):
                             class_report = state.get("export_data", {}).get("class_report")
-                        await websocket.send_json(
-                            {
-                                "type": "workflow_completed",
-                                "message": f"Grading completed, processed {len(formatted_results)} students",
-                                "results": formatted_results,
-                                "cross_page_questions": state.get("cross_page_questions", []),
-                                "classReport": class_report,
-                            }
-                        )
+                        async with ws_locks[ws_id]:
+                            await websocket.send_json(
+                                {
+                                    "type": "workflow_completed",
+                                    "message": f"Grading completed, processed {len(formatted_results)} students",
+                                    "results": formatted_results,
+                                    "cross_page_questions": state.get("cross_page_questions", []),
+                                    "classReport": class_report,
+                                }
+                            )
                     else:
                         logger.warning(f"跳过发送 workflow_completed: 状态为 completed 但没有结果数据, batch_id={batch_id}")
             if run_info and run_info.status and run_info.status.value in ("running", "pending"):
