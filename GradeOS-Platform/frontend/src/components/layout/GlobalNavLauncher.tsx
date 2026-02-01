@@ -110,6 +110,13 @@ export default function GlobalNavLauncher() {
       if (!mounted) return;
       setRunsLoading(true);
       try {
+        if (!user?.id) {
+          if (mounted) {
+            setActiveRuns([]);
+            setRunsError(null);
+          }
+          return;
+        }
         const response = await gradingApi.getActiveRuns(user.id);
         if (mounted) {
           setActiveRuns(response.runs || []);
@@ -200,7 +207,14 @@ export default function GlobalNavLauncher() {
       let runs = activeRuns;
       if (runs.length === 0 && user?.id) {
         try {
-          const response = await gradingApi.getActiveRuns(user.id);
+          if (!user?.id) {
+          if (mounted) {
+            setActiveRuns([]);
+            setRunsError(null);
+          }
+          return;
+        }
+        const response = await gradingApi.getActiveRuns(user.id);
           runs = response.runs || [];
         } catch {
           return null;
