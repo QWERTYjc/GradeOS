@@ -431,7 +431,10 @@ async def broadcast_progress(batch_id: str, message: dict):
                 import sys; sys.stdout.write(f'[DEBUG_LOG] {{"hypothesisId":"H1","location":"batch_langgraph.py:broadcast_progress:disconnect","message":"WebSocket断开","data":{{"batch_id":"{batch_id}","ws_id":{ws_id}}},"timestamp":{int(__import__("time").time()*1000)},"sessionId":"debug-session"}}\n'); sys.stdout.flush()
                 # #endregion
                 disconnected.append(ws)
-            except RuntimeError as exc:
+            except (RuntimeError, AssertionError) as exc:
+                # AssertionError: websockets 库内部 keepalive ping 与应用层写入的竞态条件
+                # RuntimeError: 连接已关闭
+                # 这两种错误都不影响功能，只是表示连接可能不稳定
                 # #region agent log
                 import sys; sys.stdout.write(f'[DEBUG_LOG] {{"hypothesisId":"H1","location":"batch_langgraph.py:broadcast_progress:runtime_error","message":"WebSocket运行时错误","data":{{"batch_id":"{batch_id}","error":"{str(exc)[:100]}"}},"timestamp":{int(__import__("time").time()*1000)},"sessionId":"debug-session"}}\n'); sys.stdout.flush()
                 # #endregion
@@ -2538,7 +2541,10 @@ async def websocket_endpoint(websocket: WebSocket, batch_id: str):
             data = await websocket.receive_text()
             logger.debug(f"收到 WebSocket 消息: batch_id={batch_id}, data={data}")
 
-    except (WebSocketDisconnect, RuntimeError) as exc:
+    except (WebSocketDisconnect, RuntimeError, AssertionError) as exc:
+        # WebSocketDisconnect: 正常断开
+        # RuntimeError: 连接已关闭时的操作
+        # AssertionError: websockets 库内部 keepalive ping 竞态条件
         # #region agent log
         import sys; sys.stdout.write(f'[DEBUG_LOG] {{"hypothesisId":"H8","location":"batch_langgraph.py:websocket_endpoint:disconnect_exception","message":"WebSocket断开异常","data":{{"batch_id":"{batch_id}","ws_id":{ws_id},"error":"{str(exc)[:100]}"}},"timestamp":{int(__import__("time").time()*1000)},"sessionId":"debug-session"}}\n'); sys.stdout.flush()
         # #endregion
