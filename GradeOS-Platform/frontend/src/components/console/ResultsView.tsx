@@ -309,22 +309,33 @@ const QuestionDetail: React.FC<{
                         Pages: <span className="font-mono text-slate-500">{question.pageIndices.map(p => p + 1).join(', ')}</span>
                     </div>
                 )}
-                {/* 始终显示置信度（如果有） */}
-                {question.confidence !== undefined && (
-                    <div className={clsx(
-                        "flex items-center gap-1.5",
-                        question.confidence >= 0.8 ? "text-emerald-600" : question.confidence >= 0.6 ? "text-amber-600" : "text-red-500"
-                    )}>
-                        {question.confidence >= 0.8 ? (
-                            <CheckCircle className="w-3 h-3" />
-                        ) : question.confidence >= 0.6 ? (
-                            <AlertCircle className="w-3 h-3" />
-                        ) : (
-                            <AlertTriangle className="w-3 h-3" />
-                        )}
-                        置信度: <span className="font-mono font-semibold">{(question.confidence * 100).toFixed(0)}%</span>
-                    </div>
-                )}
+                {/* 显示置信度 - 优先使用逻辑复核后的置信度 */}
+                {(() => {
+                    // 优先使用逻辑复核置信度 > self_critique_confidence > 原始 confidence
+                    const displayConfidence = (question as any).selfCritiqueConfidence 
+                        ?? (question as any).self_critique_confidence 
+                        ?? question.confidence;
+                    const isReviewed = (question as any).logicReviewed || (question as any).logic_reviewed;
+                    
+                    if (displayConfidence === undefined) return null;
+                    
+                    return (
+                        <div className={clsx(
+                            "flex items-center gap-1.5",
+                            displayConfidence >= 0.8 ? "text-emerald-600" : displayConfidence >= 0.6 ? "text-amber-600" : "text-red-500"
+                        )}>
+                            {displayConfidence >= 0.8 ? (
+                                <CheckCircle className="w-3 h-3" />
+                            ) : displayConfidence >= 0.6 ? (
+                                <AlertCircle className="w-3 h-3" />
+                            ) : (
+                                <AlertTriangle className="w-3 h-3" />
+                            )}
+                            置信度: <span className="font-mono font-semibold">{(displayConfidence * 100).toFixed(0)}%</span>
+                            {isReviewed && <span className="text-[9px] text-slate-400">(复核)</span>}
+                        </div>
+                    );
+                })()}
                 {/* 显示评分标准引用数量 */}
                 {question.rubricRefs && question.rubricRefs.length > 0 && (
                     <div className="flex items-center gap-1.5 text-blue-600">
@@ -353,21 +364,25 @@ const QuestionDetail: React.FC<{
                                     评分标准对照
                                 </div>
                                 {question.scoringPointResults.map((spr, idx) => {
-                                    // 🔍 DEBUG: 打印 rubricReference 数据
-                                    if (idx === 0) {
-                                        console.log('[DEBUG] scoringPointResult:', {
-                                            pointId: spr.pointId,
-                                            rubricReference: spr.rubricReference,
-                                            rubricReferenceSource: spr.rubricReferenceSource,
-                                            fullData: spr
-                                        });
-                                    }
+                                    // 构建评分标准引用文本（如果没有则基于 pointId 和 description 生成）
+                                    const rubricRef = spr.rubricReference 
+                                        || (spr as any).rubric_reference 
+                                        || (spr.pointId && spr.description ? `[${spr.pointId}] ${spr.description}` : null)
+                                        || (spr.scoringPoint?.description ? `[${spr.pointId || idx + 1}] ${spr.scoringPoint.description}` : null);
+                                    
+                                    // 是否被逻辑复核修正过
+                                    const isReviewAdjusted = (spr as any).reviewAdjusted || (spr as any).review_adjusted;
+                                    const reviewBefore = (spr as any).reviewBefore || (spr as any).review_before;
+                                    const reviewReason = (spr as any).reviewReason || (spr as any).review_reason;
+                                    
                                     return (
                                     <div key={idx} className={clsx(
                                         "rounded-lg border p-3 transition-all",
-                                        spr.awarded > 0 
-                                            ? "border-emerald-200 bg-emerald-50/30" 
-                                            : "border-slate-200 bg-slate-50/30"
+                                        isReviewAdjusted 
+                                            ? "border-amber-300 bg-amber-50/50" 
+                                            : spr.awarded > 0 
+                                                ? "border-emerald-200 bg-emerald-50/30" 
+                                                : "border-slate-200 bg-slate-50/30"
                                     )}>
                                         <div className="flex items-start justify-between gap-3">
                                             {/* 左侧：评分标准内容 */}
@@ -379,11 +394,46 @@ const QuestionDetail: React.FC<{
                                                             得分点 {spr.pointId}
                                                         </span>
                                                     )}
-                                                    {spr.rubricReference && (
-                                                        <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-blue-100 text-blue-700 border border-blue-200 flex items-center gap-1">
-                                                            <BookOpen className="w-3 h-3" />
-                                                            标准 {spr.rubricReference}
-                                                        </span>
+                                                    {rubricRef && (
+                                                        <Popover
+                                                            content={
+                                                                <div className="max-w-xs text-xs">
+                                                                    <div className="font-semibold mb-1">评分标准引用</div>
+                                                                    <div className="text-slate-600">{rubricRef}</div>
+                                                                </div>
+                                                            }
+                                                            trigger="hover"
+                                                            placement="top"
+                                                        >
+                                                            <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-blue-100 text-blue-700 border border-blue-200 flex items-center gap-1 cursor-help">
+                                                                <BookOpen className="w-3 h-3" />
+                                                                标准引用
+                                                            </span>
+                                                        </Popover>
+                                                    )}
+                                                    {isReviewAdjusted && (
+                                                        <Popover
+                                                            content={
+                                                                <div className="max-w-xs text-xs">
+                                                                    <div className="font-semibold mb-1 text-amber-700">逻辑复核修正</div>
+                                                                    {reviewBefore && (
+                                                                        <div className="text-slate-500 mb-1">
+                                                                            原分数: {reviewBefore.awarded} → 修正: {spr.awarded}
+                                                                        </div>
+                                                                    )}
+                                                                    {reviewReason && (
+                                                                        <div className="text-slate-600">{reviewReason}</div>
+                                                                    )}
+                                                                </div>
+                                                            }
+                                                            trigger="hover"
+                                                            placement="top"
+                                                        >
+                                                            <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-100 text-amber-700 border border-amber-200 flex items-center gap-1 cursor-help">
+                                                                <Shield className="w-3 h-3" />
+                                                                已复核
+                                                            </span>
+                                                        </Popover>
                                                     )}
                                                 </div>
                                                 

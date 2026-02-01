@@ -2931,6 +2931,109 @@ def _build_student_results_from_page_results(
     return student_results
 
 
+def _merge_logic_review_fields(
+    original_question: Dict[str, Any],
+    review_item: Dict[str, Any]
+) -> Dict[str, Any]:
+    """
+    合并逻辑复核结果到原始题目数据。
+    
+    逻辑复核输出的字段（confidence, review_summary, review_corrections 等）
+    会覆盖或补充原始题目的对应字段。
+    
+    关键：逻辑复核后的 confidence 应该作为最终显示的置信度。
+    """
+    merged = dict(original_question)
+    
+    # 1. 更新置信度（逻辑复核决定最终置信度）
+    if "confidence" in review_item:
+        merged["confidence"] = review_item["confidence"]
+    if "confidence_reason" in review_item:
+        merged["confidence_reason"] = review_item["confidence_reason"]
+    if "confidenceReason" in review_item:
+        merged["confidence_reason"] = review_item["confidenceReason"]
+    
+    # 2. 更新自我反思相关字段
+    if "self_critique" in review_item:
+        merged["self_critique"] = review_item["self_critique"]
+    if "selfCritique" in review_item:
+        merged["self_critique"] = review_item["selfCritique"]
+    if "self_critique_confidence" in review_item:
+        merged["self_critique_confidence"] = review_item["self_critique_confidence"]
+    if "selfCritiqueConfidence" in review_item:
+        merged["self_critique_confidence"] = review_item["selfCritiqueConfidence"]
+    
+    # 3. 更新复核摘要
+    if "review_summary" in review_item:
+        merged["review_summary"] = review_item["review_summary"]
+    if "reviewSummary" in review_item:
+        merged["review_summary"] = review_item["reviewSummary"]
+    
+    # 4. 处理分数修正
+    review_corrections = review_item.get("review_corrections") or review_item.get("reviewCorrections") or []
+    if review_corrections:
+        merged["review_corrections"] = review_corrections
+        
+        # 应用分数修正到 scoring_point_results
+        scoring_results = merged.get("scoring_point_results") or []
+        correction_map = {}
+        for corr in review_corrections:
+            if isinstance(corr, dict):
+                point_id = corr.get("point_id") or corr.get("pointId")
+                if point_id:
+                    correction_map[point_id] = corr
+        
+        if scoring_results and correction_map:
+            updated_scoring = []
+            total_score_delta = 0
+            for spr in scoring_results:
+                point_id = spr.get("point_id") or spr.get("pointId")
+                if point_id and point_id in correction_map:
+                    corr = correction_map[point_id]
+                    original_awarded = _safe_float(spr.get("awarded", 0))
+                    corrected_awarded = _safe_float(corr.get("correct_awarded", corr.get("correctAwarded", original_awarded)))
+                    
+                    updated_spr = dict(spr)
+                    updated_spr["awarded"] = corrected_awarded
+                    updated_spr["review_adjusted"] = True
+                    updated_spr["review_before"] = {
+                        "awarded": original_awarded,
+                        "decision": spr.get("decision"),
+                        "reason": spr.get("reason"),
+                        "evidence": spr.get("evidence"),
+                    }
+                    updated_spr["review_reason"] = corr.get("review_reason") or corr.get("reviewReason") or ""
+                    
+                    # 更新 decision
+                    if corrected_awarded > 0:
+                        updated_spr["decision"] = "得分（复核修正）"
+                    else:
+                        updated_spr["decision"] = "不得分（复核修正）"
+                    
+                    total_score_delta += corrected_awarded - original_awarded
+                    updated_scoring.append(updated_spr)
+                else:
+                    updated_scoring.append(dict(spr))
+            
+            merged["scoring_point_results"] = updated_scoring
+            
+            # 重新计算总分
+            if total_score_delta != 0:
+                original_score = _safe_float(merged.get("score", 0))
+                merged["score"] = max(0, original_score + total_score_delta)
+    
+    # 5. 更新 honesty_note
+    if "honesty_note" in review_item:
+        merged["honesty_note"] = review_item["honesty_note"]
+    if "honestyNote" in review_item:
+        merged["honesty_note"] = review_item["honestyNote"]
+    
+    # 6. 标记已复核
+    merged["logic_reviewed"] = True
+    
+    return merged
+
+
 def _recompute_student_totals(student: Dict[str, Any]) -> None:
     total_score = _safe_float(student.get("total_score", 0))
     max_total_score = _safe_float(student.get("max_total_score", 0))
