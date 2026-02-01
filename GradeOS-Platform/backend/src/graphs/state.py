@@ -102,6 +102,8 @@ class BatchGradingGraphState(TypedDict, total=False):
     student_page_map: Dict[int, str]  # 页面 -> 学生标识映射
     indexed_students: List[Dict[str, Any]]  # 索引阶段识别的学生信息
     index_unidentified_pages: List[int]  # 未识别学生的页面
+    # ===== 文件索引（文件存储映射）=====
+    file_index_by_page: Dict[int, Dict[str, Any]]  # page_index -> 文件存储信息
 
     # ===== 批改结果（使用 add reducer 聚合并行结果）=====
     grading_results: Annotated[List[Dict[str, Any]], operator.add]  # 各页批改结果
@@ -296,6 +298,7 @@ def create_initial_batch_state(
         student_page_map={},
         indexed_students=[],
         index_unidentified_pages=[],
+        file_index_by_page={},
         student_boundaries=[],
         detected_students=[],
         submission_jobs=[],

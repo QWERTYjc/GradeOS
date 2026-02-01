@@ -1006,6 +1006,26 @@ async def stream_langgraph_progress(
                     },
                 )
 
+                if node_name in ("confession", "logic_review"):
+                    output = data.get("output", {})
+                    student_count = None
+                    if isinstance(output, dict):
+                        if node_name == "confession":
+                            student_count = len(
+                                output.get("confessed_results")
+                                or output.get("student_results")
+                                or []
+                            )
+                        else:
+                            student_count = len(
+                                output.get("reviewed_results")
+                                or output.get("student_results")
+                                or []
+                            )
+                    logger.info(
+                        f"[{node_name}] completed: batch_id={batch_id}, students={student_count}"
+                    )
+
                 # 处理节点输出
                 output = data.get("output", {})
                 if isinstance(output, dict):

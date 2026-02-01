@@ -18,6 +18,21 @@ from src.utils.llm_thinking import split_thinking_content
 
 
 logger = logging.getLogger(__name__)
+
+# #region agent log - debug helper
+def _write_debug_log_bg(payload: dict) -> None:
+    """写入调试日志到本地文件（batch_grading专用）"""
+    import json
+    from datetime import datetime
+    log_path = r"d:\project\GradeOS\.cursor\debug.log"
+    try:
+        payload["timestamp"] = payload.get("timestamp", int(datetime.now().timestamp() * 1000))
+        payload["sessionId"] = payload.get("sessionId", "debug-session")
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+# #endregion
 # Stdout-visible workflow markers for Railway verification.
 workflow_logger = logging.getLogger("gradeos.workflow")
 
@@ -952,8 +967,31 @@ async def rubric_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     enable_review = state.get("inputs", {}).get("enable_review", True)
     grading_mode = _resolve_grading_mode(state.get("inputs", {}), parsed_rubric)
 
+    # #region agent log - 假设C: rubric_review_node 入口
+    _write_debug_log_bg({
+        "hypothesisId": "C",
+        "location": "batch_grading.py:rubric_review_node:entry",
+        "message": "rubric_review_node被调用",
+        "data": {
+            "batch_id": batch_id,
+            "enable_review": enable_review,
+            "grading_mode": grading_mode,
+            "has_parsed_rubric": bool(parsed_rubric),
+            "questions_count": len(parsed_rubric.get("questions", [])) if parsed_rubric else 0,
+        }
+    })
+    # #endregion
+
     if grading_mode.startswith("assist"):
         logger.info(f"[rubric_review] skip (assist mode): batch_id={batch_id}")
+        # #region agent log - 假设C: 跳过-assist模式
+        _write_debug_log_bg({
+            "hypothesisId": "C",
+            "location": "batch_grading.py:rubric_review_node:skip_assist",
+            "message": "rubric_review跳过 - assist模式",
+            "data": {"reason": "assist_mode"}
+        })
+        # #endregion
         return {
             "current_stage": "rubric_review_skipped",
             "percentage": 18.0,
@@ -965,6 +1003,14 @@ async def rubric_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
 
     if not parsed_rubric or not parsed_rubric.get("questions"):
         logger.info(f"[rubric_review] skip (no rubric): batch_id={batch_id}")
+        # #region agent log - 假设C: 跳过-无rubric
+        _write_debug_log_bg({
+            "hypothesisId": "C",
+            "location": "batch_grading.py:rubric_review_node:skip_no_rubric",
+            "message": "rubric_review跳过 - 无rubric",
+            "data": {"reason": "no_rubric"}
+        })
+        # #endregion
         return {
             "current_stage": "rubric_review_skipped",
             "percentage": 18.0,
@@ -976,6 +1022,14 @@ async def rubric_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
 
     if not enable_review:
         logger.info(f"[rubric_review] skip (review disabled): batch_id={batch_id}")
+        # #region agent log - 假设C: 跳过-review禁用
+        _write_debug_log_bg({
+            "hypothesisId": "C",
+            "location": "batch_grading.py:rubric_review_node:skip_disabled",
+            "message": "rubric_review跳过 - review禁用",
+            "data": {"reason": "review_disabled"}
+        })
+        # #endregion
         return {
             "current_stage": "rubric_review_skipped",
             "percentage": 18.0,
@@ -985,6 +1039,15 @@ async def rubric_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
             },
         }
 
+    # #region agent log - 假设C: 即将调用interrupt
+    _write_debug_log_bg({
+        "hypothesisId": "C",
+        "location": "batch_grading.py:rubric_review_node:before_interrupt",
+        "message": "即将调用interrupt等待人工复核",
+        "data": {"batch_id": batch_id}
+    })
+    # #endregion
+
     review_request = {
         "type": "rubric_review_required",
         "batch_id": batch_id,
@@ -993,6 +1056,19 @@ async def rubric_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
         "parsed_rubric": parsed_rubric,
     }
     review_response = interrupt(review_request)
+    
+    # #region agent log - 假设C: interrupt返回
+    _write_debug_log_bg({
+        "hypothesisId": "C",
+        "location": "batch_grading.py:rubric_review_node:after_interrupt",
+        "message": "interrupt返回，收到用户响应",
+        "data": {
+            "batch_id": batch_id,
+            "review_response_type": str(type(review_response)),
+            "action": (review_response or {}).get("action", "none"),
+        }
+    })
+    # #endregion
 
     action = (review_response or {}).get("action", "approve").lower()
     updated_rubric = parsed_rubric
@@ -1078,6 +1154,22 @@ def grading_fanout_router(state: BatchGradingGraphState) -> List[Send]:
     parsed_rubric = state.get("parsed_rubric", {})
     api_key = state.get("api_key", "")
     student_boundaries = state.get("student_boundaries")
+    
+    # #region agent log - 假设B: grading_fanout_router 入口
+    _write_debug_log_bg({
+        "hypothesisId": "B",
+        "location": "batch_grading.py:grading_fanout_router:entry",
+        "message": "grading_fanout_router被调用",
+        "data": {
+            "batch_id": batch_id,
+            "processed_images_count": len(processed_images) if processed_images else 0,
+            "answer_images_in_state": len(state.get("answer_images", []) or []),
+            "student_boundaries_count": len(student_boundaries) if student_boundaries else 0,
+            "state_keys": list(state.keys()),
+        }
+    })
+    # #endregion
+    
     if not student_boundaries:
         student_boundaries = _build_student_boundaries(state, len(processed_images))
         if student_boundaries:
@@ -1088,6 +1180,18 @@ def grading_fanout_router(state: BatchGradingGraphState) -> List[Send]:
         logger.warning(f"[grading_fanout] 🔍 调试: state keys={list(state.keys())}")
         logger.warning(f"[grading_fanout] 🔍 answer_images count={len(state.get('answer_images', []))}")
         logger.warning(f"[grading_fanout] 🔍 processed_images count={len(state.get('processed_images', []))}")
+        # #region agent log - 假设B: 没有图像，跳到confession
+        _write_debug_log_bg({
+            "hypothesisId": "B",
+            "location": "batch_grading.py:grading_fanout_router:no_images",
+            "message": "没有processed_images，直接跳到confession",
+            "data": {
+                "batch_id": batch_id,
+                "processed_images_type": str(type(state.get("processed_images"))),
+                "answer_images_type": str(type(state.get("answer_images"))),
+            }
+        })
+        # #endregion
         return [Send("confession", state)]
 
     # 不再从 page_index_contexts 推导 student_boundaries
@@ -2205,6 +2309,20 @@ def _finalize_assist_result(
 
 
 async def grade_batch_node(state: Dict[str, Any]) -> Dict[str, Any]:
+    # #region agent log - 假设E: grade_batch_node 入口
+    _write_debug_log_bg({
+        "hypothesisId": "E",
+        "location": "batch_grading.py:grade_batch_node:entry",
+        "message": "grade_batch_node被调用",
+        "data": {
+            "batch_id": state.get("batch_id"),
+            "batch_index": state.get("batch_index"),
+            "total_batches": state.get("total_batches"),
+            "page_indices": state.get("page_indices"),
+            "images_count": len(state.get("images", []) or []),
+        }
+    })
+    # #endregion
     return await _grade_batch_node_impl(state)
 
 
@@ -4056,6 +4174,12 @@ def _build_confession_prompt(
         "7. **可执行复核**：为每个潜在错误给出可操作的核验步骤/检查项",
         "8. **概率说明**：对潜在错误标注发生可能性，并说明依据",
         "",
+        "## 输出质量要求",
+        "- 每条 issue/风险必须绑定 question_id、point_id（如有）以及 page_index/pageIndices（如有）",
+        "- 必须给出可复核线索（证据文本/位置/评分点/标准答案对照）",
+        "- 至少给出 2 条最关键风险（若确无风险，需说明原因）",
+        "- review_actions 必须包含可执行动作与优先级（high/medium/low）",
+        "",
         "## 需要披露的内容类型",
         "- **目标合规自查 (objective_checks)**：对评分目标/约束逐条说明是否达成",
         "- **假设清单 (assumptions)**：批改时做了哪些隐含假设？",
@@ -4114,6 +4238,16 @@ def _build_confession_prompt(
         confidence = question.get("confidence", 0.0)
         student_answer = _trim_text(question.get("student_answer", ""), 300)
         feedback = _trim_text(question.get("feedback", ""), 200)
+        page_indices = (
+            question.get("page_indices")
+            or question.get("pageIndices")
+            or question.get("page_index")
+            or question.get("pageIndex")
+        )
+        if isinstance(page_indices, (int, float)):
+            page_indices = [int(page_indices)]
+        if not isinstance(page_indices, list):
+            page_indices = []
 
         # 统计风险指标
         if max_score > 0 and score >= max_score:
@@ -4134,6 +4268,8 @@ def _build_confession_prompt(
 
         risk_str = " ".join(risk_flags) if risk_flags else ""
         lines.append(f"- Q{qid}: {score}/{max_score} (置信度: {confidence:.2f}) {risk_str}")
+        if page_indices:
+            lines.append(f"  页面: {page_indices}")
         if student_answer:
             lines.append(f"  学生答案: {student_answer}")
         if feedback:
@@ -4149,6 +4285,7 @@ def _build_confession_prompt(
                 point_id = sp.get("point_id") or sp.get("pointId") or ""
                 awarded = sp.get("awarded", sp.get("score", 0))
                 evidence = _trim_text(sp.get("evidence", ""), 100)
+                rubric_ref = sp.get("rubric_reference") or sp.get("rubricReference") or ""
 
                 # 检查证据质量
                 evidence_flag = ""
@@ -4158,6 +4295,7 @@ def _build_confession_prompt(
 
                 lines.append(
                     f"    - {point_id}: {awarded}分, 证据: {evidence or '无'}{evidence_flag}"
+                    f"{' 引用: ' + rubric_ref if rubric_ref else ''}"
                 )
         lines.append("")
 
@@ -4314,6 +4452,8 @@ def _build_confession_prompt(
     lines.append("请仅输出 JSON，不要添加额外说明或 markdown。")
     lines.append("记住：你是在做'风险说明书'，不是审计报告。")
     lines.append("**重点**：务必披露所有满分、零分、低置信度、空证据的题目！")
+    lines.append("每条 issues / uncertainties / potential_errors / evidence_gaps 必须包含 question_id，能对应到 scoring_point 的请附 point_id，并引用具体证据或学生作答片段。")
+    lines.append("summary 必须点名 2-3 个最重要的题号与风险类型，避免泛泛而谈。")
     lines.append("必须包含 objective_checks；如存在高风险/证据缺口，给出 review_actions 与 memory_candidates。")
     lines.append("")
     lines.append("输出 JSON 模板：")
@@ -4340,6 +4480,21 @@ async def confession_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     parsed_rubric = state.get("parsed_rubric", {}) or {}
     api_key = state.get("api_key") or os.getenv("LLM_API_KEY") or os.getenv("OPENROUTER_API_KEY")
     grading_mode = _resolve_grading_mode(state.get("inputs", {}), parsed_rubric)
+    
+    # #region agent log - 假设B2: confession_node 入口
+    _write_debug_log_bg({
+        "hypothesisId": "B2",
+        "location": "batch_grading.py:confession_node:entry",
+        "message": "confession_node被调用",
+        "data": {
+            "batch_id": batch_id,
+            "student_results_count": len(student_results),
+            "grading_results_count": len(state.get("grading_results", []) or []),
+            "has_student_results": bool(student_results),
+            "grading_mode": grading_mode,
+        }
+    })
+    # #endregion
 
     def _log_confession_done(reason: str, count: int) -> None:
         message = (
@@ -5543,25 +5698,44 @@ async def export_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                 from src.db.postgres_grading import (
                     GradingHistory,
                     StudentGradingResult,
+                    get_grading_history,
                     save_grading_history,
                     save_student_result,
                 )
                 import uuid
                 
                 # 1. 保存批改历史
-                history_id = str(uuid.uuid4())
                 total_students = len(student_results)
-                
+
                 # 计算平均分
                 total_scores = [s.get("total_score", 0) for s in student_results]
                 average_score = sum(total_scores) / total_students if total_students > 0 else 0
-                
+
+                existing_history = None
+                try:
+                    existing_history = await get_grading_history(batch_id)
+                except Exception as e:
+                    logger.debug(f"[export] Failed to check existing grading history: {e}")
+
+                if existing_history:
+                    history_id = existing_history.id
+                    created_at = existing_history.created_at or datetime.now().isoformat()
+                    logger.info(f"[export] Reusing grading_history id={history_id} for batch_id={batch_id}")
+                else:
+                    history_id = str(uuid.uuid4())
+                    created_at = datetime.now().isoformat()
+
+                class_ids = None
+                state_class_id = state.get("class_id") or state.get("classId")
+                if state_class_id:
+                    class_ids = [state_class_id]
+
                 grading_history = GradingHistory(
                     id=history_id,
                     batch_id=batch_id,
                     status="completed" if not has_failures else "partial",
-                    class_ids=None,  # 可以从 state 中获取 class_ids
-                    created_at=datetime.now().isoformat(),
+                    class_ids=class_ids,
+                    created_at=created_at,
                     completed_at=datetime.now().isoformat(),
                     total_students=total_students,
                     average_score=average_score,
@@ -5570,11 +5744,11 @@ async def export_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                         "failed_pages_count": len(failed_pages),
                         "cross_page_questions": cross_page_questions,
                         "merged_questions": merged_questions,
-                    }
+                    },
                 )
-                
+
                 await save_grading_history(grading_history)
-                logger.info(f"[export] 批改历史已保存到数据库: history_id={history_id}")
+                logger.info(f"[export] Grading history saved: history_id={history_id}, batch_id={batch_id}")
                 
                 # 2. 保存每个学生的批改结果和页面图像
                 saved_students = 0
@@ -6165,6 +6339,19 @@ def create_batch_grading_graph(
         """占位节点,用于跳过 review 时直接进入 grading_fanout"""
         batch_id = state.get("batch_id", "unknown")
         logger.info(f"[grading_fanout_placeholder] 跳过 review,准备进入批改: batch_id={batch_id}")
+        # #region agent log - 假设D: placeholder节点被执行
+        _write_debug_log_bg({
+            "hypothesisId": "D",
+            "location": "batch_grading.py:grading_fanout_placeholder_node",
+            "message": "grading_fanout_placeholder_node被执行",
+            "data": {
+                "batch_id": batch_id,
+                "processed_images_count": len(state.get("processed_images", []) or []),
+                "answer_images_count": len(state.get("answer_images", []) or []),
+                "state_keys": list(state.keys()),
+            }
+        })
+        # #endregion
         return {
             "current_stage": "grading_fanout_placeholder",
             "percentage": 20.0,
@@ -6180,17 +6367,58 @@ def create_batch_grading_graph(
         parsed_rubric = state.get("parsed_rubric", {})
         grading_mode = _resolve_grading_mode(state.get("inputs", {}), parsed_rubric)
         
+        # #region agent log - 假设A: should_review_rubric 路由决策
+        _write_debug_log_bg({
+            "hypothesisId": "A",
+            "location": "batch_grading.py:should_review_rubric",
+            "message": "should_review_rubric路由决策",
+            "data": {
+                "batch_id": batch_id,
+                "enable_review": enable_review,
+                "grading_mode": grading_mode,
+                "has_parsed_rubric": bool(parsed_rubric),
+                "questions_count": len(parsed_rubric.get("questions", [])) if parsed_rubric else 0,
+                "processed_images_count": len(state.get("processed_images", []) or []),
+                "answer_images_count": len(state.get("answer_images", []) or []),
+            }
+        })
+        # #endregion
+        
         # 如果是 assist 模式或 review 被禁用,直接跳到 grading_fanout
         if grading_mode.startswith("assist") or not enable_review:
             logger.info(f"[should_review_rubric] 跳过 review,直接进入批改: batch_id={batch_id}, mode={grading_mode}, enable_review={enable_review}")
+            # #region agent log - 假设A: 跳过原因
+            _write_debug_log_bg({
+                "hypothesisId": "A",
+                "location": "batch_grading.py:should_review_rubric:skip_assist",
+                "message": "跳过review - assist模式或review禁用",
+                "data": {"reason": "assist_or_disabled", "grading_mode": grading_mode, "enable_review": enable_review}
+            })
+            # #endregion
             return "skip_review"
         
         # 如果没有 rubric,也跳过
         if not parsed_rubric or not parsed_rubric.get("questions"):
             logger.info(f"[should_review_rubric] 没有 rubric,跳过 review: batch_id={batch_id}")
+            # #region agent log - 假设A: 跳过原因-无rubric
+            _write_debug_log_bg({
+                "hypothesisId": "A",
+                "location": "batch_grading.py:should_review_rubric:skip_no_rubric",
+                "message": "跳过review - 没有rubric",
+                "data": {"reason": "no_rubric"}
+            })
+            # #endregion
             return "skip_review"
         
         logger.info(f"[should_review_rubric] 需要 review: batch_id={batch_id}")
+        # #region agent log - 假设A: 需要review
+        _write_debug_log_bg({
+            "hypothesisId": "A",
+            "location": "batch_grading.py:should_review_rubric:do_review",
+            "message": "需要review",
+            "data": {"decision": "do_review"}
+        })
+        # #endregion
         return "do_review"
     
     graph.add_conditional_edges(
