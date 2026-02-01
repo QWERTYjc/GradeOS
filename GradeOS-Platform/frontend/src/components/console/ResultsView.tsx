@@ -1435,6 +1435,11 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
             const data = await gradingApi.getRubricReviewContext(submissionId);
             const parsed = normalizeRubricDraft(data.parsed_rubric || {});
             setRubricDraft(parsed);
+            
+            // 同步到 consoleStore，让 RubricOverview 组件也能访问
+            // 转换为 ParsedRubric 类型
+            useConsoleStore.getState().setParsedRubric(parsed as any);
+            
             const images = (data.rubric_images || []).map((img: string) =>
                 img.startsWith('data:') ? img : `data:image/jpeg;base64,${img}`
             );
@@ -1451,6 +1456,13 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
             loadRubricContext();
         }
     }, [rubricOpen, rubricDraft, loadRubricContext]);
+
+    // 组件初始化时自动加载 rubric 数据，让 RubricOverview 能显示
+    useEffect(() => {
+        if (submissionId && !useConsoleStore.getState().parsedRubric) {
+            loadRubricContext();
+        }
+    }, [submissionId, loadRubricContext]);
 
     const toggleRubricSelected = useCallback((questionId: string) => {
         setRubricSelectedIds((prev) => {
