@@ -849,7 +849,6 @@ async def submit_batch(
                     if page_idx is not None:
                         file_index_by_page[int(page_idx)] = {
                             "file_id": item.file_id,
-                            "file_url": _build_file_url(item.file_id),
                             "content_type": item.content_type,
                         }
 
@@ -921,8 +920,10 @@ async def submit_batch(
         def task_done_callback(t):
             try:
                 t.result()
-            except Exception as e:
-                logger.error(f"批改任务启动失败: batch_id={batch_id}, error={e}", exc_info=True)
+            except asyncio.CancelledError:
+                logger.info(f"Batch grading task cancelled: batch_id={batch_id}")
+            except BaseException as e:
+                logger.error(f"Batch grading task failed: batch_id={batch_id}, error={e}", exc_info=True)
         
         task.add_done_callback(task_done_callback)
         logger.info(f"批改任务已提交到事件循环: batch_id={batch_id}")

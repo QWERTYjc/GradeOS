@@ -64,6 +64,9 @@ const AgentCard: React.FC<{ agent: GradingAgent; onClick: () => void; isSelected
     const isRunning = agent.status === 'running';
     const isCompleted = agent.status === 'completed';
     const isFailed = agent.status === 'failed';
+    const scoreValue = typeof agent.output?.score === 'number' ? agent.output.score : 0;
+    const maxScoreValue = typeof agent.output?.maxScore === 'number' ? agent.output.maxScore : 100;
+
     return (
         <motion.div
             data-no-drag="true"
@@ -112,12 +115,12 @@ const AgentCard: React.FC<{ agent: GradingAgent; onClick: () => void; isSelected
                     <span className="text-xs font-semibold text-slate-700 truncate tracking-tight">{agent.label}</span>
                 </div>
 
-                {agent.output && typeof (agent.output?.score ?? 0) === 'number' && (
+                {agent.output && (
                     <span className={clsx(
                         "text-[10px] font-bold px-1.5 py-0.5 rounded-md",
-                        (agent.output?.score ?? 0) >= ((agent.output?.maxScore ?? 100) * 0.6) ? "bg-emerald-100/50 text-emerald-700" : "bg-red-100/50 text-red-700"
+                        scoreValue >= (maxScoreValue * 0.6) ? "bg-emerald-100/50 text-emerald-700" : "bg-red-100/50 text-red-700"
                     )}>
-                        {agent.output?.score ?? 0}
+                        {scoreValue}
                     </span>
                 )}
             </div>

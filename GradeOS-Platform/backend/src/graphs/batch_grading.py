@@ -5920,30 +5920,19 @@ async def export_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                                         or stored_file.get("id")
                                         or ""
                                     )
-                                    file_url = stored_file.get("file_url")
-                                    content_type = stored_file.get("content_type")
+                                    content_type = (
+                                        stored_file.get("content_type")
+                                        or stored_file.get("contentType")
+                                    )
                                 else:
                                     file_id = stored_file.file_id
                                     content_type = stored_file.content_type
-                                if file_id and not file_url:
-                                    file_url = _build_file_url(file_id)
-                            else:
-                                candidate_url = (
-                                    page_result.get("file_url")
-                                    or page_result.get("image_url")
-                                    or page_result.get("imageUrl")
+
+                            if not file_id:
+                                logger.debug(
+                                    f"[export] Skip page image without file_id: student={student_key}, page={page_index}"
                                 )
-                                if isinstance(candidate_url, str) and candidate_url and not candidate_url.startswith("data:"):
-                                    if candidate_url.startswith("/") and public_base:
-                                        file_url = public_base.rstrip("/") + candidate_url
-                                    else:
-                                        file_url = candidate_url
-                                    content_type = (
-                                        page_result.get("content_type")
-                                        or page_result.get("contentType")
-                                    )
-                                else:
-                                    continue
+                                continue
 
                             try:
                                 page_image = GradingPageImage(

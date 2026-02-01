@@ -80,7 +80,7 @@ const useWorkflowSimulation = () => {
         return () => clearInterval(interval);
     }, []);
 
-    const triggerPipeline = () => {
+    const triggerPipeline = React.useCallback(() => {
         const sequence = ['rubric_parse', 'rubric_review', 'grade_batch', 'logic_review', 'export'];
 
         // Staggered execution
@@ -125,9 +125,11 @@ const useWorkflowSimulation = () => {
 
             accumulatedDelay += (stepDuration + 1000); // Node time + Packet travel time
         });
-    };
-    
-    triggerPipelineRef.current = triggerPipeline;
+    }, []);
+
+    useEffect(() => {
+        triggerPipelineRef.current = triggerPipeline;
+    }, [triggerPipeline]);
 
     return { nodes, workers, activePackets };
 };

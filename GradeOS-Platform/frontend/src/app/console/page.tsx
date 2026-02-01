@@ -89,8 +89,6 @@ const ScannerContainer = ({
     const [studentBoundaries, setStudentBoundaries] = useState<number[]>([]);
     const [studentInfos, setStudentInfos] = useState<Array<{ studentName: string; studentId: string }>>([]);
 
-    console.log('ScannerContainer Render:', { viewMode, hasHandler: !!onSubmitBatch });
-
     useEffect(() => {
         if (viewMode === 'exams' && examSessionId) {
             setCurrentSessionId(examSessionId);
@@ -119,7 +117,7 @@ const ScannerContainer = ({
         return normalized;
     };
 
-    const syncStudentInfos = (count: number) => {
+    const syncStudentInfos = useCallback((count: number) => {
         setStudentInfos((prev) => {
             const next = [];
             for (let i = 0; i < count; i += 1) {
@@ -132,7 +130,7 @@ const ScannerContainer = ({
             }
             return next;
         });
-    };
+    }, [studentNameMapping]);
 
     const handleBoundariesChange = (boundaries: number[]) => {
         const normalized = normalizeBoundaries(boundaries, imageCount);

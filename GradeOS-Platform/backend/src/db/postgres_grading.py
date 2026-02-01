@@ -63,6 +63,8 @@ class GradingPageImage:
 
 
 _PAGE_IMAGES_TABLE_READY = False
+_GRADING_HISTORY_SCHEMA_READY = False
+_STUDENT_RESULTS_SCHEMA_READY = False
 
 
 def _build_file_url(file_id: str) -> Optional[str]:
@@ -159,10 +161,52 @@ async def ensure_page_images_table() -> None:
     except Exception as exc:
         logger.error(f"Ensure grading_page_images failed: {exc}")
         raise
+
+
+async def ensure_grading_history_schema() -> None:
+    """Ensure grading_history has required columns."""
+    global _GRADING_HISTORY_SCHEMA_READY
+    if _GRADING_HISTORY_SCHEMA_READY:
+        return
+    try:
+        async with db.connection() as conn:
+            await conn.execute("ALTER TABLE grading_history ADD COLUMN IF NOT EXISTS class_ids JSONB")
+            await conn.execute("ALTER TABLE grading_history ADD COLUMN IF NOT EXISTS completed_at TIMESTAMP")
+            await conn.execute("ALTER TABLE grading_history ADD COLUMN IF NOT EXISTS status VARCHAR(40)")
+            await conn.execute("ALTER TABLE grading_history ADD COLUMN IF NOT EXISTS total_students INTEGER")
+            await conn.execute("ALTER TABLE grading_history ADD COLUMN IF NOT EXISTS average_score DOUBLE PRECISION")
+            await conn.execute("ALTER TABLE grading_history ADD COLUMN IF NOT EXISTS result_data JSONB")
+            await conn.commit()
+        _GRADING_HISTORY_SCHEMA_READY = True
+    except Exception as exc:
+        logger.error(f"Ensure grading_history schema failed: {exc}")
+        raise
+
+
+async def ensure_student_results_schema() -> None:
+    """Ensure student_grading_results has required columns."""
+    global _STUDENT_RESULTS_SCHEMA_READY
+    if _STUDENT_RESULTS_SCHEMA_READY:
+        return
+    try:
+        async with db.connection() as conn:
+            await conn.execute("ALTER TABLE student_grading_results ADD COLUMN IF NOT EXISTS confession TEXT")
+            await conn.execute("ALTER TABLE student_grading_results ADD COLUMN IF NOT EXISTS result_data JSONB")
+            await conn.execute("ALTER TABLE student_grading_results ADD COLUMN IF NOT EXISTS imported_at TIMESTAMP")
+            await conn.execute("ALTER TABLE student_grading_results ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMP")
+            await conn.commit()
+        _STUDENT_RESULTS_SCHEMA_READY = True
+    except Exception as exc:
+        logger.error(f"Ensure student_grading_results schema failed: {exc}")
+        raise
+
+
 async def save_grading_history(history: GradingHistory) -> None:
-    """保存批改历史到 PostgreSQL"""
+    """???????????PostgreSQL"""
     if not history.created_at:
         history.created_at = datetime.now().isoformat()
+
+    await ensure_grading_history_schema()
 
     query = """
         INSERT INTO grading_history 
@@ -353,6 +397,7 @@ async def list_grading_history(
 
 async def save_student_result(result: StudentGradingResult) -> None:
     """????????? PostgreSQL"""
+    await ensure_student_results_schema()
     # Normalize confession payloads and keep result_data in sync.
     result_data_payload = result.result_data
     confession_value = result.confession
