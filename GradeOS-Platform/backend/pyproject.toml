@@ -20,6 +20,7 @@ dependencies = [
     "imagehash>=4.3.0",
     "uvicorn[standard]>=0.27.0",
     "websockets>=12.0",
+    "wsproto>=1.2.0",
     "python-multipart>=0.0.9",
     "alembic>=1.13.0",
     "pillow>=10.2.0",
