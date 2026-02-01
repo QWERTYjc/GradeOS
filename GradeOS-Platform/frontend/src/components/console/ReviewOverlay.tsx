@@ -48,7 +48,7 @@ export default function ReviewOverlay() {
       ? `/grading/rubric-review/${submissionId}`
       : `/grading/results-review/${submissionId}`;
     setReviewFocus(reviewFocus);
-    setCurrentTab('results');
+    setCurrentTab(isRubricReview ? 'process' : 'results');
     router.push(target);
   };
 
@@ -64,6 +64,10 @@ export default function ReviewOverlay() {
       }
       setPendingReview(null);
       setStatus('RUNNING');
+      if (isRubricReview) {
+        setCurrentTab('process');
+        setReviewFocus(null);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : '提交失败');
     } finally {

@@ -66,6 +66,7 @@ export default function GlobalNavLauncher() {
   const [runsLoading, setRunsLoading] = useState(false);
   const [runsError, setRunsError] = useState<string | null>(null);
   const [dismissedRuns, setDismissedRuns] = useState<Set<string>>(new Set());
+  const [isVisible, setIsVisible] = useState(true);
   const hideLauncher = pathname.startsWith('/student/student_assistant');
 
   useEffect(() => {
@@ -89,9 +90,18 @@ export default function GlobalNavLauncher() {
   }, [user?.id]);
 
   useEffect(() => {
-    if (!user?.id || user.role !== Role.Teacher) {
-      setActiveRuns([]);
-      setRunsError(null);
+    if (typeof document === 'undefined') return;
+    const handleVisibility = () => {
+      setIsVisible(document.visibilityState === 'visible');
+    };
+    handleVisibility();
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => document.removeEventListener('visibilitychange', handleVisibility);
+  }, []);
+
+  useEffect(() => {
+    const shouldPollRuns = Boolean(open && isVisible && user?.id && user.role === Role.Teacher);
+    if (!shouldPollRuns) {
       setRunsLoading(false);
       return;
     }
@@ -116,12 +126,12 @@ export default function GlobalNavLauncher() {
       }
     };
     fetchRuns();
-    const interval = setInterval(fetchRuns, 8000);
+    const interval = setInterval(fetchRuns, 30000);
     return () => {
       mounted = false;
       clearInterval(interval);
     };
-  }, [user?.id, user?.role]);
+  }, [open, isVisible, user?.id, user?.role]);
 
   const sections = useMemo<NavSection[]>(() => {
     const base: NavSection[] = [

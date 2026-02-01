@@ -3,6 +3,7 @@ import os
 import asyncio
 import json
 import re
+import time
 from functools import lru_cache
 from typing import Optional, List, Dict, Any, Literal, Tuple
 from datetime import datetime
@@ -4583,17 +4584,63 @@ async def confession_node(state: BatchGradingGraphState) -> Dict[str, Any]:
         try:
             from src.services.grading_confession import update_memory_from_confession
 
-            updates = await update_memory_from_confession(
-                confession=confession_payload,
-                memory_service=memory_service,
-                batch_id=batch_id,
-                subject=subject,
-            )
-            confession_payload["memory_updates"] = updates.get("memory_updates", [])
-            confession_payload["memory_update_summary"] = {
-                "created": updates.get("total_created", 0),
-                "confirmed": updates.get("total_confirmed", 0),
-            }
+            async def _run_update() -> Dict[str, Any]:
+                return await update_memory_from_confession(
+                    confession=confession_payload,
+                    memory_service=memory_service,
+                    batch_id=batch_id,
+                    subject=subject,
+                )
+
+            timeout_raw = os.getenv("CONFESSION_MEMORY_TIMEOUT_SECONDS", "2.5")
+            try:
+                timeout_s = float(timeout_raw)
+            except ValueError:
+                timeout_s = 2.5
+
+            background_raw = os.getenv("CONFESSION_MEMORY_BACKGROUND", "1")
+            allow_background = background_raw.lower() not in {"0", "false", "no"}
+
+            started_at = time.monotonic()
+            try:
+                if timeout_s > 0:
+                    updates = await asyncio.wait_for(_run_update(), timeout=timeout_s)
+                else:
+                    updates = await _run_update()
+                duration_s = time.monotonic() - started_at
+                confession_payload["memory_updates"] = updates.get("memory_updates", [])
+                confession_payload["memory_update_summary"] = {
+                    "created": updates.get("total_created", 0),
+                    "confirmed": updates.get("total_confirmed", 0),
+                    "duration_s": round(duration_s, 2),
+                }
+            except asyncio.TimeoutError:
+                duration_s = time.monotonic() - started_at
+                logger.warning(
+                    f"[confession] memory update timeout student={student_key} "
+                    f"after {duration_s:.2f}s (deferred)"
+                )
+                confession_payload["memory_update_summary"] = {
+                    "created": 0,
+                    "confirmed": 0,
+                    "status": "deferred",
+                    "duration_s": round(duration_s, 2),
+                }
+                if allow_background:
+                    async def _background_update() -> None:
+                        try:
+                            await _run_update()
+                            logger.info(
+                                f"[confession] memory update completed in background "
+                                f"student={student_key}"
+                            )
+                        except Exception as bg_exc:
+                            logger.warning(
+                                f"[confession] background memory update failed "
+                                f"student={student_key}: {bg_exc}"
+                            )
+
+                    asyncio.create_task(_background_update())
         except Exception as exc:
             logger.warning(
                 f"[confession] memory update failed student={student_key}: {exc}"
@@ -4948,11 +4995,28 @@ async def confession_node(state: BatchGradingGraphState) -> Dict[str, Any]:
 
     # 保存记忆到持久化存储
     try:
-        memory_service.save_to_storage()
+        save_async_raw = os.getenv("CONFESSION_MEMORY_SAVE_ASYNC", "1")
+        save_async = save_async_raw.lower() not in {"0", "false", "no"}
+        if save_async:
+            async def _background_save() -> None:
+                try:
+                    await asyncio.to_thread(memory_service.save_to_storage)
+                    logger.info(
+                        f"[confession] memory save completed (background): batch_id={batch_id}"
+                    )
+                except Exception as bg_exc:
+                    logger.warning(
+                        f"[confession] background memory save failed: batch_id={batch_id}, error={bg_exc}"
+                    )
+    
+            asyncio.create_task(_background_save())
+        else:
+            memory_service.save_to_storage()
+            logger.info(f"[confession] memory saved (sync): batch_id={batch_id}")
         await _persist_batch_memory("llm")
-        logger.info(f"[confession] 记忆系统已保存: batch_id={batch_id}")
+        logger.info(f"[confession] ??????????? batch_id={batch_id}")
     except Exception as e:
-        logger.warning(f"[confession] 记忆保存失败: {e}")
+        logger.warning(f"[confession] ?????????: {e}")
 
     return {
         "confessed_results": final_results,
