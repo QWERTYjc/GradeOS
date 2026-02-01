@@ -798,9 +798,6 @@ async def submit_batch(
 
         # 📁 持久化存储原始文件（可选，通过环境变量 ENABLE_FILE_STORAGE 控制）
         stored_files: List[StoredFile] = []
-        # 📁 持久化存储原始文件（可选，通过环境变量 ENABLE_FILE_STORAGE 控制）
-        stored_files: List[StoredFile] = []
-        if os.getenv("ENABLE_FILE_STORAGE", "false").lower() == "true":
             try:
                 file_storage = get_file_storage_service()
                 
@@ -829,6 +826,33 @@ async def submit_batch(
                 )
             except Exception as e:
                 logger.warning(f"[FileStorage] 文件存储失败（不影响批改流程）: {e}")
+
+        file_index_by_page: Dict[int, Dict[str, Any]] = {}
+        if stored_files:
+            public_base = (
+                os.getenv("BACKEND_PUBLIC_URL")
+                or os.getenv("PUBLIC_BACKEND_URL")
+                or os.getenv("PUBLIC_API_BASE_URL")
+                or ""
+            )
+
+            def _build_file_url(file_id: str) -> str:
+                if public_base:
+                    return public_base.rstrip("/") + f"/api/batch/files/{file_id}/download"
+                return f"/api/batch/files/{file_id}/download"
+
+            for item in stored_files:
+                meta = item.metadata or {}
+                if meta.get("type") == "answer":
+                    page_idx = meta.get("page_index")
+                    if page_idx is not None:
+                        file_index_by_page[int(page_idx)] = {
+                            "file_id": item.file_id,
+                            "file_url": _build_file_url(item.file_id),
+                            "content_type": item.content_type,
+                        }
+
+
 
         # 🚀 使用 LangGraph Orchestrator 启动批改流程
 
@@ -860,6 +884,7 @@ async def submit_batch(
             "temp_dir": str(temp_path),  # 临时目录（用于清理）
             "rubric_images": rubric_images,
             "answer_images": answer_images,
+            "file_index_by_page": file_index_by_page,
             "api_key": api_key,
             # 班级批改上下文（可选）
             "class_id": class_id,
@@ -1394,11 +1419,7 @@ async def stream_langgraph_progress(
                             result.get("studentSummary") or result.get("student_summary") or {}
                         )
                         self_audit = result.get("selfAudit") or result.get("self_audit") or {}
-                        confession_payload = (
-                            result.get("confession")
-                            or result.get("confession_data")
-                            or result.get("confessionData")
-                        )
+                        confession_payload = result.get("confession")
                         student_id_value = student_id if class_id else None
                         student_result = StudentGradingResult(
                             id=_make_student_result_id(history_id, student_name, student_id_value),
@@ -2156,7 +2177,7 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
 
         student_summary = r.get("student_summary") or r.get("studentSummary")
         self_audit = r.get("self_audit") or r.get("selfAudit")
-        confession_raw = r.get("confession") or r.get("confession_data") or r.get("confessionData")
+        confession_raw = r.get("confession")
         if isinstance(confession_raw, str):
             try:
                 confession_raw = json.loads(confession_raw)
@@ -2652,7 +2673,6 @@ async def get_results_review_context(
     """获取 results review 页面上下文"""
 
     async def _load_answer_images_from_storage() -> List[str]:
-        if os.getenv("ENABLE_FILE_STORAGE", "false").lower() != "true":
             return []
         try:
             file_storage = get_file_storage_service()

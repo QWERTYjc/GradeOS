@@ -269,13 +269,7 @@ class LLMReasoningClient:
             or []
         )
         # 提取批注坐标
-        annotations = detail.get("annotations") or []
-        enable_backend_annotations = (
-            os.getenv("ENABLE_BACKEND_ANNOTATIONS", "false").strip().lower()
-            in ("1", "true", "yes")
-        )
-        if not enable_backend_annotations:
-            annotations = []
+        annotations = []
 
         # 提取步骤信息（包含坐标）
         steps = detail.get("steps") or []
@@ -283,52 +277,6 @@ class LLMReasoningClient:
         # 提取答案区域坐标
         answer_region = detail.get("answer_region") or detail.get("answerRegion")
 
-        # 🔥 后备逻辑：如果 LLM 没有返回 annotations，从 scoring_point_results 构建基本批注
-        if enable_backend_annotations and not annotations and scoring_point_results:
-            fallback_annotations = []
-            for idx, spr in enumerate(scoring_point_results):
-                # 从 error_region 构建错误圈选批注
-                error_region = spr.get("error_region") or spr.get("errorRegion")
-                if error_region:
-                    fallback_annotations.append(
-                        {
-                            "type": "error_circle",
-                            "page_index": page_index,
-                            "bounding_box": error_region,
-                            "text": spr.get("evidence", ""),
-                            "color": "#FF0000",
-                        }
-                    )
-
-                # 从 mark_type 构建 M/A mark 批注
-                mark_type = spr.get("mark_type") or spr.get("markType")
-                awarded = spr.get("awarded") or spr.get("score") or 0
-                if mark_type and error_region:
-                    mark_text = f"{mark_type}{1 if awarded > 0 else 0}"
-                    mark_color = "#00AA00" if awarded > 0 else "#FF0000"
-                    fallback_annotations.append(
-                        {
-                            "type": f"{mark_type.lower()}_mark",
-                            "page_index": page_index,
-                            "bounding_box": {
-                                "x_min": min(error_region.get("x_max", 0.9) + 0.02, 0.95),
-                                "y_min": error_region.get("y_min", 0.1),
-                                "x_max": min(error_region.get("x_max", 0.9) + 0.08, 1.0),
-                                "y_max": error_region.get("y_max", 0.15),
-                            },
-                            "text": mark_text,
-                            "color": mark_color,
-                        }
-                    )
-
-            if fallback_annotations:
-                annotations = fallback_annotations
-                logger.debug(
-                    f"[_normalize_question_detail] 从 scoring_point_results 构建了 "
-                    f"{len(fallback_annotations)} 个后备批注"
-                )
-
-        # 🔥 后备逻辑：如果 LLM 没有返回 steps，从 scoring_point_results 构建基本步骤
         if not steps and scoring_point_results:
             fallback_steps = []
             for idx, spr in enumerate(scoring_point_results):

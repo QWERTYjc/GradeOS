@@ -216,6 +216,17 @@ async def intake_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     验证输入文件，准备处理环境。
     """
     batch_id = state["batch_id"]
+    public_base = (
+        os.getenv("BACKEND_PUBLIC_URL")
+        or os.getenv("PUBLIC_BACKEND_URL")
+        or os.getenv("PUBLIC_API_BASE_URL")
+        or ""
+    )
+
+    def _build_file_url(file_id: str) -> str:
+        if public_base:
+            return public_base.rstrip("/") + f"/api/batch/files/{file_id}/download"
+        return f"/api/batch/files/{file_id}/download"
 
     logger.info(f"[intake] 开始接收文件: batch_id={batch_id}")
 
@@ -2553,6 +2564,15 @@ async def _grade_batch_node_impl(state: Dict[str, Any]) -> Dict[str, Any]:
                 ):
                     status = "failed"
 
+                question_details = page_result.get("question_details", [])
+                if isinstance(question_details, list):
+                    for item in question_details:
+                        if not isinstance(item, dict):
+                            continue
+                        if not item.get("page_indices") and item.get("page_index") is None and item.get("pageIndex") is None:
+                            item["page_indices"] = [page_index]
+                            item["pageIndices"] = [page_index]
+
                 page_results.append(
                     {
                         "page_index": page_index,
@@ -2562,7 +2582,7 @@ async def _grade_batch_node_impl(state: Dict[str, Any]) -> Dict[str, Any]:
                         "max_score": page_result.get("max_score", page_max_score),
                         "confidence": page_result.get("confidence", 0),
                         "feedback": page_result.get("feedback", ""),
-                        "question_details": page_result.get("question_details", []),
+                        "question_details": question_details,
                         "question_numbers": question_numbers or [],
                         "student_key": batch_student_key,
                         "student_name": batch_student_name,
@@ -4171,8 +4191,43 @@ async def confession_node(state: BatchGradingGraphState) -> Dict[str, Any]:
             f"[confession] OK completed ({reason}): batch_id={batch_id}, students={count}"
         )
         logger.info(message)
+        logger.info(f"[confession_done] batch_id={batch_id}, students={count}, reason={reason}")
         workflow_logger.info(message)
         workflow_logger.info(f"[confession_done] batch_id={batch_id}, students={count}")
+
+    async def _persist_batch_memory(stage: str) -> None:
+        try:
+            saved = await memory_service.save_batch_memory_async(batch_id)
+            if saved:
+                logger.info(
+                    f"[confession] batch memory persisted: batch_id={batch_id}, stage={stage}"
+                )
+        except Exception as exc:
+            logger.warning(
+                f"[confession] batch memory persist failed: batch_id={batch_id}, stage={stage}, error={exc}"
+            )
+
+    def _build_confession_skip_results(reason: str) -> List[Dict[str, Any]]:
+        if not student_results:
+            return []
+        now_ts = datetime.now().isoformat()
+        skipped_results: List[Dict[str, Any]] = []
+        for student in student_results:
+            updated = dict(student)
+            if not updated.get("confession"):
+                updated["confession"] = {
+                    "summary": f"confession skipped ({reason})",
+                    "issues": [],
+                    "warnings": [],
+                    "highRiskQuestions": [],
+                    "overallStatus": "skipped",
+                    "overallConfidence": None,
+                    "generated_at": now_ts,
+                    "source": "skip",
+                    "skip_reason": reason,
+                }
+            skipped_results.append(updated)
+        return skipped_results
 
     # 获取科目（用于记忆隔离）
     # 科目来源优先级：state["subject"] > inputs["subject"] > "general"
@@ -4192,7 +4247,10 @@ async def confession_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     if grading_mode.startswith("assist"):
         logger.info(f"[confession] skip (assist mode): batch_id={batch_id}")
         _log_confession_done("assist mode", len(student_results))
+        skipped_results = _build_confession_skip_results("assist mode")
+        await _persist_batch_memory("assist")
         return {
+            "confessed_results": skipped_results,
             "current_stage": "confession_completed",
             "percentage": 80.0,
             "timestamps": {
@@ -4203,7 +4261,9 @@ async def confession_node(state: BatchGradingGraphState) -> Dict[str, Any]:
 
     if not student_results:
         _log_confession_done("no student_results", 0)
+        await _persist_batch_memory("no student_results")
         return {
+            "confessed_results": [],
             "current_stage": "confession_completed",
             "percentage": 80.0,
             "timestamps": {
@@ -4238,7 +4298,9 @@ async def confession_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                         updated["confession"]["warnings"].extend(rule_report.get("warnings", []))
             updated_results.append(updated)
         _log_confession_done("rule-based", len(updated_results))
+        await _persist_batch_memory("rule-based")
         return {
+            "confessed_results": updated_results,
             "student_results": updated_results,
             "current_stage": "confession_completed",
             "percentage": 80.0,
@@ -4479,6 +4541,7 @@ async def confession_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     # 保存记忆到持久化存储
     try:
         memory_service.save_to_storage()
+        await _persist_batch_memory("llm")
         logger.info(f"[confession] 记忆系统已保存: batch_id={batch_id}")
     except Exception as e:
         logger.warning(f"[confession] 记忆保存失败: {e}")
@@ -4765,10 +4828,45 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
             f"students={count}, reviewed={reviewed}"
         )
         logger.info(message)
+        logger.info(
+            f"[logic_review_done] batch_id={batch_id}, students={count}, reviewed={reviewed}, reason={reason}"
+        )
         workflow_logger.info(message)
         workflow_logger.info(
             f"[logic_review_done] batch_id={batch_id}, students={count}, reviewed={reviewed}"
         )
+
+    async def _persist_batch_memory(stage: str) -> None:
+        try:
+            saved = await memory_service.save_batch_memory_async(batch_id)
+            if saved:
+                logger.info(
+                    f"[logic_review] batch memory persisted: batch_id={batch_id}, stage={stage}"
+                )
+        except Exception as exc:
+            logger.warning(
+                f"[logic_review] batch memory persist failed: batch_id={batch_id}, stage={stage}, error={exc}"
+            )
+
+    def _build_logic_review_skip_results(reason: str) -> List[Dict[str, Any]]:
+        if not student_results:
+            return []
+        now_ts = datetime.now().isoformat()
+        skipped_results: List[Dict[str, Any]] = []
+        for student in student_results:
+            updated = dict(student)
+            updated.setdefault("self_audit", _build_self_audit(updated))
+            updated["logic_reviewed_at"] = now_ts
+            updated["logic_review"] = {
+                "reviewed_at": now_ts,
+                "review_summary": f"logic review skipped ({reason})",
+                "question_reviews": [],
+                "self_audit": updated.get("self_audit"),
+                "skipped": True,
+                "skip_reason": reason,
+            }
+            skipped_results.append(updated)
+        return skipped_results
 
     # 获取记忆服务
     from src.services.grading_memory import get_memory_service, MemoryType, MemoryImportance
@@ -4778,7 +4876,10 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     if grading_mode.startswith("assist"):
         logger.info(f"[logic_review] skip (assist mode): batch_id={batch_id}")
         _log_logic_review_done("assist mode", len(student_results), 0)
+        skipped_results = _build_logic_review_skip_results("assist mode")
+        await _persist_batch_memory("assist")
         return {
+            "reviewed_results": skipped_results,
             "logic_review_results": [],
             "current_stage": "logic_review_completed",
             "percentage": 85.0,
@@ -4790,7 +4891,9 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
 
     if not student_results:
         _log_logic_review_done("no student_results", 0, 0)
+        await _persist_batch_memory("no student_results")
         return {
+            "reviewed_results": [],
             "logic_review_results": [],
             "current_stage": "logic_review_completed",
             "percentage": 85.0,
@@ -4826,7 +4929,9 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
             }
             updated_results.append(updated)
         _log_logic_review_done("rule-based", len(updated_results), 0)
+        await _persist_batch_memory("rule-based")
         return {
+            "reviewed_results": updated_results,
             "student_results": updated_results,
             "logic_review_results": [],
             "current_stage": "logic_review_completed",
@@ -5064,6 +5169,7 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     try:
         new_memories = memory_service.consolidate_batch_memory(batch_id)
         memory_service.save_to_storage()
+        await _persist_batch_memory("llm")
         logger.info(
             f"[logic_review] 记忆整合完成: batch_id={batch_id}, 新增 {new_memories} 条长期记忆"
         )
@@ -5287,11 +5393,7 @@ async def export_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                     )
                     if not key:
                         continue
-                    confession_value = (
-                        item.get("confession")
-                        or item.get("confession_data")
-                        or item.get("confessionData")
-                    )
+                    confession_value = item.get("confession")
                     if confession_value:
                         confession_by_student[key] = confession_value
 
@@ -5305,6 +5407,13 @@ async def export_node(state: BatchGradingGraphState) -> Dict[str, Any]:
 
                 # 预先构建文件存储索引（仅保存 file_id，不存图片内容）
                 file_index_by_page: Dict[int, Any] = {}
+                state_file_index = state.get("file_index_by_page") or {}
+                if isinstance(state_file_index, dict) and state_file_index:
+                    for raw_idx, stored in state_file_index.items():
+                        try:
+                            file_index_by_page[int(raw_idx)] = stored
+                        except Exception:
+                            continue
                 if os.getenv("ENABLE_FILE_STORAGE", "false").lower() == "true":
                     try:
                         from src.services.file_storage import get_file_storage_service
@@ -5316,7 +5425,7 @@ async def export_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                             if meta.get("type") == "answer" or item.filename.startswith("answer_page"):
                                 page_idx = meta.get("page_index")
                                 if page_idx is not None:
-                                    file_index_by_page[int(page_idx)] = item
+                                    file_index_by_page.setdefault(int(page_idx), item)
                         if file_index_by_page:
                             logger.info(
                                 f"[export] 文件索引已准备: batch_id={batch_id}, pages={len(file_index_by_page)}"
@@ -5357,11 +5466,7 @@ async def export_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                             or f"student_{saved_students + 1}"
                         )
                         
-                        confession_payload = (
-                            student.get("confession")
-                            or student.get("confession_data")
-                            or student.get("confessionData")
-                        )
+                        confession_payload = student.get("confession")
                         if not confession_payload:
                             confession_payload = confession_by_student.get(student_key)
 
@@ -5435,9 +5540,19 @@ async def export_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                             content_type = None
 
                             if stored_file:
-                                file_id = stored_file.file_id
-                                file_url = f"/api/batch/files/{stored_file.file_id}/download"
-                                content_type = stored_file.content_type
+                                if isinstance(stored_file, dict):
+                                    file_id = (
+                                        stored_file.get("file_id")
+                                        or stored_file.get("id")
+                                        or ""
+                                    )
+                                    file_url = stored_file.get("file_url")
+                                    content_type = stored_file.get("content_type")
+                                else:
+                                    file_id = stored_file.file_id
+                                    content_type = stored_file.content_type
+                                if file_id and not file_url:
+                                    file_url = _build_file_url(file_id)
                             else:
                                 candidate_url = (
                                     page_result.get("file_url")
@@ -5445,7 +5560,10 @@ async def export_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                                     or page_result.get("imageUrl")
                                 )
                                 if isinstance(candidate_url, str) and candidate_url and not candidate_url.startswith("data:"):
-                                    file_url = candidate_url
+                                    if candidate_url.startswith("/") and public_base:
+                                        file_url = public_base.rstrip("/") + candidate_url
+                                    else:
+                                        file_url = candidate_url
                                     content_type = (
                                         page_result.get("content_type")
                                         or page_result.get("contentType")

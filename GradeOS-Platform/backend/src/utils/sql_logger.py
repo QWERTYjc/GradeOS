@@ -10,12 +10,17 @@ _SENSITIVE_TABLES = (
     "student_grading_results",
     "grading_history",
     "grading_page_images",
+    "grading_results",
+    "grading_logs",
 )
 
 
-def _is_sensitive_query(query: str) -> bool:
+def _sensitive_table_name(query: str) -> Optional[str]:
     lowered = query.lower()
-    return any(table in lowered for table in _SENSITIVE_TABLES)
+    for table in _SENSITIVE_TABLES:
+        if table in lowered:
+            return table
+    return None
 
 
 def log_sql_operation(
@@ -41,14 +46,16 @@ def log_sql_operation(
         "true",
         "yes",
     )
-    is_sensitive = _is_sensitive_query(query)
-    if is_sensitive and not error:
+    sensitive_table = _sensitive_table_name(query)
+    if sensitive_table:
+        if error:
+            logger.error(f"[SQL] ✗ {operation} failed on {sensitive_table}: {error}")
         return
     log_data = {
         "operation": operation,
         "query": query.strip(),
     }
-    if log_params and params and not is_sensitive:
+    if log_params and params:
         log_data["params"] = params
     
     if result_count is not None:
@@ -57,6 +64,6 @@ def log_sql_operation(
     if error:
         log_data["error"] = str(error)
         logger.error(f"[SQL] ❌ {operation} 失败: {json.dumps(log_data, ensure_ascii=False)}")
-    elif log_success and not is_sensitive:
+    elif log_success:
         # Successful SQL logs are noisy and may contain sensitive data; default to disabled.
         logger.debug(f"[SQL] ✅ {operation}: {json.dumps(log_data, ensure_ascii=False)}")

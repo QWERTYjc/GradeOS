@@ -1403,17 +1403,17 @@ async def import_grading_results(
                     or result.get("student_summary")
                     or result.get("summary")
                 )
-                confession_data = result.get("confession")
+                confession_payload = result.get("confession")
                 summary_text = None
                 if isinstance(summary_data, dict):
                     summary_text = summary_data.get("overall")
                 elif isinstance(summary_data, str):
                     summary_text = summary_data
                 confession_text = None
-                if isinstance(confession_data, dict):
-                    confession_text = confession_data.get("summary")
-                elif isinstance(confession_data, str):
-                    confession_text = confession_data
+                if isinstance(confession_payload, dict):
+                    confession_text = confession_payload.get("summary")
+                elif isinstance(confession_payload, str):
+                    confession_text = confession_payload
                 identity_token = student_id or student_key or student_name
                 stable_key = f"{history_id}:{identity_token}"
                 result_id = str(uuid.uuid5(uuid.NAMESPACE_URL, stable_key))

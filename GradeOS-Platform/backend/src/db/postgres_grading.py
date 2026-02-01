@@ -301,23 +301,34 @@ async def list_grading_history(
 
 async def save_student_result(result: StudentGradingResult) -> None:
     """????????? PostgreSQL"""
-    # ?? result_data ??????? JSON ???
-    result_data_json = None
-    if result.result_data:
-        try:
-            result_data_json = json.dumps(result.result_data, ensure_ascii=False)
-        except Exception as e:
-            logger.error(f"??? result_data ??: {e}")
-            result_data_json = "{}"
-
-    # ?? confession ??????????? dict?
+    # Normalize confession payloads and keep result_data in sync.
+    result_data_payload = result.result_data
     confession_value = result.confession
-    if isinstance(confession_value, dict):
+    if isinstance(result_data_payload, dict):
+        payload = dict(result_data_payload)
+        if confession_value is None:
+            confession_value = payload.get("confession")
+        elif "confession" not in payload:
+            payload["confession"] = confession_value
+
+        for key in ("confession_data", "confessionData", "self_report", "selfReport"):
+            payload.pop(key, None)
+        result_data_payload = payload
+
+    if confession_value is not None and not isinstance(confession_value, str):
         try:
             confession_value = json.dumps(confession_value, ensure_ascii=False)
         except Exception as e:
             logger.error(f"??? confession ??: {e}")
             confession_value = None
+
+    result_data_json = None
+    if result_data_payload is not None:
+        try:
+            result_data_json = json.dumps(result_data_payload, ensure_ascii=False)
+        except Exception as e:
+            logger.error(f"??? result_data ??: {e}")
+            result_data_json = "{}"
 
     # ?????
     update_params = (

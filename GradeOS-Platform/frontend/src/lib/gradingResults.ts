@@ -177,20 +177,7 @@ export const normalizeStudentResults = (raw: RawObject[]): StudentResult[] => {
           scoringPoints: (q.scoringPoints || q.scoring_points) as any,
           scoringPointResults: pointResults,
           // 🔥 新增：批注坐标和步骤信息
-          annotations: Array.isArray(q.annotations)
-            ? q.annotations.map((ann: RawObject) => ({
-              type: String(ann.type || ann.annotation_type || ''),
-              page_index: ann.page_index as number | undefined,
-              bounding_box: {
-                x_min: Number((ann.bounding_box as RawObject)?.x_min ?? 0),
-                y_min: Number((ann.bounding_box as RawObject)?.y_min ?? 0),
-                x_max: Number((ann.bounding_box as RawObject)?.x_max ?? 0),
-                y_max: Number((ann.bounding_box as RawObject)?.y_max ?? 0),
-              },
-              text: (ann.text ?? ann.label) as string | undefined,
-              color: ann.color as string | undefined,
-            }))
-            : undefined,
+          annotations: undefined,
           steps: (() => {
             const rawSteps = (q.steps || []) as unknown;
             if (!Array.isArray(rawSteps)) return [];
@@ -232,7 +219,7 @@ export const normalizeStudentResults = (raw: RawObject[]): StudentResult[] => {
       needsConfirmation: (r.needsConfirmation ?? r.needs_confirmation) as boolean | undefined,
       studentSummary: (r.studentSummary || r.student_summary) as any,
       selfAudit: normalizeSelfAudit(r.selfAudit || r.self_audit),
-      confession: (r.confession || r.confession_data) as any,
+      confession: r.confession as any,
       questionResults,
     };
   });

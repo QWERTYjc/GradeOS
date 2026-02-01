@@ -421,7 +421,7 @@ const QuestionDetail: React.FC<{ question: QuestionResult; gradingMode?: string;
             )}
             {isLowConfidence && (
                 <div className="mt-3 p-3 rounded-md border border-amber-200 bg-amber-50">
-                    <div className="text-[11px] font-semibold text-amber-700 mb-1">自白提示</div>
+                    <div className="text-[11px] font-semibold text-amber-700 mb-1">Confession Hint</div>
                     <p className="text-xs text-amber-800 leading-relaxed">
                         <MathText text={confessionText} />
                     </p>
@@ -1009,23 +1009,8 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
             const pageAnnotations: VisualAnnotation[] = [];
             student.questionResults?.forEach(q => {
                 const questionPages = q.pageIndices || [];
-                if (questionPages.length > 0 && !questionPages.includes(pageIdx)) return;
-
-                const explicitAnnotations = Array.isArray(q.annotations) ? q.annotations : [];
-                if (explicitAnnotations.length > 0) {
-                    explicitAnnotations.forEach((ann: any) => {
-                        const annPage = ann.page_index ?? ann.pageIndex;
-                        if (annPage === undefined || annPage === pageIdx) {
-                            pageAnnotations.push({
-                                annotation_type: ann.annotation_type || ann.type,
-                                bounding_box: ann.bounding_box || ann.boundingBox,
-                                text: ann.text || '',
-                                color: ann.color || '#FF0000',
-                            } as VisualAnnotation);
-                        }
-                    });
-                    return;
-                }
+                if (questionPages.length === 0) return;
+                if (!questionPages.includes(pageIdx)) return;
 
                 if (q.steps && q.steps.length > 0) {
                     q.steps.forEach(step => {
@@ -2384,7 +2369,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                                             <div className="flex items-center justify-between mb-3">
                                                 <div className="text-xs font-semibold text-amber-700 flex items-center gap-1.5">
                                                     <AlertTriangle className="w-4 h-4" />
-                                                    AI 自白报告
+                                                    AI Confession Report
                                                 </div>
                                                 {detailViewStudent.confession.generatedAt && (
                                                     <div className="text-[10px] text-amber-500">
@@ -2595,7 +2580,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                                                             </div>
                                                             {dq.selfCritique && (
                                                                 <div className="mt-1 text-[11px] text-amber-700 italic">
-                                                                    自白: {dq.selfCritique}
+                                                                    Confession: {dq.selfCritique}
                                                                 </div>
                                                             )}
                                                         </div>
