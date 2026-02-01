@@ -2181,7 +2181,11 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
             try:
                 confession_raw = json.loads(confession_raw)
             except Exception:
-                confession_raw = None
+                confession_raw = {
+                    "overall_status": "ok",
+                    "summary": confession_raw,
+                    "generated_at": datetime.now().isoformat(),
+                }
 
         logic_review_raw = r.get("logic_review") or r.get("logicReview")
         if isinstance(logic_review_raw, str):

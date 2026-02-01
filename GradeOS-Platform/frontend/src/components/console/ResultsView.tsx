@@ -569,7 +569,20 @@ const normalizeQuestionResults = (questionResults?: QuestionResult[]) => {
 };
 
 const normalizeConfession = (confession: any) => {
-    if (!confession || typeof confession !== 'object') return undefined;
+    if (!confession) return undefined;
+    if (typeof confession === 'string') {
+        try {
+            const parsed = JSON.parse(confession);
+            if (parsed && typeof parsed === 'object') {
+                confession = parsed;
+            } else {
+                return { summary: confession };
+            }
+        } catch {
+            return { summary: confession };
+        }
+    }
+    if (typeof confession !== 'object') return undefined;
     const normalizeIssue = (item: any) => ({
         questionId: item.questionId ?? item.question_id,
         message: item.message ?? item.description ?? item.note ?? '',

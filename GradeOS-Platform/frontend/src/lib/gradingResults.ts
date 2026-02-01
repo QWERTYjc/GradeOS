@@ -58,6 +58,22 @@ const normalizeSelfAudit = (audit: unknown): SelfAudit | undefined => {
   };
 };
 
+const normalizeConfessionPayload = (confession: unknown): unknown => {
+  if (!confession) return undefined;
+  if (typeof confession === 'string') {
+    try {
+      const parsed = JSON.parse(confession);
+      if (parsed && typeof parsed === 'object') {
+        return parsed;
+      }
+    } catch {
+      return { summary: confession };
+    }
+    return { summary: confession };
+  }
+  return confession;
+};
+
 export const normalizeStudentResults = (raw: RawObject[]): StudentResult[] => {
   if (!Array.isArray(raw)) return [];
   return raw.map((r: RawObject) => {
@@ -219,7 +235,7 @@ export const normalizeStudentResults = (raw: RawObject[]): StudentResult[] => {
       needsConfirmation: (r.needsConfirmation ?? r.needs_confirmation) as boolean | undefined,
       studentSummary: (r.studentSummary || r.student_summary) as any,
       selfAudit: normalizeSelfAudit(r.selfAudit || r.self_audit),
-      confession: r.confession as any,
+      confession: normalizeConfessionPayload(r.confession) as any,
       questionResults,
     };
   });
