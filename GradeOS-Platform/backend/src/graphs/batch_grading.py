@@ -2731,14 +2731,22 @@ async def _grade_batch_node_impl(state: Dict[str, Any]) -> Dict[str, Any]:
     )
     logger.debug(f"[grade_batch] Student results count: {len(student_results)}")
 
-    # 🔍 输出完整的批改结果 JSON
+    # 🔍 DEBUG: 关键日志 - 记录 grade_batch 返回
+    logger.warning(
+        f"[grade_batch] 🔍 DEBUG: 准备返回结果, batch_index={batch_index}, "
+        f"student_key={batch_student_key}, student_results_count={len(student_results)}, "
+        f"page_results_count={len(page_results)}"
+    )
 
     # 返回结果（使用 add reducer 聚合，直接输出 student_results）
-    return {
+    result = {
         "student_results": student_results,
         "grading_results": page_results,  # 保留用于调试/日志
         "batch_progress": progress_info,
     }
+    
+    logger.warning(f"[grade_batch] 🔍 DEBUG: 返回 result keys={list(result.keys())}")
+    return result
 
 
 def _apply_student_result_overrides(
@@ -4444,6 +4452,13 @@ async def confession_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     """
     batch_id = state["batch_id"]
     student_results = state.get("student_results", []) or []
+    
+    # 🔍 DEBUG: 关键日志 - 记录 confession_node 入口
+    logger.warning(
+        f"[confession] 🔍 DEBUG: 进入 confession_node, batch_id={batch_id}, "
+        f"student_results_count={len(student_results)}, "
+        f"state_keys={sorted(list(state.keys()))}"
+    )
     parsed_rubric = state.get("parsed_rubric", {}) or {}
     api_key = state.get("api_key") or os.getenv("LLM_API_KEY") or os.getenv("OPENROUTER_API_KEY")
     grading_mode = _resolve_grading_mode(state.get("inputs", {}), parsed_rubric)
@@ -5703,6 +5718,14 @@ async def export_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     Requirements: 9.4, 11.4
     """
     batch_id = state["batch_id"]
+    
+    # 🔍 DEBUG: 关键日志 - 记录 export_node 入口
+    logger.warning(
+        f"[export] 🔍 DEBUG: 进入 export_node, batch_id={batch_id}, "
+        f"student_results={len(state.get('student_results', []))}, "
+        f"confessed_results={len(state.get('confessed_results', []))}, "
+        f"reviewed_results={len(state.get('reviewed_results', []))}"
+    )
     # 优先读取 reviewed_results，回退到 confessed_results，再回退到 student_results
     student_results = state.get("reviewed_results") or state.get("confessed_results") or state.get("student_results", [])
     cross_page_questions = state.get("cross_page_questions", [])
