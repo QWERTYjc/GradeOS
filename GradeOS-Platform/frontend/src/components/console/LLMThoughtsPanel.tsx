@@ -159,10 +159,11 @@ export default function LLMThoughtsPanel({ className, onClose }: LLMThoughtsPane
 
   return (
     <GlassCard
-      className={clsx("h-full min-h-0 flex flex-col p-0 overflow-hidden", className)}
+      className={clsx("h-full min-h-0 p-0 overflow-hidden", className)}
       hoverEffect={false}
     >
-      <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100 bg-white/50 backdrop-blur-md z-10">
+      <div className="h-full min-h-0 flex flex-col">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100 bg-white/50 backdrop-blur-md z-10">
         <div>
           <div className="flex items-center gap-2 mb-0.5">
             <Activity className="w-3 h-3 text-indigo-500" />
@@ -263,17 +264,13 @@ export default function LLMThoughtsPanel({ className, onClose }: LLMThoughtsPane
         </div>
       </div>
 
-      <div
-        ref={scrollRef}
-        onScroll={handleScroll}
-        onWheel={handleWheel}
-        onTouchMove={handleTouchMove}
-        className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain px-4 py-3 space-y-3 bg-slate-50/30 pointer-events-auto"
-        style={{ 
-          WebkitOverflowScrolling: 'touch',
-          maxHeight: 'calc(100vh - 200px)',  // 确保有固定最大高度以启用滚动
-        }}
-      >
+        <div
+          ref={scrollRef}
+          onScroll={handleScroll}
+          onWheel={handleWheel}
+          onTouchMove={handleTouchMove}
+          className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain px-4 py-3 space-y-3 bg-slate-50/30 pointer-events-auto"
+        >
         <AnimatePresence initial={false}>
           {thoughts.length === 0 ? (
             <motion.div
@@ -321,6 +318,7 @@ export default function LLMThoughtsPanel({ className, onClose }: LLMThoughtsPane
             ))
           )}
         </AnimatePresence>
+        </div>
       </div>
     </GlassCard>
   );
