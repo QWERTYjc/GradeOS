@@ -5295,6 +5295,22 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     api_key = state.get("api_key") or os.getenv("LLM_API_KEY") or os.getenv("OPENROUTER_API_KEY")
     grading_mode = _resolve_grading_mode(state.get("inputs", {}), parsed_rubric)
 
+    # #region agent log - 假设D: logic_review_node 入口
+    _write_debug_log_bg({
+        "hypothesisId": "D",
+        "location": "batch_grading.py:logic_review_node:entry",
+        "message": "logic_review_node被调用",
+        "data": {
+            "batch_id": batch_id,
+            "student_results_count": len(student_results),
+            "confessed_results_count": len(state.get("confessed_results", []) or []),
+            "grading_results_count": len(state.get("grading_results", []) or []),
+            "grading_mode": grading_mode,
+            "has_api_key": bool(api_key),
+        }
+    })
+    # #endregion
+
     def _log_logic_review_done(reason: str, count: int, reviewed: int = 0) -> None:
         message = (
             f"[logic_review] OK completed ({reason}): batch_id={batch_id}, "
@@ -6626,15 +6642,41 @@ def grading_merge_gate(state: BatchGradingGraphState) -> str:
     检查是否所有并行批改任务都已完成。
     通过比较 grading_results（已批改页面数）和 processed_images（总页面数）。
     """
+    batch_id = state.get("batch_id", "unknown")
     processed_images = state.get("processed_images") or []
     grading_results = state.get("grading_results") or []
+    student_results = state.get("student_results") or []
 
     total_pages = len(processed_images)
     graded_pages = _count_graded_pages(grading_results)
 
+    # #region agent log - 假设E: grading_merge_gate 决策
+    _write_debug_log_bg({
+        "hypothesisId": "E",
+        "location": "batch_grading.py:grading_merge_gate",
+        "message": "grading_merge_gate决策",
+        "data": {
+            "batch_id": batch_id,
+            "total_pages": total_pages,
+            "graded_pages": graded_pages,
+            "grading_results_count": len(grading_results),
+            "student_results_count": len(student_results),
+            "state_keys": list(state.keys()),
+        }
+    })
+    # #endregion
+
     # 如果总页数为0（异常情况），且有结果（可能逻辑错误），或者都没结果
     if total_pages == 0:
         logger.warning("[grading_merge] 总页数为 0，直接继续")
+        # #region agent log - 假设E: 总页数为0
+        _write_debug_log_bg({
+            "hypothesisId": "E",
+            "location": "batch_grading.py:grading_merge_gate:zero_pages",
+            "message": "总页数为0，直接继续到confession",
+            "data": {"batch_id": batch_id, "decision": "continue_zero_pages"}
+        })
+        # #endregion
         return "continue"
 
     progress = (graded_pages / total_pages) * 100
@@ -6647,9 +6689,25 @@ def grading_merge_gate(state: BatchGradingGraphState) -> str:
     # 检查是否全部完成
     if graded_pages >= total_pages:
         logger.info("[grading_merge] ✅ 所有批次完成，进入自白阶段")
+        # #region agent log - 假设E: 所有批次完成
+        _write_debug_log_bg({
+            "hypothesisId": "E",
+            "location": "batch_grading.py:grading_merge_gate:all_done",
+            "message": "所有批次完成，进入confession",
+            "data": {"batch_id": batch_id, "decision": "continue_all_done", "graded_pages": graded_pages}
+        })
+        # #endregion
         return "continue"
     
     # 还有未完成的任务，当前分支结束
+    # #region agent log - 假设E: 等待其他批次
+    _write_debug_log_bg({
+        "hypothesisId": "E",
+        "location": "batch_grading.py:grading_merge_gate:wait",
+        "message": "等待其他批次完成",
+        "data": {"batch_id": batch_id, "decision": "wait", "graded_pages": graded_pages, "total_pages": total_pages}
+    })
+    # #endregion
     return "wait"
 
 

@@ -1044,6 +1044,55 @@ class LangGraphOrchestrator(Orchestrator):
                 if run and run.get("input_data"):
                     accumulated_state = dict(run["input_data"])
 
+            # #region agent log - 假设A: 恢复执行时的状态检查
+            _write_debug_log({
+                "hypothesisId": "A",
+                "location": "langgraph_orchestrator.py:_resume_graph_background:entry",
+                "message": "恢复执行时的状态检查",
+                "data": {
+                    "run_id": run_id,
+                    "accumulated_state_keys": list(accumulated_state.keys()) if accumulated_state else [],
+                    "processed_images_count": len(accumulated_state.get("processed_images", []) or []) if accumulated_state else 0,
+                    "answer_images_count": len(accumulated_state.get("answer_images", []) or []) if accumulated_state else 0,
+                    "student_boundaries_count": len(accumulated_state.get("student_boundaries", []) or []) if accumulated_state else 0,
+                    "resume_command_resume": str(resume_command.resume)[:200] if resume_command and resume_command.resume else None,
+                },
+                "timestamp": int(datetime.now().timestamp() * 1000),
+                "sessionId": "debug-session",
+            })
+            # #endregion
+
+            # #region agent log - 假设A2: 检查 checkpointer 中的 Graph 状态
+            try:
+                checkpoint_state = await compiled_graph.aget_state(config)
+                checkpoint_values = checkpoint_state.values if checkpoint_state else {}
+                _write_debug_log({
+                    "hypothesisId": "A2",
+                    "location": "langgraph_orchestrator.py:_resume_graph_background:checkpoint_state",
+                    "message": "checkpointer中的Graph状态",
+                    "data": {
+                        "run_id": run_id,
+                        "has_checkpoint": bool(checkpoint_state),
+                        "checkpoint_keys": list(checkpoint_values.keys()) if checkpoint_values else [],
+                        "processed_images_count": len(checkpoint_values.get("processed_images", []) or []) if checkpoint_values else 0,
+                        "answer_images_count": len(checkpoint_values.get("answer_images", []) or []) if checkpoint_values else 0,
+                        "student_boundaries_count": len(checkpoint_values.get("student_boundaries", []) or []) if checkpoint_values else 0,
+                        "next_nodes": list(checkpoint_state.next) if checkpoint_state and checkpoint_state.next else [],
+                    },
+                    "timestamp": int(datetime.now().timestamp() * 1000),
+                    "sessionId": "debug-session",
+                })
+            except Exception as e:
+                _write_debug_log({
+                    "hypothesisId": "A2",
+                    "location": "langgraph_orchestrator.py:_resume_graph_background:checkpoint_error",
+                    "message": f"获取checkpoint状态失败: {str(e)}",
+                    "data": {"run_id": run_id, "error": str(e)},
+                    "timestamp": int(datetime.now().timestamp() * 1000),
+                    "sessionId": "debug-session",
+                })
+            # #endregion
+
             result = None
             async for event in compiled_graph.astream_events(
                 resume_command, config=config, version="v2"
