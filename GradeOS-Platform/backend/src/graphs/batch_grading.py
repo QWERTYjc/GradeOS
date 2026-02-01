@@ -4451,7 +4451,24 @@ async def confession_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     工作流位置：grade_batch → confession → logic_review
     """
     batch_id = state["batch_id"]
-    student_results = state.get("student_results", []) or []
+    student_results_raw = state.get("student_results", []) or []
+    
+    # 🔧 去重：由于 Send 并行任务会多次触发后续节点，student_results 可能包含重复
+    # 使用 student_key 去重，保留最后一个（最新的）结果
+    seen_keys = set()
+    student_results = []
+    for result in reversed(student_results_raw):
+        student_key = result.get("student_key") or result.get("student_name") or f"unknown_{len(seen_keys)}"
+        if student_key not in seen_keys:
+            seen_keys.add(student_key)
+            student_results.append(result)
+    student_results = list(reversed(student_results))  # 恢复原顺序
+    
+    if len(student_results) != len(student_results_raw):
+        logger.info(
+            f"[confession] 去重: {len(student_results_raw)} → {len(student_results)} 学生 "
+            f"(removed duplicates: {[r.get('student_key') for r in student_results_raw if r.get('student_key') not in {s.get('student_key') for s in student_results}]})"
+        )
     
     # 🔍 DEBUG: 关键日志 - 记录 confession_node 入口
     logger.warning(
@@ -5210,7 +5227,23 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     """
     batch_id = state["batch_id"]
     # 优先读取 confessed_results（confession 节点输出），回退到 student_results
-    student_results = state.get("confessed_results") or state.get("student_results", []) or []
+    student_results_raw = state.get("confessed_results") or state.get("student_results", []) or []
+    
+    # 🔧 去重：由于 Send 并行任务可能导致重复，使用 student_key 去重
+    seen_keys = set()
+    student_results = []
+    for result in reversed(student_results_raw):
+        student_key = result.get("student_key") or result.get("student_name") or f"unknown_{len(seen_keys)}"
+        if student_key not in seen_keys:
+            seen_keys.add(student_key)
+            student_results.append(result)
+    student_results = list(reversed(student_results))
+    
+    if len(student_results) != len(student_results_raw):
+        logger.info(
+            f"[logic_review] 去重: {len(student_results_raw)} → {len(student_results)} 学生"
+        )
+    
     parsed_rubric = state.get("parsed_rubric", {}) or {}
     api_key = state.get("api_key") or os.getenv("LLM_API_KEY") or os.getenv("OPENROUTER_API_KEY")
     grading_mode = _resolve_grading_mode(state.get("inputs", {}), parsed_rubric)
