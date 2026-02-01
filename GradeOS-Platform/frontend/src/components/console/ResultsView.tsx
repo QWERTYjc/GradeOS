@@ -2399,29 +2399,88 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                 <div className="flex-1 min-h-0 overflow-hidden flex">
                     {/* Image Panel */}
                     <div className="w-1/2 h-full min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain p-6 border-r border-slate-200 custom-scrollbar space-y-6 bg-white">
-                        {/* 批注开关 */}
+                        {/* 批注工具栏 */}
                         <div className="flex items-center justify-between pb-4 border-b border-slate-100">
                             <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-[0.2em]">
                                 答题图片
                             </span>
-                            <label className="flex items-center gap-2 cursor-pointer">
-                                <span className="text-xs text-slate-500">显示批注</span>
-                                <div className="relative">
-                                    <input
-                                        type="checkbox"
-                                        checked={showAnnotations}
-                                        onChange={(e) => {
-                                            setShowAnnotations(e.target.checked);
-                                            if (!e.target.checked) {
-                                                setPageAnnotationsData(new Map());
+                            <div className="flex items-center gap-3">
+                                {/* 生成批注按钮 */}
+                                <button
+                                    onClick={async () => {
+                                        if (!submissionId || !detailViewStudent?.studentName) return;
+                                        try {
+                                            const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || ''}/api/annotations/generate`, {
+                                                method: 'POST',
+                                                headers: { 'Content-Type': 'application/json' },
+                                                body: JSON.stringify({
+                                                    grading_history_id: submissionId,
+                                                    student_key: detailViewStudent.studentName,
+                                                    overwrite: false,
+                                                }),
+                                            });
+                                            if (res.ok) {
+                                                setShowAnnotations(true);
                                             }
-                                        }}
-                                        className="sr-only peer"
-                                    />
-                                    <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-500"></div>
-                                </div>
-                                <Pencil className="w-3.5 h-3.5 text-slate-400" />
-                            </label>
+                                        } catch (err) {
+                                            console.error('生成批注失败:', err);
+                                        }
+                                    }}
+                                    className="text-[11px] text-blue-600 hover:text-blue-700 font-medium"
+                                >
+                                    生成批注
+                                </button>
+                                {/* 导出 PDF 按钮 */}
+                                <button
+                                    onClick={async () => {
+                                        if (!submissionId || !detailViewStudent?.studentName) return;
+                                        try {
+                                            const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || ''}/api/annotations/export/pdf`, {
+                                                method: 'POST',
+                                                headers: { 'Content-Type': 'application/json' },
+                                                body: JSON.stringify({
+                                                    grading_history_id: submissionId,
+                                                    student_key: detailViewStudent.studentName,
+                                                    include_summary: true,
+                                                }),
+                                            });
+                                            if (res.ok) {
+                                                const blob = await res.blob();
+                                                const url = URL.createObjectURL(blob);
+                                                const a = document.createElement('a');
+                                                a.href = url;
+                                                a.download = `批改报告_${detailViewStudent.studentName}.pdf`;
+                                                a.click();
+                                                URL.revokeObjectURL(url);
+                                            }
+                                        } catch (err) {
+                                            console.error('导出 PDF 失败:', err);
+                                        }
+                                    }}
+                                    className="text-[11px] text-emerald-600 hover:text-emerald-700 font-medium"
+                                >
+                                    导出 PDF
+                                </button>
+                                {/* 批注开关 */}
+                                <label className="flex items-center gap-2 cursor-pointer">
+                                    <span className="text-xs text-slate-500">显示批注</span>
+                                    <div className="relative">
+                                        <input
+                                            type="checkbox"
+                                            checked={showAnnotations}
+                                            onChange={(e) => {
+                                                setShowAnnotations(e.target.checked);
+                                                if (!e.target.checked) {
+                                                    setPageAnnotationsData(new Map());
+                                                }
+                                            }}
+                                            className="sr-only peer"
+                                        />
+                                        <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-500"></div>
+                                    </div>
+                                    <Pencil className="w-3.5 h-3.5 text-slate-400" />
+                                </label>
+                            </div>
                         </div>
                         {uniquePages.length === 0 && (
                             <div className="flex flex-col items-center justify-center h-full text-slate-400 gap-2">
