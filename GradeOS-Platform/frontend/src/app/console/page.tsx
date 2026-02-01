@@ -1024,7 +1024,7 @@ export default function ConsolePage() {
                             initial={{ opacity: 0, x: 30 }}
                             animate={{ opacity: 1, x: 0 }}
                             exit={{ opacity: 0, x: 30 }}
-                            className="fixed right-6 top-24 bottom-6 w-[360px] z-40 pointer-events-auto"
+                            className="fixed right-6 top-24 bottom-6 w-[360px] z-50 pointer-events-auto"
                         >
                             <LLMThoughtsPanel className="h-full" onClose={handleStreamClose} />
                         </motion.div>

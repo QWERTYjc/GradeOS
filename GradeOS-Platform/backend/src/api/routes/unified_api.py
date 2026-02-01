@@ -1514,6 +1514,7 @@ async def get_grading_history(
 ):
     """Get grading history list from PostgreSQL."""
     records: List[Dict[str, Any]] = []
+    seen_ids: set[str] = set()
 
     allowed_class_ids: Optional[List[str]] = None
     if teacher_id:
@@ -1584,8 +1585,89 @@ async def get_grading_history(
                     "revoked_at": None,
                 }
             )
+            seen_ids.add(str(history.id))
     except Exception as exc:
         logger.warning(f"PostgreSQL grading detail read failed: {exc}")
+
+    try:
+        with get_connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM grading_history ORDER BY created_at DESC LIMIT ?",
+                (200,),
+            ).fetchall()
+        for row in rows:
+            import_id = str(row["id"])
+            if import_id in seen_ids:
+                continue
+            raw_class_ids = row.get("class_ids")
+            if isinstance(raw_class_ids, str):
+                try:
+                    class_ids = json.loads(raw_class_ids) if raw_class_ids else []
+                except Exception:
+                    class_ids = []
+            elif isinstance(raw_class_ids, list):
+                class_ids = raw_class_ids
+            else:
+                class_ids = []
+
+            result_meta = row.get("result_data") or {}
+            if isinstance(result_meta, str):
+                try:
+                    result_meta = json.loads(result_meta)
+                except Exception:
+                    result_meta = {}
+
+            if allowed_class_ids is not None:
+                teacher_match = row.get("teacher_id") or result_meta.get("teacher_id") or result_meta.get("teacherId")
+                if teacher_match and teacher_id and teacher_match == teacher_id:
+                    pass
+                else:
+                    if class_ids:
+                        if not any(cid in allowed_class_ids for cid in class_ids):
+                            continue
+                    else:
+                        if teacher_match != teacher_id:
+                            continue
+
+            target_class_id = class_id or (class_ids[0] if class_ids else None)
+            if class_id and class_id not in class_ids:
+                continue
+
+            assignment_id_value = result_meta.get("homework_id") or result_meta.get("assignment_id")
+            if assignment_id and assignment_id_value != assignment_id:
+                continue
+
+            class_info = get_class_by_id(target_class_id) if target_class_id else None
+            assignment_title = None
+            if assignment_id_value:
+                assignment = get_homework(assignment_id_value)
+                assignment_title = assignment.title if assignment else None
+
+            created_at_value = row.get("created_at")
+            if isinstance(created_at_value, datetime):
+                created_at_value = created_at_value.isoformat()
+            elif created_at_value is not None:
+                created_at_value = str(created_at_value)
+            if not created_at_value:
+                created_at_value = ""
+
+            records.append(
+                {
+                    "import_id": import_id,
+                    "batch_id": row.get("batch_id") or "",
+                    "class_id": target_class_id or "",
+                    "class_name": class_info.name if class_info else None,
+                    "assignment_id": assignment_id_value,
+                    "assignment_title": assignment_title,
+                    "student_count": row.get("total_students") or 0,
+                    "status": row.get("status") or "unknown",
+                    "created_at": created_at_value,
+                    "revoked_at": None,
+                }
+            )
+            seen_ids.add(import_id)
+    except Exception as exc:
+        logger.warning(f"grading history fallback read failed: {exc}")
 
     try:
         with get_connection() as conn:
@@ -1615,6 +1697,8 @@ async def get_grading_history(
                 created_at_value = str(created_at_value)
             if not created_at_value:
                 created_at_value = ""
+            if str(row["id"]) in seen_ids:
+                continue
             records.append(
                 {
                     "import_id": str(row["id"]),
@@ -1629,6 +1713,7 @@ async def get_grading_history(
                     "revoked_at": row["revoked_at"],
                 }
             )
+            seen_ids.add(str(row["id"]))
     except Exception as exc:
         logger.warning(f"grading import records read failed: {exc}")
 

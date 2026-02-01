@@ -407,9 +407,6 @@ async def broadcast_progress(batch_id: str, message: dict):
         logger.debug(f"Failed to cache progress message: {exc}")
     if batch_id in active_connections:
         disconnected = []
-        # #region agent log
-        import sys; sys.stdout.write(f'[DEBUG_LOG] {{"hypothesisId":"H1","location":"batch_langgraph.py:broadcast_progress","message":"广播消息到WebSocket","data":{{"batch_id":"{batch_id}","msg_type":"{msg_type}","connections":{len(active_connections[batch_id])}}},"timestamp":{int(__import__("time").time()*1000)},"sessionId":"debug-session"}}\n'); sys.stdout.flush()
-        # #endregion
         for ws in active_connections[batch_id]:
             if not _is_ws_connected(ws):
                 disconnected.append(ws)
@@ -423,25 +420,15 @@ async def broadcast_progress(batch_id: str, message: dict):
             try:
                 async with ws_locks[ws_id]:
                     await ws.send_json(message)
-                # #region agent log
-                import sys; sys.stdout.write(f'[DEBUG_LOG] {{"hypothesisId":"H3","location":"batch_langgraph.py:broadcast_progress:send_ok","message":"WebSocket发送成功","data":{{"batch_id":"{batch_id}","msg_type":"{msg_type}","ws_id":{ws_id}}},"timestamp":{int(__import__("time").time()*1000)},"sessionId":"debug-session"}}\n'); sys.stdout.flush()
-                # #endregion
             except WebSocketDisconnect:
-                # #region agent log
-                import sys; sys.stdout.write(f'[DEBUG_LOG] {{"hypothesisId":"H1","location":"batch_langgraph.py:broadcast_progress:disconnect","message":"WebSocket断开","data":{{"batch_id":"{batch_id}","ws_id":{ws_id}}},"timestamp":{int(__import__("time").time()*1000)},"sessionId":"debug-session"}}\n'); sys.stdout.flush()
-                # #endregion
                 disconnected.append(ws)
-            except RuntimeError as exc:
-                # #region agent log
-                import sys; sys.stdout.write(f'[DEBUG_LOG] {{"hypothesisId":"H1","location":"batch_langgraph.py:broadcast_progress:runtime_error","message":"WebSocket运行时错误","data":{{"batch_id":"{batch_id}","error":"{str(exc)[:100]}"}},"timestamp":{int(__import__("time").time()*1000)},"sessionId":"debug-session"}}\n'); sys.stdout.flush()
-                # #endregion
-                logger.debug(f"WebSocket 发送被跳过: {exc}")
+            except (RuntimeError, AssertionError):
+                # AssertionError: websockets 库内部 keepalive ping 与应用层写入的竞态条件
+                # RuntimeError: 连接已关闭
+                # 这两种错误都是预期的，静默处理
                 disconnected.append(ws)
-            except Exception as e:
-                # #region agent log
-                import sys; sys.stdout.write(f'[DEBUG_LOG] {{"hypothesisId":"H1","location":"batch_langgraph.py:broadcast_progress:error","message":"WebSocket发送失败","data":{{"batch_id":"{batch_id}","error":"{str(e)[:100]}"}},"timestamp":{int(__import__("time").time()*1000)},"sessionId":"debug-session"}}\n'); sys.stdout.flush()
-                # #endregion
-                logger.error(f"WebSocket 发送失败: {e}")
+            except Exception:
+                # 其他错误也静默处理，只记录断开
                 disconnected.append(ws)
 
         # 移除断开的连接
@@ -894,6 +881,7 @@ async def submit_batch(
                 "expected_total_score": expected_total_score,
                 "enable_review": enable_review,
                 "grading_mode": grading_mode or "auto",
+                "teacher_id": teacher_key,
             },
         }
 
@@ -1037,9 +1025,6 @@ async def stream_langgraph_progress(
                     # 评分标准解析完成
                     if node_name == "rubric_parse" and output.get("parsed_rubric"):
                         parsed = output["parsed_rubric"]
-                        # #region agent log
-                        import sys; sys.stdout.write(f'[DEBUG_LOG] {{"hypothesisId":"H4","location":"batch_langgraph.py:stream_langgraph_progress:rubric_parsed","message":"准备发送rubric_parsed消息","data":{{"batch_id":"{batch_id}","total_questions":{parsed.get("total_questions", 0)},"total_score":{parsed.get("total_score", 0)}}},"timestamp":{int(__import__("time").time()*1000)},"sessionId":"debug-session"}}\n'); sys.stdout.flush()
-                        # #endregion
                         await broadcast_progress(
                             batch_id,
                             {
@@ -2331,10 +2316,38 @@ async def websocket_endpoint(websocket: WebSocket, batch_id: str):
         active_connections[batch_id] = []
     active_connections[batch_id].append(websocket)
 
-    # #region agent log
-    import sys; sys.stdout.write(f'[DEBUG_LOG] {{"hypothesisId":"H2","location":"batch_langgraph.py:websocket_endpoint:connected","message":"WebSocket连接已建立并注册","data":{{"batch_id":"{batch_id}","ws_id":{ws_id},"total_connections":{len(active_connections[batch_id])}}},"timestamp":{int(__import__("time").time()*1000)},"sessionId":"debug-session"}}\n'); sys.stdout.flush()
-    # #endregion
-    logger.info(f"WebSocket 连接建立: batch_id={batch_id}")
+    # 检查该批次是否有活跃的 LangGraph 运行
+    orchestrator_check = await get_orchestrator()
+    run_exists = False
+    if orchestrator_check:
+        try:
+            run_info = await orchestrator_check.get_run_info(f"batch_grading_{batch_id}")
+            run_exists = run_info is not None
+        except Exception:
+            pass
+    
+    logger.debug(f"WebSocket 连接建立: batch_id={batch_id}, run_exists={run_exists}")
+    
+    # 如果批次不存在活跃的运行，静默关闭连接
+    # 这是正常情况（前端可能连接到已完成的批次），不需要记录错误
+    if not run_exists:
+        try:
+            async with ws_locks[ws_id]:
+                await websocket.send_json({
+                    "type": "batch_not_found",
+                    "message": f"Batch {batch_id} has no active run. It may have completed or does not exist.",
+                    "batchId": batch_id,
+                })
+        except Exception:
+            pass  # 静默处理 - 连接可能已关闭，这是预期的
+        # 清理连接
+        _discard_connection(batch_id, websocket)
+        ws_locks.pop(ws_id, None)
+        try:
+            await websocket.close(code=1000, reason="Batch not found")
+        except Exception:
+            pass
+        return  # 直接返回，不进入 while 循环
 
     # 连接建立后尝试发送当前状态快照，避免前端错过早期事件导致卡住
     try:
@@ -2476,40 +2489,30 @@ async def websocket_endpoint(websocket: WebSocket, batch_id: str):
                     student_mapping=None,
                     teacher_key=teacher_key,
                 )
-    except Exception as e:
-        # #region agent log
-        import sys; sys.stdout.write(f'[DEBUG_LOG] {{"hypothesisId":"H5","location":"batch_langgraph.py:websocket_endpoint:snapshot_error","message":"发送状态快照失败","data":{{"batch_id":"{batch_id}","ws_id":{ws_id},"error":"{str(e)[:100]}"}},"timestamp":{int(__import__("time").time()*1000)},"sessionId":"debug-session"}}\n'); sys.stdout.flush()
-        # #endregion
-        logger.debug(f"发送状态快照失败: {e}")
+    except Exception:
+        pass  # 状态快照发送失败是正常情况，静默处理
 
     try:
         # 保持连接，等待客户端消息或断开
-        # #region agent log
-        import sys; sys.stdout.write(f'[DEBUG_LOG] {{"hypothesisId":"H5","location":"batch_langgraph.py:websocket_endpoint:before_while","message":"进入while循环前","data":{{"batch_id":"{batch_id}","ws_id":{ws_id}}},"timestamp":{int(__import__("time").time()*1000)},"sessionId":"debug-session"}}\n'); sys.stdout.flush()
-        # #endregion
         while True:
             if not _is_ws_connected(websocket):
-                # #region agent log
-                import sys; sys.stdout.write(f'[DEBUG_LOG] {{"hypothesisId":"H6","location":"batch_langgraph.py:websocket_endpoint:not_connected","message":"_is_ws_connected返回False","data":{{"batch_id":"{batch_id}","ws_id":{ws_id}}},"timestamp":{int(__import__("time").time()*1000)},"sessionId":"debug-session"}}\n'); sys.stdout.flush()
-                # #endregion
                 break
             data = await websocket.receive_text()
             logger.debug(f"收到 WebSocket 消息: batch_id={batch_id}, data={data}")
 
-    except (WebSocketDisconnect, RuntimeError) as exc:
-        # #region agent log
-        import sys; sys.stdout.write(f'[DEBUG_LOG] {{"hypothesisId":"H8","location":"batch_langgraph.py:websocket_endpoint:disconnect_exception","message":"WebSocket断开异常","data":{{"batch_id":"{batch_id}","ws_id":{ws_id},"error":"{str(exc)[:100]}"}},"timestamp":{int(__import__("time").time()*1000)},"sessionId":"debug-session"}}\n'); sys.stdout.flush()
-        # #endregion
-        logger.info(f"WebSocket 连接断开: batch_id={batch_id}, reason={exc}")
+    except (WebSocketDisconnect, RuntimeError, AssertionError):
+        # WebSocketDisconnect: 正常断开
+        # RuntimeError: 连接已关闭时的操作
+        # AssertionError: websockets 库内部 keepalive ping 竞态条件
+        # 这些都是预期的断开情况，静默处理
+        pass
+    except Exception:
+        # 其他异常也静默处理
+        pass
+    finally:
+        # 🔥 FIX: 无论如何都要清理连接，防止连接泄漏
         _discard_connection(batch_id, websocket)
-        return
-    except Exception as exc:
-        # #region agent log
-        import sys; sys.stdout.write(f'[DEBUG_LOG] {{"hypothesisId":"H8","location":"batch_langgraph.py:websocket_endpoint:other_exception","message":"WebSocket其他异常","data":{{"batch_id":"{batch_id}","ws_id":{ws_id},"error":"{str(exc)[:100]}"}},"timestamp":{int(__import__("time").time()*1000)},"sessionId":"debug-session"}}\n'); sys.stdout.flush()
-        # #endregion
-        logger.debug(f"WebSocket 接收异常: batch_id={batch_id}, error={exc}")
-        logger.info(f"WebSocket 连接断开: batch_id={batch_id}")
-        _discard_connection(batch_id, websocket)
+        ws_locks.pop(ws_id, None)
 
 
 @router.get("/active", response_model=ActiveRunsResponse)

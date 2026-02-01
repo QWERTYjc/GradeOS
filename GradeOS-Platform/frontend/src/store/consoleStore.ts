@@ -588,8 +588,8 @@ const initialNodes: WorkflowNode[] = [
     { id: 'rubric_parse', label: 'Rubric Parse', status: 'pending', isParallelContainer: true, children: [] },
     { id: 'rubric_review', label: 'Rubric Review', status: 'pending' },
     { id: 'grade_batch', label: 'Student Grading', status: 'pending', isParallelContainer: true, children: [] },
-    { id: 'confession', label: 'Confession', status: 'pending' },
-    { id: 'logic_review', label: 'Logic Review', status: 'pending' },
+    { id: 'confession', label: 'Confession', status: 'pending', isParallelContainer: true, children: [] },
+    { id: 'logic_review', label: 'Logic Review', status: 'pending', isParallelContainer: true, children: [] },
     { id: 'review', label: 'Results Review', status: 'pending' },
     { id: 'export', label: 'Export', status: 'pending' },
 ];
@@ -1078,7 +1078,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
             let shouldAppend = true;
             const normalizedStreamType = streamType || 'output';
             const isThinking = normalizedStreamType === 'thinking';
-            const maxChars = 12000;
+            const maxChars = 200000;
 
             if (isThinking) {
                 if (typeof chunk === 'string') {
@@ -1136,12 +1136,12 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                 const combined = updated[existingIdx].content + contentStr;
                 updated[existingIdx] = {
                     ...updated[existingIdx],
-                    content: combined.length > maxChars ? combined.slice(-maxChars) : combined
+                    content: (maxChars > 0 && combined.length > maxChars) ? combined.slice(-maxChars) : combined
                 };
                 return { llmThoughts: updated };
             } else {
                 // 创建新思�?
-                const truncated = contentStr.length > maxChars ? contentStr.slice(-maxChars) : contentStr;
+                const truncated = maxChars > 0 && contentStr.length > maxChars ? contentStr.slice(-maxChars) : contentStr;
                 return {
                     llmThoughts: [...state.llmThoughts, {
                         id: thoughtId,
@@ -1357,6 +1357,24 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                     submissionId: null,
                 });
                 get().addLog(message, 'ERROR');
+            });
+
+            // 🔥 FIX: 处理批次不存在事件 - 停止重连并清理状态
+            wsClient.on('batch_not_found', (data: any) => {
+                console.warn('Batch Not Found:', data);
+                const message = data.message || 'This batch has completed or does not exist.';
+                const currentBatchId = get().submissionId;
+                const receivedBatchId = data.batchId || data.batch_id;
+                
+                // 只有当消息对应当前批次时才处理
+                if (receivedBatchId && currentBatchId && receivedBatchId !== currentBatchId) {
+                    console.log(`Ignoring batch_not_found for different batch: ${receivedBatchId} vs current ${currentBatchId}`);
+                    return;
+                }
+                
+                get().addLog(message, 'WARNING');
+                // 断开 WebSocket 连接，防止无限重连
+                wsClient.disconnect();
             });
 
             // 🔥 处理图片预处理完成事�?- 用于结果页显示答题图�?
