@@ -14,7 +14,7 @@ import {
 import clsx from 'clsx';
 import { AppContext } from '@/components/bookscan/AppContext';
 import { ScannedImage, Session } from '@/components/bookscan/types';
-import { api } from '@/services/api';
+import { api, classApi } from '@/services/api';
 
 // Dynamic imports - Scanner and Gallery use pdfjs-dist which requires browser APIs
 const Scanner = dynamic(() => import('@/components/bookscan/Scanner'), { ssr: false });
@@ -68,6 +68,10 @@ interface ScannerContainerProps {
 
     // 班级批改模式下的学生映射
     studentNameMapping?: Array<{ studentId?: string; studentName?: string; studentKey?: string; startIndex: number; endIndex: number }>;
+    
+    // 当前用户信息（用于获取班级列表）
+    userId?: string;
+    userType?: string;
 }
 
 const ScannerContainer = ({
@@ -82,12 +86,21 @@ const ScannerContainer = ({
     onGradingModeChange,
     expectedTotalScore,
     onExpectedTotalScoreChange,
-    studentNameMapping = []
+    studentNameMapping = [],
+    userId,
+    userType
 }: ScannerContainerProps) => {
     const { setCurrentSessionId, sessions } = useContext(AppContext)!;
     const [viewMode, setViewMode] = useState<ScanViewMode>('exams');
     const [studentBoundaries, setStudentBoundaries] = useState<number[]>([]);
     const [studentInfos, setStudentInfos] = useState<Array<{ studentName: string; studentId: string }>>([]);
+    
+    // 班级选择相关状态
+    const [availableClasses, setAvailableClasses] = useState<Array<{ class_id: string; class_name: string }>>([]);
+    const [selectedClassId, setSelectedClassId] = useState<string>('');
+    const [classStudents, setClassStudents] = useState<Array<{ id: string; name: string; username: string }>>([]);
+    const [isLoadingClasses, setIsLoadingClasses] = useState(false);
+    const [isLoadingStudents, setIsLoadingStudents] = useState(false);
 
     useEffect(() => {
         if (viewMode === 'exams' && examSessionId) {
@@ -99,6 +112,72 @@ const ScannerContainer = ({
 
     const currentSession = sessions.find(s => s.id === (viewMode === 'exams' ? examSessionId : rubricSessionId));
     const imageCount = currentSession?.images.length || 0;
+
+    // 加载班级列表
+    useEffect(() => {
+        if (!userId || !userType) return;
+        
+        const loadClasses = async () => {
+            setIsLoadingClasses(true);
+            try {
+                let classes: Array<{ class_id: string; class_name: string }> = [];
+                
+                if (userType === 'teacher') {
+                    const response = await classApi.getTeacherClasses(userId);
+                    classes = response.map((c: any) => ({ class_id: c.class_id, class_name: c.class_name }));
+                } else if (userType === 'student') {
+                    const response = await classApi.getMyClasses(userId);
+                    classes = response.map((c: any) => ({ class_id: c.class_id, class_name: c.class_name }));
+                }
+                
+                setAvailableClasses(classes);
+            } catch (error) {
+                console.error('Failed to load classes:', error);
+            } finally {
+                setIsLoadingClasses(false);
+            }
+        };
+        
+        loadClasses();
+    }, [userId, userType]);
+
+    // 加载班级学生
+    useEffect(() => {
+        if (!selectedClassId) {
+            setClassStudents([]);
+            return;
+        }
+        
+        const loadStudents = async () => {
+            setIsLoadingStudents(true);
+            try {
+                const students = await classApi.getClassStudents(selectedClassId);
+                setClassStudents(students);
+                
+                // 自动填充学生信息到 studentInfos
+                if (students.length > 0) {
+                    const autoMapping = students.map((s: any) => ({
+                        studentName: s.name || s.username,
+                        studentId: s.id,
+                    }));
+                    setStudentInfos(autoMapping);
+                    
+                    // 自动设置边界（假设每个学生平均分配页面）
+                    if (imageCount > 0) {
+                        const pagesPerStudent = Math.floor(imageCount / students.length);
+                        const boundaries = students.map((_: any, idx: number) => idx * pagesPerStudent);
+                        setStudentBoundaries(boundaries);
+                    }
+                }
+            } catch (error) {
+                console.error('Failed to load students:', error);
+            } finally {
+                setIsLoadingStudents(false);
+            }
+        };
+        
+        loadStudents();
+    }, [selectedClassId, imageCount]);
 
     const normalizeBoundaries = (boundaries: number[], total: number) => {
         const normalized = Array.from(
@@ -218,6 +297,60 @@ const ScannerContainer = ({
 
                     <div className="flex items-center gap-4">
                         {viewMode === 'exams' && (
+                            <>
+                                {/* 班级选择器 */}
+                                {availableClasses.length > 0 && (
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-[0.2em]">班级</span>
+                                        <select
+                                            value={selectedClassId}
+                                            onChange={(e) => setSelectedClassId(e.target.value)}
+                                            disabled={isLoadingClasses}
+                                            className="text-xs font-medium text-slate-700 bg-white border border-slate-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer disabled:opacity-50"
+                                        >
+                                            <option value="">选择班级...</option>
+                                            {availableClasses.map(cls => (
+                                                <option key={cls.class_id} value={cls.class_id}>
+                                                    {cls.class_name}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                )}
+                                
+                                {/* 学生数量显示 */}
+                                {classStudents.length > 0 && (
+                                    <div className="flex items-center gap-2 rounded-full border border-blue-200 bg-blue-50 px-3 py-1.5 text-[11px] font-semibold text-blue-700">
+                                        <span className="uppercase tracking-[0.2em]">学生</span>
+                                        <span>{classStudents.length}</span>
+                                    </div>
+                                )}
+                                
+                                <div className="flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-[11px] font-semibold text-slate-600">
+                                    <span className="uppercase tracking-[0.2em] text-slate-400">Total</span>
+                                    <input
+                                        type="number"
+                                        min={0}
+                                        step={0.5}
+                                        value={expectedTotalScore ?? ''}
+                                        onChange={(event) => {
+                                            const nextValue = event.target.value.trim();
+                                            if (!nextValue) {
+                                                onExpectedTotalScoreChange(null);
+                                                return;
+                                            }
+                                            const parsed = Number(nextValue);
+                                            if (Number.isFinite(parsed) && parsed >= 0) {
+                                                onExpectedTotalScoreChange(parsed);
+                                            }
+                                        }}
+                                        placeholder="Max score"
+                                        className="w-20 bg-transparent text-xs font-semibold text-slate-900 outline-none placeholder:text-slate-300"
+                                    />
+                                </div>
+                            </>
+                        )}
+                        {viewMode === 'rubrics' && (
                             <div className="flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-[11px] font-semibold text-slate-600">
                                 <span className="uppercase tracking-[0.2em] text-slate-400">Total</span>
                                 <input
@@ -269,36 +402,75 @@ const ScannerContainer = ({
                 </div>
             </div>
 
-            {/* Content Content - Re-mount on view change to reset gallery state if needed */}
-            <div className="flex-1 min-h-0 bg-transparent">
-                {activeTab === 'scan' ? (
-                    <Scanner />
-                ) : (
-                    <Gallery
-                        key={viewMode} // Force re-mount when switching modes
-                        session={currentSession} // Direct pass to avoid context lag
-                        onSubmitBatch={handleSubmit}
-                        submitLabel={viewMode === 'exams' ? "Start Grading" : undefined}
-                        onBoundariesChange={viewMode === 'exams' ? handleBoundariesChange : undefined}
-                        isRubricMode={viewMode === 'rubrics'}
-                        studentNameMapping={viewMode === 'exams' ? displayStudentMapping : undefined}
-                        onStudentInfoChange={viewMode === 'exams' ? (index, info) => {
-                            setStudentInfos((prev) => {
-                                const next = [...prev];
-                                const current = next[index] || { studentName: '', studentId: '' };
-                                next[index] = {
-                                    studentName: info.studentName ?? current.studentName,
-                                    studentId: info.studentId ?? current.studentId,
-                                };
-                                return next;
-                            });
-                        } : undefined}
-                        interactionEnabled={interactionEnabled}
-                        onInteractionToggle={onInteractionToggle}
-                        gradingMode={gradingMode}
-                        onGradingModeChange={onGradingModeChange}
-                    />
+            {/* Content Area - 包含学生列表侧边栏和主内容区 */}
+            <div className="flex-1 min-h-0 bg-transparent flex">
+                {/* 学生列表侧边栏 - 仅在选择班级且有学生时显示 */}
+                {viewMode === 'exams' && classStudents.length > 0 && (
+                    <div className="w-64 border-r border-slate-200 bg-slate-50 overflow-y-auto">
+                        <div className="p-4 border-b border-slate-200 bg-white">
+                            <h3 className="text-sm font-semibold text-slate-900">班级学生</h3>
+                            <p className="text-xs text-slate-500 mt-1">共 {classStudents.length} 人</p>
+                        </div>
+                        <div className="p-2 space-y-1">
+                            {classStudents.map((student, index) => (
+                                <div
+                                    key={student.id}
+                                    className="flex items-center gap-3 p-3 rounded-lg bg-white border border-slate-200 hover:border-blue-300 hover:bg-blue-50 transition-colors cursor-pointer"
+                                >
+                                    <div className="flex-shrink-0 w-8 h-8 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center text-xs font-semibold">
+                                        {index + 1}
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                        <div className="text-sm font-medium text-slate-900 truncate">
+                                            {student.name || student.username}
+                                        </div>
+                                        <div className="text-xs text-slate-500 truncate">
+                                            {student.id}
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                        {isLoadingStudents && (
+                            <div className="p-4 text-center">
+                                <div className="inline-block animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
+                                <p className="text-xs text-slate-500 mt-2">加载中...</p>
+                            </div>
+                        )}
+                    </div>
                 )}
+                
+                {/* 主内容区 */}
+                <div className="flex-1 min-h-0 bg-transparent">
+                    {activeTab === 'scan' ? (
+                        <Scanner />
+                    ) : (
+                        <Gallery
+                            key={viewMode} // Force re-mount when switching modes
+                            session={currentSession} // Direct pass to avoid context lag
+                            onSubmitBatch={handleSubmit}
+                            submitLabel={viewMode === 'exams' ? "Start Grading" : undefined}
+                            onBoundariesChange={viewMode === 'exams' ? handleBoundariesChange : undefined}
+                            isRubricMode={viewMode === 'rubrics'}
+                            studentNameMapping={viewMode === 'exams' ? displayStudentMapping : undefined}
+                            onStudentInfoChange={viewMode === 'exams' ? (index, info) => {
+                                setStudentInfos((prev) => {
+                                    const next = [...prev];
+                                    const current = next[index] || { studentName: '', studentId: '' };
+                                    next[index] = {
+                                        studentName: info.studentName ?? current.studentName,
+                                        studentId: info.studentId ?? current.studentId,
+                                    };
+                                    return next;
+                                });
+                            } : undefined}
+                            interactionEnabled={interactionEnabled}
+                            onInteractionToggle={onInteractionToggle}
+                            gradingMode={gradingMode}
+                            onGradingModeChange={onGradingModeChange}
+                        />
+                    )}
+                </div>
             </div>
         </div>
     );
@@ -776,6 +948,8 @@ export default function ConsolePage() {
                                     expectedTotalScore={expectedTotalScore}
                                     onExpectedTotalScoreChange={setExpectedTotalScore}
                                     studentNameMapping={classContext.studentImageMapping}
+                                    userId={user?.id}
+                                    userType={user?.role}
                                 />
                             </motion.div>
                         )}
