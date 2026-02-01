@@ -4215,3 +4215,87 @@ async def download_file(file_id: str):
     except Exception as e:
         logger.error(f"下载文件失败: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"下载文件失败: {str(e)}")
+
+
+# ====================== 管理 API ======================
+
+@router.post("/admin/clear-slots")
+async def admin_clear_all_slots(teacher_id: Optional[str] = None):
+    """
+    管理端点：清理教师的活动槽位（用于解决槽位卡死问题）
+    
+    如果提供 teacher_id，只清理该教师的槽位；
+    否则清理所有已知教师的槽位。
+    """
+    try:
+        run_controller = await get_run_controller()
+        if not run_controller:
+            return {"success": False, "message": "Redis 不可用，无法清理槽位"}
+        
+        cleared_teachers = []
+        
+        if teacher_id:
+            # 清理指定教师的槽位
+            await run_controller.force_clear_teacher_slots(teacher_id)
+            cleared_teachers.append(teacher_id)
+        else:
+            # 清理所有已知教师的槽位
+            # 从 Redis 中获取所有教师的 active 槽位 key
+            redis_client = run_controller._redis
+            pattern = "grading_run:*:active"
+            async for key in redis_client.scan_iter(match=pattern):
+                key_str = key.decode("utf-8") if isinstance(key, bytes) else key
+                # 从 key 中提取 teacher_key
+                parts = key_str.split(":")
+                if len(parts) >= 3:
+                    teacher_key = parts[1]
+                    await run_controller.force_clear_teacher_slots(teacher_key)
+                    cleared_teachers.append(teacher_key)
+        
+        logger.info(f"[admin_clear_all_slots] 已清理槽位: {cleared_teachers}")
+        return {
+            "success": True,
+            "message": f"已清理 {len(cleared_teachers)} 个教师的槽位",
+            "cleared_teachers": cleared_teachers,
+        }
+    except Exception as e:
+        logger.error(f"清理槽位失败: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"清理槽位失败: {str(e)}")
+
+
+@router.post("/admin/clear-progress-cache")
+async def admin_clear_progress_cache(batch_id: Optional[str] = None):
+    """
+    管理端点：清理批改进度缓存（用于解决旧批次缓存重放问题）
+    
+    如果提供 batch_id，只清理该批次的缓存；
+    否则清理所有批次的缓存。
+    """
+    try:
+        redis_client = await _get_redis_client()
+        if not redis_client:
+            return {"success": False, "message": "Redis 不可用，无法清理缓存"}
+        
+        cleared_count = 0
+        
+        if batch_id:
+            # 清理指定批次的缓存
+            cache_key = _progress_cache_key(batch_id)
+            await redis_client.delete(cache_key)
+            cleared_count = 1
+        else:
+            # 清理所有批次的缓存
+            pattern = f"{REDIS_PROGRESS_KEY_PREFIX}:*"
+            async for key in redis_client.scan_iter(match=pattern):
+                await redis_client.delete(key)
+                cleared_count += 1
+        
+        logger.info(f"[admin_clear_progress_cache] 已清理 {cleared_count} 个批次的进度缓存")
+        return {
+            "success": True,
+            "message": f"已清理 {cleared_count} 个批次的进度缓存",
+            "cleared_count": cleared_count,
+        }
+    except Exception as e:
+        logger.error(f"清理进度缓存失败: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"清理进度缓存失败: {str(e)}")
