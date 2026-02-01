@@ -22,17 +22,28 @@ logger = logging.getLogger(__name__)
 
 # #region agent log - debug helper
 def _write_debug_log_bg(payload: dict) -> None:
-    """写入调试日志到本地文件（batch_grading专用）"""
+    """写入调试日志（支持本地文件或标准输出）
+    
+    环境变量 GRADEOS_DEBUG_LOG_PATH 指定日志文件路径
+    如果未设置，则输出到标准日志（Railway可见）
+    """
     import json
     from datetime import datetime
-    log_path = r"d:\project\GradeOS\.cursor\debug.log"
+    log_path = os.getenv("GRADEOS_DEBUG_LOG_PATH", "")
     try:
         payload["timestamp"] = payload.get("timestamp", int(datetime.now().timestamp() * 1000))
         payload["sessionId"] = payload.get("sessionId", "debug-session")
-        with open(log_path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(payload, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
+        log_line = json.dumps(payload, ensure_ascii=False)
+        
+        if log_path:
+            # 写入本地文件
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write(log_line + "\n")
+        else:
+            # 输出到标准日志（Railway 可见）
+            logger.info(f"[DEBUG_LOG] {log_line}")
+    except Exception as e:
+        logger.debug(f"_write_debug_log_bg failed: {e}")
 # #endregion
 # Stdout-visible workflow markers for Railway verification.
 workflow_logger = logging.getLogger("gradeos.workflow")

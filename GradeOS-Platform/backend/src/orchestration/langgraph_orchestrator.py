@@ -26,11 +26,16 @@ DEBUG_LOG_PATH = os.getenv("GRADEOS_DEBUG_LOG_PATH")
 
 
 def _write_debug_log(payload: Dict[str, Any]) -> None:
-    if not DEBUG_LOG_PATH:
-        return
+    """写入调试日志（支持本地文件或标准输出）"""
     try:
-        with open(DEBUG_LOG_PATH, "a", encoding="utf-8") as log_file:
-            log_file.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        log_line = json.dumps(payload, ensure_ascii=False)
+        if DEBUG_LOG_PATH:
+            # 写入本地文件
+            with open(DEBUG_LOG_PATH, "a", encoding="utf-8") as log_file:
+                log_file.write(log_line + "\n")
+        else:
+            # 输出到标准日志（Railway 可见）
+            logger.info(f"[DEBUG_LOG] {log_line}")
     except Exception as exc:
         logger.debug(f"Failed to write debug log: {exc}")
 
