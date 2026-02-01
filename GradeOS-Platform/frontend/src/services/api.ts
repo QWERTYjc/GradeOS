@@ -474,6 +474,14 @@ export interface GradingImportRequest {
   targets: GradingImportTarget[];
 }
 
+export interface GradingRecordStatistics {
+  average_score?: number;
+  max_score?: number;
+  min_score?: number;
+  pass_rate?: number;
+  score_distribution?: Record<string, number>;
+}
+
 export interface GradingImportRecord {
   import_id: string;
   batch_id: string;
@@ -485,6 +493,7 @@ export interface GradingImportRecord {
   status: string;
   created_at: string;
   revoked_at?: string;
+  statistics?: GradingRecordStatistics;
 }
 
 export interface GradingImportItem {
@@ -500,8 +509,16 @@ export interface GradingImportItem {
   result?: Record<string, any>;
 }
 
+export interface GradingHistorySummary {
+  total_records: number;
+  total_students_graded: number;
+  overall_average?: number;
+  trend?: 'improving' | 'stable' | 'regressing';
+}
+
 export interface GradingHistoryResponse {
   records: GradingImportRecord[];
+  summary?: GradingHistorySummary;
 }
 
 export interface GradingHistoryDetailResponse {
@@ -676,8 +693,12 @@ export const gradingApi = {
       body: JSON.stringify(data),
     }),
 
-  getGradingHistory: (params?: { class_id?: string; assignment_id?: string }) => {
-    const query = new URLSearchParams(params as Record<string, string>).toString();
+  getGradingHistory: (params?: { class_id?: string; assignment_id?: string; include_stats?: boolean }) => {
+    const queryParams: Record<string, string> = {};
+    if (params?.class_id) queryParams.class_id = params.class_id;
+    if (params?.assignment_id) queryParams.assignment_id = params.assignment_id;
+    if (params?.include_stats) queryParams.include_stats = 'true';
+    const query = new URLSearchParams(queryParams).toString();
     return request<GradingHistoryResponse>(`/grading/history${query ? `?${query}` : ''}`);
   },
 

@@ -1369,24 +1369,45 @@ class LangGraphOrchestrator(Orchestrator):
             状态字典
         """
         try:
-            logger.info(f"DEBUG: get_state called for run_id={run_id}")
+            # 首先检查数据库中是否有已完成的 output_data（优先使用，因为它包含完整的 page_indices）
+            run = await self._get_run_from_db(run_id)
+            if run and run.get("status") == "completed" and run.get("output_data"):
+                output_data = run["output_data"]
+                if isinstance(output_data, str):
+                    try:
+                        output_data = json.loads(output_data)
+                    except json.JSONDecodeError:
+                        logger.warning(f"Failed to parse output_data as JSON for {run_id}")
+                return output_data
+            
+            # 如果没有已完成的 output_data，尝试从 checkpointer 获取
             config = {"configurable": {"thread_id": run_id}}
             checkpoint = await self.checkpointer.aget(config)
-            logger.info(f"DEBUG: checkpointer.aget result for {run_id}: {bool(checkpoint)}")
             
             if checkpoint:
                 return checkpoint.get("channel_values", {})
             
-            # 如果 Checkpointer 中没有，尝试从 DB 或内存中获取（针对已完成的）
-            run = await self._get_run_from_db(run_id)
-            logger.info(f"DEBUG: _get_run_from_db result for {run_id}: {bool(run)}")
+            # 如果 Checkpointer 中也没有，尝试从 DB 获取 input_data
             
             if run:
                 if run.get("output_data"):
-                     return run["output_data"]
+                     # 确保 output_data 是 dict，如果是 JSON 字符串则解析
+                     output_data = run["output_data"]
+                     if isinstance(output_data, str):
+                         try:
+                             output_data = json.loads(output_data)
+                         except json.JSONDecodeError:
+                             logger.warning(f"Failed to parse output_data as JSON for {run_id}")
+                     return output_data
                 if run.get("input_data"):
                      # 如果只有输入数据（刚开始），至少返回输入
-                     return run["input_data"]
+                     input_data = run["input_data"]
+                     if isinstance(input_data, str):
+                         try:
+                             input_data = json.loads(input_data)
+                         except json.JSONDecodeError:
+                             logger.warning(f"Failed to parse input_data as JSON for {run_id}")
+                     return input_data
 
             return {}
         except Exception as e:
@@ -1490,11 +1511,7 @@ class LangGraphOrchestrator(Orchestrator):
     
     async def _get_run_from_db(self, run_id: str) -> Optional[Dict[str, Any]]:
         """从数据库查询 run 记录（支持离线模式）"""
-        # 先检查内存
-        if run_id in self._runs:
-            return self._runs[run_id]
-        
-        # 再检查数据库（兼容 psycopg3 AsyncConnectionPool）
+        # 优先从数据库获取（确保数据是最新的）
         if self.db_pool:
             try:
                 async with self.db_pool.connection() as conn:
@@ -1505,12 +1522,18 @@ class LangGraphOrchestrator(Orchestrator):
                         )
                         row = await cur.fetchone()
                         if row:
+                            # 如果 row 已经是字典（使用 dict_row），直接返回
+                            if isinstance(row, dict):
+                                return row
+                            # 否则使用 zip 转换
                             columns = ["run_id", "graph_name", "status", "input_data", "output_data", "error", "created_at", "updated_at"]
                             return dict(zip(columns, row))
-                        return None
             except Exception as e:
                 logger.warning(f"数据库查询失败: {e}")
-                return None
+        
+        # 如果数据库查询失败，回退到内存
+        if run_id in self._runs:
+            return self._runs[run_id]
         
         return None
     

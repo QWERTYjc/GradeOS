@@ -240,6 +240,15 @@ class AssistantProgressResponse(BaseModel):
     mastery_history: List[MasterySnapshot] = []
 
 
+class GradingRecordStatistics(BaseModel):
+    """批改记录统计数据"""
+    average_score: Optional[float] = None
+    max_score: Optional[float] = None
+    min_score: Optional[float] = None
+    pass_rate: Optional[float] = None  # 及格率 (>=60%)
+    score_distribution: Optional[Dict[str, int]] = None  # 分数分布
+
+
 class GradingImportRecord(BaseModel):
     import_id: str
     batch_id: str
@@ -251,6 +260,7 @@ class GradingImportRecord(BaseModel):
     status: str
     created_at: str
     revoked_at: Optional[str] = None
+    statistics: Optional[GradingRecordStatistics] = None  # 新增统计数据
 
 
 class GradingImportItem(BaseModel):
@@ -266,8 +276,17 @@ class GradingImportItem(BaseModel):
     result: Optional[dict] = None
 
 
+class GradingHistorySummary(BaseModel):
+    """批改历史汇总"""
+    total_records: int
+    total_students_graded: int
+    overall_average: Optional[float] = None
+    trend: Optional[str] = None  # improving / stable / regressing
+
+
 class GradingHistoryResponse(BaseModel):
     records: List[GradingImportRecord]
+    summary: Optional[GradingHistorySummary] = None  # 新增汇总数据
 
 
 class GradingHistoryDetailResponse(BaseModel):
@@ -340,6 +359,117 @@ def _parse_llm_json(text: str) -> Dict[str, Any]:
         if not match:
             raise
         return json.loads(match.group(0))
+
+
+def _calculate_grading_statistics(
+    history_id: str,
+    batch_id: str,
+) -> Optional[Dict[str, Any]]:
+    """计算批改记录的统计数据"""
+    scores: List[float] = []
+    max_scores: List[float] = []
+    
+    # 从 PostgreSQL 获取学生结果
+    try:
+        results = get_student_results(history_id)
+        for result in results:
+            if result.score is not None and result.max_score is not None and result.max_score > 0:
+                scores.append(result.score)
+                max_scores.append(result.max_score)
+    except Exception as exc:
+        logger.debug(f"Failed to get student results from PostgreSQL: {exc}")
+    
+    # 如果 PostgreSQL 没有数据，尝试从 SQLite 获取
+    if not scores:
+        try:
+            with get_connection() as conn:
+                rows = conn.execute(
+                    """SELECT result FROM grading_import_items 
+                       WHERE import_id = ? OR batch_id = ?""",
+                    (history_id, batch_id),
+                ).fetchall()
+                for row in rows:
+                    result_data = row["result"]
+                    if isinstance(result_data, str):
+                        try:
+                            result_data = json.loads(result_data)
+                        except Exception:
+                            continue
+                    if not result_data:
+                        continue
+                    score = result_data.get("totalScore") or result_data.get("total_score") or result_data.get("score")
+                    max_score = result_data.get("maxScore") or result_data.get("max_score")
+                    if score is not None and max_score is not None and max_score > 0:
+                        scores.append(float(score))
+                        max_scores.append(float(max_score))
+        except Exception as exc:
+            logger.debug(f"Failed to get student results from SQLite: {exc}")
+    
+    if not scores:
+        return None
+    
+    # 计算统计数据
+    avg_score = sum(scores) / len(scores) if scores else 0
+    max_score_val = max(scores) if scores else 0
+    min_score_val = min(scores) if scores else 0
+    
+    # 计算及格率（假设满分为 max_scores 中的最大值，及格线为 60%）
+    total_max = max(max_scores) if max_scores else 100
+    pass_threshold = total_max * 0.6
+    pass_count = sum(1 for s in scores if s >= pass_threshold)
+    pass_rate = pass_count / len(scores) if scores else 0
+    
+    # 计算分数分布
+    distribution = {
+        "0-59": 0,
+        "60-69": 0,
+        "70-79": 0,
+        "80-89": 0,
+        "90-100": 0,
+    }
+    for score, max_s in zip(scores, max_scores):
+        if max_s <= 0:
+            continue
+        pct = (score / max_s) * 100
+        if pct < 60:
+            distribution["0-59"] += 1
+        elif pct < 70:
+            distribution["60-69"] += 1
+        elif pct < 80:
+            distribution["70-79"] += 1
+        elif pct < 90:
+            distribution["80-89"] += 1
+        else:
+            distribution["90-100"] += 1
+    
+    return {
+        "average_score": round(avg_score, 2),
+        "max_score": round(max_score_val, 2),
+        "min_score": round(min_score_val, 2),
+        "pass_rate": round(pass_rate, 4),
+        "score_distribution": distribution,
+    }
+
+
+def _calculate_trend(averages: List[float]) -> str:
+    """计算成绩趋势"""
+    if len(averages) < 2:
+        return "stable"
+    
+    # 比较前半部分和后半部分的平均值
+    mid = len(averages) // 2
+    if mid == 0:
+        mid = 1
+    
+    earlier_avg = sum(averages[:mid]) / mid
+    recent_avg = sum(averages[mid:]) / (len(averages) - mid)
+    
+    diff = recent_avg - earlier_avg
+    if diff > 2:
+        return "improving"
+    elif diff < -2:
+        return "regressing"
+    return "stable"
 
 
 
@@ -1261,12 +1391,15 @@ async def import_grading_results(
 
 
 @router.get("/grading/history", response_model=GradingHistoryResponse, tags=["批改历史"])
-async def get_grading_history(
+async def get_grading_history_api(
     class_id: Optional[str] = None,
     assignment_id: Optional[str] = None,
+    include_stats: bool = False,
 ):
-    """Get grading history list from PostgreSQL."""
+    """Get grading history list from PostgreSQL with optional statistics."""
     records: List[Dict[str, Any]] = []
+    all_averages: List[float] = []
+    total_students_graded = 0
 
     try:
         histories = list_grading_history(class_id=class_id, limit=50)
@@ -1284,7 +1417,8 @@ async def get_grading_history(
             if assignment_id_value:
                 assignment = get_homework(assignment_id_value)
                 assignment_title = assignment.title if assignment else None
-            records.append({
+            
+            record_data = {
                 "import_id": history.id,
                 "batch_id": history.batch_id,
                 "class_id": target_class_id or "",
@@ -1295,7 +1429,19 @@ async def get_grading_history(
                 "status": history.status,
                 "created_at": history.created_at,
                 "revoked_at": None,
-            })
+                "statistics": None,
+            }
+            
+            # 计算统计数据
+            if include_stats and history.status != "revoked":
+                stats = _calculate_grading_statistics(history.id, history.batch_id)
+                if stats:
+                    record_data["statistics"] = stats
+                    if stats.get("average_score") is not None:
+                        all_averages.append(stats["average_score"])
+                    total_students_graded += history.total_students or 0
+            
+            records.append(record_data)
     except Exception as exc:
         logger.warning(f"PostgreSQL grading detail read failed: {exc}")
 
@@ -1318,7 +1464,8 @@ async def get_grading_history(
             if row["assignment_id"]:
                 assignment = get_homework(row["assignment_id"])
                 assignment_title = assignment.title if assignment else None
-            records.append({
+            
+            record_data = {
                 "import_id": row["id"],
                 "batch_id": row["batch_id"],
                 "class_id": row["class_id"],
@@ -1329,12 +1476,40 @@ async def get_grading_history(
                 "status": row["status"],
                 "created_at": row["created_at"],
                 "revoked_at": row["revoked_at"],
-            })
+                "statistics": None,
+            }
+            
+            # 计算统计数据
+            if include_stats and row["status"] != "revoked":
+                stats = _calculate_grading_statistics(row["id"], row["batch_id"])
+                if stats:
+                    record_data["statistics"] = stats
+                    if stats.get("average_score") is not None:
+                        all_averages.append(stats["average_score"])
+                    total_students_graded += row["student_count"] or 0
+            
+            records.append(record_data)
     except Exception as exc:
         logger.warning(f"grading import records read failed: {exc}")
 
     records = sorted(records, key=lambda item: item.get("created_at") or "", reverse=True)
-    return GradingHistoryResponse(records=[GradingImportRecord(**record) for record in records])
+    
+    # 构建汇总数据
+    summary = None
+    if include_stats:
+        overall_avg = sum(all_averages) / len(all_averages) if all_averages else None
+        trend = _calculate_trend(all_averages) if len(all_averages) >= 2 else None
+        summary = GradingHistorySummary(
+            total_records=len(records),
+            total_students_graded=total_students_graded,
+            overall_average=round(overall_avg, 2) if overall_avg is not None else None,
+            trend=trend,
+        )
+    
+    return GradingHistoryResponse(
+        records=[GradingImportRecord(**record) for record in records],
+        summary=summary,
+    )
 
 
 @router.get("/grading/history/{import_id}", response_model=GradingHistoryDetailResponse, tags=["Grading History"])

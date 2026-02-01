@@ -448,10 +448,10 @@ def list_classes_by_student(student_id: str) -> List[ClassRecord]:
     with get_connection() as conn:
         rows = conn.execute(
             """
-            SELECT c.*
+            SELECT c.class_id, c.class_name, c.teacher_id, c.invite_code, c.created_at
             FROM classes c
-            JOIN student_class_relations cs ON c.class_id = cs.class_id
-            WHERE cs.student_id = ?
+            JOIN student_class_relations scr ON c.class_id = scr.class_id
+            WHERE scr.student_id = ?
             ORDER BY c.created_at DESC
             """,
             (student_id,),
@@ -462,7 +462,7 @@ def list_classes_by_student(student_id: str) -> List[ClassRecord]:
             name=row["class_name"],
             teacher_id=row["teacher_id"],
             invite_code=row["invite_code"],
-            created_at=row["created_at"],
+            created_at=str(row["created_at"]) if row["created_at"] else "",
         )
         for row in rows
     ]
@@ -496,22 +496,22 @@ def list_class_students(class_id: str) -> List[UserRecord]:
     with get_connection() as conn:
         rows = conn.execute(
             """
-            SELECT u.*
+            SELECT u.user_id, u.username, u.real_name, u.user_type, u.password_hash, u.created_at
             FROM class_students cs
-            JOIN users u ON cs.student_id = u.id
+            JOIN users u ON cs.student_id = u.user_id
             WHERE cs.class_id = ?
-            ORDER BY u.name
+            ORDER BY u.real_name
             """,
             (class_id,),
         ).fetchall()
     return [
         UserRecord(
-            id=row["id"],
+            id=row["user_id"],
             username=row["username"],
-            name=row["name"],
-            role=row["role"],
-            password_hash=row["password_hash"],
-            created_at=row["created_at"],
+            name=row["real_name"],
+            role=row["user_type"] or "student",
+            password_hash=row["password_hash"] or "",
+            created_at=str(row["created_at"]) if row["created_at"] else "",
         )
         for row in rows
     ]

@@ -280,17 +280,26 @@ export default function StudentDashboard() {
         {feedbackModal.open && (
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
             <div className="bg-white rounded-xl p-6 w-full max-w-md mx-4 text-center">
-              <div className="text-6xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-cyan-500 mb-4">
-                {feedbackModal.score}
-              </div>
+              <h3 className="text-lg font-bold text-slate-800 mb-4">🤖 AI 批改结果</h3>
+              {feedbackModal.score !== undefined && feedbackModal.score !== null ? (
+                <div className="text-6xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-cyan-500 mb-4">
+                  {feedbackModal.score}
+                </div>
+              ) : (
+                <div className="text-2xl text-slate-400 mb-4">暂无评分</div>
+              )}
               <div className="bg-slate-50 p-4 rounded-lg text-left mb-4">
-                <p className="text-sm text-slate-600">{feedbackModal.feedback}</p>
+                {feedbackModal.feedback ? (
+                  <p className="text-sm text-slate-600 whitespace-pre-wrap">{feedbackModal.feedback}</p>
+                ) : (
+                  <p className="text-sm text-slate-400">暂无反馈信息，请等待老师完成批改。</p>
+                )}
               </div>
               <button
                 onClick={() => setFeedbackModal({ open: false })}
-                className="px-6 py-2 text-slate-600 hover:bg-slate-100 rounded-lg"
+                className="px-6 py-2 text-slate-600 hover:bg-slate-100 rounded-lg cursor-pointer"
               >
-                Close
+                关闭
               </button>
             </div>
           </div>

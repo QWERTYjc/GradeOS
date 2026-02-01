@@ -1367,19 +1367,6 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
 
 def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
     """格式化批改结果为前端格式"""
-    # #region agent log - 假设D: _format_results_for_frontend 输入
-    _write_debug_log({
-        "hypothesisId": "D",
-        "location": "batch_langgraph.py:_format_results_for_frontend:input",
-        "message": "输入的results",
-        "data": {
-            "count": len(results),
-            "students": [{"key": r.get("student_key"), "score": r.get("total_score")} for r in results],
-        },
-        "timestamp": int(datetime.now().timestamp() * 1000),
-        "sessionId": "debug-session",
-    })
-    # #endregion
     formatted = []
     for r in results:
         # 处理 question_details 格式
@@ -2098,6 +2085,7 @@ async def get_batch_results(
                 final_output = await orchestrator.get_final_output(run_id)
                 if final_output:
                     student_results = final_output.get("student_results", [])
+                    logger.info(f"DEBUG get_batch_results: got student_results from final_output, count = {len(student_results)}")
             except Exception as e:
                 logger.debug(f"获取最终输出失败: {e}")
         
