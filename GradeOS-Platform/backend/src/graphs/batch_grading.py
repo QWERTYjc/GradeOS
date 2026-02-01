@@ -3,7 +3,6 @@ import os
 import asyncio
 import json
 import re
-import sys
 import time
 from functools import lru_cache
 from typing import Optional, List, Dict, Any, Literal, Tuple
@@ -20,20 +19,6 @@ from src.utils.llm_thinking import split_thinking_content
 
 
 logger = logging.getLogger(__name__)
-
-
-def _write_debug_log_bg(hypothesis_id: str, location: str, message: str, data: dict = None):
-    """Debug log for batch_grading.py - prints to stdout for Railway visibility"""
-    payload = {
-        "hypothesisId": hypothesis_id,
-        "location": f"batch_grading.py:{location}",
-        "message": message,
-        "data": data or {},
-        "timestamp": int(time.time() * 1000),
-        "sessionId": "debug-session",
-    }
-    print(f"[DEBUG_LOG] {json.dumps(payload)}", flush=True)
-    sys.stdout.flush()
 
 # Stdout-visible workflow markers for Railway verification.
 workflow_logger = logging.getLogger("gradeos.workflow")
@@ -5174,20 +5159,11 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     =========================================
     """
     batch_id = state["batch_id"]
-    _write_debug_log_bg("LR1", "logic_review_node:entry", "逻辑复核节点开始", {"batch_id": batch_id})
-    
     # 优先读取 confessed_results（confession 节点输出），回退到 student_results
     student_results = state.get("confessed_results") or state.get("student_results", []) or []
     parsed_rubric = state.get("parsed_rubric", {}) or {}
     api_key = state.get("api_key") or os.getenv("LLM_API_KEY") or os.getenv("OPENROUTER_API_KEY")
     grading_mode = _resolve_grading_mode(state.get("inputs", {}), parsed_rubric)
-    
-    _write_debug_log_bg("LR2", "logic_review_node:state_loaded", "状态已加载", {
-        "batch_id": batch_id,
-        "student_count": len(student_results),
-        "has_rubric": bool(parsed_rubric),
-        "grading_mode": grading_mode,
-    })
 
     def _log_logic_review_done(reason: str, count: int, reviewed: int = 0) -> None:
         message = (
@@ -5550,11 +5526,6 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
         logger.warning(f"[logic_review] 记忆整合失败: {e}")
 
     _log_logic_review_done("llm", len(final_results), len(logic_review_results))
-    _write_debug_log_bg("LR3", "logic_review_node:exit", "逻辑复核节点完成，准备返回", {
-        "batch_id": batch_id,
-        "final_results_count": len(final_results),
-        "logic_review_results_count": len(logic_review_results),
-    })
     return {
         "reviewed_results": final_results,  # 使用新字段，避免 operator.add 问题
         "student_results": final_results,
@@ -5574,8 +5545,6 @@ async def review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     汇总审核批改结果，标记需要人工确认的项目。
     """
     batch_id = state["batch_id"]
-    _write_debug_log_bg("RV1", "review_node:entry", "结果审核节点开始", {"batch_id": batch_id})
-    
     # 优先读取 reviewed_results，回退到 confessed_results，再回退到 student_results
     student_results = state.get("reviewed_results") or state.get("confessed_results") or state.get("student_results", [])
     student_boundaries = state.get("student_boundaries", [])
@@ -5696,8 +5665,6 @@ async def export_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     Requirements: 9.4, 11.4
     """
     batch_id = state["batch_id"]
-    _write_debug_log_bg("EX1", "export_node:entry", "导出节点开始", {"batch_id": batch_id})
-    
     # 优先读取 reviewed_results，回退到 confessed_results，再回退到 student_results
     student_results = state.get("reviewed_results") or state.get("confessed_results") or state.get("student_results", [])
     cross_page_questions = state.get("cross_page_questions", [])
@@ -6237,10 +6204,6 @@ async def export_node(state: BatchGradingGraphState) -> Dict[str, Any]:
         f"失败页面数={len(failed_pages)}"
     )
 
-    _write_debug_log_bg("EX2", "export_node:exit", "导出节点完成，准备返回", {
-        "batch_id": batch_id,
-        "student_count": len(export_data.get('students', [])),
-    })
     return {
         "export_data": export_data,
         "student_results": student_results,

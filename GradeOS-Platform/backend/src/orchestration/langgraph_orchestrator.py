@@ -10,8 +10,6 @@ import logging
 import uuid
 import asyncio
 import os
-import sys
-import time
 from typing import Any, Dict, List, Optional
 from datetime import datetime
 import json
@@ -24,20 +22,6 @@ from src.orchestration.base import Orchestrator, RunStatus, RunInfo
 
 
 logger = logging.getLogger(__name__)
-
-
-def _write_debug_log(hypothesis_id: str, location: str, message: str, data: dict = None):
-    """Debug log for langgraph_orchestrator.py - prints to stdout for Railway visibility"""
-    payload = {
-        "hypothesisId": hypothesis_id,
-        "location": f"langgraph_orchestrator.py:{location}",
-        "message": message,
-        "data": data or {},
-        "timestamp": int(time.time() * 1000),
-        "sessionId": "debug-session",
-    }
-    print(f"[DEBUG_LOG] {json.dumps(payload)}", flush=True)
-    sys.stdout.flush()
 
 
 class LangGraphOrchestrator(Orchestrator):
@@ -249,22 +233,10 @@ class LangGraphOrchestrator(Orchestrator):
             accumulated_state = dict(payload)  # 从初始 payload 开始累积状态
 
             # 使用 astream_events 获取详细的执行事件
-            _write_debug_log("ORC1", "start_run:astream_events_start", "开始astream_events循环", {"run_id": run_id})
-            event_count = 0
             async for event in compiled_graph.astream_events(payload, config=config, version="v2"):
                 event_kind = event.get("event")
                 event_name = event.get("name", "")
                 event_data = event.get("data", {})
-                event_count += 1
-                
-                # 只记录关键节点事件
-                if event_kind in ("on_chain_start", "on_chain_end") and event_name in ("logic_review", "review", "export", "batch_grading"):
-                    _write_debug_log("ORC2", "start_run:astream_event", f"关键事件: {event_kind}", {
-                        "run_id": run_id,
-                        "event_kind": event_kind,
-                        "event_name": event_name,
-                        "event_count": event_count,
-                    })
 
                 # 将事件存储到内存队列（供 stream_run 使用）
                 await self._push_event(
@@ -363,17 +335,11 @@ class LangGraphOrchestrator(Orchestrator):
                 return
 
             # 执行完成 - 使用累积的完整状态
-            _write_debug_log("ORC3", "start_run:astream_events_done", "astream_events循环结束", {
-                "run_id": run_id,
-                "event_count": event_count,
-                "has_student_results": bool(accumulated_state.get("student_results")),
-            })
             logger.info(f"Graph 执行完成: run_id={run_id}")
 
             await self._update_run_status(run_id, "completed", output_data=accumulated_state)
 
             # 标记事件流结束 - 传递完整状态
-            _write_debug_log("ORC4", "start_run:push_completed", "推送completed事件", {"run_id": run_id})
             await self._push_event(
                 run_id, {"kind": "completed", "name": None, "data": {"state": accumulated_state}}
             )
@@ -1134,20 +1100,13 @@ class LangGraphOrchestrator(Orchestrator):
             logger.info(f"开始流式监听 Graph（从队列）: run_id={run_id}")
 
             # 从队列读取事件
-            loop_count = 0
             while True:
-                loop_count += 1
                 try:
                     # 等待事件（带超时）
-                    _write_debug_log("ORC9", "stream_run:wait_event", f"等待事件 #{loop_count}", {
-                        "run_id": run_id,
-                        "queue_size": queue.qsize(),
-                    })
                     event = await asyncio.wait_for(queue.get(), timeout=1.0)
 
                     # 检查是否是结束标记
                     if event.get("kind") == "__end__":
-                        _write_debug_log("ORC10", "stream_run:__end__", "收到__end__标记，退出循环", {"run_id": run_id})
                         logger.info(f"事件流结束: run_id={run_id}")
                         break
 
@@ -1155,12 +1114,6 @@ class LangGraphOrchestrator(Orchestrator):
                     event_kind = event.get("kind")
                     event_name = event.get("name", "")
                     event_data = event.get("data", {})
-                    
-                    _write_debug_log("ORC11", "stream_run:got_event", f"收到事件: {event_kind}/{event_name}", {
-                        "run_id": run_id,
-                        "event_kind": event_kind,
-                        "event_name": event_name,
-                    })
 
                     # 转换为统一的事件格式
                     if event_kind == "on_chain_start":
@@ -1195,10 +1148,6 @@ class LangGraphOrchestrator(Orchestrator):
 
                     elif event_kind == "completed":
                         # 执行完成
-                        _write_debug_log("ORC6", "stream_run:completed", "收到completed事件并yield", {
-                            "run_id": run_id,
-                            "has_state": bool(event_data.get("state")),
-                        })
                         yield {"type": "completed", "node": None, "data": event_data}
                         break
 
@@ -1222,10 +1171,6 @@ class LangGraphOrchestrator(Orchestrator):
                     is_complete = self._is_event_stream_complete(run_id)
                     if is_complete:
                         # 🔥 修复竞态条件：先 drain 队列中的剩余事件
-                        _write_debug_log("ORC7", "stream_run:timeout_complete", "超时检测到事件流完成，开始drain队列", {
-                            "run_id": run_id,
-                            "queue_size": queue.qsize(),
-                        })
                         # Drain 队列中的剩余事件
                         drained_count = 0
                         while not queue.empty():
@@ -1247,7 +1192,6 @@ class LangGraphOrchestrator(Orchestrator):
                                 elif evt_kind == "on_chain_stream":
                                     yield {"type": "stream", "node": evt_name, "data": evt_data}
                                 elif evt_kind == "completed":
-                                    _write_debug_log("ORC6", "stream_run:completed", "drain时收到completed事件", {"run_id": run_id})
                                     yield {"type": "completed", "node": None, "data": evt_data}
                                 elif evt_kind == "error":
                                     yield {"type": "error", "node": None, "data": evt_data}
@@ -1260,13 +1204,11 @@ class LangGraphOrchestrator(Orchestrator):
                             except asyncio.QueueEmpty:
                                 break
                         
-                        _write_debug_log("ORC7B", "stream_run:drain_done", f"drain完成，处理了{drained_count}个事件", {"run_id": run_id, "drained_count": drained_count})
                         logger.info(f"事件流已完成（超时检测，drain {drained_count} 个事件）: run_id={run_id}")
                         break
                     # 否则继续等待
                     continue
 
-            _write_debug_log("ORC8", "stream_run:loop_exit", "流式监听循环退出", {"run_id": run_id})
             logger.info(f"流式监听完成: run_id={run_id}")
 
             # 清理队列
@@ -1398,17 +1340,6 @@ class LangGraphOrchestrator(Orchestrator):
         """
         if run_id not in self._event_queues:
             self._event_queues[run_id] = asyncio.Queue()
-        
-        event_kind = event.get("kind", "unknown")
-        event_name = event.get("name", "")
-        # 只记录关键事件
-        if event_kind in ("completed", "error", "paused") or event_name in ("logic_review", "review", "export"):
-            _write_debug_log("ORC5", "_push_event", f"推送事件到队列: {event_kind}", {
-                "run_id": run_id,
-                "event_kind": event_kind,
-                "event_name": event_name,
-                "queue_size_before": self._event_queues[run_id].qsize(),
-            })
 
         await self._event_queues[run_id].put(event)
 

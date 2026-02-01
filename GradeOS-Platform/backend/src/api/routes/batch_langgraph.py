@@ -13,25 +13,9 @@ import asyncio
 import inspect
 import base64
 import json
-import sys
-import time
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Dict, Any
-
-
-def _write_debug_log(hypothesis_id: str, location: str, message: str, data: dict = None):
-    """Debug log for batch_langgraph.py - prints to stdout for Railway visibility"""
-    payload = {
-        "hypothesisId": hypothesis_id,
-        "location": f"batch_langgraph.py:{location}",
-        "message": message,
-        "data": data or {},
-        "timestamp": int(time.time() * 1000),
-        "sessionId": "debug-session",
-    }
-    print(f"[DEBUG_LOG] {json.dumps(payload)}", flush=True)
-    sys.stdout.flush()
 
 from fastapi import (
     APIRouter,
@@ -941,7 +925,6 @@ async def stream_langgraph_progress(
         orchestrator: LangGraph Orchestrator
     """
     logger.info(f"开始流式监听 LangGraph 进度: batch_id={batch_id}, run_id={run_id}")
-    _write_debug_log("SL1", "stream_langgraph_progress:entry", "开始流式监听", {"batch_id": batch_id, "run_id": run_id})
 
     try:
         # 🔥 使用 LangGraph 的流式 API
@@ -949,13 +932,6 @@ async def stream_langgraph_progress(
             event_type = event.get("type")
             node_name = event.get("node")
             data = event.get("data", {})
-            
-            # 记录所有事件类型
-            _write_debug_log("SL2", "stream_langgraph_progress:event", f"收到事件: {event_type}", {
-                "batch_id": batch_id,
-                "event_type": event_type,
-                "node_name": node_name,
-            })
 
             logger.debug(
                 f"LangGraph 事件: batch_id={batch_id}, type={event_type}, node={node_name}"
@@ -1000,11 +976,6 @@ async def stream_langgraph_progress(
                                 or output.get("student_results")
                                 or []
                             )
-                    _write_debug_log("SL3", f"stream_langgraph_progress:{node_name}_completed", f"{node_name}节点完成", {
-                        "batch_id": batch_id,
-                        "node_name": node_name,
-                        "student_count": student_count,
-                    })
                     logger.info(
                         f"[{node_name}] completed: batch_id={batch_id}, students={student_count}"
                     )
@@ -1143,20 +1114,10 @@ async def stream_langgraph_progress(
 
                     # 审核完成
                     if node_name == "review" and output.get("review_summary"):
-                        _write_debug_log("SL4", "stream_langgraph_progress:review_completed", "review节点完成", {
-                            "batch_id": batch_id,
-                        })
                         await broadcast_progress(
                             batch_id,
                             {"type": "review_completed", "summary": output["review_summary"]},
                         )
-                    
-                    # export 节点完成
-                    if node_name == "export":
-                        _write_debug_log("SL5", "stream_langgraph_progress:export_completed", "export节点完成", {
-                            "batch_id": batch_id,
-                            "current_stage": output.get("current_stage"),
-                        })
 
                     # 跨页题目合并完成
                     if node_name == "cross_page_merge":
@@ -1264,17 +1225,7 @@ async def stream_langgraph_progress(
 
             elif event_type == "completed":
                 # 工作流完成 - 获取完整的最终状态
-                _write_debug_log("SL6", "stream_langgraph_progress:workflow_completed", "收到completed事件", {
-                    "batch_id": batch_id,
-                })
                 final_state = data.get("state", {})
-                
-                _write_debug_log("SL7", "stream_langgraph_progress:final_state", "最终状态", {
-                    "batch_id": batch_id,
-                    "has_student_results": bool(final_state.get("student_results")),
-                    "student_count": len(final_state.get("student_results", [])),
-                    "current_stage": final_state.get("current_stage"),
-                })
 
                 # 从 student_results 获取结果
                 student_results = final_state.get("student_results", [])
@@ -1455,11 +1406,9 @@ async def stream_langgraph_progress(
                     },
                 )
 
-        _write_debug_log("SL8", "stream_langgraph_progress:loop_done", "async for 循环正常结束", {"batch_id": batch_id})
         logger.info(f"LangGraph 进度流式传输完成: batch_id={batch_id}")
 
     except Exception as e:
-        _write_debug_log("SL9", "stream_langgraph_progress:error", f"流式传输异常: {str(e)}", {"batch_id": batch_id})
         logger.error(f"流式传输失败: batch_id={batch_id}, error={str(e)}", exc_info=True)
         await broadcast_progress(
             batch_id, {"type": "workflow_error", "message": f"流式传输失败: {str(e)}"}
