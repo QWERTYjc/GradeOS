@@ -1289,6 +1289,7 @@ async def stream_langgraph_progress(
                         history = GradingHistory(
                             id=history_id,
                             batch_id=batch_id,
+                            teacher_id=teacher_key,
                             status="completed",
                             class_ids=[class_id] if class_id else None,
                             created_at=now,

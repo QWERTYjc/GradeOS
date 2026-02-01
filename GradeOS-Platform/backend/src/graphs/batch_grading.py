@@ -5733,6 +5733,7 @@ async def export_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                 grading_history = GradingHistory(
                     id=history_id,
                     batch_id=batch_id,
+                    teacher_id=teacher_id,
                     status="completed" if not has_failures else "partial",
                     class_ids=class_ids,
                     created_at=created_at,

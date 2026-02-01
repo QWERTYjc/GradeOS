@@ -105,6 +105,7 @@ def init_db():
             CREATE TABLE IF NOT EXISTS grading_history (
                 id TEXT PRIMARY KEY,
                 batch_id TEXT UNIQUE NOT NULL,
+                teacher_id TEXT,
                 class_ids TEXT,
                 created_at TEXT NOT NULL,
                 completed_at TEXT,
@@ -115,6 +116,12 @@ def init_db():
             )
         """
         )
+
+        # Ensure teacher_id column exists for older sqlite files
+        try:
+            conn.execute("ALTER TABLE grading_history ADD COLUMN teacher_id TEXT")
+        except Exception:
+            pass
 
         # Import records (per class)
         conn.execute(
@@ -761,6 +768,7 @@ class GradingHistory:
 
     id: str
     batch_id: str
+    teacher_id: Optional[str] = None
     status: str = "pending"  # pending, completed, imported, revoked
     class_ids: Optional[List[str]] = None
     created_at: str = ""
@@ -782,10 +790,11 @@ def save_grading_history(history: GradingHistory) -> None:
         conn.execute(
             """
             INSERT INTO grading_history 
-            (id, batch_id, class_ids, created_at, completed_at, status, 
+            (id, batch_id, teacher_id, class_ids, created_at, completed_at, status, 
              total_students, average_score, result_data)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (batch_id) DO UPDATE SET
+                teacher_id = EXCLUDED.teacher_id,
                 class_ids = EXCLUDED.class_ids,
                 completed_at = EXCLUDED.completed_at,
                 status = EXCLUDED.status,
@@ -796,6 +805,7 @@ def save_grading_history(history: GradingHistory) -> None:
             (
                 history.id,
                 history.batch_id,
+                history.teacher_id,
                 class_ids_json,
                 history.created_at,
                 history.completed_at,
@@ -853,6 +863,7 @@ def get_grading_history(batch_id: str) -> Optional[GradingHistory]:
         return GradingHistory(
             id=row["id"],
             batch_id=row["batch_id"],
+            teacher_id=row.get("teacher_id"),
             status=row["status"],
             class_ids=class_ids,
             created_at=row["created_at"],
@@ -885,6 +896,7 @@ def list_grading_history(class_id: Optional[str] = None, limit: int = 50) -> Lis
                 GradingHistory(
                     id=row["id"],
                     batch_id=row["batch_id"],
+                    teacher_id=row["teacher_id"] if "teacher_id" in row.keys() else None,
                     status=row["status"],
                     class_ids=class_ids,
                     created_at=row["created_at"],

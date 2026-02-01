@@ -21,6 +21,7 @@ class GradingHistory:
 
     id: str
     batch_id: str
+    teacher_id: Optional[str] = None
     status: str = "pending"  # pending, completed, imported, revoked
     class_ids: Optional[List[str]] = None
     created_at: str = ""
@@ -172,6 +173,7 @@ async def ensure_grading_history_schema() -> None:
         return
     try:
         async with db.connection() as conn:
+            await conn.execute("ALTER TABLE grading_history ADD COLUMN IF NOT EXISTS teacher_id VARCHAR(64)")
             await conn.execute("ALTER TABLE grading_history ADD COLUMN IF NOT EXISTS class_ids JSONB")
             await conn.execute("ALTER TABLE grading_history ADD COLUMN IF NOT EXISTS completed_at TIMESTAMP")
             await conn.execute("ALTER TABLE grading_history ADD COLUMN IF NOT EXISTS status VARCHAR(40)")
@@ -214,10 +216,11 @@ async def save_grading_history(history: GradingHistory) -> None:
 
     query = """
         INSERT INTO grading_history 
-        (id, batch_id, class_ids, created_at, completed_at, status, 
+        (id, batch_id, teacher_id, class_ids, created_at, completed_at, status, 
          total_students, average_score, result_data, rubric_data, current_stage)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (batch_id) DO UPDATE SET
+            teacher_id = EXCLUDED.teacher_id,
             class_ids = EXCLUDED.class_ids,
             completed_at = EXCLUDED.completed_at,
             status = EXCLUDED.status,
@@ -230,6 +233,7 @@ async def save_grading_history(history: GradingHistory) -> None:
     params = (
         history.id,
         history.batch_id,
+        history.teacher_id,
         json.dumps(history.class_ids) if history.class_ids else None,
         history.created_at,
         history.completed_at,
@@ -319,6 +323,7 @@ async def get_grading_history(batch_id_or_id: str) -> Optional[GradingHistory]:
             return GradingHistory(
                 id=str(row["id"]),
                 batch_id=row["batch_id"],
+                teacher_id=row.get("teacher_id"),
                 status=row["status"],
                 class_ids=class_ids,
                 created_at=created_at_value,
@@ -396,6 +401,7 @@ async def list_grading_history(
                     GradingHistory(
                         id=str(row["id"]),
                         batch_id=row["batch_id"],
+                        teacher_id=row.get("teacher_id"),
                         status=row["status"],
                         class_ids=class_ids,
                         created_at=created_at_value,

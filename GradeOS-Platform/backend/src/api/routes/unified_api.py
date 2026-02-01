@@ -1278,6 +1278,12 @@ async def import_grading_results(
     records: List[GradingImportRecord] = []
     now = datetime.utcnow().isoformat()
     history_record = get_grading_history_record(request.batch_id)
+    import_teacher_id = None
+    for target in request.targets:
+        class_info = get_class_by_id(target.class_id)
+        if class_info:
+            import_teacher_id = class_info.teacher_id
+            break
     target_class_ids = [target.class_id for target in request.targets]
     total_students = sum(len(target.student_ids) for target in request.targets)
     if history_record:
@@ -1286,6 +1292,7 @@ async def import_grading_results(
         updated_history = GradingHistory(
             id=history_record.id,
             batch_id=history_record.batch_id,
+            teacher_id=history_record.teacher_id or import_teacher_id,
             status="imported",
             class_ids=list(merged_class_ids),
             created_at=history_record.created_at or now,
@@ -1301,6 +1308,7 @@ async def import_grading_results(
         history = GradingHistory(
             id=history_id,
             batch_id=request.batch_id,
+            teacher_id=import_teacher_id,
             status="imported",
             class_ids=target_class_ids,
             created_at=now,
@@ -1478,16 +1486,19 @@ async def get_grading_history(
             if isinstance(class_ids, str):
                 class_ids = [class_ids]
             if allowed_class_ids is not None:
-                if class_ids:
-                    if not any(cid in allowed_class_ids for cid in class_ids):
-                        continue
+                result_meta = history.result_data or {}
+                if not isinstance(result_meta, dict):
+                    result_meta = {}
+                teacher_match = getattr(history, 'teacher_id', None) or result_meta.get('teacher_id') or result_meta.get('teacherId')
+                if teacher_match and teacher_id and teacher_match == teacher_id:
+                    pass
                 else:
-                    result_meta = history.result_data or {}
-                    if not isinstance(result_meta, dict):
-                        result_meta = {}
-                    teacher_match = result_meta.get('teacher_id') or result_meta.get('teacherId')
-                    if teacher_match != teacher_id:
-                        continue
+                    if class_ids:
+                        if not any(cid in allowed_class_ids for cid in class_ids):
+                            continue
+                    else:
+                        if teacher_match != teacher_id:
+                            continue
             target_class_id = class_id or (class_ids[0] if class_ids else None)
             if class_id and class_id not in class_ids:
                 continue

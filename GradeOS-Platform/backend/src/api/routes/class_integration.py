@@ -259,10 +259,16 @@ async def import_grading_to_class(
     avg_score = (total_score / len(student_results)) if student_results else 0.0
 
     # 保存批改历史
+    teacher_id = None
+    if request.class_ids:
+        class_info = get_class_by_id(request.class_ids[0])
+        if class_info:
+            teacher_id = class_info.teacher_id
     history_id = str(uuid.uuid4())[:8]
     history = GradingHistory(
         id=history_id,
         batch_id=batch_id,
+        teacher_id=teacher_id,
         status="imported",
         class_ids=request.class_ids,
         created_at=datetime.now().isoformat(),
