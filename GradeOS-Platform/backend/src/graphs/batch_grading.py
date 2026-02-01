@@ -6526,6 +6526,9 @@ def grading_merge_gate(state: BatchGradingGraphState) -> str:
     检查是否所有并行批改任务都已完成。
     🔧 修复：支持 grade_student 模式（使用 student_results）和 grade_page 模式（使用 grading_results）
     """
+    # #region agent log - 假设 A/B/C/D/E 调试
+    import json as _json
+    _log_path = r"d:\project\GradeOS\.cursor\debug.log"
     batch_id = state.get("batch_id", "unknown")
     grading_results = state.get("grading_results") or []
     student_results = state.get("student_results") or []
@@ -6533,6 +6536,30 @@ def grading_merge_gate(state: BatchGradingGraphState) -> str:
     
     total_students = len(student_boundaries) if student_boundaries else 0
     completed_students = len(student_results)
+    
+    # 调试日志：详细记录状态
+    _debug_data = {
+        "hypothesisId": "A-B-C-D-E",
+        "location": "grading_merge_gate:entry",
+        "message": "grading_merge_gate called",
+        "data": {
+            "batch_id": batch_id,
+            "total_students": total_students,
+            "completed_students": completed_students,
+            "student_results_keys": [s.get("student_key") for s in student_results] if student_results else [],
+            "student_boundaries_keys": [b.get("student_key") for b in student_boundaries] if student_boundaries else [],
+            "grading_results_count": len(grading_results),
+            "state_keys": list(state.keys()),
+        },
+        "timestamp": int(__import__("time").time() * 1000),
+        "sessionId": "debug-session",
+    }
+    try:
+        with open(_log_path, "a", encoding="utf-8") as _f:
+            _f.write(_json.dumps(_debug_data, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+    # #endregion
     
     logger.info(
         f"[grading_merge] 诊断: batch_id={batch_id}, "
@@ -6545,14 +6572,38 @@ def grading_merge_gate(state: BatchGradingGraphState) -> str:
     if total_students > 0:
         if completed_students >= total_students:
             logger.info(f"[grading_merge] ✅ 所有 {total_students} 个学生批改完成，进入自白阶段")
+            # #region agent log
+            _debug_data2 = {"hypothesisId": "A", "location": "grading_merge_gate:continue", "message": "returning continue", "data": {"reason": "all_students_completed"}, "timestamp": int(__import__("time").time() * 1000), "sessionId": "debug-session"}
+            try:
+                with open(_log_path, "a", encoding="utf-8") as _f:
+                    _f.write(_json.dumps(_debug_data2, ensure_ascii=False) + "\n")
+            except Exception:
+                pass
+            # #endregion
             return "continue"
         else:
             logger.info(f"[grading_merge] ⏳ 学生批改进度: {completed_students}/{total_students}")
+            # #region agent log
+            _debug_data3 = {"hypothesisId": "B", "location": "grading_merge_gate:wait", "message": "returning wait - not all students completed", "data": {"completed": completed_students, "total": total_students}, "timestamp": int(__import__("time").time() * 1000), "sessionId": "debug-session"}
+            try:
+                with open(_log_path, "a", encoding="utf-8") as _f:
+                    _f.write(_json.dumps(_debug_data3, ensure_ascii=False) + "\n")
+            except Exception:
+                pass
+            # #endregion
             return "wait"
     
     # 🔧 Fallback：如果没有 student_boundaries，检查是否有任何批改结果
     if student_results:
         logger.info(f"[grading_merge] ✅ 有 {len(student_results)} 个学生结果（无边界信息），进入自白阶段")
+        # #region agent log
+        _debug_data4 = {"hypothesisId": "C", "location": "grading_merge_gate:continue_fallback", "message": "returning continue - has student_results but no boundaries", "data": {"student_count": len(student_results)}, "timestamp": int(__import__("time").time() * 1000), "sessionId": "debug-session"}
+        try:
+            with open(_log_path, "a", encoding="utf-8") as _f:
+                _f.write(_json.dumps(_debug_data4, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+        # #endregion
         return "continue"
     
     if grading_results:
@@ -6561,6 +6612,14 @@ def grading_merge_gate(state: BatchGradingGraphState) -> str:
     
     # 没有任何结果，继续等待（可能还在处理中）
     logger.warning("[grading_merge] ⚠️ 没有批改结果，继续等待")
+    # #region agent log
+    _debug_data5 = {"hypothesisId": "D", "location": "grading_merge_gate:wait_no_results", "message": "returning wait - no results at all", "data": {}, "timestamp": int(__import__("time").time() * 1000), "sessionId": "debug-session"}
+    try:
+        with open(_log_path, "a", encoding="utf-8") as _f:
+            _f.write(_json.dumps(_debug_data5, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+    # #endregion
     return "wait"
 
 
