@@ -476,33 +476,76 @@ async def _start_run_with_teacher_limit(
     })
     # #endregion
     logger.info(f"[_start_run_with_teacher_limit] 开始执行: batch_id={batch_id}")
-    logger.info(f"[_start_run_with_teacher_limit] payload keys: {list(payload.keys())}")
-    logger.info(f"[_start_run_with_teacher_limit] answer_images count: {len(payload.get('answer_images', []))}")
-    logger.info(f"[_start_run_with_teacher_limit] rubric_images count: {len(payload.get('rubric_images', []))}")
     
-    logger.info(f"[_start_run_with_teacher_limit] 准备调用 get_run_controller()")
+    # #region agent log - 假设P: 准备获取 run_controller
+    _write_debug_log({
+        "hypothesisId": "P",
+        "location": "batch_langgraph.py:_start_run_with_teacher_limit:before_get_run_controller",
+        "message": "准备调用get_run_controller()",
+        "data": {"batch_id": batch_id},
+    })
+    # #endregion
+    
     try:
         run_controller = await get_run_controller()
-        logger.info(f"[_start_run_with_teacher_limit] get_run_controller() 返回: {run_controller is not None}")
+        # #region agent log - 假设P: get_run_controller 返回
+        _write_debug_log({
+            "hypothesisId": "P",
+            "location": "batch_langgraph.py:_start_run_with_teacher_limit:after_get_run_controller",
+            "message": f"get_run_controller返回: {run_controller is not None}",
+            "data": {"batch_id": batch_id, "has_controller": run_controller is not None},
+        })
+        # #endregion
     except Exception as e:
-        logger.error(f"[_start_run_with_teacher_limit] get_run_controller() 异常: {e}", exc_info=True)
+        _write_debug_log({
+            "hypothesisId": "P",
+            "location": "batch_langgraph.py:_start_run_with_teacher_limit:get_run_controller_error",
+            "message": f"get_run_controller异常: {str(e)}",
+            "data": {"batch_id": batch_id, "error": str(e)},
+        })
         run_controller = None
     
     if run_controller:
-        logger.info(f"[_start_run_with_teacher_limit] 准备获取 slot: teacher_key={teacher_key}")
+        # #region agent log - 假设Q: 准备获取 slot
+        _write_debug_log({
+            "hypothesisId": "Q",
+            "location": "batch_langgraph.py:_start_run_with_teacher_limit:before_try_acquire_slot",
+            "message": "准备调用try_acquire_slot",
+            "data": {"batch_id": batch_id, "teacher_key": teacher_key, "max_runs": TEACHER_MAX_ACTIVE_RUNS},
+        })
+        # #endregion
         try:
             acquired = await run_controller.try_acquire_slot(
                 teacher_key,
                 batch_id,
                 TEACHER_MAX_ACTIVE_RUNS,
             )
-            logger.info(f"[_start_run_with_teacher_limit] try_acquire_slot 返回: {acquired}")
+            # #region agent log - 假设Q: try_acquire_slot 返回
+            _write_debug_log({
+                "hypothesisId": "Q",
+                "location": "batch_langgraph.py:_start_run_with_teacher_limit:after_try_acquire_slot",
+                "message": f"try_acquire_slot返回: {acquired}",
+                "data": {"batch_id": batch_id, "acquired": acquired},
+            })
+            # #endregion
         except Exception as e:
-            logger.error(f"[_start_run_with_teacher_limit] try_acquire_slot 异常: {e}", exc_info=True)
+            _write_debug_log({
+                "hypothesisId": "Q",
+                "location": "batch_langgraph.py:_start_run_with_teacher_limit:try_acquire_slot_error",
+                "message": f"try_acquire_slot异常: {str(e)}",
+                "data": {"batch_id": batch_id, "error": str(e)},
+            })
             acquired = False
         
         if not acquired:
-            logger.info(f"[_start_run_with_teacher_limit] 未获取到 slot，进入等待队列")
+            # #region agent log - 假设R: 进入等待队列
+            _write_debug_log({
+                "hypothesisId": "R",
+                "location": "batch_langgraph.py:_start_run_with_teacher_limit:entering_wait_queue",
+                "message": "未获取到slot，进入等待队列",
+                "data": {"batch_id": batch_id, "teacher_key": teacher_key},
+            })
+            # #endregion
             await broadcast_progress(
                 batch_id,
                 {
@@ -512,8 +555,15 @@ async def _start_run_with_teacher_limit(
                     "message": "Queued: waiting for grading slot",
                 },
             )
-            logger.info(f"[_start_run_with_teacher_limit] 开始等待 slot")
             max_wait = RUN_QUEUE_TIMEOUT_SECONDS if RUN_QUEUE_TIMEOUT_SECONDS > 0 else None
+            # #region agent log - 假设R: 开始等待 slot
+            _write_debug_log({
+                "hypothesisId": "R",
+                "location": "batch_langgraph.py:_start_run_with_teacher_limit:before_wait_for_slot",
+                "message": f"开始等待slot, max_wait={max_wait}",
+                "data": {"batch_id": batch_id, "max_wait": max_wait},
+            })
+            # #endregion
             acquired = await run_controller.wait_for_slot(
                 teacher_key,
                 batch_id,
@@ -521,7 +571,14 @@ async def _start_run_with_teacher_limit(
                 RUN_QUEUE_POLL_SECONDS,
                 max_wait,
             )
-            logger.info(f"[_start_run_with_teacher_limit] wait_for_slot 返回: {acquired}")
+            # #region agent log - 假设R: wait_for_slot 返回
+            _write_debug_log({
+                "hypothesisId": "R",
+                "location": "batch_langgraph.py:_start_run_with_teacher_limit:after_wait_for_slot",
+                "message": f"wait_for_slot返回: {acquired}",
+                "data": {"batch_id": batch_id, "acquired": acquired},
+            })
+            # #endregion
             if not acquired:
                 logger.info(f"[_start_run_with_teacher_limit] 等待超时，任务失败")
                 await run_controller.update_run(
