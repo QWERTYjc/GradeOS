@@ -43,8 +43,9 @@ export default function LLMThoughtsPanel({ className, onClose }: LLMThoughtsPane
     return node?.label || selectedNodeId || 'All Streams';
   }, [selectedAgentId, selectedNodeId, workflowNodes]);
 
-  const thoughts = useMemo(() => {
-    const filteredByTarget = llmThoughts.filter((t) => {
+  // 🔧 修复：先按节点/Agent 过滤，再计算标签列表
+  const filteredByTarget = useMemo(() => {
+    return llmThoughts.filter((t) => {
       if (selectedAgentId) {
         return t.agentId === selectedAgentId;
       }
@@ -53,26 +54,65 @@ export default function LLMThoughtsPanel({ className, onClose }: LLMThoughtsPane
       }
       return true;
     });
+  }, [llmThoughts, selectedAgentId, selectedNodeId]);
+
+  const thoughts = useMemo(() => {
+    // 🔧 修复：支持按学生名称过滤（匹配该学生的所有页面）
     const filteredByFocus = focusAgentLabel
-      ? filteredByTarget.filter((t) => (t.agentLabel || t.agentId) === focusAgentLabel)
+      ? filteredByTarget.filter((t) => {
+          const label = t.agentLabel || t.agentId || '';
+          // 精确匹配
+          if (label === focusAgentLabel) return true;
+          // 学生名称匹配（如 focusAgentLabel="学生1" 匹配 "学生1 - P1", "学生1 - P2" 等）
+          if (label.startsWith(`${focusAgentLabel} - P`)) return true;
+          return false;
+        })
       : filteredByTarget;
     const filteredByTab = filteredByFocus.filter((t) => (t.streamType || 'output') === activeTab);
     return filteredByTab.sort((a, b) => a.timestamp - b.timestamp);
-  }, [llmThoughts, activeTab, selectedAgentId, selectedNodeId, focusAgentLabel]);
+  }, [filteredByTarget, activeTab, focusAgentLabel]);
 
-  const totalCount = llmThoughts.length;
+  const totalCount = filteredByTarget.length; // 只显示当前节点的消息数量
 
+  // 🔧 修复：agentFilters 基于 filteredByTarget 计算，而不是所有 llmThoughts
   const agentFilters = useMemo(() => {
     const counts = new Map<string, number>();
-    llmThoughts.forEach((t) => {
+    filteredByTarget.forEach((t) => {
       const label = t.agentLabel || t.agentId;
       if (!label) return;
       counts.set(label, (counts.get(label) || 0) + 1);
     });
-    return Array.from(counts.entries())
-      .map(([label, count]) => ({ label, count }))
+    // 🔧 优化：按学生分组显示，合并同一学生的不同页面
+    const studentGroups = new Map<string, { pages: string[]; totalCount: number }>();
+    Array.from(counts.entries()).forEach(([label, count]) => {
+      // 提取学生名称（如 "学生1 - P1" -> "学生1"）
+      const studentMatch = label.match(/^(.+?)\s*-\s*P\d+$/);
+      if (studentMatch) {
+        const studentName = studentMatch[1];
+        if (!studentGroups.has(studentName)) {
+          studentGroups.set(studentName, { pages: [], totalCount: 0 });
+        }
+        const group = studentGroups.get(studentName)!;
+        group.pages.push(label);
+        group.totalCount += count;
+      } else {
+        // 非页面格式的标签直接添加
+        studentGroups.set(label, { pages: [label], totalCount: count });
+      }
+    });
+    return Array.from(studentGroups.entries())
+      .map(([studentName, { pages, totalCount }]) => ({
+        label: studentName,
+        count: totalCount,
+        pages: pages.sort((a, b) => {
+          // 自然排序：P1, P2, ..., P10, P11
+          const numA = parseInt(a.match(/P(\d+)$/)?.[1] || '0');
+          const numB = parseInt(b.match(/P(\d+)$/)?.[1] || '0');
+          return numA - numB;
+        })
+      }))
       .sort((a, b) => a.label.localeCompare(b.label));
-  }, [llmThoughts]);
+  }, [filteredByTarget]);
 
   const scrollToBottom = useCallback(() => {
     if (!scrollRef.current) return;
@@ -163,8 +203,12 @@ export default function LLMThoughtsPanel({ className, onClose }: LLMThoughtsPane
                       ? 'bg-indigo-500 text-white border-indigo-500'
                       : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300'
                   )}
+                  title={agent.pages.length > 1 ? `${agent.pages.length} 页` : agent.pages[0]}
                 >
                   {agent.label}
+                  {agent.pages.length > 1 && (
+                    <span className="ml-1 text-[9px] opacity-70">({agent.pages.length}页)</span>
+                  )}
                   <span className="ml-1 text-[9px] opacity-70">{agent.count}</span>
                 </button>
               ))}

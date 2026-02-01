@@ -6594,15 +6594,42 @@ def grading_merge_gate(state: BatchGradingGraphState) -> str:
     批改汇聚门控
 
     检查是否所有并行批改任务都已完成。
-    通过比较 grading_results（已批改页面数）和 processed_images（总页面数）。
+    使用 student_results 来判断完成状态（因为 processed_images 可能丢失）。
     """
     batch_id = state.get("batch_id", "unknown")
-    processed_images = state.get("processed_images") or []
     grading_results = state.get("grading_results") or []
     student_results = state.get("student_results") or []
-
-    total_pages = len(processed_images)
+    student_boundaries = state.get("student_boundaries") or []
+    
+    # 🔧 修复：从多个来源获取总页数，避免 processed_images 丢失导致的问题
+    processed_images = state.get("processed_images") or []
+    answer_images = state.get("answer_images") or []
+    inputs = state.get("inputs") or {}
+    input_answer_images = inputs.get("answer_images") or []
+    
+    # 优先级：processed_images > answer_images > inputs.answer_images
+    total_pages = len(processed_images) or len(answer_images) or len(input_answer_images)
+    
+    # 如果还是无法获取总页数，使用 student_boundaries 计算
+    if total_pages == 0 and student_boundaries:
+        total_pages = sum(
+            len(b.get("page_indices", [])) or (b.get("end", 0) - b.get("start", 0) + 1)
+            for b in student_boundaries
+        )
+    
     graded_pages = _count_graded_pages(grading_results)
+    
+    logger.info(
+        f"[grading_merge] 诊断: batch_id={batch_id}, "
+        f"graded_pages={graded_pages}, total_pages={total_pages}, "
+        f"student_results={len(student_results)}, "
+        f"processed_images={len(processed_images)}, answer_images={len(answer_images)}"
+    )
+
+    # 如果有 student_results 且没有更多待处理的页面，直接进入 confession
+    if student_results and total_pages == 0:
+        logger.info(f"[grading_merge] ✅ 有 {len(student_results)} 个学生结果，进入自白阶段")
+        return "continue"
 
     # 如果总页数为0（异常情况），且有结果（可能逻辑错误），或者都没结果
     if total_pages == 0:
