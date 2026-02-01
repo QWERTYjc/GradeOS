@@ -407,6 +407,9 @@ async def broadcast_progress(batch_id: str, message: dict):
         logger.debug(f"Failed to cache progress message: {exc}")
     if batch_id in active_connections:
         disconnected = []
+        # #region agent log
+        import sys; sys.stdout.write(f'[DEBUG_LOG] {{"hypothesisId":"H1","location":"batch_langgraph.py:broadcast_progress","message":"广播消息到WebSocket","data":{{"batch_id":"{batch_id}","msg_type":"{msg_type}","connections":{len(active_connections[batch_id])}}},"timestamp":{int(__import__("time").time()*1000)},"sessionId":"debug-session"}}\n'); sys.stdout.flush()
+        # #endregion
         for ws in active_connections[batch_id]:
             if not _is_ws_connected(ws):
                 disconnected.append(ws)
@@ -420,12 +423,24 @@ async def broadcast_progress(batch_id: str, message: dict):
             try:
                 async with ws_locks[ws_id]:
                     await ws.send_json(message)
+                # #region agent log
+                import sys; sys.stdout.write(f'[DEBUG_LOG] {{"hypothesisId":"H3","location":"batch_langgraph.py:broadcast_progress:send_ok","message":"WebSocket发送成功","data":{{"batch_id":"{batch_id}","msg_type":"{msg_type}","ws_id":{ws_id}}},"timestamp":{int(__import__("time").time()*1000)},"sessionId":"debug-session"}}\n'); sys.stdout.flush()
+                # #endregion
             except WebSocketDisconnect:
+                # #region agent log
+                import sys; sys.stdout.write(f'[DEBUG_LOG] {{"hypothesisId":"H1","location":"batch_langgraph.py:broadcast_progress:disconnect","message":"WebSocket断开","data":{{"batch_id":"{batch_id}","ws_id":{ws_id}}},"timestamp":{int(__import__("time").time()*1000)},"sessionId":"debug-session"}}\n'); sys.stdout.flush()
+                # #endregion
                 disconnected.append(ws)
             except RuntimeError as exc:
+                # #region agent log
+                import sys; sys.stdout.write(f'[DEBUG_LOG] {{"hypothesisId":"H1","location":"batch_langgraph.py:broadcast_progress:runtime_error","message":"WebSocket运行时错误","data":{{"batch_id":"{batch_id}","error":"{str(exc)[:100]}"}},"timestamp":{int(__import__("time").time()*1000)},"sessionId":"debug-session"}}\n'); sys.stdout.flush()
+                # #endregion
                 logger.debug(f"WebSocket 发送被跳过: {exc}")
                 disconnected.append(ws)
             except Exception as e:
+                # #region agent log
+                import sys; sys.stdout.write(f'[DEBUG_LOG] {{"hypothesisId":"H1","location":"batch_langgraph.py:broadcast_progress:error","message":"WebSocket发送失败","data":{{"batch_id":"{batch_id}","error":"{str(e)[:100]}"}},"timestamp":{int(__import__("time").time()*1000)},"sessionId":"debug-session"}}\n'); sys.stdout.flush()
+                # #endregion
                 logger.error(f"WebSocket 发送失败: {e}")
                 disconnected.append(ws)
 
@@ -1022,6 +1037,9 @@ async def stream_langgraph_progress(
                     # 评分标准解析完成
                     if node_name == "rubric_parse" and output.get("parsed_rubric"):
                         parsed = output["parsed_rubric"]
+                        # #region agent log
+                        import sys; sys.stdout.write(f'[DEBUG_LOG] {{"hypothesisId":"H4","location":"batch_langgraph.py:stream_langgraph_progress:rubric_parsed","message":"准备发送rubric_parsed消息","data":{{"batch_id":"{batch_id}","total_questions":{parsed.get("total_questions", 0)},"total_score":{parsed.get("total_score", 0)}}},"timestamp":{int(__import__("time").time()*1000)},"sessionId":"debug-session"}}\n'); sys.stdout.flush()
+                        # #endregion
                         await broadcast_progress(
                             batch_id,
                             {
@@ -2312,6 +2330,9 @@ async def websocket_endpoint(websocket: WebSocket, batch_id: str):
         active_connections[batch_id] = []
     active_connections[batch_id].append(websocket)
 
+    # #region agent log
+    import sys; sys.stdout.write(f'[DEBUG_LOG] {{"hypothesisId":"H2","location":"batch_langgraph.py:websocket_endpoint:connected","message":"WebSocket连接已建立并注册","data":{{"batch_id":"{batch_id}","ws_id":{ws_id},"total_connections":{len(active_connections[batch_id])}}},"timestamp":{int(__import__("time").time()*1000)},"sessionId":"debug-session"}}\n'); sys.stdout.flush()
+    # #endregion
     logger.info(f"WebSocket 连接建立: batch_id={batch_id}")
 
     # 连接建立后尝试发送当前状态快照，避免前端错过早期事件导致卡住
