@@ -259,9 +259,9 @@ export default function TeachingCockpitPage() {
                       </div>
                       <div className="flex-1">
                         <p className="text-sm font-medium text-slate-700">
-                          错误率: {Math.round(wp.error_rate * 100)}%
+                          错误率: {Math.round((wp.error_rate ?? 0) * 100)}%
                         </p>
-                        {wp.common_errors.length > 0 && (
+                        {wp.common_errors && wp.common_errors.length > 0 && (
                           <p className="text-xs text-slate-500 mt-1">
                             常见错误: {wp.common_errors.join('; ')}
                           </p>

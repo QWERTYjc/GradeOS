@@ -1,7 +1,7 @@
 'use client';
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { I18N } from '../constants';
 import { ConceptNode, EnhancedChatMessage, Language } from '../types';
 import { assistantApi, AssistantProgressResponse } from '@/services/api';
@@ -33,7 +33,28 @@ type PersistedState = {
   selectedConceptLabel?: string | null;
 };
 
+// 错题上下文类型
+type WrongQuestionContext = {
+  questionId: string;
+  score: number;
+  maxScore: number;
+  feedback?: string;
+  studentAnswer?: string;
+  scoringPointResults?: Array<{
+    point_id?: string;
+    description?: string;
+    awarded: number;
+    max_points?: number;
+    evidence: string;
+  }>;
+  subject?: string;
+  topic?: string;
+  images?: string[];
+  timestamp: string;
+};
+
 const STORAGE_KEY = 'gradeos.student-assistant-ui';
+const WRONG_QUESTION_CONTEXT_KEY = 'gradeos.wrong-question-context';
 const MAX_PERSISTED_MESSAGES = 12;
 
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -48,6 +69,7 @@ const AIChat: React.FC<Props> = ({ lang }) => {
   }, [lang]);
 
   const t = I18N[resolvedLang];
+  const searchParams = useSearchParams();
   const [messages, setMessages] = useState<EnhancedChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
@@ -61,6 +83,7 @@ const AIChat: React.FC<Props> = ({ lang }) => {
   const [selectedConceptId, setSelectedConceptId] = useState<string | null>(null);
   const [selectedConceptLabel, setSelectedConceptLabel] = useState<string | null>(null);
   const [hydrated, setHydrated] = useState(false);
+  const [wrongQuestionProcessed, setWrongQuestionProcessed] = useState(false);
   const { user } = useAuthStore();
   const activeClassId = user?.classIds?.[0];
   const router = useRouter();
@@ -102,6 +125,59 @@ const AIChat: React.FC<Props> = ({ lang }) => {
       ]);
     }
   }, [hydrated, messages.length, resolvedLang, t.chatIntro]);
+
+  // 存储待处理的错题上下文（用于传递给 API）
+  const [activeWrongQuestionContext, setActiveWrongQuestionContext] = useState<WrongQuestionContext | null>(null);
+
+  // 处理从错题本跳转过来的深究请求
+  useEffect(() => {
+    if (!hydrated || wrongQuestionProcessed) return;
+    
+    const fromParam = searchParams.get('from');
+    if (fromParam !== 'wrongbook') return;
+    
+    // 读取错题上下文
+    const contextRaw = window.localStorage.getItem(WRONG_QUESTION_CONTEXT_KEY);
+    if (!contextRaw) {
+      console.warn('[AIChat] No wrong question context found');
+      setWrongQuestionProcessed(true);
+      return;
+    }
+    
+    try {
+      const context: WrongQuestionContext = JSON.parse(contextRaw);
+      console.log('[AIChat] Processing wrong question context:', context.questionId, 'images:', context.images?.length || 0);
+      
+      // 清除 localStorage 中的上下文，避免重复处理
+      window.localStorage.removeItem(WRONG_QUESTION_CONTEXT_KEY);
+      
+      // 清除现有消息，开启新的上下文
+      setMessages([]);
+      
+      // 存储错题上下文，等待用户信息加载完成后发送
+      setActiveWrongQuestionContext(context);
+      setWrongQuestionProcessed(true);
+    } catch (err) {
+      console.error('[AIChat] Failed to parse wrong question context:', err);
+      setWrongQuestionProcessed(true);
+    }
+  }, [hydrated, wrongQuestionProcessed, searchParams]);
+
+  // 当用户信息加载完成且有待处理的错题上下文时，自动发送深究请求
+  useEffect(() => {
+    if (!activeWrongQuestionContext || !user?.id || isStreaming) return;
+    
+    const context = activeWrongQuestionContext;
+    
+    // 构建简短的用户消息（详细信息通过 wrong_question_context 传递给后端）
+    const userMessage = `请帮我深究这道错题 Q${context.questionId}，我得了 ${context.score}/${context.maxScore} 分。`;
+    
+    // 调用带上下文的发送函数
+    handleSendWithContext(userMessage, context);
+    
+    // 清除待处理状态
+    setActiveWrongQuestionContext(null);
+  }, [activeWrongQuestionContext, user?.id, isStreaming]);
 
   useEffect(() => {
     if (!hydrated || typeof window === 'undefined') return;
@@ -162,7 +238,11 @@ const AIChat: React.FC<Props> = ({ lang }) => {
     }
   }, [messages]);
 
-  const handleSend = async (userMsgContent: string) => {
+  // 带错题上下文的发送函数
+  const handleSendWithContext = useCallback(async (
+    userMsgContent: string, 
+    wrongContext?: WrongQuestionContext | null
+  ) => {
     if (!userMsgContent.trim() || isStreaming) return;
     if (!user?.id) {
       setMessages((prev) => [
@@ -195,13 +275,35 @@ const AIChat: React.FC<Props> = ({ lang }) => {
         .slice(-6)
         .map((msg) => ({ role: msg.role as 'user' | 'assistant', content: msg.content }));
 
-      const response = await assistantApi.chat({
+      // 构建 API 请求，包含错题上下文和图片
+      const chatRequest: Parameters<typeof assistantApi.chat>[0] = {
         student_id: user.id,
         class_id: activeClassId,
         message: userMsgContent,
         history,
-        session_mode: 'learning',
-      });
+        session_mode: wrongContext ? 'wrong_question_review' : 'learning',
+      };
+
+      // 如果有错题上下文，添加到请求中
+      if (wrongContext) {
+        chatRequest.wrong_question_context = {
+          questionId: wrongContext.questionId,
+          score: wrongContext.score,
+          maxScore: wrongContext.maxScore,
+          feedback: wrongContext.feedback,
+          studentAnswer: wrongContext.studentAnswer,
+          scoringPointResults: wrongContext.scoringPointResults,
+          subject: wrongContext.subject,
+          topic: wrongContext.topic,
+        };
+        
+        // 如果有图片，也传递给后端
+        if (wrongContext.images && wrongContext.images.length > 0) {
+          chatRequest.images = wrongContext.images;
+        }
+      }
+
+      const response = await assistantApi.chat(chatRequest);
 
       setMessages((prev) => {
         const next = [...prev];
@@ -231,7 +333,12 @@ const AIChat: React.FC<Props> = ({ lang }) => {
     } finally {
       setIsStreaming(false);
     }
-  };
+  }, [isStreaming, user?.id, t.brainFreeze, messages, activeClassId]);
+
+  // 普通发送函数（不带错题上下文）
+  const handleSend = useCallback((userMsgContent: string) => {
+    handleSendWithContext(userMsgContent, null);
+  }, [handleSendWithContext]);
 
   const handleInputSubmit = (e: React.FormEvent) => {
     e.preventDefault();

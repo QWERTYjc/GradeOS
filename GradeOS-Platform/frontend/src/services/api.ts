@@ -36,6 +36,9 @@ const getApiBase = () => {
   return 'http://localhost:8001/api';
 };
 
+// 导出获取 API 基础 URL 的函数
+export const getApiBaseUrl = getApiBase;
+
 const API_BASE = getApiBase();
 
 // ============ 通用请求方法 ============
@@ -141,6 +144,7 @@ export interface HomeworkResponse {
   description: string;
   deadline: string;
   allow_early_grading?: boolean;
+  rubric_images?: string[];
   created_at: string;
 }
 
@@ -164,7 +168,7 @@ export const homeworkApi = {
   getDetail: (homeworkId: string) =>
     request<HomeworkResponse>(`/homework/detail/${homeworkId}`),
 
-  create: (data: { class_id: string; title: string; description: string; deadline: string; allow_early_grading?: boolean }) =>
+  create: (data: { class_id: string; title: string; description: string; deadline: string; allow_early_grading?: boolean; rubric_images?: string[] }) =>
     request<HomeworkResponse>('/homework/create', {
       method: 'POST',
       body: JSON.stringify(data),
@@ -279,6 +283,24 @@ export interface AssistantChatRequest {
   history?: AssistantMessage[];
   session_mode?: string;
   concept_topic?: string;
+  // 新增：多模态支持
+  images?: string[];  // base64 编码的图片列表
+  wrong_question_context?: {
+    questionId: string;
+    score: number;
+    maxScore: number;
+    feedback?: string;
+    studentAnswer?: string;
+    scoringPointResults?: Array<{
+      point_id?: string;
+      description?: string;
+      awarded: number;
+      max_points?: number;
+      evidence: string;
+    }>;
+    subject?: string;
+    topic?: string;
+  };
 }
 
 export interface ConceptNode {
@@ -473,6 +495,14 @@ export interface GradingImportRequest {
   targets: GradingImportTarget[];
 }
 
+export interface GradingRecordStatistics {
+  average_score?: number;
+  max_score?: number;
+  min_score?: number;
+  pass_rate?: number;
+  score_distribution?: Record<string, number>;
+}
+
 export interface GradingImportRecord {
   import_id: string;
   batch_id: string;
@@ -484,6 +514,7 @@ export interface GradingImportRecord {
   status: string;
   created_at: string;
   revoked_at?: string;
+  statistics?: GradingRecordStatistics;
 }
 
 export interface GradingImportItem {
@@ -499,8 +530,16 @@ export interface GradingImportItem {
   result?: Record<string, unknown>;
 }
 
+export interface GradingHistorySummary {
+  total_records: number;
+  total_students_graded: number;
+  overall_average?: number;
+  trend?: 'improving' | 'stable' | 'regressing';
+}
+
 export interface GradingHistoryResponse {
   records: GradingImportRecord[];
+  summary?: GradingHistorySummary;
 }
 
 export interface GradingHistoryDetailResponse {
@@ -522,7 +561,6 @@ export interface ResultsReviewContext {
   current_stage?: string;
   student_results: Array<Record<string, unknown>>;
   answer_images: string[];
-  parsed_rubric?: Record<string, unknown>;
 }
 
 export interface ActiveRunItem {
@@ -680,8 +718,12 @@ export const gradingApi = {
       body: JSON.stringify(data),
     }),
 
-  getGradingHistory: (params?: { class_id?: string; assignment_id?: string; teacher_id?: string }) => {
-    const query = new URLSearchParams(params as Record<string, string>).toString();
+  getGradingHistory: (params?: { class_id?: string; assignment_id?: string; include_stats?: boolean }) => {
+    const queryParams: Record<string, string> = {};
+    if (params?.class_id) queryParams.class_id = params.class_id;
+    if (params?.assignment_id) queryParams.assignment_id = params.assignment_id;
+    if (params?.include_stats) queryParams.include_stats = 'true';
+    const query = new URLSearchParams(queryParams).toString();
     return request<GradingHistoryResponse>(`/grading/history${query ? `?${query}` : ''}`);
   },
 
@@ -754,6 +796,184 @@ export const api = {
       total_pages: number;
     }>(`/class/${classId}/homework/${homeworkId}/submissions-for-grading`);
   },
+};
+
+// ============ 错题本手动录入 API ============
+
+export interface ManualWrongQuestionCreate {
+  student_id: string;
+  class_id?: string;
+  question_id?: string;
+  subject?: string;
+  topic?: string;
+  question_content?: string;
+  student_answer?: string;
+  correct_answer?: string;
+  score: number;
+  max_score: number;
+  feedback?: string;
+  images: string[];  // base64 图片列表
+  tags: string[];
+}
+
+export interface ManualWrongQuestionResponse {
+  id: string;
+  student_id: string;
+  class_id?: string;
+  question_id: string;
+  subject?: string;
+  topic?: string;
+  question_content?: string;
+  student_answer?: string;
+  correct_answer?: string;
+  score: number;
+  max_score: number;
+  feedback?: string;
+  images: string[];
+  tags: string[];
+  source: 'manual' | 'grading';
+  created_at: string;
+}
+
+export interface ManualWrongQuestionListResponse {
+  questions: ManualWrongQuestionResponse[];
+  total: number;
+}
+
+export const wrongbookApi = {
+  // 添加手动录入的错题
+  addQuestion: (data: ManualWrongQuestionCreate) =>
+    request<ManualWrongQuestionResponse>('/wrongbook/add', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  // 获取手动录入的错题列表
+  listQuestions: (params: { student_id: string; class_id?: string; subject?: string; limit?: number }) => {
+    const queryParams: Record<string, string> = { student_id: params.student_id };
+    if (params.class_id) queryParams.class_id = params.class_id;
+    if (params.subject) queryParams.subject = params.subject;
+    if (params.limit !== undefined) queryParams.limit = params.limit.toString();
+    const query = new URLSearchParams(queryParams).toString();
+    return request<ManualWrongQuestionListResponse>(`/wrongbook/list?${query}`);
+  },
+
+  // 删除错题
+  deleteQuestion: (entryId: string, studentId: string) =>
+    request<{ success: boolean; message: string }>(`/wrongbook/${entryId}?student_id=${studentId}`, {
+      method: 'DELETE',
+    }),
+
+  // 更新错题
+  updateQuestion: (entryId: string, data: ManualWrongQuestionCreate) =>
+    request<ManualWrongQuestionResponse>(`/wrongbook/${entryId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+};
+
+// ============ OpenBoard 论坛 API ============
+
+import { Forum, ForumPost, ForumReply, ForumSearchResult, ForumUserStatus, ForumModLog } from '@/types';
+
+export interface CreateForumRequest {
+  name: string;
+  description: string;
+  creator_id: string;
+}
+
+export interface ApproveForumRequest {
+  approved: boolean;
+  reason?: string;
+  moderator_id: string;
+}
+
+export interface CreatePostRequest {
+  forum_id: string;
+  title: string;
+  content: string;
+  author_id: string;
+  images?: string[];  // 图片列表（base64）
+}
+
+export interface CreateReplyRequest {
+  content: string;
+  author_id: string;
+  images?: string[];  // 图片列表（base64）
+}
+
+export interface BanUserRequest {
+  user_id: string;
+  moderator_id: string;
+  banned: boolean;
+  reason?: string;
+}
+
+export const openboardApi = {
+  // 论坛管理
+  getForums: (includePending: boolean = false) =>
+    request<Forum[]>(`/openboard/forums${includePending ? '?include_pending=true' : ''}`),
+
+  createForum: (data: CreateForumRequest) =>
+    request<Forum>('/openboard/forums', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  approveForum: (forumId: string, data: ApproveForumRequest) =>
+    request<Forum>(`/openboard/forums/${forumId}/approve`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  // 帖子管理
+  getForumPosts: (forumId: string, page: number = 1, limit: number = 20) =>
+    request<ForumPost[]>(`/openboard/forums/${forumId}/posts?page=${page}&limit=${limit}`),
+
+  createPost: (data: CreatePostRequest) =>
+    request<ForumPost>('/openboard/posts', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  getPostDetail: (postId: string) =>
+    request<{ post: ForumPost; replies: ForumReply[] }>(`/openboard/posts/${postId}`),
+
+  // 回复
+  createReply: (postId: string, data: CreateReplyRequest) =>
+    request<ForumReply>(`/openboard/posts/${postId}/replies`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  // 搜索
+  searchPosts: (query: string, forumId?: string, limit: number = 20) => {
+    const params = new URLSearchParams({ q: query, limit: limit.toString() });
+    if (forumId) params.set('forum_id', forumId);
+    return request<ForumSearchResult[]>(`/openboard/search?${params.toString()}`);
+  },
+
+  // 管理员功能
+  getPendingForums: () =>
+    request<Forum[]>('/openboard/admin/pending-forums'),
+
+  deletePost: (postId: string, moderatorId: string, reason?: string) =>
+    request<{ success: boolean; message: string }>(`/openboard/admin/posts/${postId}`, {
+      method: 'DELETE',
+      body: JSON.stringify({ moderator_id: moderatorId, reason }),
+    }),
+
+  banUser: (data: BanUserRequest) =>
+    request<{ success: boolean; message: string }>('/openboard/admin/ban', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  getUserStatus: (userId: string) =>
+    request<ForumUserStatus>(`/openboard/admin/users/${userId}/status`),
+
+  getModLogs: (limit: number = 50) =>
+    request<ForumModLog[]>(`/openboard/admin/mod-logs?limit=${limit}`),
 };
 
 export default api;
