@@ -2631,9 +2631,9 @@ async def _grade_batch_node_impl(state: Dict[str, Any]) -> Dict[str, Any]:
                         stream_callback=page_stream_callback,
                     )
                     
-                    # 输出完整页面批改结果 JSON（用于调试）
-                    import json
-                    logger.info(f"📄 页面 {page_index} 批改结果完整JSON:\n{json.dumps(page_result, ensure_ascii=False, indent=2)}")
+                    # 输出完整页面批改结果 JSON（用于调试）- 已禁用避免日志噪音
+                    # import json
+                    # logger.debug(f"📄 页面 {page_index} 批改结果完整JSON:\n{json.dumps(page_result, ensure_ascii=False, indent=2)}")
                     
                 except Exception as exc:
                     logger.warning(f"[grade_batch] page {page_index} grading failed: {exc}")

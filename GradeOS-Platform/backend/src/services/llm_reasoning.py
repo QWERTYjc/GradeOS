@@ -1001,8 +1001,8 @@ class LLMReasoningClient:
         """
         json_text = self._extract_json_from_text(response_text)
         
-        # 直接输出 AI 返回的原始 JSON
-        logger.info(f"AI返回的原始JSON: {json_text}")
+        # 直接输出 AI 返回的原始 JSON - 已禁用避免日志噪音
+        # logger.debug(f"AI返回的原始JSON: {json_text}")
         
         result = json.loads(json_text)
 
@@ -1240,9 +1240,9 @@ class LLMReasoningClient:
                 f"批改完成: score={result.get('score')}, confidence={result.get('confidence')}"
             )
             
-            # 输出完整 JSON 结果用于调试
-            import json
-            logger.info(f"📄 批改结果完整JSON:\n{json.dumps(result, ensure_ascii=False, indent=2)}")
+            # 输出完整 JSON 结果用于调试 - 已禁用避免日志噪音
+            # import json
+            # logger.debug(f"📄 批改结果完整JSON:\n{json.dumps(result, ensure_ascii=False, indent=2)}")
 
             return result
 
@@ -3676,9 +3676,9 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
                 f"questions={len(result.get('question_details', []))}"
             )
             
-            # 输出完整学生批改结果 JSON（用于调试）
-            import json
-            logger.info(f"📄 学生 {student_key} 批改结果完整JSON:\n{json.dumps(result, ensure_ascii=False, indent=2)}")
+            # 输出完整学生批改结果 JSON（用于调试）- 已禁用避免日志噪音
+            # import json
+            # logger.debug(f"📄 学生 {student_key} 批改结果完整JSON:\n{json.dumps(result, ensure_ascii=False, indent=2)}")
 
             return result
 
