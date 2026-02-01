@@ -215,7 +215,9 @@ export default function GlobalNavLauncher() {
       }
       if (runs.length === 0) {
         try {
-          const history = await gradingApi.getGradingHistory();
+          const history = await gradingApi.getGradingHistory({
+            teacher_id: user?.id || undefined,
+          });
           const records = history.records || [];
           if (records.length === 0) return null;
           const parseTime = (value?: string) => {

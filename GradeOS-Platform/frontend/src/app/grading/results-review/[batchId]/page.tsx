@@ -52,7 +52,9 @@ export default function ResultsReviewPage() {
         const latest = pickLatestRun(response.runs || [], true);
         if (!latest) {
           try {
-            const history = await gradingApi.getGradingHistory();
+            const history = await gradingApi.getGradingHistory({
+              teacher_id: user?.id || undefined,
+            });
             const records = history.records || [];
             if (records.length === 0) {
               if (active) {

@@ -851,6 +851,7 @@ async def submit_batch(
             "answer_images": answer_images,
             "file_index_by_page": file_index_by_page,
             "api_key": api_key,
+            "teacher_id": teacher_key,
             # 班级批改上下文（可选）
             "class_id": class_id,
             "homework_id": homework_id,

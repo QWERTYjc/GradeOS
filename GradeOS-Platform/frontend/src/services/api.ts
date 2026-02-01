@@ -680,7 +680,7 @@ export const gradingApi = {
       body: JSON.stringify(data),
     }),
 
-  getGradingHistory: (params?: { class_id?: string; assignment_id?: string }) => {
+  getGradingHistory: (params?: { class_id?: string; assignment_id?: string; teacher_id?: string }) => {
     const query = new URLSearchParams(params as Record<string, string>).toString();
     return request<GradingHistoryResponse>(`/grading/history${query ? `?${query}` : ''}`);
   },

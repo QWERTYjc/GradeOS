@@ -52,8 +52,7 @@ export default function LLMThoughtsPanel({ className, onClose }: LLMThoughtsPane
       return true;
     });
     const filteredByTab = filteredByTarget.filter((t) => (t.streamType || 'output') === activeTab);
-    const ordered = filteredByTab.sort((a, b) => a.timestamp - b.timestamp);
-    return ordered.slice(-40);
+    return filteredByTab.sort((a, b) => a.timestamp - b.timestamp);
   }, [llmThoughts, activeTab, selectedAgentId, selectedNodeId]);
 
   const totalCount = llmThoughts.length;

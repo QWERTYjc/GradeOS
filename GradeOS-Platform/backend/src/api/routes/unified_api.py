@@ -1452,9 +1452,23 @@ async def import_grading_results(
 async def get_grading_history(
     class_id: Optional[str] = None,
     assignment_id: Optional[str] = None,
+    teacher_id: Optional[str] = None,
 ):
     """Get grading history list from PostgreSQL."""
     records: List[Dict[str, Any]] = []
+
+    allowed_class_ids: Optional[List[str]] = None
+    if teacher_id:
+        try:
+            user = get_user_by_id(teacher_id)
+            if user and user.role == 'teacher':
+                allowed_class_ids = [c.id for c in list_classes_by_teacher(teacher_id)]
+            elif user and user.role == 'student':
+                allowed_class_ids = list_user_class_ids(user.id)
+            else:
+                allowed_class_ids = []
+        except Exception:
+            allowed_class_ids = []
 
     try:
         # 使用异步版本获取批改历史
@@ -1463,6 +1477,17 @@ async def get_grading_history(
             class_ids = history.class_ids or []
             if isinstance(class_ids, str):
                 class_ids = [class_ids]
+            if allowed_class_ids is not None:
+                if class_ids:
+                    if not any(cid in allowed_class_ids for cid in class_ids):
+                        continue
+                else:
+                    result_meta = history.result_data or {}
+                    if not isinstance(result_meta, dict):
+                        result_meta = {}
+                    teacher_match = result_meta.get('teacher_id') or result_meta.get('teacherId')
+                    if teacher_match != teacher_id:
+                        continue
             target_class_id = class_id or (class_ids[0] if class_ids else None)
             if class_id and class_id not in class_ids:
                 continue
@@ -1513,6 +1538,8 @@ async def get_grading_history(
                     "SELECT * FROM grading_imports ORDER BY created_at DESC"
                 ).fetchall()
         for row in rows:
+            if allowed_class_ids is not None and row.get('class_id') not in allowed_class_ids:
+                continue
             if assignment_id and row["assignment_id"] != assignment_id:
                 continue
             class_info = get_class_by_id(row["class_id"])

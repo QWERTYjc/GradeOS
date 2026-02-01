@@ -97,7 +97,10 @@ export default function StudentWrongBookPage() {
       setLoading(true);
       setError('');
       try {
-        const history: GradingHistoryResponse = await gradingApi.getGradingHistory({ class_id: selectedClassId });
+        const history: GradingHistoryResponse = await gradingApi.getGradingHistory({
+          class_id: selectedClassId,
+          teacher_id: user?.id || undefined,
+        });
         const detailResponses: GradingHistoryDetailResponse[] = await Promise.all(
           history.records.map((record) => gradingApi.getGradingHistoryDetail(record.import_id))
         );

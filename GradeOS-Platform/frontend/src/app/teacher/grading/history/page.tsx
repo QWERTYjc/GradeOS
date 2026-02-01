@@ -27,7 +27,10 @@ export default function GradingHistoryPage() {
   const fetchHistory = (classId?: string) => {
     setLoading(true);
     gradingApi
-      .getGradingHistory(classId ? { class_id: classId } : undefined)
+      .getGradingHistory({
+        class_id: classId || undefined,
+        teacher_id: user?.id || undefined,
+      })
       .then((data) => {
         setRecords(data.records);
         setError('');
@@ -40,7 +43,7 @@ export default function GradingHistoryPage() {
 
   useEffect(() => {
     fetchHistory(filterClass);
-  }, [filterClass]);
+  }, [filterClass, user?.id]);
 
   const handleRevoke = async (importId: string) => {
     setRevokingId(importId);
