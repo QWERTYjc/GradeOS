@@ -2345,6 +2345,21 @@ async def websocket_endpoint(websocket: WebSocket, batch_id: str):
     import sys; sys.stdout.write(f'[DEBUG_LOG] {{"hypothesisId":"H9","location":"batch_langgraph.py:websocket_endpoint:connected","message":"WebSocket连接已建立","data":{{"batch_id":"{batch_id}","ws_id":{ws_id},"total_connections":{len(active_connections[batch_id])},"run_exists":{str(run_exists).lower()},"run_status":"{run_status}"}},"timestamp":{int(__import__("time").time()*1000)},"sessionId":"debug-session"}}\n'); sys.stdout.flush()
     # #endregion
     logger.info(f"WebSocket 连接建立: batch_id={batch_id}")
+    
+    # 🔥 FIX: 如果批次不存在活跃的运行，发送 batch_not_found 消息并关闭连接
+    # 这可以防止前端无限重连到已完成或不存在的批次
+    if not run_exists:
+        try:
+            async with ws_locks[ws_id]:
+                await websocket.send_json({
+                    "type": "batch_not_found",
+                    "message": f"Batch {batch_id} has no active run. It may have completed or does not exist.",
+                    "batchId": batch_id,
+                })
+            logger.info(f"批次无活跃运行，已通知前端: batch_id={batch_id}")
+        except Exception as e:
+            logger.debug(f"发送 batch_not_found 失败: {e}")
+        # 不立即关闭连接，让前端有机会处理消息后自己关闭
 
     # 连接建立后尝试发送当前状态快照，避免前端错过早期事件导致卡住
     try:
