@@ -1455,9 +1455,11 @@ async def stream_langgraph_progress(
                     },
                 )
 
+        _write_debug_log("SL8", "stream_langgraph_progress:loop_done", "async for 循环正常结束", {"batch_id": batch_id})
         logger.info(f"LangGraph 进度流式传输完成: batch_id={batch_id}")
 
     except Exception as e:
+        _write_debug_log("SL9", "stream_langgraph_progress:error", f"流式传输异常: {str(e)}", {"batch_id": batch_id})
         logger.error(f"流式传输失败: batch_id={batch_id}, error={str(e)}", exc_info=True)
         await broadcast_progress(
             batch_id, {"type": "workflow_error", "message": f"流式传输失败: {str(e)}"}

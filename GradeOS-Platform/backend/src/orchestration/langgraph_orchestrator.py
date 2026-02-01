@@ -1134,13 +1134,20 @@ class LangGraphOrchestrator(Orchestrator):
             logger.info(f"开始流式监听 Graph（从队列）: run_id={run_id}")
 
             # 从队列读取事件
+            loop_count = 0
             while True:
+                loop_count += 1
                 try:
                     # 等待事件（带超时）
+                    _write_debug_log("ORC9", "stream_run:wait_event", f"等待事件 #{loop_count}", {
+                        "run_id": run_id,
+                        "queue_size": queue.qsize(),
+                    })
                     event = await asyncio.wait_for(queue.get(), timeout=1.0)
 
                     # 检查是否是结束标记
                     if event.get("kind") == "__end__":
+                        _write_debug_log("ORC10", "stream_run:__end__", "收到__end__标记，退出循环", {"run_id": run_id})
                         logger.info(f"事件流结束: run_id={run_id}")
                         break
 
@@ -1148,6 +1155,12 @@ class LangGraphOrchestrator(Orchestrator):
                     event_kind = event.get("kind")
                     event_name = event.get("name", "")
                     event_data = event.get("data", {})
+                    
+                    _write_debug_log("ORC11", "stream_run:got_event", f"收到事件: {event_kind}/{event_name}", {
+                        "run_id": run_id,
+                        "event_kind": event_kind,
+                        "event_name": event_name,
+                    })
 
                     # 转换为统一的事件格式
                     if event_kind == "on_chain_start":
