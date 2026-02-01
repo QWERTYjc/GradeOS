@@ -1160,6 +1160,37 @@ class LangGraphOrchestrator(Orchestrator):
                 if event_kind == "on_chain_end" and event_name == graph_name:
                     result = event_data.get("output", {})
 
+                # #region agent log - 假设H: 跟踪关键节点事件
+                if event_kind == "on_chain_end" and event_name in ("logic_review", "review", "export"):
+                    _write_debug_log({
+                        "hypothesisId": "H",
+                        "location": "langgraph_orchestrator.py:_resume_graph_background:node_end",
+                        "message": f"节点完成: {event_name}",
+                        "data": {
+                            "run_id": run_id,
+                            "node_name": event_name,
+                            "output_keys": list(event_data.get("output", {}).keys()) if isinstance(event_data.get("output"), dict) else None,
+                        },
+                        "timestamp": int(datetime.now().timestamp() * 1000),
+                        "sessionId": "debug-session",
+                    })
+                # #endregion
+
+            # #region agent log - 假设H: 事件循环结束
+            _write_debug_log({
+                "hypothesisId": "H",
+                "location": "langgraph_orchestrator.py:_resume_graph_background:loop_end",
+                "message": "事件循环结束",
+                "data": {
+                    "run_id": run_id,
+                    "accumulated_state_keys": list(accumulated_state.keys()),
+                    "has_result": bool(result),
+                },
+                "timestamp": int(datetime.now().timestamp() * 1000),
+                "sessionId": "debug-session",
+            })
+            # #endregion
+
             # 执行完成
             logger.info(f"Graph 恢复执行完成: run_id={run_id}")
             output_state = accumulated_state if accumulated_state else (result or {})

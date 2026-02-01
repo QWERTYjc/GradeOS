@@ -5708,6 +5708,21 @@ async def review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     enable_review = state.get("inputs", {}).get("enable_review", True)
     grading_mode = _resolve_grading_mode(state.get("inputs", {}), state.get("parsed_rubric", {}))
 
+    # #region agent log - 假设F: review_node 入口
+    _write_debug_log_bg({
+        "hypothesisId": "F",
+        "location": "batch_grading.py:review_node:entry",
+        "message": "review_node被调用",
+        "data": {
+            "batch_id": batch_id,
+            "student_results_count": len(student_results),
+            "reviewed_results_count": len(state.get("reviewed_results", []) or []),
+            "enable_review": enable_review,
+            "grading_mode": grading_mode,
+        }
+    })
+    # #endregion
+
     logger.info(f"[review] 开始结果审核: batch_id={batch_id}")
 
     review_threshold = float(os.getenv("GRADING_REVIEW_CONFIDENCE_THRESHOLD", "0.7"))
