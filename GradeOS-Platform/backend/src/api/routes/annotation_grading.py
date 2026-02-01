@@ -2,24 +2,16 @@
 
 提供带坐标批注的批改接口：
 - POST /api/grading/annotate - 批改并返回批注坐标
-- POST /api/grading/render - 渲染批注到图片
 """
 
 import base64
 import logging
 from typing import List, Optional
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form
-from fastapi.responses import Response
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from src.models.annotation import (
-    VisualAnnotation,
-    PageAnnotations,
-    GradingAnnotationResult,
-)
 from src.models.grading_models import QuestionRubric, ScoringPoint
-from src.services.annotation_grading import AnnotationGradingService, AnnotationGradingConfig
-from src.services.annotation_renderer import AnnotationRenderer, RenderConfig
+from src.services.annotation_grading import AnnotationGradingService
 
 
 logger = logging.getLogger(__name__)
@@ -28,8 +20,10 @@ router = APIRouter(prefix="/grading", tags=["批注批改"])
 
 # ==================== 请求/响应模型 ====================
 
+
 class ScoringPointInput(BaseModel):
     """得分点输入"""
+
     description: str = Field(..., description="得分点描述")
     score: float = Field(..., description="分值")
     point_id: str = Field(default="", description="得分点编号")
@@ -38,6 +32,7 @@ class ScoringPointInput(BaseModel):
 
 class QuestionRubricInput(BaseModel):
     """题目评分标准输入"""
+
     question_id: str = Field(..., description="题号")
     max_score: float = Field(..., description="满分")
     question_text: str = Field(default="", description="题目内容")
@@ -48,6 +43,7 @@ class QuestionRubricInput(BaseModel):
 
 class AnnotateRequest(BaseModel):
     """批注批改请求"""
+
     image_base64: str = Field(..., description="图片 Base64 编码")
     rubrics: List[QuestionRubricInput] = Field(..., description="评分标准列表")
     page_index: int = Field(default=0, description="页码")
@@ -55,19 +51,15 @@ class AnnotateRequest(BaseModel):
 
 class AnnotateResponse(BaseModel):
     """批注批改响应"""
+
     success: bool = Field(..., description="是否成功")
     page_annotations: Optional[dict] = Field(None, description="页面批注信息")
     error: Optional[str] = Field(None, description="错误信息")
 
 
-class RenderRequest(BaseModel):
-    """渲染请求"""
-    image_base64: str = Field(..., description="原始图片 Base64")
-    annotations: List[dict] = Field(..., description="批注列表")
-
-
 class BatchAnnotateRequest(BaseModel):
     """批量批注批改请求"""
+
     images_base64: List[str] = Field(..., description="图片 Base64 列表")
     rubrics: List[QuestionRubricInput] = Field(..., description="评分标准列表")
     submission_id: str = Field(default="", description="提交 ID")
@@ -75,6 +67,7 @@ class BatchAnnotateRequest(BaseModel):
 
 class BatchAnnotateResponse(BaseModel):
     """批量批注批改响应"""
+
     success: bool
     result: Optional[dict] = None
     error: Optional[str] = None
@@ -82,21 +75,26 @@ class BatchAnnotateResponse(BaseModel):
 
 # ==================== API 路由 ====================
 
+
 @router.post("/annotate", response_model=AnnotateResponse, summary="批改单页并返回批注坐标")
 async def annotate_page(request: AnnotateRequest):
     """
     批改单页图片并返回带坐标的批注信息
-    
+
     - 输入：图片 Base64 + 评分标准
     - 输出：批注坐标列表（分数位置、错误圈选、讲解位置等）
     """
+    raise HTTPException(
+        status_code=410,
+        detail="后端批注渲染已禁用，请改为前端 Canvas 渲染。",
+    )
     try:
         # 解码图片
         try:
             image_data = base64.b64decode(request.image_base64)
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"图片 Base64 解码失败: {e}")
-        
+
         # 转换评分标准
         rubrics = []
         for r in request.rubrics:
@@ -109,15 +107,17 @@ async def annotate_page(request: AnnotateRequest):
                 )
                 for sp in r.scoring_points
             ]
-            rubrics.append(QuestionRubric(
-                question_id=r.question_id,
-                max_score=r.max_score,
-                question_text=r.question_text,
-                standard_answer=r.standard_answer,
-                scoring_points=scoring_points,
-                grading_notes=r.grading_notes,
-            ))
-        
+            rubrics.append(
+                QuestionRubric(
+                    question_id=r.question_id,
+                    max_score=r.max_score,
+                    question_text=r.question_text,
+                    standard_answer=r.standard_answer,
+                    scoring_points=scoring_points,
+                    grading_notes=r.grading_notes,
+                )
+            )
+
         # 调用批注批改服务
         service = AnnotationGradingService()
         page_annotations = await service.grade_page_with_annotations(
@@ -125,12 +125,12 @@ async def annotate_page(request: AnnotateRequest):
             rubrics=rubrics,
             page_index=request.page_index,
         )
-        
+
         return AnnotateResponse(
             success=True,
             page_annotations=page_annotations.to_dict(),
         )
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -141,11 +141,17 @@ async def annotate_page(request: AnnotateRequest):
         )
 
 
-@router.post("/annotate/batch", response_model=BatchAnnotateResponse, summary="批量批改并返回批注坐标")
+@router.post(
+    "/annotate/batch", response_model=BatchAnnotateResponse, summary="批量批改并返回批注坐标"
+)
 async def annotate_batch(request: BatchAnnotateRequest):
     """
     批量批改多页图片并返回带坐标的批注信息
     """
+    raise HTTPException(
+        status_code=410,
+        detail="后端批注渲染已禁用，请改为前端 Canvas 渲染。",
+    )
     try:
         # 解码所有图片
         pages = []
@@ -154,7 +160,7 @@ async def annotate_batch(request: BatchAnnotateRequest):
                 pages.append(base64.b64decode(img_b64))
             except Exception as e:
                 raise HTTPException(status_code=400, detail=f"第 {i+1} 张图片解码失败: {e}")
-        
+
         # 转换评分标准
         rubrics = []
         for r in request.rubrics:
@@ -167,15 +173,17 @@ async def annotate_batch(request: BatchAnnotateRequest):
                 )
                 for sp in r.scoring_points
             ]
-            rubrics.append(QuestionRubric(
-                question_id=r.question_id,
-                max_score=r.max_score,
-                question_text=r.question_text,
-                standard_answer=r.standard_answer,
-                scoring_points=scoring_points,
-                grading_notes=r.grading_notes,
-            ))
-        
+            rubrics.append(
+                QuestionRubric(
+                    question_id=r.question_id,
+                    max_score=r.max_score,
+                    question_text=r.question_text,
+                    standard_answer=r.standard_answer,
+                    scoring_points=scoring_points,
+                    grading_notes=r.grading_notes,
+                )
+            )
+
         # 调用批注批改服务
         service = AnnotationGradingService()
         result = await service.grade_submission_with_annotations(
@@ -183,12 +191,12 @@ async def annotate_batch(request: BatchAnnotateRequest):
             rubrics=rubrics,
             submission_id=request.submission_id,
         )
-        
+
         return BatchAnnotateResponse(
             success=True,
             result=result.to_dict(),
         )
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -199,129 +207,3 @@ async def annotate_batch(request: BatchAnnotateRequest):
         )
 
 
-@router.post("/render", summary="渲染批注到图片")
-async def render_annotations(request: RenderRequest):
-    """
-    将批注渲染到图片上，返回带批改标记的图片
-    
-    - 输入：原始图片 + 批注列表
-    - 输出：渲染后的图片（PNG）
-    """
-    try:
-        # 解码图片
-        try:
-            image_data = base64.b64decode(request.image_base64)
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=f"图片解码失败: {e}")
-        
-        # 解析批注
-        annotations = [
-            VisualAnnotation.from_dict(ann)
-            for ann in request.annotations
-        ]
-        
-        # 渲染
-        renderer = AnnotationRenderer()
-        page_annotations = PageAnnotations(page_index=0, annotations=annotations)
-        rendered_image = renderer.render_page(image_data, page_annotations)
-        
-        return Response(
-            content=rendered_image,
-            media_type="image/png",
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"渲染批注失败: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/render/base64", summary="渲染批注并返回 Base64")
-async def render_annotations_base64(request: RenderRequest):
-    """
-    将批注渲染到图片上，返回 Base64 编码的图片
-    """
-    try:
-        # 解码图片
-        image_data = base64.b64decode(request.image_base64)
-        
-        # 解析批注
-        annotations = [
-            VisualAnnotation.from_dict(ann)
-            for ann in request.annotations
-        ]
-        
-        # 渲染
-        renderer = AnnotationRenderer()
-        page_annotations = PageAnnotations(page_index=0, annotations=annotations)
-        rendered_image = renderer.render_page(image_data, page_annotations)
-        
-        # 编码为 Base64
-        rendered_b64 = base64.b64encode(rendered_image).decode('utf-8')
-        
-        return {
-            "success": True,
-            "image_base64": rendered_b64,
-        }
-        
-    except Exception as e:
-        logger.error(f"渲染批注失败: {e}", exc_info=True)
-        return {
-            "success": False,
-            "error": str(e),
-        }
-
-
-@router.post("/annotate-and-render", summary="批改并直接渲染")
-async def annotate_and_render(request: AnnotateRequest):
-    """
-    一步完成：批改 + 渲染批注到图片
-    
-    返回带批改标记的图片（PNG）
-    """
-    try:
-        # 解码图片
-        image_data = base64.b64decode(request.image_base64)
-        
-        # 转换评分标准
-        rubrics = []
-        for r in request.rubrics:
-            scoring_points = [
-                ScoringPoint(
-                    description=sp.description,
-                    score=sp.score,
-                    point_id=sp.point_id,
-                    is_required=sp.is_required,
-                )
-                for sp in r.scoring_points
-            ]
-            rubrics.append(QuestionRubric(
-                question_id=r.question_id,
-                max_score=r.max_score,
-                question_text=r.question_text,
-                standard_answer=r.standard_answer,
-                scoring_points=scoring_points,
-                grading_notes=r.grading_notes,
-            ))
-        
-        # 批改
-        grading_service = AnnotationGradingService()
-        page_annotations = await grading_service.grade_page_with_annotations(
-            image_data=image_data,
-            rubrics=rubrics,
-            page_index=request.page_index,
-        )
-        
-        # 渲染
-        renderer = AnnotationRenderer()
-        rendered_image = renderer.render_page(image_data, page_annotations)
-        
-        return Response(
-            content=rendered_image,
-            media_type="image/png",
-        )
-        
-    except Exception as e:
-        logger.error(f"批改渲染失败: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))

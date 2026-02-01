@@ -1,5 +1,3 @@
-import { create } from 'zustand';
-
 const stripTrailingSlash = (value: string) => value.replace(/\/+$/, '');
 
 const resolveFromApiBase = (apiBase: string, fallbackOrigin: string) => {
@@ -52,22 +50,6 @@ export const buildWsUrl = (path: string) => {
 
 type WebSocketStatus = 'CONNECTING' | 'OPEN' | 'CLOSED' | 'ERROR';
 
-interface WebSocketService {
-    url: string;
-    socket: WebSocket | null;
-    status: WebSocketStatus;
-    reconnectAttempts: number;
-    maxReconnectAttempts: number;
-    reconnectInterval: number;
-    listeners: Map<string, ((data: any) => void)[]>;
-
-    connect: (url: string) => void;
-    disconnect: () => void;
-    send: (type: string, payload: any) => void;
-    on: (type: string, callback: (data: any) => void) => void;
-    off: (type: string, callback: (data: any) => void) => void;
-}
-
 class WSClient {
     private socket: WebSocket | null = null;
     private status: WebSocketStatus = 'CLOSED';
@@ -95,8 +77,13 @@ class WSClient {
     }
 
     connect(url: string) {
-        if (this.socket && (this.socket.readyState === WebSocket.OPEN || this.socket.readyState === WebSocket.CONNECTING)) {
+        const hasActiveSocket = this.socket
+            && (this.socket.readyState === WebSocket.OPEN || this.socket.readyState === WebSocket.CONNECTING);
+        if (hasActiveSocket && url === this.url) {
             return;
+        }
+        if (hasActiveSocket && url !== this.url) {
+            this.disconnect();
         }
 
         this.url = url;
@@ -189,7 +176,7 @@ class WSClient {
         }
     }
 
-    send(type: string, payload: any) {
+    send(type: string, payload: Record<string, unknown>) {
         if (this.socket && this.socket.readyState === WebSocket.OPEN) {
             this.socket.send(JSON.stringify({ type, ...payload }));
         } else {

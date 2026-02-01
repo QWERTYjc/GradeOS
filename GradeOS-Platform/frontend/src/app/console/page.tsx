@@ -1,10 +1,10 @@
 'use client';
 
-import React, { useEffect, useState, useContext } from 'react';
+import React, { useEffect, useState, useContext, useCallback } from 'react';
 import dynamic from 'next/dynamic';
 import { useConsoleStore } from '@/store/consoleStore';
 import { useAuthStore } from '@/store/authStore';
-import { useSearchParams, useRouter } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
     Images,
@@ -14,7 +14,7 @@ import {
 import clsx from 'clsx';
 import { AppContext } from '@/components/bookscan/AppContext';
 import { ScannedImage, Session } from '@/components/bookscan/types';
-import { api, ActiveRunItem } from '@/services/api';
+import { api, classApi } from '@/services/api';
 
 // Dynamic imports - Scanner and Gallery use pdfjs-dist which requires browser APIs
 const Scanner = dynamic(() => import('@/components/bookscan/Scanner'), { ssr: false });
@@ -54,14 +54,24 @@ interface ScannerContainerProps {
     rubricSessionId: string | null;
 
     // Actions
-    onSubmitBatch: (images: ScannedImage[], boundaries: number[]) => Promise<void>;
+    onSubmitBatch: (
+        images: ScannedImage[],
+        boundaries: number[],
+        studentMapping?: Array<{ studentId?: string; studentName?: string; studentKey?: string; startIndex: number; endIndex: number }>
+    ) => Promise<void>;
     interactionEnabled: boolean;
     onInteractionToggle: (enabled: boolean) => void;
     gradingMode: string;
     onGradingModeChange: (mode: string) => void;
+    expectedTotalScore: number | null;
+    onExpectedTotalScoreChange: (score: number | null) => void;
 
     // 班级批改模式下的学生映射
-    studentNameMapping?: Array<{ studentId: string; studentName: string; startIndex: number; endIndex: number }>;
+    studentNameMapping?: Array<{ studentId?: string; studentName?: string; studentKey?: string; startIndex: number; endIndex: number }>;
+    
+    // 当前用户信息（用于获取班级列表）
+    userId?: string;
+    userType?: string;
 }
 
 const ScannerContainer = ({
@@ -74,14 +84,23 @@ const ScannerContainer = ({
     onInteractionToggle,
     gradingMode,
     onGradingModeChange,
-    studentNameMapping = []
+    expectedTotalScore,
+    onExpectedTotalScoreChange,
+    studentNameMapping = [],
+    userId,
+    userType
 }: ScannerContainerProps) => {
-    const { user } = useAuthStore();
     const { setCurrentSessionId, sessions } = useContext(AppContext)!;
     const [viewMode, setViewMode] = useState<ScanViewMode>('exams');
     const [studentBoundaries, setStudentBoundaries] = useState<number[]>([]);
-
-    console.log('ScannerContainer Render:', { viewMode, hasHandler: !!onSubmitBatch });
+    const [studentInfos, setStudentInfos] = useState<Array<{ studentName: string; studentId: string }>>([]);
+    
+    // 班级选择相关状态
+    const [availableClasses, setAvailableClasses] = useState<Array<{ class_id: string; class_name: string }>>([]);
+    const [selectedClassId, setSelectedClassId] = useState<string>('');
+    const [classStudents, setClassStudents] = useState<Array<{ id: string; name: string; username: string }>>([]);
+    const [isLoadingClasses, setIsLoadingClasses] = useState(false);
+    const [isLoadingStudents, setIsLoadingStudents] = useState(false);
 
     useEffect(() => {
         if (viewMode === 'exams' && examSessionId) {
@@ -94,9 +113,152 @@ const ScannerContainer = ({
     const currentSession = sessions.find(s => s.id === (viewMode === 'exams' ? examSessionId : rubricSessionId));
     const imageCount = currentSession?.images.length || 0;
 
-    const handleSubmit = async (images: ScannedImage[]) => {
-        await onSubmitBatch(images, studentBoundaries);
+    // 加载班级列表
+    useEffect(() => {
+        if (!userId || !userType) return;
+        
+        const loadClasses = async () => {
+            setIsLoadingClasses(true);
+            try {
+                let classes: Array<{ class_id: string; class_name: string }> = [];
+                
+                if (userType === 'teacher') {
+                    const response = await classApi.getTeacherClasses(userId);
+                    classes = response.map((c: any) => ({ class_id: c.class_id, class_name: c.class_name }));
+                } else if (userType === 'student') {
+                    const response = await classApi.getMyClasses(userId);
+                    classes = response.map((c: any) => ({ class_id: c.class_id, class_name: c.class_name }));
+                }
+                
+                setAvailableClasses(classes);
+            } catch (error) {
+                console.error('Failed to load classes:', error);
+            } finally {
+                setIsLoadingClasses(false);
+            }
+        };
+        
+        loadClasses();
+    }, [userId, userType]);
+
+    // 加载班级学生
+    useEffect(() => {
+        if (!selectedClassId) {
+            setClassStudents([]);
+            return;
+        }
+        
+        const loadStudents = async () => {
+            setIsLoadingStudents(true);
+            try {
+                const students = await classApi.getClassStudents(selectedClassId);
+                setClassStudents(students);
+                
+                // 自动填充学生信息到 studentInfos
+                if (students.length > 0) {
+                    const autoMapping = students.map((s: any) => ({
+                        studentName: s.name || s.username,
+                        studentId: s.id,
+                    }));
+                    setStudentInfos(autoMapping);
+                    
+                    // 自动设置边界（假设每个学生平均分配页面）
+                    if (imageCount > 0) {
+                        const pagesPerStudent = Math.floor(imageCount / students.length);
+                        const boundaries = students.map((_: any, idx: number) => idx * pagesPerStudent);
+                        setStudentBoundaries(boundaries);
+                    }
+                }
+            } catch (error) {
+                console.error('Failed to load students:', error);
+            } finally {
+                setIsLoadingStudents(false);
+            }
+        };
+        
+        loadStudents();
+    }, [selectedClassId, imageCount]);
+
+    const normalizeBoundaries = (boundaries: number[], total: number) => {
+        const normalized = Array.from(
+            new Set(
+                boundaries
+                    .map((value) => Number(value))
+                    .filter((value) => Number.isFinite(value) && value >= 0 && value < total)
+            )
+        ).sort((a, b) => a - b);
+
+        if (total > 0) {
+            if (normalized.length === 0 || normalized[0] !== 0) {
+                normalized.unshift(0);
+            }
+        }
+        return normalized;
     };
+
+    const syncStudentInfos = useCallback((count: number) => {
+        setStudentInfos((prev) => {
+            const next = [];
+            for (let i = 0; i < count; i += 1) {
+                const existing = prev[i];
+                const seeded = studentNameMapping[i];
+                next.push({
+                    studentName: (existing?.studentName ?? seeded?.studentName ?? '').toString(),
+                    studentId: (existing?.studentId ?? seeded?.studentId ?? '').toString(),
+                });
+            }
+            return next;
+        });
+    }, [studentNameMapping]);
+
+    const handleBoundariesChange = (boundaries: number[]) => {
+        const normalized = normalizeBoundaries(boundaries, imageCount);
+        setStudentBoundaries(normalized);
+        syncStudentInfos(normalized.length);
+    };
+
+    useEffect(() => {
+        if (studentBoundaries.length > 0 && studentNameMapping.length > 0) {
+            syncStudentInfos(studentBoundaries.length);
+        }
+    }, [studentBoundaries.length, studentNameMapping, syncStudentInfos]);
+
+    const buildStudentMapping = (
+        boundaries: number[],
+        total: number,
+        options: { fillDefaults?: boolean } = {}
+    ) => {
+        if (!total) return [];
+        const normalized = normalizeBoundaries(boundaries, total);
+        const fillDefaults = options.fillDefaults ?? false;
+        return normalized.map((startIndex, idx) => {
+            const endIndex = idx + 1 < normalized.length ? normalized[idx + 1] - 1 : total - 1;
+            const info = studentInfos[idx] || { studentName: '', studentId: '' };
+            const trimmedName = info.studentName.trim();
+            const trimmedId = info.studentId.trim();
+            const labelCandidate = trimmedName || trimmedId;
+            const studentKey = fillDefaults
+                ? (labelCandidate || `学生${idx + 1}`)
+                : labelCandidate || undefined;
+            return {
+                studentId: trimmedId || undefined,
+                studentName: trimmedName || undefined,
+                studentKey,
+                startIndex,
+                endIndex,
+            };
+        }).filter(item => item.startIndex <= item.endIndex);
+    };
+
+    const handleSubmit = async (images: ScannedImage[]) => {
+        const normalized = normalizeBoundaries(studentBoundaries, images.length);
+        const mapping = buildStudentMapping(normalized, images.length, { fillDefaults: true });
+        await onSubmitBatch(images, normalized, mapping);
+    };
+
+    const displayStudentMapping = viewMode === 'exams'
+        ? buildStudentMapping(studentBoundaries, imageCount)
+        : [];
 
     // Allow access without login for demo purposes
     // if (!user) {
@@ -134,6 +296,84 @@ const ScannerContainer = ({
                     </div>
 
                     <div className="flex items-center gap-4">
+                        {viewMode === 'exams' && (
+                            <>
+                                {/* 班级选择器 */}
+                                {availableClasses.length > 0 && (
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-[0.2em]">班级</span>
+                                        <select
+                                            value={selectedClassId}
+                                            onChange={(e) => setSelectedClassId(e.target.value)}
+                                            disabled={isLoadingClasses}
+                                            className="text-xs font-medium text-slate-700 bg-white border border-slate-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer disabled:opacity-50"
+                                        >
+                                            <option value="">选择班级...</option>
+                                            {availableClasses.map(cls => (
+                                                <option key={cls.class_id} value={cls.class_id}>
+                                                    {cls.class_name}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                )}
+                                
+                                {/* 学生数量显示 */}
+                                {classStudents.length > 0 && (
+                                    <div className="flex items-center gap-2 rounded-full border border-blue-200 bg-blue-50 px-3 py-1.5 text-[11px] font-semibold text-blue-700">
+                                        <span className="uppercase tracking-[0.2em]">学生</span>
+                                        <span>{classStudents.length}</span>
+                                    </div>
+                                )}
+                                
+                                <div className="flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-[11px] font-semibold text-slate-600">
+                                    <span className="uppercase tracking-[0.2em] text-slate-400">Total</span>
+                                    <input
+                                        type="number"
+                                        min={0}
+                                        step={0.5}
+                                        value={expectedTotalScore ?? ''}
+                                        onChange={(event) => {
+                                            const nextValue = event.target.value.trim();
+                                            if (!nextValue) {
+                                                onExpectedTotalScoreChange(null);
+                                                return;
+                                            }
+                                            const parsed = Number(nextValue);
+                                            if (Number.isFinite(parsed) && parsed >= 0) {
+                                                onExpectedTotalScoreChange(parsed);
+                                            }
+                                        }}
+                                        placeholder="Max score"
+                                        className="w-20 bg-transparent text-xs font-semibold text-slate-900 outline-none placeholder:text-slate-300"
+                                    />
+                                </div>
+                            </>
+                        )}
+                        {viewMode === 'rubrics' && (
+                            <div className="flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-[11px] font-semibold text-slate-600">
+                                <span className="uppercase tracking-[0.2em] text-slate-400">Total</span>
+                                <input
+                                    type="number"
+                                    min={0}
+                                    step={0.5}
+                                    value={expectedTotalScore ?? ''}
+                                    onChange={(event) => {
+                                        const nextValue = event.target.value.trim();
+                                        if (!nextValue) {
+                                            onExpectedTotalScoreChange(null);
+                                            return;
+                                        }
+                                        const parsed = Number(nextValue);
+                                        if (Number.isFinite(parsed) && parsed >= 0) {
+                                            onExpectedTotalScoreChange(parsed);
+                                        }
+                                    }}
+                                    placeholder="Max score"
+                                    className="w-20 bg-transparent text-xs font-semibold text-slate-900 outline-none placeholder:text-slate-300"
+                                />
+                            </div>
+                        )}
                         <button
                             onClick={() => onTabChange('scan')}
                             className={clsx(
@@ -162,25 +402,75 @@ const ScannerContainer = ({
                 </div>
             </div>
 
-            {/* Content Content - Re-mount on view change to reset gallery state if needed */}
-            <div className="flex-1 min-h-0 bg-transparent">
-                {activeTab === 'scan' ? (
-                    <Scanner />
-                ) : (
-                    <Gallery
-                        key={viewMode} // Force re-mount when switching modes
-                        session={currentSession} // Direct pass to avoid context lag
-                        onSubmitBatch={handleSubmit}
-                        submitLabel={viewMode === 'exams' ? "Start Grading" : undefined}
-                        onBoundariesChange={viewMode === 'exams' ? setStudentBoundaries : undefined}
-                        isRubricMode={viewMode === 'rubrics'}
-                        studentNameMapping={viewMode === 'exams' ? studentNameMapping : undefined}
-                        interactionEnabled={interactionEnabled}
-                        onInteractionToggle={onInteractionToggle}
-                        gradingMode={gradingMode}
-                        onGradingModeChange={onGradingModeChange}
-                    />
+            {/* Content Area - 包含学生列表侧边栏和主内容区 */}
+            <div className="flex-1 min-h-0 bg-transparent flex">
+                {/* 学生列表侧边栏 - 仅在选择班级且有学生时显示 */}
+                {viewMode === 'exams' && classStudents.length > 0 && (
+                    <div className="w-64 border-r border-slate-200 bg-slate-50 overflow-y-auto">
+                        <div className="p-4 border-b border-slate-200 bg-white">
+                            <h3 className="text-sm font-semibold text-slate-900">班级学生</h3>
+                            <p className="text-xs text-slate-500 mt-1">共 {classStudents.length} 人</p>
+                        </div>
+                        <div className="p-2 space-y-1">
+                            {classStudents.map((student, index) => (
+                                <div
+                                    key={student.id}
+                                    className="flex items-center gap-3 p-3 rounded-lg bg-white border border-slate-200 hover:border-blue-300 hover:bg-blue-50 transition-colors cursor-pointer"
+                                >
+                                    <div className="flex-shrink-0 w-8 h-8 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center text-xs font-semibold">
+                                        {index + 1}
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                        <div className="text-sm font-medium text-slate-900 truncate">
+                                            {student.name || student.username}
+                                        </div>
+                                        <div className="text-xs text-slate-500 truncate">
+                                            {student.id}
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                        {isLoadingStudents && (
+                            <div className="p-4 text-center">
+                                <div className="inline-block animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
+                                <p className="text-xs text-slate-500 mt-2">加载中...</p>
+                            </div>
+                        )}
+                    </div>
                 )}
+                
+                {/* 主内容区 */}
+                <div className="flex-1 min-h-0 bg-transparent">
+                    {activeTab === 'scan' ? (
+                        <Scanner />
+                    ) : (
+                        <Gallery
+                            key={viewMode} // Force re-mount when switching modes
+                            session={currentSession} // Direct pass to avoid context lag
+                            onSubmitBatch={handleSubmit}
+                            submitLabel={viewMode === 'exams' ? "Start Grading" : undefined}
+                            onBoundariesChange={viewMode === 'exams' ? handleBoundariesChange : undefined}
+                            isRubricMode={viewMode === 'rubrics'}
+                            studentNameMapping={viewMode === 'exams' ? displayStudentMapping : undefined}
+                            onStudentInfoChange={viewMode === 'exams' ? (index, info) => {
+                                setStudentInfos((prev) => {
+                                    const next = [...prev];
+                                    const current = next[index] || { studentName: '', studentId: '' };
+                                    next[index] = {
+                                        studentName: info.studentName ?? current.studentName,
+                                        studentId: info.studentId ?? current.studentId,
+                                    };
+                                    return next;
+                                });
+                            } : undefined}
+                            interactionEnabled={interactionEnabled}
+                            onInteractionToggle={onInteractionToggle}
+                            gradingMode={gradingMode}
+                            onGradingModeChange={onGradingModeChange}
+                        />
+                    )}
+                </div>
             </div>
         </div>
     );
@@ -198,10 +488,18 @@ export default function ConsolePage() {
     const setInteractionEnabled = useConsoleStore((state) => state.setInteractionEnabled);
     const gradingMode = useConsoleStore((state) => state.gradingMode);
     const setGradingMode = useConsoleStore((state) => state.setGradingMode);
+    const expectedTotalScore = useConsoleStore((state) => state.expectedTotalScore);
+    const setExpectedTotalScore = useConsoleStore((state) => state.setExpectedTotalScore);
+    const classContext = useConsoleStore((state) => state.classContext);
+    const rubricScoreMismatch = useConsoleStore((state) => state.rubricScoreMismatch);
+    const setRubricScoreMismatch = useConsoleStore((state) => state.setRubricScoreMismatch);
+    const rubricParseError = useConsoleStore((state) => state.rubricParseError);
+    const setRubricParseError = useConsoleStore((state) => state.setRubricParseError);
     const currentTab = useConsoleStore((state) => state.currentTab);
     const isResultsView = currentTab === 'results';
     const setCurrentTab = useConsoleStore((state) => state.setCurrentTab);
     const isIdleView = status === 'IDLE';
+    const dismissedRunsKey = user?.id ? `gradeos-dismissed-runs:${user.id}` : null;
 
     // Initial Sessions State
     const [sessions, setSessions] = useState<Session[]>([]);
@@ -217,10 +515,6 @@ export default function ConsolePage() {
     const [activeTab, setActiveTab] = useState<ScanTab>('scan'); // Sub-tab for ScannerContainer
 
     const [isStreamOpen, setIsStreamOpen] = useState(false);
-    const [activeRuns, setActiveRuns] = useState<ActiveRunItem[]>([]);
-    const [activeRunsLoading, setActiveRunsLoading] = useState(false);
-    const [activeRunsError, setActiveRunsError] = useState<string | null>(null);
-    const [activeRunsLoaded, setActiveRunsLoaded] = useState(false);
 
     useEffect(() => {
         if (selectedAgentId || selectedNodeId) {
@@ -230,52 +524,37 @@ export default function ConsolePage() {
         setIsStreamOpen(false);
     }, [selectedAgentId, selectedNodeId]);
 
+    useEffect(() => {
+        if (rubricScoreMismatch || rubricParseError) {
+            setActiveTab('scan');
+        }
+    }, [rubricScoreMismatch, rubricParseError]);
+
+    const dismissCompletedRun = useCallback((batchId: string) => {
+        if (!dismissedRunsKey || typeof window === 'undefined') return;
+        try {
+            const raw = window.localStorage.getItem(dismissedRunsKey);
+            const parsed = raw ? (JSON.parse(raw) as string[]) : [];
+            if (!parsed.includes(batchId)) {
+                const next = [...parsed, batchId];
+                window.localStorage.setItem(dismissedRunsKey, JSON.stringify(next));
+            }
+        } catch (error) {
+            console.warn('Failed to persist dismissed run:', error);
+        }
+    }, [dismissedRunsKey]);
+
+    useEffect(() => {
+        if (status === 'COMPLETED' && currentTab === 'results' && submissionId) {
+            dismissCompletedRun(submissionId);
+        }
+    }, [status, currentTab, submissionId, dismissCompletedRun]);
+
     const handleStreamClose = () => {
         setIsStreamOpen(false);
         setSelectedNodeId(null);
     };
 
-    useEffect(() => {
-        if (!user?.id) {
-            setActiveRuns([]);
-            setActiveRunsLoaded(false);
-            return;
-        }
-
-        let mounted = true;
-        const fetchRuns = async () => {
-            if (!mounted) return;
-            if (!activeRunsLoaded) {
-                setActiveRunsLoading(true);
-            }
-            try {
-                const data = await api.getActiveRuns(user.id);
-                if (mounted) {
-                    setActiveRuns(data.runs || []);
-                    setActiveRunsError(null);
-                    setActiveRunsLoaded(true);
-                }
-            } catch (error) {
-                console.error('Failed to load active runs:', error);
-                if (mounted) {
-                    setActiveRunsError('Unable to load active runs');
-                    setActiveRunsLoaded(true);
-                }
-            } finally {
-                if (mounted) {
-                    setActiveRunsLoading(false);
-                }
-            }
-        };
-
-        fetchRuns();
-        const interval = setInterval(fetchRuns, 8000);
-
-        return () => {
-            mounted = false;
-            clearInterval(interval);
-        };
-    }, [user?.id, activeRunsLoaded]);
 
     // Create default sessions on mount
     useEffect(() => {
@@ -392,10 +671,13 @@ export default function ConsolePage() {
         if (!batchId) {
             return;
         }
+        if (submissionId !== batchId) {
+            reset();
+        }
         useConsoleStore.getState().setSubmissionId(batchId);
         useConsoleStore.getState().connectWs(batchId);
         useConsoleStore.getState().setStatus('RUNNING');
-    }, [searchParams]);
+    }, [searchParams, reset, submissionId]);
 
     // Provider Methods
     const createNewSession = (name?: string) => {
@@ -501,11 +783,12 @@ export default function ConsolePage() {
         markImageAsSplit
     };
 
-    // Prepare Header Count
-    const activeSession = sessions.find(s => s.id === currentSessionId);
-
     // Batch Submission
-    const handleSubmitBatch = async (images: ScannedImage[], boundaries: number[]) => {
+    const handleSubmitBatch = async (
+        images: ScannedImage[],
+        boundaries: number[],
+        studentMapping?: Array<{ studentId?: string; studentName?: string; studentKey?: string; startIndex: number; endIndex: number }>
+    ) => {
         try {
             const rubricSession = sessions.find(s => s.id === rubricSessionId);
             if (!rubricSession || rubricSession.images.length === 0) {
@@ -518,11 +801,13 @@ export default function ConsolePage() {
             const rubricFiles = rubricSession ? rubricSession.images.map(img => dataUrlToFile(img.url, img.name)) : [];
 
             // 获取班级批改上下文（如果存在）
-            const { classContext } = useConsoleStore.getState();
-            const classContextPayload = classContext.classId ? {
-                classId: classContext.classId,
+            const studentMappingPayload = (studentMapping && studentMapping.length > 0)
+                ? studentMapping
+                : undefined;
+            const classContextPayload = (classContext.classId || studentMappingPayload) ? {
+                classId: classContext.classId || undefined,
                 homeworkId: classContext.homeworkId || undefined,
-                studentMapping: classContext.studentImageMapping,
+                studentMapping: studentMappingPayload,
             } : undefined;
 
             // 2. Upload to backend with optional class context
@@ -534,7 +819,8 @@ export default function ConsolePage() {
                 classContextPayload,
                 interactionEnabled,
                 gradingMode,
-                user?.id
+                user?.id,
+                expectedTotalScore ?? undefined
             );
 
             useConsoleStore.getState().setSubmissionId(response.id);
@@ -545,33 +831,6 @@ export default function ConsolePage() {
             console.error("Batch upload failed", error);
             useConsoleStore.getState().setStatus('FAILED');
         }
-    };
-
-    const mapRunStatus = (statusValue: string): 'UPLOADING' | 'RUNNING' | 'COMPLETED' | 'FAILED' => {
-        if (statusValue === 'completed') return 'COMPLETED';
-        if (statusValue === 'failed') return 'FAILED';
-        if (statusValue === 'queued') return 'UPLOADING';
-        return 'RUNNING';
-    };
-
-    const formatStageLabel = (stage?: string) => {
-        if (!stage) return 'pending';
-        return stage.replace(/_/g, ' ');
-    };
-
-    const runStatusTone = (statusValue: string) => {
-        if (statusValue === 'running') return 'bg-emerald-500';
-        if (statusValue === 'queued') return 'bg-amber-400';
-        if (statusValue === 'failed') return 'bg-rose-500';
-        if (statusValue === 'completed') return 'bg-slate-800';
-        return 'bg-slate-400';
-    };
-
-    const handleRunSelect = (run: ActiveRunItem) => {
-        useConsoleStore.getState().setSubmissionId(run.batch_id);
-        useConsoleStore.getState().connectWs(run.batch_id);
-        useConsoleStore.getState().setStatus(mapRunStatus(run.status));
-        useConsoleStore.getState().setCurrentTab('process');
     };
 
     return (
@@ -619,79 +878,6 @@ export default function ConsolePage() {
                     )}
                 </AnimatePresence>
 
-                <AnimatePresence>
-                    {(activeRunsLoading || activeRuns.length > 0 || activeRunsError) && (
-                        <motion.div
-                            initial={{ opacity: 0, y: -8 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            exit={{ opacity: 0, y: -8 }}
-                            className="fixed left-6 top-24 z-40 w-[280px] rounded-2xl border border-slate-200 bg-white/90 p-4 shadow-xl backdrop-blur"
-                        >
-                            <div className="text-[10px] font-semibold uppercase tracking-[0.4em] text-slate-500">
-                                Active runs
-                            </div>
-                            {activeRunsError && (
-                                <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
-                                    {activeRunsError}
-                                </div>
-                            )}
-                            {!activeRunsError && activeRuns.length === 0 && activeRunsLoading && (
-                                <div className="mt-3 text-xs text-slate-400">Loading active runs...</div>
-                            )}
-                            {!activeRunsError && activeRuns.length > 0 && (
-                                <div className="mt-3 max-h-[60vh] space-y-3 overflow-y-auto pr-1">
-                                    {activeRuns.map((run) => {
-                                        const progressValue =
-                                            typeof run.progress === 'number'
-                                                ? Math.round(run.progress * 100)
-                                                : null;
-                                        const stageLabel = formatStageLabel(run.current_stage);
-                                        const isActive = submissionId === run.batch_id;
-
-                                        return (
-                                            <button
-                                                key={run.batch_id}
-                                                type="button"
-                                                onClick={() => handleRunSelect(run)}
-                                                className={clsx(
-                                                    'w-full rounded-xl border px-3 py-3 text-left transition hover:border-slate-400',
-                                                    isActive
-                                                        ? 'border-slate-900 bg-slate-900 text-white'
-                                                        : 'border-slate-200 bg-white text-slate-700'
-                                                )}
-                                            >
-                                                <div className="flex items-center justify-between text-xs font-semibold">
-                                                    <span>Batch {run.batch_id.slice(0, 8)}</span>
-                                                    <span className="flex items-center gap-2 text-[10px] uppercase tracking-[0.2em]">
-                                                        <span className={clsx('h-1.5 w-1.5 rounded-full', runStatusTone(run.status))} />
-                                                        {run.status}
-                                                    </span>
-                                                </div>
-                                                {(run.class_id || run.homework_id) && (
-                                                    <div className={clsx('mt-1 text-[11px]', isActive ? 'text-white/70' : 'text-slate-500')}>
-                                                        {run.class_id ? `Class ${run.class_id}` : 'Class run'}
-                                                        {run.homework_id ? ` · HW ${run.homework_id}` : ''}
-                                                    </div>
-                                                )}
-                                                <div className="mt-3 h-1.5 w-full rounded-full bg-slate-200">
-                                                    <div
-                                                        className={clsx('h-full rounded-full', isActive ? 'bg-white' : 'bg-slate-900')}
-                                                        style={{ width: `${Math.max(progressValue ?? 8, 8)}%` }}
-                                                    />
-                                                </div>
-                                                <div className={clsx('mt-2 flex items-center justify-between text-[10px] uppercase', isActive ? 'text-white/70' : 'text-slate-500')}>
-                                                    <span>{stageLabel}</span>
-                                                    <span>{progressValue !== null ? `${progressValue}%` : '—'}</span>
-                                                </div>
-                                            </button>
-                                        );
-                                    })}
-                                </div>
-                            )}
-                        </motion.div>
-                    )}
-                </AnimatePresence>
-
                 {/* Main Content Area - Centered */}
                 <main
                     className={clsx(
@@ -714,6 +900,41 @@ export default function ConsolePage() {
                                 exit={{ opacity: 0, scale: 0.95, y: -30 }}
                                 className="w-full h-full"
                             >
+                                {rubricScoreMismatch && (
+                                    <div className="mx-auto max-w-3xl px-6 pt-6">
+                                        <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 flex items-start justify-between gap-4">
+                                            <div>
+                                                <div className="font-semibold">Rubric total mismatch</div>
+                                                <div className="mt-1 text-xs text-rose-600">{rubricScoreMismatch.message}</div>
+                                            </div>
+                                            <button
+                                                onClick={() => setRubricScoreMismatch(null)}
+                                                className="shrink-0 rounded-full border border-rose-200 bg-white px-3 py-1 text-xs font-semibold text-rose-600 hover:bg-rose-100"
+                                            >
+                                                Got it
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
+                                {rubricParseError && (
+                                    <div className="mx-auto max-w-3xl px-6 pt-4">
+                                        <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 flex items-start justify-between gap-4">
+                                            <div>
+                                                <div className="font-semibold">Rubric parse failed</div>
+                                                <div className="mt-1 text-xs text-rose-600">{rubricParseError.message}</div>
+                                                {rubricParseError.details && (
+                                                    <div className="mt-1 text-[10px] text-rose-500">{rubricParseError.details}</div>
+                                                )}
+                                            </div>
+                                            <button
+                                                onClick={() => setRubricParseError(null)}
+                                                className="shrink-0 rounded-full border border-rose-200 bg-white px-3 py-1 text-xs font-semibold text-rose-600 hover:bg-rose-100"
+                                            >
+                                                Got it
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
                                 <ScannerContainer
                                     activeTab={activeTab}
                                     onTabChange={setActiveTab}
@@ -724,7 +945,11 @@ export default function ConsolePage() {
                                     onInteractionToggle={setInteractionEnabled}
                                     gradingMode={gradingMode}
                                     onGradingModeChange={setGradingMode}
-                                    studentNameMapping={useConsoleStore.getState().classContext.studentImageMapping}
+                                    expectedTotalScore={expectedTotalScore}
+                                    onExpectedTotalScoreChange={setExpectedTotalScore}
+                                    studentNameMapping={classContext.studentImageMapping}
+                                    userId={user?.id}
+                                    userType={user?.role}
                                 />
                             </motion.div>
                         )}

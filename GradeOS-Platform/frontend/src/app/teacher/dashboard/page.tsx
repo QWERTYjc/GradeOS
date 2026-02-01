@@ -17,8 +17,6 @@ export default function TeacherDashboard() {
 
   useEffect(() => {
     if (!user?.id) {
-      setClasses([]);
-      setLoading(false);
       return;
     }
     let active = true;

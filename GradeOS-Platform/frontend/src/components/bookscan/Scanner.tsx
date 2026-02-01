@@ -3,7 +3,6 @@ import { Camera, Upload, X, Loader2, Zap, ZapOff, Sparkles, BookOpen, Smartphone
 import { AppContext } from './AppContext';
 import { fileToDataURL } from './imageProcessing';
 import { optimizeDocument } from './llmService';
-import { COLORS } from './constants';
 
 type ScanMode = 'single' | 'book';
 
@@ -12,74 +11,40 @@ let pdfjsLib: typeof import('pdfjs-dist') | null = null;
 let pdfjsInitialized = false;
 
 const initPdfJs = async () => {
-  if (pdfjsInitialized && pdfjsLib) {
-    console.log('PDF.js already initialized');
-    return pdfjsLib;
-  }
+  if (pdfjsInitialized) return pdfjsLib;
+  if (typeof window === 'undefined') return null;
   
-  if (typeof window === 'undefined') {
-    console.warn('PDF.js initialization skipped: not in browser environment');
-    return null;
-  }
-  
-  try {
-    console.log('Initializing PDF.js...');
-    pdfjsLib = await import('pdfjs-dist');
-    
-    const version = pdfjsLib.version;
-    console.log('PDF.js version:', version);
-    
-    const workerSrc = `https://unpkg.com/pdfjs-dist@${version}/build/pdf.worker.min.mjs`;
-    console.log('Setting PDF.js worker:', workerSrc);
-    pdfjsLib.GlobalWorkerOptions.workerSrc = workerSrc;
-    
-    pdfjsInitialized = true;
-    console.log('PDF.js initialized successfully');
-    return pdfjsLib;
-  } catch (error) {
-    console.error('Failed to initialize PDF.js:', error);
-    return null;
-  }
+  pdfjsLib = await import('pdfjs-dist');
+  // Use unpkg CDN with .mjs extension for ES module worker
+  // pdfjs-dist 4.x requires .mjs worker
+  const version = pdfjsLib.version;
+  pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${version}/build/pdf.worker.min.mjs`;
+  pdfjsInitialized = true;
+  return pdfjsLib;
 };
 
 const renderPdfToImages = async (file: File, maxPages = 80) => {
-  console.log('Loading PDF file:', file.name, 'Size:', file.size);
-  
   const pdfjs = await initPdfJs();
   if (!pdfjs) throw new Error('PDF.js not available');
   
-  try {
-    console.log('Parsing PDF document...');
-    const buffer = await file.arrayBuffer();
-    const pdf = await pdfjs.getDocument({ data: new Uint8Array(buffer) }).promise;
-    const pages = Math.min(pdf.numPages, maxPages);
-    console.log(`PDF has ${pdf.numPages} pages, processing ${pages} pages`);
-    
-    const images: string[] = [];
+  const buffer = await file.arrayBuffer();
+  const pdf = await pdfjs.getDocument({ data: new Uint8Array(buffer) }).promise;
+  const pages = Math.min(pdf.numPages, maxPages);
+  const images: string[] = [];
 
-    for (let i = 1; i <= pages; i += 1) {
-      console.log(`Rendering page ${i}/${pages}...`);
-      const page = await pdf.getPage(i);
-      const viewport = page.getViewport({ scale: 1.5 });
-      const canvas = document.createElement('canvas');
-      const context = canvas.getContext('2d');
-      if (!context) {
-        console.warn(`Failed to get canvas context for page ${i}`);
-        continue;
-      }
-      canvas.width = viewport.width;
-      canvas.height = viewport.height;
-      await page.render({ canvasContext: context, viewport } as any).promise;
-      images.push(canvas.toDataURL('image/jpeg', 0.9));
-      console.log(`Page ${i} rendered successfully`);
-    }
-
-    console.log(`PDF processing complete: ${images.length} images extracted`);
-    return images;
-  } catch (error) {
-    console.error('Failed to process PDF:', error);
-    throw new Error(`Failed to process PDF: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  for (let i = 1; i <= pages; i += 1) {
+    const page = await pdf.getPage(i);
+    const viewport = page.getViewport({ scale: 1.5 });
+    const canvas = document.createElement('canvas');
+    const context = canvas.getContext('2d');
+    if (!context) continue;
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+    await page.render({ canvasContext: context, viewport } as any).promise;
+    images.push(canvas.toDataURL('image/jpeg', 0.9));
   }
+
+  return images;
 };
 
 export default function Scanner() {
@@ -219,6 +184,8 @@ export default function Scanner() {
   }, [context, isAutoEnhance, willSplitNext]);
 
   // Auto-scan logic (Motion detection)
+  const checkStabilityRef = useRef<(() => void) | null>(null);
+  
   const checkStability = useCallback(() => {
     if (!videoRef.current || !canvasRef.current || !isAutoScan) return;
 
@@ -269,9 +236,13 @@ export default function Scanner() {
       }, 1500);
     }
 
-    requestRef.current = requestAnimationFrame(checkStability);
+    if (checkStabilityRef.current) {
+      requestRef.current = requestAnimationFrame(checkStabilityRef.current);
+    }
 
   }, [isAutoScan, capturePhoto]);
+  
+  checkStabilityRef.current = checkStability;
 
   useEffect(() => {
     if (isAutoScan) {
@@ -285,45 +256,27 @@ export default function Scanner() {
 
   // File Upload Handling
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!e.target.files || e.target.files.length === 0) return;
-    
-    setIsProcessing(true);
-    setFeedbackMessage('Processing files...');
-    
-    try {
+    if (e.target.files) {
+      setIsProcessing(true);
       const files = Array.from(e.target.files);
 
       for (const file of files) {
-        try {
-          if (file.type === 'application/pdf') {
-            console.log('Processing PDF:', file.name);
+        if (file.type === 'application/pdf') {
+          try {
             const images = await renderPdfToImages(file);
-            console.log(`Extracted ${images.length} pages from PDF`);
             for (const img of images) {
               await handleImageData(img, 'pdf');
             }
-          } else if (file.type.startsWith('image/')) {
-            console.log('Processing image:', file.name);
-            const dataUrl = await fileToDataURL(file);
-            await handleImageData(dataUrl, 'upload');
-          } else {
-            console.warn('Unsupported file type:', file.type);
-            setFeedbackMessage(`Skipped: ${file.name} (unsupported type)`);
+          } catch {
+            alert("Failed to parse PDF");
           }
-        } catch (fileErr) {
-          console.error(`Error processing ${file.name}:`, fileErr);
-          setFeedbackMessage(`Failed to process: ${file.name}`);
+        } else {
+          const dataUrl = await fileToDataURL(file);
+          handleImageData(dataUrl, 'upload');
         }
       }
-      
-      setFeedbackMessage(`Successfully imported ${files.length} file(s)`);
-      setTimeout(() => setFeedbackMessage(null), 2000);
-    } catch (err: any) {
-      console.error('File upload error:', err);
-      setFeedbackMessage(`Upload failed: ${err.message}`);
-      setTimeout(() => setFeedbackMessage(null), 3000);
-    } finally {
       setIsProcessing(false);
+      // Reset input
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
   };

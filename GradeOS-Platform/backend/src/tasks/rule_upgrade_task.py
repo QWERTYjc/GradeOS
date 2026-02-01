@@ -25,18 +25,16 @@ logger = logging.getLogger(__name__)
 
 
 async def run_rule_upgrade(
-    min_samples: int = 100,
-    days: int = 7,
-    auto_deploy: bool = False
+    min_samples: int = 100, days: int = 7, auto_deploy: bool = False
 ) -> dict:
     """
     执行一次规则升级流程
-    
+
     Args:
         min_samples: 触发规则挖掘的最小改判样本数
         days: 改判样本的时间窗口（天）
         auto_deploy: 是否自动灰度发布通过测试的补丁
-        
+
     Returns:
         升级结果，包含：
         - samples_count: 样本数量
@@ -46,40 +44,39 @@ async def run_rule_upgrade(
         - patches_deployed: 已部署的补丁数
     """
     logger.info(f"开始规则升级流程: min_samples={min_samples}, days={days}")
-    
+
     result = {
         "samples_count": 0,
         "patterns_found": 0,
         "patches_generated": 0,
         "patches_passed": 0,
         "patches_deployed": 0,
-        "errors": []
+        "errors": [],
     }
-    
+
     try:
         # Step 1: 获取改判样本
         logger.info("Step 1: 获取改判样本...")
         grading_logger = get_grading_logger()
         override_samples = await grading_logger.get_override_samples(
-            min_count=min_samples,
-            days=days
+            min_count=min_samples, days=days
         )
         result["samples_count"] = len(override_samples)
-        
+
         if len(override_samples) < min_samples:
             logger.info(f"改判样本不足（{len(override_samples)} < {min_samples}），跳过升级")
             return result
-        
+
         # Step 2: 分析失败模式
         logger.info("Step 2: 分析失败模式...")
         miner = RuleMiner()
         patterns = await miner.analyze_overrides(override_samples)
         result["patterns_found"] = len(patterns)
-        
+
         if not patterns:
             logger.info("未发现可修复的失败模式")
             return result
-        
+
         # Step 3: 生成候选补丁
         logger.info(f"Step 3: 为 {len(patterns)} 个模式生成补丁...")
         generator = PatchGenerator()
@@ -92,13 +89,13 @@ async def run_rule_upgrade(
             except Exception as e:
                 logger.warning(f"补丁生成失败: {e}")
                 result["errors"].append(f"补丁生成: {e}")
-        
+
         result["patches_generated"] = len(patches)
-        
+
         if not patches:
             logger.info("未生成任何补丁")
             return result
-        
+
         # Step 4: 运行回归测试
         logger.info(f"Step 4: 对 {len(patches)} 个补丁运行回归测试...")
         tester = RegressionTester()
@@ -114,13 +111,13 @@ async def run_rule_upgrade(
             except Exception as e:
                 logger.warning(f"回归测试失败: {e}")
                 result["errors"].append(f"回归测试: {e}")
-        
+
         result["patches_passed"] = len(passed_patches)
-        
+
         if not passed_patches:
             logger.info("没有补丁通过回归测试")
             return result
-        
+
         # Step 5: 灰度发布
         if auto_deploy:
             logger.info(f"Step 5: 灰度发布 {len(passed_patches)} 个补丁...")
@@ -135,10 +132,10 @@ async def run_rule_upgrade(
                     result["errors"].append(f"灰度发布: {e}")
         else:
             logger.info("自动部署已禁用，跳过灰度发布")
-        
+
         logger.info(f"规则升级完成: {result}")
         return result
-        
+
     except Exception as e:
         logger.error(f"规则升级流程失败: {e}", exc_info=True)
         result["errors"].append(str(e))
@@ -148,20 +145,18 @@ async def run_rule_upgrade(
 async def main():
     """命令行入口"""
     import argparse
-    
+
     parser = argparse.ArgumentParser(description="运行规则升级任务")
     parser.add_argument("--min-samples", type=int, default=100, help="最小改判样本数")
     parser.add_argument("--days", type=int, default=7, help="时间窗口（天）")
     parser.add_argument("--auto-deploy", action="store_true", help="自动灰度发布")
-    
+
     args = parser.parse_args()
-    
+
     result = await run_rule_upgrade(
-        min_samples=args.min_samples,
-        days=args.days,
-        auto_deploy=args.auto_deploy
+        min_samples=args.min_samples, days=args.days, auto_deploy=args.auto_deploy
     )
-    
+
     print(f"升级结果: {result}")
 
 

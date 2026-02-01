@@ -76,7 +76,7 @@ export const ImageGallery: React.FC<ImageGalleryProps> = ({ images, onDelete, on
           ))}
         </div>
       </div>
-      <Image style={{ display: 'none' }} preview={{ visible: !!previewImage, src: previewImage || '', onVisibleChange: (visible) => !visible && setPreviewImage(null) }} />
+      <Image alt="Preview" style={{ display: 'none' }} preview={{ visible: !!previewImage, src: previewImage || '', onVisibleChange: (visible) => !visible && setPreviewImage(null) }} />
     </div>
   );
 };

@@ -53,15 +53,12 @@ const recommendedDrills = [
   { id: 'r-03', title: '顶点式转换练习', count: 8, duration: '18 分钟' },
 ];
 
-const extractQuestions = (result: Record<string, any>) => {
-  return (
-    result.questionResults ||
-    result.question_results ||
-    result.questions ||
-    result.questionDetails ||
-    result.question_details ||
-    []
-  );
+const extractQuestions = (result: Record<string, unknown>): Array<Record<string, unknown>> => {
+  const questions = result.questionResults || result.question_results || result.questions || result.questionDetails || result.question_details;
+  if (Array.isArray(questions)) {
+    return questions as Array<Record<string, unknown>>;
+  }
+  return [];
 };
 
 export default function StudentWrongBookPage() {
@@ -100,7 +97,10 @@ export default function StudentWrongBookPage() {
       setLoading(true);
       setError('');
       try {
-        const history: GradingHistoryResponse = await gradingApi.getGradingHistory({ class_id: selectedClassId });
+        const history: GradingHistoryResponse = await gradingApi.getGradingHistory({
+          class_id: selectedClassId,
+          teacher_id: user?.id || undefined,
+        });
         const detailResponses: GradingHistoryDetailResponse[] = await Promise.all(
           history.records.map((record) => gradingApi.getGradingHistoryDetail(record.import_id))
         );
@@ -118,7 +118,7 @@ export default function StudentWrongBookPage() {
         studentItems.forEach((item) => {
           const result = item.result || {};
           const questions = extractQuestions(result);
-          questions.forEach((question: Record<string, any>, idx: number) => {
+          questions.forEach((question: Record<string, unknown>, idx: number) => {
             const score = Number(question.score ?? 0);
             const maxScore = Number(question.maxScore ?? question.max_score ?? 0);
             const questionId = String(question.questionId ?? question.question_id ?? idx + 1);
@@ -146,10 +146,10 @@ export default function StudentWrongBookPage() {
                 questionId,
                 score,
                 maxScore,
-                feedback: question.feedback || '',
-                studentAnswer: question.studentAnswer || question.student_answer || '',
-                scoringPointResults: question.scoring_point_results || question.scoringPointResults || [],
-                pageIndices: question.page_indices || question.pageIndices || [],
+                feedback: String(question.feedback || ''),
+                studentAnswer: String(question.studentAnswer || question.student_answer || ''),
+                scoringPointResults: Array.isArray(question.scoring_point_results) ? question.scoring_point_results : Array.isArray(question.scoringPointResults) ? question.scoringPointResults : [],
+                pageIndices: Array.isArray(question.page_indices) ? question.page_indices : Array.isArray(question.pageIndices) ? question.pageIndices : [],
                 sourceImportId: item.import_id,
               });
             }

@@ -1,11 +1,13 @@
 "use client";
 
-import React, { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter, useParams } from "next/navigation";
 import clsx from "clsx";
-import { gradingApi } from "@/services/api";
+import { gradingApi, ActiveRunItem } from "@/services/api";
 import { buildWsUrl } from "@/services/ws";
 import { MathText } from "@/components/common/MathText";
+import { useAuthStore } from "@/store/authStore";
+import { useConsoleStore } from "@/store/consoleStore";
 
 type RubricScoringPointDraft = {
   pointId: string;
@@ -52,40 +54,40 @@ const workflowSteps = [
   { id: "export", label: "Export" },
 ];
 
-const normalizeRubric = (raw: any): ParsedRubricDraft => {
-  const rawQuestions = raw?.questions || [];
-  const questions: RubricQuestionDraft[] = rawQuestions.map((q: any, idx: number) => {
+const normalizeRubric = (raw: Record<string, unknown>): ParsedRubricDraft => {
+  const rawQuestions = (raw?.questions as Array<Record<string, unknown>>) || [];
+  const questions: RubricQuestionDraft[] = rawQuestions.map((q, idx: number) => {
     const questionId = String(q.questionId || q.question_id || q.id || idx + 1);
-    const scoringPoints = (q.scoringPoints || q.scoring_points || []).map((sp: any, spIdx: number) => ({
+    const scoringPoints = ((q.scoringPoints as Array<Record<string, unknown>>) || (q.scoring_points as Array<Record<string, unknown>>) || []).map((sp, spIdx: number) => ({
       pointId: String(sp.pointId || sp.point_id || `${questionId}.${spIdx + 1}`),
-      description: sp.description || "",
-      expectedValue: sp.expectedValue || sp.expected_value || "",
+      description: String(sp.description || ""),
+      expectedValue: String(sp.expectedValue || sp.expected_value || ""),
       score: Number(sp.score ?? sp.maxScore ?? 0),
       isRequired: Boolean(sp.isRequired ?? sp.is_required ?? true),
       keywords: Array.isArray(sp.keywords)
-        ? sp.keywords
+        ? sp.keywords.map((k: unknown) => String(k))
         : typeof sp.keywords === "string"
           ? sp.keywords.split(",").map((v: string) => v.trim()).filter(Boolean)
           : [],
     }));
 
-    const alternativeSolutions = (q.alternativeSolutions || q.alternative_solutions || []).map((alt: any) => ({
-      description: alt.description || "",
-      scoringCriteria: alt.scoringCriteria || alt.scoring_criteria || "",
-      note: alt.note || "",
+    const alternativeSolutions = ((q.alternativeSolutions as Array<Record<string, unknown>>) || (q.alternative_solutions as Array<Record<string, unknown>>) || []).map((alt) => ({
+      description: (alt.description as string) || "",
+      scoringCriteria: (alt.scoringCriteria || alt.scoring_criteria) as string || "",
+      note: (alt.note as string) || "",
     }));
 
     return {
       questionId,
       maxScore: Number(q.maxScore ?? q.max_score ?? 0),
-      questionText: q.questionText || q.question_text || "",
-      standardAnswer: q.standardAnswer || q.standard_answer || "",
-      gradingNotes: q.gradingNotes || q.grading_notes || "",
-      reviewNote: q.reviewNote || q.review_note || "",
+      questionText: String(q.questionText || q.question_text || ""),
+      standardAnswer: String(q.standardAnswer || q.standard_answer || ""),
+      gradingNotes: String(q.gradingNotes || q.grading_notes || ""),
+      reviewNote: String(q.reviewNote || q.review_note || ""),
       scoringPoints,
       alternativeSolutions,
-      criteria: q.criteria || [],
-      sourcePages: q.sourcePages || q.source_pages || [],
+      criteria: Array.isArray(q.criteria) ? q.criteria : [],
+      sourcePages: Array.isArray(q.sourcePages) ? q.sourcePages : Array.isArray(q.source_pages) ? q.source_pages : [],
     };
   });
 
@@ -97,8 +99,8 @@ const normalizeRubric = (raw: any): ParsedRubricDraft => {
   return {
     totalQuestions,
     totalScore,
-    generalNotes: raw?.generalNotes || raw?.general_notes || "",
-    rubricFormat: raw?.rubricFormat || raw?.rubric_format || "standard",
+    generalNotes: String(raw?.generalNotes || raw?.general_notes || ""),
+    rubricFormat: String(raw?.rubricFormat || raw?.rubric_format || "standard"),
     questions,
   };
 };
@@ -132,9 +134,15 @@ const buildRubricPayload = (draft: ParsedRubricDraft) => ({
   })),
 });
 
-export default function RubricReviewPage({ params }: { params: Promise<{ batchId: string }> }) {
+export default function RubricReviewPage() {
   const router = useRouter();
-  const { batchId } = use(params);
+  const params = useParams();
+  const batchId = params?.batchId as string;
+  const { user } = useAuthStore();
+  const setCurrentTab = useConsoleStore((state) => state.setCurrentTab);
+  const setPendingReview = useConsoleStore((state) => state.setPendingReview);
+  const setConsoleStatus = useConsoleStore((state) => state.setStatus);
+  const setReviewFocus = useConsoleStore((state) => state.setReviewFocus);
   const [rubricImages, setRubricImages] = useState<string[]>([]);
   const [rubricDraft, setRubricDraft] = useState<ParsedRubricDraft | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -153,7 +161,55 @@ export default function RubricReviewPage({ params }: { params: Promise<{ batchId
 
   useEffect(() => {
     let active = true;
+
+    const pickLatestRun = (runs: ActiveRunItem[], preferActive: boolean) => {
+      if (!runs.length) return null;
+      const candidates = preferActive ? runs.filter((run) => run.status !== "completed") : runs;
+      const pool = candidates.length > 0 ? candidates : runs;
+      const parseTime = (value?: string) => {
+        const ts = Date.parse(value || "");
+        return Number.isNaN(ts) ? 0 : ts;
+      };
+      return pool.reduce<ActiveRunItem | null>((latest, run) => {
+        const latestTime = latest
+          ? parseTime(
+              latest.updated_at || latest.completed_at || latest.started_at || latest.created_at
+            )
+          : 0;
+        const runTime = parseTime(
+          run.updated_at || run.completed_at || run.started_at || run.created_at
+        );
+        return runTime >= latestTime ? run : latest;
+      }, null);
+    };
+
+    const resolveLastBatch = async () => {
+      try {
+        const response = await gradingApi.getActiveRuns(user?.id);
+        const latest = pickLatestRun(response.runs || [], true);
+        if (!latest) {
+          if (active) {
+            setError("No grading runs found yet.");
+            setIsLoading(false);
+          }
+          return;
+        }
+        router.replace(`/grading/rubric-review/${latest.batch_id}`);
+      } catch (err) {
+        if (!active) return;
+        setError(err instanceof Error ? err.message : "Failed to resolve latest run.");
+        setIsLoading(false);
+      }
+    };
+
     setIsLoading(true);
+    if (batchId === "last") {
+      resolveLastBatch();
+      return () => {
+        active = false;
+      };
+    }
+
     gradingApi
       .getRubricReviewContext(batchId)
       .then((data) => {
@@ -178,9 +234,12 @@ export default function RubricReviewPage({ params }: { params: Promise<{ batchId
     return () => {
       active = false;
     };
-  }, [batchId]);
+  }, [batchId, router, user?.id]);
 
   useEffect(() => {
+    if (batchId === "last") {
+      return;
+    }
     streamBufferRef.current = "";
     setStreamText("");
     if (streamFlushTimerRef.current) {
@@ -316,6 +375,10 @@ export default function RubricReviewPage({ params }: { params: Promise<{ batchId
     try {
       await gradingApi.submitRubricReview({ batch_id: batchId, action: "approve" });
       setSuccessMessage("已确认解析结果，批改流程继续进行。");
+      setPendingReview(null);
+      setConsoleStatus('RUNNING');
+      setCurrentTab('process');
+      setReviewFocus(null);
       router.push(`/console?batchId=${batchId}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "提交失败");

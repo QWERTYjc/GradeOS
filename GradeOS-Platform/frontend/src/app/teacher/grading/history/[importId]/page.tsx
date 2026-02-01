@@ -32,23 +32,54 @@ export default function GradingHistoryDetailPage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    let active = true;
     if (!importId) return;
-    setLoading(true);
+    let active = true;
     let resolvedBatchId = '';
+    setLoading(true);
     gradingApi
       .getGradingHistoryDetail(importId)
       .then((detail) => {
         if (!active) return null;
         resolvedBatchId = detail.record.batch_id;
         setBatchId(resolvedBatchId);
+
+        // 如果没有 batch_id，直接使用 detail.items 中的结果
+        if (!resolvedBatchId || resolvedBatchId.trim() === '') {
+          // 从 items 构建 student_results
+          const studentResults = detail.items.map(item => ({
+            ...item.result,
+            studentName: item.student_name,
+            studentId: item.student_id,
+          }));
+
+          return Promise.resolve({
+            batch_id: importId,
+            student_results: studentResults,
+            answer_images: [],
+          });
+        }
+
         return gradingApi.getResultsReviewContext(resolvedBatchId);
       })
       .then((data: ResultsReviewContext | null) => {
         if (!active || !data) return;
         setSubmissionId(data.batch_id || resolvedBatchId || importId);
         setFinalResults(normalizeStudentResults(data.student_results || []));
-        setUploadedImages(data.answer_images || []);
+        const normalizedImages = (data.answer_images || []).map((img) => {
+          if (!img) return img;
+          const trimmed = img.trim();
+          if (
+            trimmed.startsWith('data:') ||
+            trimmed.startsWith('http://') ||
+            trimmed.startsWith('https://') ||
+            trimmed.startsWith('blob:') ||
+            trimmed.startsWith('/')
+          ) {
+            return trimmed;
+          }
+          return `data:image/jpeg;base64,${trimmed}`;
+        });
+        setUploadedImages(normalizedImages);
         setStatus('COMPLETED');
         setCurrentTab('results');
         setError(null);
@@ -84,7 +115,7 @@ export default function GradingHistoryDetailPage() {
           ) : error ? (
             <div className="h-full flex items-center justify-center text-sm text-rose-500">{error}</div>
           ) : (
-            <ResultsView />
+            <ResultsView defaultExpandDetails={true} />
           )}
         </div>
       </div>

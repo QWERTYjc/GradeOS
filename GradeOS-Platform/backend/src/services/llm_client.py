@@ -43,7 +43,10 @@ class UnifiedLLMClient:
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
-            self._client = httpx.AsyncClient(timeout=120.0)
+            # 增加超时时间以支持大型视觉分析任务
+            # 可通过环境变量 LLM_HTTP_TIMEOUT 覆盖
+            timeout = self._read_float_env("LLM_HTTP_TIMEOUT", 300.0)
+            self._client = httpx.AsyncClient(timeout=timeout)
         return self._client
 
     async def close(self) -> None:
@@ -148,7 +151,7 @@ class UnifiedLLMClient:
             **kwargs,
         }
 
-        logger.info(
+        logger.debug(
             "[LLM] invoke model=%s purpose=%s messages=%s",
             resolved_model,
             purpose,
@@ -169,7 +172,9 @@ class UnifiedLLMClient:
             usage = data.get("usage", {}) or {}
 
             header_usage = {}
-            header_key = response.headers.get("x-openrouter-usage") or response.headers.get("x-usage")
+            header_key = response.headers.get("x-openrouter-usage") or response.headers.get(
+                "x-usage"
+            )
             if header_key:
                 try:
                     import json
@@ -180,7 +185,7 @@ class UnifiedLLMClient:
             if header_usage:
                 usage = {**usage, **header_usage}
 
-            logger.info("[LLM] response chars=%s tokens=%s", len(content), usage)
+            logger.debug("[LLM] response chars=%s tokens=%s", len(content), usage)
             return LLMResponse(
                 content=content,
                 model=resolved_model,
@@ -228,7 +233,7 @@ class UnifiedLLMClient:
                     if isinstance(item, dict) and item.get("type") == "image_url":
                         image_count += 1
 
-        logger.info(
+        logger.debug(
             "[LLM] stream model=%s purpose=%s images=%s messages=%s",
             resolved_model,
             purpose,

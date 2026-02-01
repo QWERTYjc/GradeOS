@@ -213,7 +213,7 @@ const AIChat: React.FC<Props> = ({ lang }) => {
           lastMessage.nextQuestion = response.next_question;
           lastMessage.questionOptions = response.question_options;
           lastMessage.focusMode = response.focus_mode;
-          lastMessage.responseType = response.response_type as any;
+          lastMessage.responseType = response.response_type as 'text' | 'question' | 'diagram' | 'code';
         }
         return next;
       });
@@ -441,12 +441,12 @@ const AIChat: React.FC<Props> = ({ lang }) => {
     () => ({
       history: 'History',
       focus: 'Focus cues',
-      analytics: 'Learning analytics',
+      analytics: 'Learning progress',
       knowledgeMap: 'Knowledge map',
       question: 'Question',
       explanation: 'Explanation',
       highlight: 'Highlight',
-      progressTrace: 'Progress trace',
+      progressTrace: 'Progress',
     }),
     [],
   );

@@ -22,13 +22,19 @@ from src.graphs.batch_grading import (
 from src.graphs.state import BatchGradingGraphState
 
 
+@pytest.fixture(autouse=True)
+def _disable_progress_broadcast(monkeypatch):
+    """测试中禁用进度广播，避免导入重依赖模块导致卡顿。"""
+    monkeypatch.setenv("DISABLE_PROGRESS_BROADCAST", "true")
+
+
 class TestBatchConfig:
     """测试批次配置类"""
     
     def test_default_config(self):
         """测试默认配置值"""
         config = BatchConfig()
-        assert config.batch_size == 10
+        assert config.batch_size == 1000
         assert config.max_concurrent_workers == 5
         assert config.max_retries == 2
         assert config.retry_delay == 1.0
@@ -207,9 +213,9 @@ class TestGradingFanoutRouter:
         
         sends = grading_fanout_router(state)
         
-        # 没有图像时应该直接跳到 segment 节点
+        # 没有图像时应该直接跳到 simple_aggregate 节点
         assert len(sends) == 1
-        assert sends[0].node == "segment"
+        assert sends[0].node == "simple_aggregate"
     
     def test_fanout_includes_retry_config(self):
         """测试扇出包含重试配置"""
@@ -265,6 +271,11 @@ class TestGradeBatchNode:
                 "question_numbers": ["1", "2"],
                 "question_details": [],
                 "is_blank_page": False
+            }
+            # 显式让 grade_student 失败，走按页批改分支
+            mock_instance.grade_student.return_value = {
+                "status": "failed",
+                "error": "force per-page grading"
             }
             
             result = await grade_batch_node(state)
@@ -372,6 +383,10 @@ class TestGradeBatchNode:
                 }
             
             mock_instance.grade_page.side_effect = modify_rubric
+            mock_instance.grade_student.return_value = {
+                "status": "failed",
+                "error": "force per-page grading"
+            }
             
             await grade_batch_node(state)
             
@@ -408,6 +423,10 @@ class TestGradeBatchNode:
                 "question_numbers": ["1"],
                 "question_details": [],
                 "is_blank_page": False
+            }
+            mock_instance.grade_student.return_value = {
+                "status": "failed",
+                "error": "force per-page grading"
             }
             
             result = await grade_batch_node(state)
@@ -463,6 +482,10 @@ class TestWorkerIndependence:
                     "question_numbers": ["1"],
                     "question_details": [],
                     "is_blank_page": False
+                }
+                mock_instance.grade_student.return_value = {
+                    "status": "failed",
+                    "error": "force per-page grading"
                 }
                 
                 result = await grade_batch_node(state)

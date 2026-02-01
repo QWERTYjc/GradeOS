@@ -141,7 +141,6 @@ export interface HomeworkResponse {
   description: string;
   deadline: string;
   allow_early_grading?: boolean;
-  rubric_images?: string[];
   created_at: string;
 }
 
@@ -165,7 +164,7 @@ export const homeworkApi = {
   getDetail: (homeworkId: string) =>
     request<HomeworkResponse>(`/homework/detail/${homeworkId}`),
 
-  create: (data: { class_id: string; title: string; description: string; deadline: string; allow_early_grading?: boolean; rubric_images?: string[] }) =>
+  create: (data: { class_id: string; title: string; description: string; deadline: string; allow_early_grading?: boolean }) =>
     request<HomeworkResponse>('/homework/create', {
       method: 'POST',
       body: JSON.stringify(data),
@@ -449,7 +448,7 @@ export interface ConfirmBoundaryRequest {
 export interface RubricReviewRequest {
   batch_id: string;
   action: string;
-  parsed_rubric?: Record<string, any>;
+  parsed_rubric?: Record<string, unknown>;
   selected_question_ids?: string[];
   notes?: string;
 }
@@ -457,8 +456,8 @@ export interface RubricReviewRequest {
 export interface ResultsReviewRequest {
   batch_id: string;
   action: string;
-  results?: Array<Record<string, any>>;
-  regrade_items?: Array<Record<string, any>>;
+  results?: Array<Record<string, unknown>>;
+  regrade_items?: Array<Record<string, unknown>>;
   notes?: string;
 }
 
@@ -474,14 +473,6 @@ export interface GradingImportRequest {
   targets: GradingImportTarget[];
 }
 
-export interface GradingRecordStatistics {
-  average_score?: number;
-  max_score?: number;
-  min_score?: number;
-  pass_rate?: number;
-  score_distribution?: Record<string, number>;
-}
-
 export interface GradingImportRecord {
   import_id: string;
   batch_id: string;
@@ -493,7 +484,6 @@ export interface GradingImportRecord {
   status: string;
   created_at: string;
   revoked_at?: string;
-  statistics?: GradingRecordStatistics;
 }
 
 export interface GradingImportItem {
@@ -506,19 +496,11 @@ export interface GradingImportItem {
   status: string;
   created_at: string;
   revoked_at?: string;
-  result?: Record<string, any>;
-}
-
-export interface GradingHistorySummary {
-  total_records: number;
-  total_students_graded: number;
-  overall_average?: number;
-  trend?: 'improving' | 'stable' | 'regressing';
+  result?: Record<string, unknown>;
 }
 
 export interface GradingHistoryResponse {
   records: GradingImportRecord[];
-  summary?: GradingHistorySummary;
 }
 
 export interface GradingHistoryDetailResponse {
@@ -530,7 +512,7 @@ export interface RubricReviewContext {
   batch_id: string;
   status?: string;
   current_stage?: string;
-  parsed_rubric?: Record<string, any>;
+  parsed_rubric?: Record<string, unknown>;
   rubric_images: string[];
 }
 
@@ -538,8 +520,9 @@ export interface ResultsReviewContext {
   batch_id: string;
   status?: string;
   current_stage?: string;
-  student_results: Array<Record<string, any>>;
+  student_results: Array<Record<string, unknown>>;
   answer_images: string[];
+  parsed_rubric?: Record<string, unknown>;
 }
 
 export interface ActiveRunItem {
@@ -570,11 +553,12 @@ export const gradingApi = {
     classContext?: {
       classId?: string;
       homeworkId?: string;
-      studentMapping?: Array<{ studentId: string; studentName: string; startIndex: number; endIndex: number }>;
+      studentMapping?: Array<{ studentId?: string; studentName?: string; studentKey?: string; startIndex: number; endIndex: number }>;
     },
     enableReview: boolean = true,
     gradingMode?: string,
-    teacherId?: string
+    teacherId?: string,
+    expectedTotalScore?: number
   ): Promise<Submission> => {
     const formData = new FormData();
 
@@ -610,6 +594,9 @@ export const gradingApi = {
     }
     if (teacherId) {
       formData.append('teacher_id', teacherId);
+    }
+    if (typeof expectedTotalScore === 'number' && expectedTotalScore >= 0) {
+      formData.append('expected_total_score', expectedTotalScore.toString());
     }
 
     // 使用正确的批改 API 端点
@@ -693,12 +680,8 @@ export const gradingApi = {
       body: JSON.stringify(data),
     }),
 
-  getGradingHistory: (params?: { class_id?: string; assignment_id?: string; include_stats?: boolean }) => {
-    const queryParams: Record<string, string> = {};
-    if (params?.class_id) queryParams.class_id = params.class_id;
-    if (params?.assignment_id) queryParams.assignment_id = params.assignment_id;
-    if (params?.include_stats) queryParams.include_stats = 'true';
-    const query = new URLSearchParams(queryParams).toString();
+  getGradingHistory: (params?: { class_id?: string; assignment_id?: string; teacher_id?: string }) => {
+    const query = new URLSearchParams(params as Record<string, string>).toString();
     return request<GradingHistoryResponse>(`/grading/history${query ? `?${query}` : ''}`);
   },
 
@@ -730,11 +713,12 @@ export const api = {
     classContext?: {
       classId?: string;
       homeworkId?: string;
-      studentMapping?: Array<{ studentId: string; studentName: string; startIndex: number; endIndex: number }>;
+      studentMapping?: Array<{ studentId?: string; studentName?: string; studentKey?: string; startIndex: number; endIndex: number }>;
     },
     enableReview: boolean = true,
     gradingMode?: string,
-    teacherId?: string
+    teacherId?: string,
+    expectedTotalScore?: number
   ) => gradingApi.createSubmission(
     examFiles,
     rubricFiles,
@@ -743,7 +727,8 @@ export const api = {
     classContext,
     enableReview,
     gradingMode,
-    teacherId
+    teacherId,
+    expectedTotalScore
   ),
   getSubmission: gradingApi.getSubmission,
   getResults: gradingApi.getResults,
@@ -769,110 +754,6 @@ export const api = {
       total_pages: number;
     }>(`/class/${classId}/homework/${homeworkId}/submissions-for-grading`);
   },
-};
-
-// ============ OpenBoard 论坛 API ============
-
-import { Forum, ForumPost, ForumReply, ForumSearchResult, ForumUserStatus, ForumModLog } from '@/types';
-
-export interface CreateForumRequest {
-  name: string;
-  description: string;
-  creator_id: string;
-}
-
-export interface ApproveForumRequest {
-  approved: boolean;
-  reason?: string;
-  moderator_id: string;
-}
-
-export interface CreatePostRequest {
-  forum_id: string;
-  title: string;
-  content: string;
-  author_id: string;
-  images?: string[];  // 图片列表（base64）
-}
-
-export interface CreateReplyRequest {
-  content: string;
-  author_id: string;
-  images?: string[];  // 图片列表（base64）
-}
-
-export interface BanUserRequest {
-  user_id: string;
-  moderator_id: string;
-  banned: boolean;
-  reason?: string;
-}
-
-export const openboardApi = {
-  // 论坛管理
-  getForums: (includePending: boolean = false) =>
-    request<Forum[]>(`/openboard/forums${includePending ? '?include_pending=true' : ''}`),
-
-  createForum: (data: CreateForumRequest) =>
-    request<Forum>('/openboard/forums', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    }),
-
-  approveForum: (forumId: string, data: ApproveForumRequest) =>
-    request<Forum>(`/openboard/forums/${forumId}/approve`, {
-      method: 'POST',
-      body: JSON.stringify(data),
-    }),
-
-  // 帖子管理
-  getForumPosts: (forumId: string, page: number = 1, limit: number = 20) =>
-    request<ForumPost[]>(`/openboard/forums/${forumId}/posts?page=${page}&limit=${limit}`),
-
-  createPost: (data: CreatePostRequest) =>
-    request<ForumPost>('/openboard/posts', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    }),
-
-  getPostDetail: (postId: string) =>
-    request<{ post: ForumPost; replies: ForumReply[] }>(`/openboard/posts/${postId}`),
-
-  // 回复
-  createReply: (postId: string, data: CreateReplyRequest) =>
-    request<ForumReply>(`/openboard/posts/${postId}/replies`, {
-      method: 'POST',
-      body: JSON.stringify(data),
-    }),
-
-  // 搜索
-  searchPosts: (query: string, forumId?: string, limit: number = 20) => {
-    const params = new URLSearchParams({ q: query, limit: limit.toString() });
-    if (forumId) params.set('forum_id', forumId);
-    return request<ForumSearchResult[]>(`/openboard/search?${params.toString()}`);
-  },
-
-  // 管理员功能
-  getPendingForums: () =>
-    request<Forum[]>('/openboard/admin/pending-forums'),
-
-  deletePost: (postId: string, moderatorId: string, reason?: string) =>
-    request<{ success: boolean; message: string }>(`/openboard/admin/posts/${postId}`, {
-      method: 'DELETE',
-      body: JSON.stringify({ moderator_id: moderatorId, reason }),
-    }),
-
-  banUser: (data: BanUserRequest) =>
-    request<{ success: boolean; message: string }>('/openboard/admin/ban', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    }),
-
-  getUserStatus: (userId: string) =>
-    request<ForumUserStatus>(`/openboard/admin/users/${userId}/status`),
-
-  getModLogs: (limit: number = 50) =>
-    request<ForumModLog[]>(`/openboard/admin/mod-logs?limit=${limit}`),
 };
 
 export default api;

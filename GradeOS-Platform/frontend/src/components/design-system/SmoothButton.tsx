@@ -13,6 +13,7 @@ interface SmoothButtonProps extends HTMLMotionProps<'button'> {
     variant?: 'primary' | 'secondary' | 'ghost' | 'danger';
     size?: 'sm' | 'md' | 'lg';
     isLoading?: boolean;
+    children?: React.ReactNode;
 }
 
 export function SmoothButton({

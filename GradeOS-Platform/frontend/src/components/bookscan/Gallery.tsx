@@ -1,17 +1,18 @@
-import React, { useContext, useState, useEffect, useMemo, useRef } from 'react';
+import React, { useContext, useState, useEffect, useRef } from 'react';
 import { motion, useReducedMotion, useScroll, useTransform } from 'framer-motion';
 import { AppContext } from './AppContext';
-import { Trash2, CheckSquare, Square, Wand2, Plus, Images, ArrowLeft, ArrowRight, Move, Sparkles, Loader2, Eye, Send, Split, Users } from 'lucide-react';
+import { Trash2, CheckSquare, Square, Wand2, Images, ArrowLeft, ArrowRight, Move, Loader2, Send, Split } from 'lucide-react';
 import ImageEditor from './ImageEditor';
 import ImageViewer from './ImageViewer';
 import { submitToGradingSystem, SubmissionResponse } from './submissionService';
 import { ScannedImage, Session } from './types';
 
 interface StudentNameMapping {
-  studentId: string;
-  studentName: string;
-  startIndex: number;
-  endIndex: number;
+  studentId?: string;
+  studentName?: string;
+  studentKey?: string;
+  startIndex?: number;
+  endIndex?: number;
 }
 
 interface GalleryProps {
@@ -21,6 +22,7 @@ interface GalleryProps {
   onBoundariesChange?: (boundaries: number[]) => void;
   isRubricMode?: boolean;
   studentNameMapping?: StudentNameMapping[]; // 班级批改模式下的学生名称映射
+  onStudentInfoChange?: (index: number, info: { studentName?: string; studentId?: string }) => void;
   interactionEnabled?: boolean;
   onInteractionToggle?: (enabled: boolean) => void;
   gradingMode?: string;
@@ -70,6 +72,7 @@ export default function Gallery({
   onBoundariesChange,
   isRubricMode = false,
   studentNameMapping = [],
+  onStudentInfoChange,
   interactionEnabled = false,
   onInteractionToggle,
   gradingMode = 'auto',
@@ -84,18 +87,13 @@ export default function Gallery({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
-  if (!context) return null;
-  const {
-    sessions, currentSessionId, deleteImages, createNewSession,
-    setCurrentSessionId, reorderImages, splitImageIds, markImageAsSplit
-  } = context;
-
   // Use injected session or fallback to context
-  const currentSession = (session || sessions.find(s => s.id === currentSessionId)) as Session | undefined;
+  const currentSession = context ? (session || context.sessions.find(s => s.id === context.currentSessionId)) as Session | undefined : undefined;
+  const splitImageIds = context?.splitImageIds || new Set();
 
   // Notify parent of boundary changes whenever splitImageIds or image order changes
   useEffect(() => {
-    if (!currentSession || isRubricMode) return;
+    if (!context || !currentSession || isRubricMode) return;
 
     // Always include index 0 implicitly
     const indices = [0];
@@ -107,7 +105,13 @@ export default function Gallery({
     });
 
     onBoundariesChange?.(indices);
-  }, [splitImageIds, currentSession?.images, onBoundariesChange, isRubricMode]);
+  }, [context, splitImageIds, currentSession?.images, onBoundariesChange, isRubricMode]);
+
+  if (!context) return null;
+
+  const {
+    deleteImages, reorderImages, markImageAsSplit
+  } = context;
 
   const toggleSelection = (id: string) => {
     const newSet = new Set(selectedImages);
@@ -130,18 +134,18 @@ export default function Gallery({
   };
 
   const handleBulkDelete = () => {
-    if (!currentSessionId) return;
+    if (!context?.currentSessionId) return;
     if (confirm(`Delete ${selectedImages.size} images?`)) {
-      deleteImages(currentSessionId, Array.from(selectedImages));
+      deleteImages(context.currentSessionId, Array.from(selectedImages));
       setSelectedImages(new Set());
     }
   };
 
   const handleMove = (index: number, direction: 'left' | 'right') => {
-    if (!currentSessionId || !currentSession) return;
+    if (!context?.currentSessionId || !currentSession) return;
     const newIndex = direction === 'left' ? index - 1 : index + 1;
     if (newIndex >= 0 && newIndex < currentSession.images.length) {
-      reorderImages(currentSessionId, index, newIndex);
+      reorderImages(context.currentSessionId, index, newIndex);
     }
   };
 
@@ -191,18 +195,6 @@ export default function Gallery({
     } finally {
       setIsSubmitting(false);
     }
-  };
-
-  // Helper to calculate student number for a given image index
-  const getStudentNumber = (targetIndex: number) => {
-    if (!currentSession) return 1;
-    let count = 1;
-    for (let i = 1; i <= targetIndex; i++) {
-      if (splitImageIds.has(currentSession.images[i].id)) {
-        count++;
-      }
-    }
-    return count;
   };
 
   return (
@@ -344,8 +336,39 @@ export default function Gallery({
                   {!isRubricMode && (
                     <div className="flex items-center gap-2 mb-3">
                       <div className="bg-slate-900 text-white text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider shadow-sm">
-                        {studentNameMapping[groupIdx]?.studentName || `Student ${groupIdx + 1}`}
+                        {studentNameMapping[groupIdx]?.studentName
+                          || studentNameMapping[groupIdx]?.studentId
+                          || studentNameMapping[groupIdx]?.studentKey
+                          || `Student ${groupIdx + 1}`}
                       </div>
+                      {onStudentInfoChange && (
+                        <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
+                          <input
+                            type="text"
+                            placeholder="姓名"
+                            value={studentNameMapping[groupIdx]?.studentName || ''}
+                            onChange={(event) => {
+                              onStudentInfoChange(groupIdx, {
+                                studentName: event.target.value,
+                                studentId: studentNameMapping[groupIdx]?.studentId,
+                              });
+                            }}
+                            className="h-7 w-28 rounded-full border border-slate-200 bg-white px-3 text-[11px] font-medium text-slate-700 shadow-sm outline-none focus:border-slate-400"
+                          />
+                          <input
+                            type="text"
+                            placeholder="学号"
+                            value={studentNameMapping[groupIdx]?.studentId || ''}
+                            onChange={(event) => {
+                              onStudentInfoChange(groupIdx, {
+                                studentName: studentNameMapping[groupIdx]?.studentName,
+                                studentId: event.target.value,
+                              });
+                            }}
+                            className="h-7 w-24 rounded-full border border-slate-200 bg-white px-3 text-[11px] font-medium text-slate-700 shadow-sm outline-none focus:border-slate-400"
+                          />
+                        </div>
+                      )}
                       <div className="h-px bg-slate-200 flex-1 border-t border-dashed border-slate-300"></div>
                     </div>
                   )}
@@ -479,7 +502,7 @@ export default function Gallery({
           image={currentSession.images.find(i => i.id === editingImageId)!}
           onClose={() => setEditingImageId(null)}
           onSave={(newUrl) => {
-            if (currentSessionId) context.updateImage(currentSessionId, editingImageId, newUrl);
+            if (context?.currentSessionId) context.updateImage(context.currentSessionId, editingImageId, newUrl);
             setEditingImageId(null);
           }}
         />

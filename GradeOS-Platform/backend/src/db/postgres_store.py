@@ -25,6 +25,24 @@ logger = logging.getLogger(__name__)
 # 数据库文件路径
 
 
+def _safe_json_load(value: Any) -> Any:
+    if value is None:
+        return None
+    if isinstance(value, (dict, list)):
+        return value
+    if isinstance(value, bytes):
+        try:
+            value = value.decode("utf-8")
+        except Exception:
+            return None
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except Exception:
+            return None
+    return None
+
+
 def _get_connection_string() -> str:
     database_url = os.getenv("DATABASE_URL", "").strip()
     if database_url:
@@ -67,7 +85,8 @@ def init_db():
     """初始化数据库表"""
     with get_connection() as conn:
         # 工作流状态表
-        conn.execute("""
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS workflow_state (
                 id TEXT PRIMARY KEY,
                 batch_id TEXT UNIQUE NOT NULL,
@@ -77,13 +96,16 @@ def init_db():
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             )
-        """)
-        
+        """
+        )
+
         # 批改历史表
-        conn.execute("""
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS grading_history (
                 id TEXT PRIMARY KEY,
                 batch_id TEXT UNIQUE NOT NULL,
+                teacher_id TEXT,
                 class_ids TEXT,
                 created_at TEXT NOT NULL,
                 completed_at TEXT,
@@ -92,10 +114,18 @@ def init_db():
                 average_score REAL,
                 result_data TEXT
             )
-        """)
+        """
+        )
+
+        # Ensure teacher_id column exists for older sqlite files
+        try:
+            conn.execute("ALTER TABLE grading_history ADD COLUMN teacher_id TEXT")
+        except Exception:
+            pass
 
         # Import records (per class)
-        conn.execute("""
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS grading_imports (
                 id TEXT PRIMARY KEY,
                 batch_id TEXT NOT NULL,
@@ -106,11 +136,13 @@ def init_db():
                 revoked_at TEXT,
                 student_count INTEGER DEFAULT 0
             )
-        """)
+        """
+        )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_imports_batch_id ON grading_imports(batch_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_imports_class_id ON grading_imports(class_id)")
 
-        conn.execute("""
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS grading_import_items (
                 id TEXT PRIMARY KEY,
                 import_id TEXT NOT NULL,
@@ -124,12 +156,18 @@ def init_db():
                 result_data TEXT,
                 FOREIGN KEY (import_id) REFERENCES grading_imports(id)
             )
-        """)
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_import_items_import ON grading_import_items(import_id)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_import_items_student ON grading_import_items(student_id)")
-        
+        """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_import_items_import ON grading_import_items(import_id)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_import_items_student ON grading_import_items(student_id)"
+        )
+
         # 学生批改结果表
-        conn.execute("""
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS student_grading_results (
                 id TEXT PRIMARY KEY,
                 grading_history_id TEXT NOT NULL,
@@ -139,21 +177,31 @@ def init_db():
                 score REAL,
                 max_score REAL,
                 summary TEXT,
-                self_report TEXT,
+                confession TEXT,
                 result_data TEXT,
                 imported_at TEXT,
                 revoked_at TEXT,
                 FOREIGN KEY (grading_history_id) REFERENCES grading_history(id)
             )
-        """)
-        
+        """
+        )
+
         # 创建索引
         conn.execute("CREATE INDEX IF NOT EXISTS idx_workflow_batch_id ON workflow_state(batch_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_grading_batch_id ON grading_history(batch_id)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_student_grading_history ON student_grading_results(grading_history_id)")
-        
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_student_grading_history ON student_grading_results(grading_history_id)"
+        )
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_student_grading_unique_id ON student_grading_results(grading_history_id, student_id) WHERE student_id IS NOT NULL"
+        )
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_student_grading_unique_key ON student_grading_results(grading_history_id, student_key) WHERE student_key IS NOT NULL"
+        )
+
         # 作业提交表 - 存储班级作业的学生提交图片
-        conn.execute("""
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS homework_submissions (
                 id TEXT PRIMARY KEY,
                 class_id TEXT NOT NULL,
@@ -171,12 +219,15 @@ def init_db():
                 feedback TEXT,
                 UNIQUE(class_id, homework_id, student_id)
             )
-        """)
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_homework_class ON homework_submissions(class_id, homework_id)")
-
+        """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_homework_class ON homework_submissions(class_id, homework_id)"
+        )
 
         # Users table
-        conn.execute("""
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS users (
                 id TEXT PRIMARY KEY,
                 username TEXT UNIQUE NOT NULL,
@@ -185,11 +236,13 @@ def init_db():
                 password_hash TEXT NOT NULL,
                 created_at TEXT NOT NULL
             )
-        """)
+        """
+        )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)")
 
         # Classes table
-        conn.execute("""
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS classes (
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
@@ -197,23 +250,31 @@ def init_db():
                 invite_code TEXT UNIQUE NOT NULL,
                 created_at TEXT NOT NULL
             )
-        """)
+        """
+        )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_classes_teacher ON classes(teacher_id)")
 
         # Class enrollments
-        conn.execute("""
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS class_students (
                 class_id TEXT NOT NULL,
                 student_id TEXT NOT NULL,
                 joined_at TEXT NOT NULL,
                 PRIMARY KEY (class_id, student_id)
             )
-        """)
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_class_students_class ON class_students(class_id)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_class_students_student ON class_students(student_id)")
+        """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_class_students_class ON class_students(class_id)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_class_students_student ON class_students(student_id)"
+        )
 
         # Homework table
-        conn.execute("""
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS homeworks (
                 id TEXT PRIMARY KEY,
                 class_id TEXT NOT NULL,
@@ -224,11 +285,13 @@ def init_db():
                 subject TEXT,
                 created_at TEXT NOT NULL
             )
-        """)
+        """
+        )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_homeworks_class ON homeworks(class_id)")
-        
+
         # Assistant progress tables
-        conn.execute("""
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS assistant_concepts (
                 student_id TEXT NOT NULL,
                 class_id TEXT NOT NULL DEFAULT '',
@@ -240,10 +303,14 @@ def init_db():
                 last_seen_at TEXT NOT NULL,
                 PRIMARY KEY (student_id, class_id, concept_key)
             )
-        """)
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_assistant_concepts_student ON assistant_concepts(student_id, class_id)")
+        """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_assistant_concepts_student ON assistant_concepts(student_id, class_id)"
+        )
 
-        conn.execute("""
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS assistant_mastery_snapshots (
                 id TEXT PRIMARY KEY,
                 student_id TEXT NOT NULL,
@@ -255,10 +322,12 @@ def init_db():
                 suggestions TEXT,
                 created_at TEXT NOT NULL
             )
-        """)
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_assistant_mastery_student ON assistant_mastery_snapshots(student_id, class_id, created_at)")
+        """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_assistant_mastery_student ON assistant_mastery_snapshots(student_id, class_id, created_at)"
+        )
 
-        
         logger.info("PostgreSQL database initialized.")
 
 
@@ -268,6 +337,7 @@ def init_db():
 @dataclass
 class UserRecord:
     """User record."""
+
     id: str
     username: str
     name: Optional[str] = None
@@ -279,6 +349,7 @@ class UserRecord:
 @dataclass
 class ClassRecord:
     """Class record."""
+
     id: str
     name: str
     teacher_id: str
@@ -289,6 +360,7 @@ class ClassRecord:
 @dataclass
 class HomeworkRecord:
     """Homework record."""
+
     id: str
     class_id: str
     title: str
@@ -562,7 +634,9 @@ def get_homework(homework_id: str) -> Optional[HomeworkRecord]:
     )
 
 
-def list_homeworks(class_id: Optional[str] = None, student_id: Optional[str] = None) -> List[HomeworkRecord]:
+def list_homeworks(
+    class_id: Optional[str] = None, student_id: Optional[str] = None
+) -> List[HomeworkRecord]:
     """List homeworks with optional filters."""
     query = "SELECT h.* FROM homeworks h"
     params: List[Any] = []
@@ -600,6 +674,7 @@ def list_homeworks(class_id: Optional[str] = None, student_id: Optional[str] = N
 @dataclass
 class WorkflowState:
     """工作流状态"""
+
     id: str
     batch_id: str
     status: str  # running, waiting_for_human, completed, failed
@@ -615,11 +690,12 @@ def save_workflow_state(state: WorkflowState) -> None:
     state.updated_at = now
     if not state.created_at:
         state.created_at = now
-    
+
     state_data_json = json.dumps(state.state_data) if state.state_data else None
-    
+
     with get_connection() as conn:
-        conn.execute("""
+        conn.execute(
+            """
             INSERT INTO workflow_state 
             (id, batch_id, status, pause_point, state_data, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -628,16 +704,18 @@ def save_workflow_state(state: WorkflowState) -> None:
                 pause_point = EXCLUDED.pause_point,
                 state_data = EXCLUDED.state_data,
                 updated_at = EXCLUDED.updated_at
-        """, (
-            state.id,
-            state.batch_id,
-            state.status,
-            state.pause_point,
-            state_data_json,
-            state.created_at,
-            state.updated_at
-        ))
-    
+        """,
+            (
+                state.id,
+                state.batch_id,
+                state.status,
+                state.pause_point,
+                state_data_json,
+                state.created_at,
+                state.updated_at,
+            ),
+        )
+
     logger.info(f"工作流状态已保存: batch_id={state.batch_id}, status={state.status}")
 
 
@@ -645,15 +723,14 @@ def get_workflow_state(batch_id: str) -> Optional[WorkflowState]:
     """获取工作流状态"""
     with get_connection() as conn:
         row = conn.execute(
-            "SELECT * FROM workflow_state WHERE batch_id = ?",
-            (batch_id,)
+            "SELECT * FROM workflow_state WHERE batch_id = ?", (batch_id,)
         ).fetchone()
-        
+
         if not row:
             return None
-        
+
         state_data = json.loads(row["state_data"]) if row["state_data"] else None
-        
+
         return WorkflowState(
             id=row["id"],
             batch_id=row["batch_id"],
@@ -661,21 +738,24 @@ def get_workflow_state(batch_id: str) -> Optional[WorkflowState]:
             pause_point=row["pause_point"],
             state_data=state_data,
             created_at=row["created_at"],
-            updated_at=row["updated_at"]
+            updated_at=row["updated_at"],
         )
 
 
 def update_workflow_status(batch_id: str, status: str, pause_point: Optional[str] = None) -> None:
     """更新工作流状态"""
     now = datetime.now().isoformat()
-    
+
     with get_connection() as conn:
-        conn.execute("""
+        conn.execute(
+            """
             UPDATE workflow_state 
             SET status = ?, pause_point = ?, updated_at = ?
             WHERE batch_id = ?
-        """, (status, pause_point, now, batch_id))
-    
+        """,
+            (status, pause_point, now, batch_id),
+        )
+
     logger.info(f"工作流状态已更新: batch_id={batch_id}, status={status}")
 
 
@@ -685,8 +765,10 @@ def update_workflow_status(batch_id: str, status: str, pause_point: Optional[str
 @dataclass
 class GradingHistory:
     """批改历史"""
+
     id: str
     batch_id: str
+    teacher_id: Optional[str] = None
     status: str = "pending"  # pending, completed, imported, revoked
     class_ids: Optional[List[str]] = None
     created_at: str = ""
@@ -700,62 +782,95 @@ def save_grading_history(history: GradingHistory) -> None:
     """保存批改历史"""
     if not history.created_at:
         history.created_at = datetime.now().isoformat()
-    
+
     class_ids_json = json.dumps(history.class_ids) if history.class_ids else None
     result_data_json = json.dumps(history.result_data) if history.result_data else None
-    
+
     with get_connection() as conn:
-        conn.execute("""
+        conn.execute(
+            """
             INSERT INTO grading_history 
-            (id, batch_id, class_ids, created_at, completed_at, status, 
+            (id, batch_id, teacher_id, class_ids, created_at, completed_at, status, 
              total_students, average_score, result_data)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (batch_id) DO UPDATE SET
+                teacher_id = EXCLUDED.teacher_id,
                 class_ids = EXCLUDED.class_ids,
                 completed_at = EXCLUDED.completed_at,
                 status = EXCLUDED.status,
                 total_students = EXCLUDED.total_students,
                 average_score = EXCLUDED.average_score,
                 result_data = EXCLUDED.result_data
-        """, (
-            history.id,
-            history.batch_id,
-            class_ids_json,
-            history.created_at,
-            history.completed_at,
-            history.status,
-            history.total_students,
-            history.average_score,
-            result_data_json
-        ))
-    
+        """,
+            (
+                history.id,
+                history.batch_id,
+                history.teacher_id,
+                class_ids_json,
+                history.created_at,
+                history.completed_at,
+                history.status,
+                history.total_students,
+                history.average_score,
+                result_data_json,
+            ),
+        )
+
     logger.info(f"批改历史已保存: batch_id={history.batch_id}")
 
 
 def get_grading_history(batch_id: str) -> Optional[GradingHistory]:
-    """获取批改历史"""
+    """获取批改历史（支持 batch_id、完整 UUID 或短 ID 前缀查询）"""
     with get_connection() as conn:
+        # 1. 先尝试通过 batch_id 精确匹配
         row = conn.execute(
-            "SELECT * FROM grading_history WHERE batch_id = ?",
-            (batch_id,)
+            "SELECT * FROM grading_history WHERE batch_id = ?", (batch_id,)
         ).fetchone()
-        
+
+        # 2. 如果没找到，尝试通过 id 精确匹配（完整 UUID）
+        if not row:
+            try:
+                row = conn.execute(
+                    "SELECT * FROM grading_history WHERE CAST(id AS TEXT) = ?", (batch_id,)
+                ).fetchone()
+            except Exception:
+                pass
+
+        # 3. 如果还没找到，尝试通过 id 前缀匹配（短 ID）
+        if not row and len(batch_id) >= 8:
+            try:
+                row = conn.execute(
+                    "SELECT * FROM grading_history WHERE CAST(id AS TEXT) LIKE ?", (f"{batch_id}%",)
+                ).fetchone()
+            except Exception:
+                pass
+
+        # 4. 尝试通过 batch_id 前缀匹配
+        if not row and len(batch_id) >= 8:
+            try:
+                row = conn.execute(
+                    "SELECT * FROM grading_history WHERE batch_id LIKE ?", (f"{batch_id}%",)
+                ).fetchone()
+            except Exception:
+                pass
+
         if not row:
             return None
-        
-        class_ids = json.loads(row["class_ids"]) if row["class_ids"] else None
-        result_data = json.loads(row["result_data"]) if row["result_data"] else None
-        
+
+        class_ids = _safe_json_load(row["class_ids"]) if row["class_ids"] else None
+        result_data = _safe_json_load(row["result_data"]) if row["result_data"] else None
+
         return GradingHistory(
             id=row["id"],
             batch_id=row["batch_id"],
+            teacher_id=row.get("teacher_id"),
             status=row["status"],
             class_ids=class_ids,
             created_at=row["created_at"],
             completed_at=row["completed_at"],
             total_students=row["total_students"],
             average_score=row["average_score"],
-            result_data=result_data
+            result_data=result_data,
         )
 
 
@@ -764,32 +879,34 @@ def list_grading_history(class_id: Optional[str] = None, limit: int = 50) -> Lis
     with get_connection() as conn:
         if class_id:
             rows = conn.execute(
-                "SELECT * FROM grading_history WHERE class_ids LIKE ? ORDER BY created_at DESC LIMIT ?",
-                (f'%"{class_id}"%', limit)
+                "SELECT * FROM grading_history WHERE class_ids @> ?::jsonb ORDER BY created_at DESC LIMIT ?",
+                (json.dumps([class_id]), limit),
             ).fetchall()
         else:
             rows = conn.execute(
-                "SELECT * FROM grading_history ORDER BY created_at DESC LIMIT ?",
-                (limit,)
+                "SELECT * FROM grading_history ORDER BY created_at DESC LIMIT ?", (limit,)
             ).fetchall()
-        
+
         histories = []
         for row in rows:
-            class_ids = json.loads(row["class_ids"]) if row["class_ids"] else None
-            result_data = json.loads(row["result_data"]) if row["result_data"] else None
-            
-            histories.append(GradingHistory(
-                id=row["id"],
-                batch_id=row["batch_id"],
-                status=row["status"],
-                class_ids=class_ids,
-                created_at=row["created_at"],
-                completed_at=row["completed_at"],
-                total_students=row["total_students"],
-                average_score=row["average_score"],
-                result_data=result_data
-            ))
-        
+            class_ids = _safe_json_load(row["class_ids"]) if row["class_ids"] else None
+            result_data = _safe_json_load(row["result_data"]) if row["result_data"] else None
+
+            histories.append(
+                GradingHistory(
+                    id=row["id"],
+                    batch_id=row["batch_id"],
+                    teacher_id=row["teacher_id"] if "teacher_id" in row.keys() else None,
+                    status=row["status"],
+                    class_ids=class_ids,
+                    created_at=row["created_at"],
+                    completed_at=row["completed_at"],
+                    total_students=row["total_students"],
+                    average_score=row["average_score"],
+                    result_data=result_data,
+                )
+            )
+
         return histories
 
 
@@ -799,6 +916,7 @@ def list_grading_history(class_id: Optional[str] = None, limit: int = 50) -> Lis
 @dataclass
 class StudentGradingResult:
     """学生批改结果"""
+
     id: str
     grading_history_id: str
     student_key: str
@@ -807,7 +925,7 @@ class StudentGradingResult:
     class_id: Optional[str] = None
     student_id: Optional[str] = None
     summary: Optional[str] = None
-    self_report: Optional[str] = None
+    confession: Optional[str] = None
     result_data: Optional[Dict[str, Any]] = None
     imported_at: Optional[str] = None
     revoked_at: Optional[str] = None
@@ -816,36 +934,39 @@ class StudentGradingResult:
 def save_student_result(result: StudentGradingResult) -> None:
     """保存学生批改结果"""
     result_data_json = json.dumps(result.result_data) if result.result_data else None
-    
+
     with get_connection() as conn:
-        conn.execute("""
+        conn.execute(
+            """
             INSERT INTO student_grading_results 
             (id, grading_history_id, student_key, class_id, student_id,
-             score, max_score, summary, self_report, result_data, 
+             score, max_score, summary, confession, result_data, 
              imported_at, revoked_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (id) DO UPDATE SET
                 score = EXCLUDED.score,
                 max_score = EXCLUDED.max_score,
                 summary = EXCLUDED.summary,
-                self_report = EXCLUDED.self_report,
+                confession = EXCLUDED.confession,
                 result_data = EXCLUDED.result_data,
                 imported_at = EXCLUDED.imported_at,
                 revoked_at = EXCLUDED.revoked_at
-        """, (
-            result.id,
-            result.grading_history_id,
-            result.student_key,
-            result.class_id,
-            result.student_id,
-            result.score,
-            result.max_score,
-            result.summary,
-            result.self_report,
-            result_data_json,
-            result.imported_at,
-            result.revoked_at
-        ))
+        """,
+            (
+                result.id,
+                result.grading_history_id,
+                result.student_key,
+                result.class_id,
+                result.student_id,
+                result.score,
+                result.max_score,
+                result.summary,
+                result.confession,
+                result_data_json,
+                result.imported_at,
+                result.revoked_at,
+            ),
+        )
 
 
 def get_student_results(grading_history_id: str) -> List[StudentGradingResult]:
@@ -853,28 +974,30 @@ def get_student_results(grading_history_id: str) -> List[StudentGradingResult]:
     with get_connection() as conn:
         rows = conn.execute(
             "SELECT * FROM student_grading_results WHERE grading_history_id = ?",
-            (grading_history_id,)
+            (grading_history_id,),
         ).fetchall()
-        
+
         results = []
         for row in rows:
-            result_data = json.loads(row["result_data"]) if row["result_data"] else None
-            
-            results.append(StudentGradingResult(
-                id=row["id"],
-                grading_history_id=row["grading_history_id"],
-                student_key=row["student_key"],
-                class_id=row["class_id"],
-                student_id=row["student_id"],
-                score=row["score"],
-                max_score=row["max_score"],
-                summary=row["summary"],
-                self_report=row["self_report"],
-                result_data=result_data,
-                imported_at=row["imported_at"],
-                revoked_at=row["revoked_at"]
-            ))
-        
+            result_data = _safe_json_load(row["result_data"]) if row["result_data"] else None
+
+            results.append(
+                StudentGradingResult(
+                    id=row["id"],
+                    grading_history_id=row["grading_history_id"],
+                    student_key=row["student_key"],
+                    class_id=row["class_id"],
+                    student_id=row["student_id"],
+                    score=row["score"],
+                    max_score=row["max_score"],
+                    summary=row["summary"],
+                    confession=row["confession"],
+                    result_data=result_data,
+                    imported_at=row["imported_at"],
+                    revoked_at=row["revoked_at"],
+                )
+            )
+
         return results
 
 
@@ -884,6 +1007,7 @@ def get_student_results(grading_history_id: str) -> List[StudentGradingResult]:
 @dataclass
 class HomeworkSubmission:
     """作业提交记录"""
+
     id: str
     class_id: str
     homework_id: str
@@ -904,11 +1028,12 @@ def save_homework_submission(submission: HomeworkSubmission) -> None:
     """保存作业提交"""
     if not submission.submitted_at:
         submission.submitted_at = datetime.now().isoformat()
-    
+
     images_json = json.dumps(submission.images) if submission.images else None
-    
+
     with get_connection() as conn:
-        conn.execute("""
+        conn.execute(
+            """
             INSERT INTO homework_submissions 
             (id, class_id, homework_id, student_id, student_name, 
              images, content, submission_type, page_count, submitted_at, status, grading_batch_id, score, feedback)
@@ -924,24 +1049,28 @@ def save_homework_submission(submission: HomeworkSubmission) -> None:
                 grading_batch_id = EXCLUDED.grading_batch_id,
                 score = EXCLUDED.score,
                 feedback = EXCLUDED.feedback
-        """, (
-            submission.id,
-            submission.class_id,
-            submission.homework_id,
-            submission.student_id,
-            submission.student_name,
-            images_json,
-            submission.content,
-            submission.submission_type,
-            submission.page_count,
-            submission.submitted_at,
-            submission.status,
-            submission.grading_batch_id,
-            submission.score,
-            submission.feedback,
-        ))
-    
-    logger.info(f"作业提交已保存: class_id={submission.class_id}, student_id={submission.student_id}")
+        """,
+            (
+                submission.id,
+                submission.class_id,
+                submission.homework_id,
+                submission.student_id,
+                submission.student_name,
+                images_json,
+                submission.content,
+                submission.submission_type,
+                submission.page_count,
+                submission.submitted_at,
+                submission.status,
+                submission.grading_batch_id,
+                submission.score,
+                submission.feedback,
+            ),
+        )
+
+    logger.info(
+        f"作业提交已保存: class_id={submission.class_id}, student_id={submission.student_id}"
+    )
 
 
 def get_homework_submissions(class_id: str, homework_id: str) -> List[HomeworkSubmission]:
@@ -951,30 +1080,32 @@ def get_homework_submissions(class_id: str, homework_id: str) -> List[HomeworkSu
             """SELECT * FROM homework_submissions 
                WHERE class_id = ? AND homework_id = ?
                ORDER BY student_name""",
-            (class_id, homework_id)
+            (class_id, homework_id),
         ).fetchall()
-        
+
         submissions = []
         for row in rows:
             images = json.loads(row["images"]) if row["images"] else None
-            
-            submissions.append(HomeworkSubmission(
-                id=row["id"],
-                class_id=row["class_id"],
-                homework_id=row["homework_id"],
-                student_id=row["student_id"],
-                student_name=row["student_name"],
-                images=images,
-                content=row["content"],
-                submission_type=row["submission_type"] or ("scan" if images else "text"),
-                page_count=row["page_count"],
-                submitted_at=row["submitted_at"],
-                status=row["status"],
-                grading_batch_id=row["grading_batch_id"],
-                score=row["score"],
-                feedback=row["feedback"],
-            ))
-        
+
+            submissions.append(
+                HomeworkSubmission(
+                    id=row["id"],
+                    class_id=row["class_id"],
+                    homework_id=row["homework_id"],
+                    student_id=row["student_id"],
+                    student_name=row["student_name"],
+                    images=images,
+                    content=row["content"],
+                    submission_type=row["submission_type"] or ("scan" if images else "text"),
+                    page_count=row["page_count"],
+                    submitted_at=row["submitted_at"],
+                    status=row["status"],
+                    grading_batch_id=row["grading_batch_id"],
+                    score=row["score"],
+                    feedback=row["feedback"],
+                )
+            )
+
         return submissions
 
 
@@ -993,46 +1124,54 @@ def list_student_submissions(student_id: str, limit: int = 5) -> List[HomeworkSu
     submissions = []
     for row in rows:
         images = json.loads(row["images"]) if row["images"] else None
-        submissions.append(HomeworkSubmission(
-            id=row["id"],
-            class_id=row["class_id"],
-            homework_id=row["homework_id"],
-            student_id=row["student_id"],
-            student_name=row["student_name"],
-            images=images,
-            content=row["content"],
-            submission_type=row["submission_type"] or ("scan" if images else "text"),
-            page_count=row["page_count"],
-            submitted_at=row["submitted_at"],
-            status=row["status"],
-            grading_batch_id=row["grading_batch_id"],
-            score=row["score"],
-            feedback=row["feedback"],
-        ))
+        submissions.append(
+            HomeworkSubmission(
+                id=row["id"],
+                class_id=row["class_id"],
+                homework_id=row["homework_id"],
+                student_id=row["student_id"],
+                student_name=row["student_name"],
+                images=images,
+                content=row["content"],
+                submission_type=row["submission_type"] or ("scan" if images else "text"),
+                page_count=row["page_count"],
+                submitted_at=row["submitted_at"],
+                status=row["status"],
+                grading_batch_id=row["grading_batch_id"],
+                score=row["score"],
+                feedback=row["feedback"],
+            )
+        )
     return submissions
 
 
 def update_homework_submission_status(
-    class_id: str, 
-    homework_id: str, 
-    student_id: str, 
+    class_id: str,
+    homework_id: str,
+    student_id: str,
     status: str,
-    grading_batch_id: Optional[str] = None
+    grading_batch_id: Optional[str] = None,
 ) -> None:
     """更新作业提交状态"""
     with get_connection() as conn:
         if grading_batch_id:
-            conn.execute("""
+            conn.execute(
+                """
                 UPDATE homework_submissions 
                 SET status = ?, grading_batch_id = ?
                 WHERE class_id = ? AND homework_id = ? AND student_id = ?
-            """, (status, grading_batch_id, class_id, homework_id, student_id))
+            """,
+                (status, grading_batch_id, class_id, homework_id, student_id),
+            )
         else:
-            conn.execute("""
+            conn.execute(
+                """
                 UPDATE homework_submissions 
                 SET status = ?
                 WHERE class_id = ? AND homework_id = ? AND student_id = ?
-            """, (status, class_id, homework_id, student_id))
+            """,
+                (status, class_id, homework_id, student_id),
+            )
 
 
 # ==================== 作业批改更新 ====================
@@ -1254,9 +1393,9 @@ def list_assistant_mastery_snapshots(
         )
     return snapshots
 
+
 # 初始化数据库
 try:
     init_db()
 except Exception as e:
     logger.warning(f"PostgreSQL 数据库初始化失败，将在首次使用时重试: {e}")
-

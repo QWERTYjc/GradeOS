@@ -54,7 +54,7 @@ def upgrade() -> None:
         sa.Column('score', sa.Numeric(5, 2), nullable=True),
         sa.Column('max_score', sa.Numeric(5, 2), nullable=True),
         sa.Column('summary', sa.Text, nullable=True),
-        sa.Column('self_report', sa.Text, nullable=True),
+        sa.Column('confession', sa.Text, nullable=True),
         sa.Column('result_data', postgresql.JSONB, nullable=True),  # 完整的批改结果 JSON
         sa.Column('imported_at', sa.TIMESTAMP(timezone=True), nullable=True),
         sa.Column('revoked_at', sa.TIMESTAMP(timezone=True), nullable=True),

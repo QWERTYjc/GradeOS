@@ -13,16 +13,17 @@ from decimal import Decimal
 
 class GradingLog(BaseModel):
     """批改日志模型
-    
+
     记录批改过程各阶段的详细信息：
     - 提取阶段：extracted_answer, extraction_confidence, evidence_snippets
     - 规范化阶段：normalized_answer, normalization_rules_applied
     - 匹配阶段：match_result, match_failure_reason
     - 评分阶段：score, max_score, confidence, reasoning_trace
     - 改判信息：was_overridden, override_score, override_reason, override_teacher_id
-    
+
     验证：需求 8.1, 8.2, 8.3
     """
+
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
@@ -45,48 +46,53 @@ class GradingLog(BaseModel):
                 "override_reason": None,
                 "override_teacher_id": None,
                 "override_at": None,
-                "created_at": "2025-12-20T14:00:00Z"
+                "created_at": "2025-12-20T14:00:00Z",
             }
         }
     )
-    
+
     # 基本信息
     log_id: str = Field(default_factory=lambda: str(uuid4()), description="日志唯一标识")
     submission_id: str = Field(..., description="提交ID")
     question_id: str = Field(..., description="题目ID")
     timestamp: datetime = Field(default_factory=datetime.utcnow, description="日志时间戳")
-    
+
     # 提取阶段
     extracted_answer: Optional[str] = Field(None, description="提取的答案文本")
-    extraction_confidence: Optional[float] = Field(None, description="提取置信度（0.0-1.0）", ge=0.0, le=1.0)
+    extraction_confidence: Optional[float] = Field(
+        None, description="提取置信度（0.0-1.0）", ge=0.0, le=1.0
+    )
     evidence_snippets: Optional[List[str]] = Field(default_factory=list, description="证据片段列表")
-    
+
     # 规范化阶段
     normalized_answer: Optional[str] = Field(None, description="规范化后的答案")
-    normalization_rules_applied: Optional[List[str]] = Field(default_factory=list, description="应用的规范化规则列表")
-    
+    normalization_rules_applied: Optional[List[str]] = Field(
+        default_factory=list, description="应用的规范化规则列表"
+    )
+
     # 匹配阶段
     match_result: Optional[bool] = Field(None, description="匹配结果（True/False）")
     match_failure_reason: Optional[str] = Field(None, description="匹配失败原因")
-    
+
     # 评分阶段
     score: Optional[float] = Field(None, description="评分结果", ge=0)
     max_score: Optional[float] = Field(None, description="满分值", ge=0)
     confidence: Optional[float] = Field(None, description="评分置信度（0.0-1.0）", ge=0.0, le=1.0)
     reasoning_trace: Optional[List[str]] = Field(default_factory=list, description="推理过程追踪")
-    
+
     # 改判信息
     was_overridden: bool = Field(default=False, description="是否被改判")
     override_score: Optional[float] = Field(None, description="改判后的分数", ge=0)
     override_reason: Optional[str] = Field(None, description="改判原因")
     override_teacher_id: Optional[str] = Field(None, description="改判教师ID")
     override_at: Optional[datetime] = Field(None, description="改判时间")
-    
+
     created_at: datetime = Field(default_factory=datetime.utcnow, description="创建时间")
 
 
 class GradingLogCreate(BaseModel):
     """创建批改日志的请求模型"""
+
     submission_id: str
     question_id: str
     extracted_answer: Optional[str] = None
@@ -104,9 +110,10 @@ class GradingLogCreate(BaseModel):
 
 class GradingLogOverride(BaseModel):
     """改判信息模型
-    
+
     验证：需求 8.4
     """
+
     override_score: float = Field(..., description="改判后的分数", ge=0)
     override_reason: str = Field(..., description="改判原因", min_length=1)
     override_teacher_id: str = Field(..., description="改判教师ID")

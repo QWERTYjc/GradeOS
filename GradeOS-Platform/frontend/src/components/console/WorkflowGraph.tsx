@@ -4,23 +4,12 @@ import React, { useMemo, useRef, useState } from 'react';
 import { useConsoleStore, WorkflowNode, GradingAgent } from '@/store/consoleStore';
 import clsx from 'clsx';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Check, Loader2, AlertCircle, Clock, Cpu, GitMerge, Undo2, BookOpen, UserCheck, ShieldCheck, ZoomIn, ZoomOut, RefreshCw } from 'lucide-react';
+import { Check, Loader2, AlertCircle, Clock, Cpu, GitMerge, Undo2, BookOpen, UserCheck, ShieldCheck, FileText, ZoomIn, ZoomOut, RefreshCw } from 'lucide-react';
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 const MIN_ZOOM = 0.6;
 const MAX_ZOOM = 1.6;
 const ZOOM_STEP = 0.1;
-
-const formatStreamPreview = (value: string, maxChars = 90) => {
-    const normalized = value.replace(/\s+/g, ' ').trim();
-    if (!normalized) {
-        return '';
-    }
-    if (normalized.length <= maxChars) {
-        return normalized;
-    }
-    return `...${normalized.slice(-maxChars)}`;
-};
 
 const statusStyles = {
     pending: {
@@ -75,9 +64,8 @@ const AgentCard: React.FC<{ agent: GradingAgent; onClick: () => void; isSelected
     const isRunning = agent.status === 'running';
     const isCompleted = agent.status === 'completed';
     const isFailed = agent.status === 'failed';
-    const streamPreview = isRunning && agent.output?.streamingText
-        ? formatStreamPreview(agent.output.streamingText, 60)
-        : '';
+    const scoreValue = typeof agent.output?.score === 'number' ? agent.output.score : 0;
+    const maxScoreValue = typeof agent.output?.maxScore === 'number' ? agent.output.maxScore : 100;
 
     return (
         <motion.div
@@ -127,24 +115,15 @@ const AgentCard: React.FC<{ agent: GradingAgent; onClick: () => void; isSelected
                     <span className="text-xs font-semibold text-slate-700 truncate tracking-tight">{agent.label}</span>
                 </div>
 
-                {agent.output && typeof (agent.output?.score ?? 0) === 'number' && (
+                {agent.output && (
                     <span className={clsx(
                         "text-[10px] font-bold px-1.5 py-0.5 rounded-md",
-                        (agent.output?.score ?? 0) >= ((agent.output?.maxScore ?? 100) * 0.6) ? "bg-emerald-100/50 text-emerald-700" : "bg-red-100/50 text-red-700"
+                        scoreValue >= (maxScoreValue * 0.6) ? "bg-emerald-100/50 text-emerald-700" : "bg-red-100/50 text-red-700"
                     )}>
-                        {agent.output?.score ?? 0}
+                        {scoreValue}
                     </span>
                 )}
             </div>
-
-            {streamPreview && (
-                <div
-                    className="mt-2 text-[10px] text-slate-500 font-mono truncate"
-                    title={agent.output?.streamingText}
-                >
-                    AI: {streamPreview}
-                </div>
-            )}
         </motion.div>
     );
 };
@@ -156,7 +135,7 @@ const ParallelContainer: React.FC<{
     onClick: () => void;
     isSelected: boolean;
     streamPreview?: string;
-}> = ({ node, onAgentClick, selectedAgentId, onClick, isSelected, streamPreview }) => {
+}> = ({ node, onAgentClick, selectedAgentId, onClick, isSelected }) => {
     const styles = statusStyles[node.status];
     const agents = node.children || [];
     const isRunning = node.status === 'running';
@@ -164,9 +143,6 @@ const ParallelContainer: React.FC<{
     const isRubricReview = node.id === 'rubric_review';
     const isRubricParse = node.id === 'rubric_parse';
     const isGradeBatch = node.id === 'grade_batch';
-    const preview = streamPreview ? formatStreamPreview(streamPreview, 100) : '';
-    const showStreamPreview = isRunning && Boolean(preview);
-
     const waitLabel = isLogicReview || isRubricReview
         ? 'Waiting for reviews...'
         : isRubricParse
@@ -226,12 +202,6 @@ const ParallelContainer: React.FC<{
                     </div>
                 </div>
 
-                {showStreamPreview && (
-                    <div className="mb-3 rounded-lg border border-blue-100/80 bg-blue-50/70 px-2.5 py-2 text-[10px] text-blue-700 font-mono">
-                        <span className="font-semibold">AI:</span> {preview}
-                    </div>
-                )}
-
                 <div className={gridClassName}>
                     <AnimatePresence>
                         {agents.length === 0 ? (
@@ -265,30 +235,31 @@ const NodeCard: React.FC<{
     onClick: () => void;
     isSelected: boolean;
     streamPreview?: string;
-}> = ({ node, onClick, isSelected, streamPreview }) => {
+}> = ({ node, onClick, isSelected }) => {
     const shouldAutoComplete = (
         node.status === 'pending'
         && !node.isParallelContainer
         && node.id !== 'rubric_review'
         && node.id !== 'review'
+        && node.id !== 'logic_review'
+        && node.id !== 'confession'
     );
     const inferredStatus = shouldAutoComplete ? 'completed' : node.status;
-    const effectiveStatus = (node as any).isVisualCompleted ? 'completed' : inferredStatus;
+    const effectiveStatus = (node as {isVisualCompleted?: boolean}).isVisualCompleted ? 'completed' : inferredStatus;
     const styles = statusStyles[effectiveStatus] || statusStyles.pending;
     const isRunning = effectiveStatus === 'running';
-    const preview = streamPreview ? formatStreamPreview(streamPreview, 80) : '';
-    const showStreamPreview = isRunning && Boolean(preview);
-
     const isCrossPageMerge = node.id === 'cross_page_merge';
     const isLogicReview = node.id === 'logic_review';
     const isRubricReview = node.id === 'rubric_review';
     const isResultsReview = node.id === 'review';
+    const isConfession = node.id === 'confession';
 
     // Custom Icons
     let NodeIcon = styles.icon;
     if (isCrossPageMerge) NodeIcon = <GitMerge className="w-5 h-5" />;
     else if (isLogicReview) NodeIcon = <ShieldCheck className="w-5 h-5" />;
     else if (isRubricReview || isResultsReview) NodeIcon = <UserCheck className="w-5 h-5" />;
+    else if (isConfession) NodeIcon = <FileText className="w-5 h-5" />;
 
     return (
         <motion.div
@@ -334,19 +305,6 @@ const NodeCard: React.FC<{
                             </motion.span>
                         )}
                     </AnimatePresence>
-                    <AnimatePresence>
-                        {showStreamPreview && (
-                            <motion.span
-                                key={`${node.id}-stream`}
-                                initial={{ opacity: 0, height: 0 }}
-                                animate={{ opacity: 1, height: 'auto' }}
-                                exit={{ opacity: 0, height: 0 }}
-                                className="text-[10px] font-medium text-blue-600 max-w-[160px] truncate bg-blue-50/80 px-2 py-0.5 rounded-full"
-                            >
-                                AI: {preview}
-                            </motion.span>
-                        )}
-                    </AnimatePresence>
                 </div>
 
                 <div
@@ -377,7 +335,6 @@ export const WorkflowGraph: React.FC = () => {
         setSelectedNodeId,
         setSelectedAgentId,
         interactionEnabled,
-        llmThoughts,
         pendingReview,
         submissionId,
         setCurrentTab,
@@ -393,20 +350,6 @@ export const WorkflowGraph: React.FC = () => {
     });
     const [zoom, setZoom] = useState(1);
     const [pan, setPan] = useState({ x: 0, y: 0 });
-    const activeStreamsByNode = useMemo(() => {
-        const map = new Map<string, string>();
-        for (let i = llmThoughts.length - 1; i >= 0; i -= 1) {
-            const thought = llmThoughts[i];
-            if (thought.isComplete) {
-                continue;
-            }
-            if (!map.has(thought.nodeId)) {
-                map.set(thought.nodeId, thought.content);
-            }
-        }
-        return map;
-    }, [llmThoughts]);
-
     const handleNodeClick = (node: WorkflowNode) => {
         setSelectedNodeId(node.id);
         if (!interactionEnabled || !submissionId) {
@@ -556,14 +499,12 @@ export const WorkflowGraph: React.FC = () => {
                                             selectedAgentId={selectedAgentId}
                                             onClick={() => handleNodeClick(node)}
                                             isSelected={selectedNodeId === node.id}
-                                            streamPreview={activeStreamsByNode.get(node.id)}
                                         />
                                     ) : (
                                         <NodeCard
                                             node={node}
                                             onClick={() => handleNodeClick(node)}
                                             isSelected={selectedNodeId === node.id}
-                                            streamPreview={activeStreamsByNode.get(node.id)}
                                         />
                                     )}
                                 </motion.div>

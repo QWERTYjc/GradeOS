@@ -171,8 +171,9 @@ export default function StudentScanPage() {
         score: result.score,
         feedback: result.feedback || '作业已提交，等待批改'
       });
-    } catch (error: any) {
-      setSubmitResult({ success: false, feedback: error.message });
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      setSubmitResult({ success: false, feedback: errorMessage });
     } finally {
       setIsSubmitting(false);
     }

@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
@@ -27,7 +27,10 @@ export default function GradingHistoryPage() {
   const fetchHistory = (classId?: string) => {
     setLoading(true);
     gradingApi
-      .getGradingHistory(classId ? { class_id: classId } : undefined)
+      .getGradingHistory({
+        class_id: classId || undefined,
+        teacher_id: user?.id || undefined,
+      })
       .then((data) => {
         setRecords(data.records);
         setError('');
@@ -40,7 +43,7 @@ export default function GradingHistoryPage() {
 
   useEffect(() => {
     fetchHistory(filterClass);
-  }, [filterClass]);
+  }, [filterClass, user?.id]);
 
   const handleRevoke = async (importId: string) => {
     setRevokingId(importId);
@@ -82,9 +85,8 @@ export default function GradingHistoryPage() {
           <div className="flex flex-wrap gap-2">
             <button
               onClick={() => setFilterClass('')}
-              className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                !filterClass ? 'bg-emerald-500 text-white' : 'border border-slate-200 text-slate-600'
-              }`}
+              className={`rounded-full px-3 py-1 text-xs font-semibold ${!filterClass ? 'bg-emerald-500 text-white' : 'border border-slate-200 text-slate-600'
+                }`}
             >
               全部班级
             </button>
@@ -92,11 +94,10 @@ export default function GradingHistoryPage() {
               <button
                 key={cls.class_id}
                 onClick={() => setFilterClass(cls.class_id)}
-                className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                  filterClass === cls.class_id
+                className={`rounded-full px-3 py-1 text-xs font-semibold ${filterClass === cls.class_id
                     ? 'bg-emerald-500 text-white'
                     : 'border border-slate-200 text-slate-600'
-                }`}
+                  }`}
               >
                 {cls.class_name}
               </button>
@@ -155,7 +156,7 @@ export default function GradingHistoryPage() {
                           查看详情
                         </button>
                         <button
-                          onClick={() => router.push(`/grading/results-review/${record.batch_id}`)}
+                          onClick={() => router.push(`/grading/results-review/${record.batch_id || record.import_id}`)}
                           className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600 hover:border-slate-300"
                         >
                           人工确认

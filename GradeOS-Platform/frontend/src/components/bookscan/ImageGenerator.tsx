@@ -21,9 +21,10 @@ export default function ImageGenerator() {
     try {
       const imageUrl = await generateImage(prompt, size);
       setGeneratedImage(imageUrl);
-    } catch (err: any) {
+    } catch (err) {
       console.error(err);
-      setError(err.message || "Failed to generate image. Please ensure you have selected a valid paid API key if required.");
+      const errorMessage = err instanceof Error ? err.message : "Failed to generate image. Please ensure you have selected a valid paid API key if required.";
+      setError(errorMessage);
     } finally {
       setIsGenerating(false);
     }

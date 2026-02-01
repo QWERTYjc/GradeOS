@@ -26,15 +26,6 @@ from .postgres_store import (
     save_workflow_state,
     get_workflow_state,
     update_workflow_status,
-    # 批改历史
-    GradingHistory,
-    save_grading_history,
-    get_grading_history,
-    list_grading_history,
-    # 学生结果
-    StudentGradingResult,
-    save_student_result,
-    get_student_results,
     HomeworkSubmission,
     save_homework_submission,
     get_homework_submissions,
@@ -45,6 +36,19 @@ from .postgres_store import (
     list_assistant_concepts,
     save_assistant_mastery_snapshot,
     list_assistant_mastery_snapshots,
+)
+
+# 批改历史和学生结果使用 PostgreSQL 版本
+from .postgres_grading import (
+    GradingHistory,
+    save_grading_history,
+    get_grading_history,
+    list_grading_history,
+    StudentGradingResult,
+    save_student_result,
+    get_student_results,
+    GradingPageImage,
+    get_page_images,
 )
 
 __all__ = [
@@ -79,6 +83,8 @@ __all__ = [
     "StudentGradingResult",
     "save_student_result",
     "get_student_results",
+    "GradingPageImage",
+    "get_page_images",
     "HomeworkSubmission",
     "save_homework_submission",
     "get_homework_submissions",

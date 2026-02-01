@@ -3,16 +3,16 @@
 import React, { useState, useContext, useMemo, useEffect, useCallback } from 'react';
 import { useConsoleStore, StudentResult, QuestionResult } from '@/store/consoleStore';
 import clsx from 'clsx';
-import { ArrowLeft, ChevronDown, ChevronUp, CheckCircle, XCircle, Download, GitMerge, AlertCircle, Layers, FileText, Info, X, AlertTriangle, BookOpen, ListOrdered, Pencil, Loader2 } from 'lucide-react';
+import { ArrowLeft, ChevronDown, ChevronUp, CheckCircle, XCircle, Download, GitMerge, AlertCircle, Layers, FileText, Info, X, AlertTriangle, BookOpen, ListOrdered, Loader2, Shield, Pencil } from 'lucide-react';
 import { CrownOutlined, BarChartOutlined, UsergroupAddOutlined, CheckCircleOutlined, ExclamationCircleOutlined, RocketOutlined } from '@ant-design/icons';
 import { Popover } from 'antd';
 import { motion, AnimatePresence } from 'framer-motion';
 import { RubricOverview } from './RubricOverview';
+import { GlassCard } from '@/components/design-system/GlassCard';
 import { AppContext, AppContextType } from '../bookscan/AppContext';
 import { MathText } from '@/components/common/MathText';
 import { SmoothButton } from '@/components/design-system/SmoothButton';
 import { gradingApi } from '@/services/api';
-import { renderAnnotationsToBase64 } from '@/services/annotationApi';
 import type { VisualAnnotation } from '@/types/annotation';
 import AnnotationCanvas from '@/components/grading/AnnotationCanvas';
 
@@ -23,10 +23,12 @@ interface ResultCardProps {
     isExpanded: boolean;
 }
 
-const normalizeEvidenceText = (text?: string) => {
-    if (!text) return '';
-    return text.replace(/^【原文引用】\s*/, '').trim();
-};
+interface ResultsViewProps {
+    /** 是否默认展开题目详情（用于批改历史页面） */
+    defaultExpandDetails?: boolean;
+    /** 隐藏批改透明度区块 */
+    hideGradingTransparency?: boolean;
+}
 
 const LOW_CONFIDENCE_THRESHOLD = 0.7;
 
@@ -209,7 +211,7 @@ const renderParagraphs = (text: string) => {
     ));
 };
 
-const QuestionDetail: React.FC<{ question: QuestionResult; gradingMode?: string }> = ({ question, gradingMode }) => {
+const QuestionDetail: React.FC<{ question: QuestionResult; gradingMode?: string; defaultExpanded?: boolean }> = ({ question, gradingMode, defaultExpanded = false }) => {
     const percentage = question.maxScore > 0 ? (question.score / question.maxScore) * 100 : 0;
     const questionLabel = question.questionId === 'unknown' ? '未识别' : question.questionId;
     const normalizedType = (question.questionType || '').toLowerCase();
@@ -228,7 +230,7 @@ const QuestionDetail: React.FC<{ question: QuestionResult; gradingMode?: string 
     const showScoringDetails = !isAssist && !isChoice;
     const hasDetails = Boolean(question.studentAnswer)
         || (showScoringDetails && ((question.scoringPointResults?.length || 0) > 0 || (question.scoringPoints?.length || 0) > 0));
-    const [detailsOpen, setDetailsOpen] = useState(false);
+    const [detailsOpen, setDetailsOpen] = useState(defaultExpanded);
     const scoreLabel = isAssist ? 'Assist' : (question.maxScore > 0 ? `${question.score} / ${question.maxScore}` : 'N/A');
     const scoreClass = isAssist || question.maxScore <= 0
         ? 'text-slate-400'
@@ -290,10 +292,27 @@ const QuestionDetail: React.FC<{ question: QuestionResult; gradingMode?: string 
                         Pages: <span className="font-mono text-slate-500">{question.pageIndices.map(p => p + 1).join(', ')}</span>
                     </div>
                 )}
-                {isLowConfidence && question.confidence !== undefined && (
-                    <div className={clsx("flex items-center gap-1.5", question.confidence < 0.8 ? "text-amber-600" : "text-emerald-600")}>
-                        {question.confidence < 0.8 ? <AlertCircle className="w-3 h-3" /> : <CheckCircle className="w-3 h-3" />}
-                        Confidence: <span className="font-mono font-semibold">{(question.confidence * 100).toFixed(0)}%</span>
+                {/* 始终显示置信度（如果有） */}
+                {question.confidence !== undefined && (
+                    <div className={clsx(
+                        "flex items-center gap-1.5",
+                        question.confidence >= 0.8 ? "text-emerald-600" : question.confidence >= 0.6 ? "text-amber-600" : "text-red-500"
+                    )}>
+                        {question.confidence >= 0.8 ? (
+                            <CheckCircle className="w-3 h-3" />
+                        ) : question.confidence >= 0.6 ? (
+                            <AlertCircle className="w-3 h-3" />
+                        ) : (
+                            <AlertTriangle className="w-3 h-3" />
+                        )}
+                        置信度: <span className="font-mono font-semibold">{(question.confidence * 100).toFixed(0)}%</span>
+                    </div>
+                )}
+                {/* 显示评分标准引用数量 */}
+                {question.rubricRefs && question.rubricRefs.length > 0 && (
+                    <div className="flex items-center gap-1.5 text-blue-600">
+                        <BookOpen className="w-3 h-3" />
+                        引用: <span className="font-mono font-semibold">{question.rubricRefs.length} 条</span>
                     </div>
                 )}
             </div>
@@ -316,7 +335,7 @@ const QuestionDetail: React.FC<{ question: QuestionResult; gradingMode?: string 
                                 {question.scoringPointResults.map((spr, idx) => (
                                     <div key={idx} className="rounded-md border border-slate-200 p-3">
                                         <div className="flex items-start justify-between gap-4">
-                                            <div className="space-y-1">
+                                            <div className="space-y-1 flex-1">
                                                 <div className="text-xs text-slate-700 font-medium leading-relaxed">
                                                     {spr.pointId && <span className="font-mono text-slate-400 mr-2 text-[10px]">[{spr.pointId}]</span>}
                                                     <MathText className="inline" text={spr.scoringPoint?.description || spr.description || "N/A"} />
@@ -329,6 +348,17 @@ const QuestionDetail: React.FC<{ question: QuestionResult; gradingMode?: string 
                                                                     <span>Max: {spr.maxPoints ?? spr.scoringPoint?.score ?? 0}</span>
                                                                     <span>{spr.scoringPoint?.isRequired ? 'Required' : 'Optional'}</span>
                                                                 </div>
+                                                                {spr.rubricReference && (
+                                                                    <div className="mt-2 pt-2 border-t border-slate-100">
+                                                                        <div className="text-[10px] text-blue-600 font-semibold mb-1">评分标准引用</div>
+                                                                        <div className="text-slate-600 bg-blue-50 p-1.5 rounded text-[10px]">
+                                                                            <span className="font-mono text-blue-700">[{spr.rubricReference}]</span>
+                                                                            {spr.rubricReferenceSource && (
+                                                                                <span className="ml-1 text-slate-500">{spr.rubricReferenceSource}</span>
+                                                                            )}
+                                                                        </div>
+                                                                    </div>
+                                                                )}
                                                             </div>
                                                         }
                                                     >
@@ -339,6 +369,15 @@ const QuestionDetail: React.FC<{ question: QuestionResult; gradingMode?: string 
                                                     判定: {spr.decision || (spr.awarded > 0 ? '得分' : '不得分')}
                                                     {spr.reason && <span className="ml-1 opacity-75">- {spr.reason}</span>}
                                                 </div>
+                                                {/* 评分标准引用标签 */}
+                                                {spr.rubricReference && (
+                                                    <div className="flex items-center gap-1.5 mt-1">
+                                                        <BookOpen className="w-3 h-3 text-blue-500" />
+                                                        <span className="text-[10px] font-mono text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded">
+                                                            引用: {spr.rubricReference}
+                                                        </span>
+                                                    </div>
+                                                )}
                                             </div>
                                             <div className={clsx("font-mono font-semibold text-sm whitespace-nowrap", spr.awarded > 0 ? "text-emerald-600" : "text-slate-400")}>
                                                 {spr.awarded}/{spr.maxPoints ?? spr.scoringPoint?.score ?? 0}
@@ -382,7 +421,7 @@ const QuestionDetail: React.FC<{ question: QuestionResult; gradingMode?: string 
             )}
             {isLowConfidence && (
                 <div className="mt-3 p-3 rounded-md border border-amber-200 bg-amber-50">
-                    <div className="text-[11px] font-semibold text-amber-700 mb-1">自白提示</div>
+                    <div className="text-[11px] font-semibold text-amber-700 mb-1">Confession Hint</div>
                     <p className="text-xs text-amber-800 leading-relaxed">
                         <MathText text={confessionText} />
                     </p>
@@ -401,7 +440,7 @@ const QuestionDetail: React.FC<{ question: QuestionResult; gradingMode?: string 
     );
 };
 
-const ResultCard: React.FC<ResultCardProps> = ({ result, rank, onExpand, isExpanded }) => {
+const ResultCard: React.FC<ResultCardProps> = ({ result, rank, onExpand }) => {
     const isAssist = (result.gradingMode || '').startsWith('assist') || result.maxScore <= 0;
     const percentage = !isAssist && result.maxScore > 0 ? (result.score / result.maxScore) * 100 : 0;
 
@@ -422,45 +461,60 @@ const ResultCard: React.FC<ResultCardProps> = ({ result, rank, onExpand, isExpan
     const pageRange = result.pageRange || result.pages || '';
 
     return (
-        <div
+        <GlassCard
             className={clsx(
-                'grid grid-cols-[56px_1fr_auto] items-center gap-4 px-4 py-3 border-b border-slate-100 hover:bg-slate-50/60 transition',
-                result.needsConfirmation && 'bg-amber-50/50'
+                'grid grid-cols-[56px_1fr_auto] items-center gap-4 px-4 py-3 border-b border-white/20 transition-all cursor-pointer mb-3',
+                result.needsConfirmation ? 'bg-amber-50/40 border-amber-200/50' : 'bg-white/40 hover:bg-white/60'
             )}
             onClick={() => onExpand?.()}
+            hoverEffect={true}
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            layout
         >
-            <div className="h-10 w-10 rounded-md border border-slate-200 bg-slate-50 text-slate-700 font-mono font-bold text-sm flex items-center justify-center">
+            <div className='h-10 w-10 rounded-md border border-slate-200 bg-white/50 text-slate-700 font-mono font-bold text-sm flex items-center justify-center'>
                 {rank}
             </div>
 
-            <div className="min-w-0">
-                <div className="flex items-center gap-3">
-                    <h3 className="font-semibold text-slate-900 truncate">{result.studentName}</h3>
-                    <span className="text-[11px] font-medium text-slate-500">{gradeLabel}</span>
+            <div className='min-w-0'>
+                <div className='flex items-center gap-3'>
+                    <h3 className='font-semibold text-slate-900 truncate'>{result.studentName}</h3>
+                    <span className='text-[11px] font-medium text-slate-500'>{gradeLabel}</span>
                 </div>
-                <div className="mt-1 text-[11px] text-slate-500 flex flex-wrap gap-3">
+                <div className='mt-1 text-[11px] text-slate-500 flex flex-wrap gap-3 items-center'>
                     {pageRange && <span>Pages {pageRange}</span>}
                     {result.totalRevisions !== undefined && result.totalRevisions > 0 && (
                         <span>Revisions {result.totalRevisions}</span>
                     )}
                     {crossPageCount > 0 && <span>Cross-page {crossPageCount}</span>}
-                    {result.needsConfirmation && <span className="text-amber-600">Needs confirmation</span>}
+                    {result.needsConfirmation && <span className='text-amber-600 bg-amber-100/50 px-2 py-0.5 rounded-md border border-amber-200/50'>Needs verification</span>}
+                    {result.confession?.overallStatus === 'caution' && (
+                        <span className='text-orange-600 bg-orange-100/50 px-2 py-0.5 rounded-md border border-orange-200/50 flex items-center gap-1'>
+                            <AlertTriangle className='w-3 h-3' /> Confession
+                        </span>
+                    )}
+                    {result.logicReviewedAt && (
+                        <span className='text-indigo-600 bg-indigo-100/50 px-2 py-0.5 rounded-md border border-indigo-200/50 flex items-center gap-1'>
+                            <Shield className='w-3 h-3' /> Logic Review
+                        </span>
+                    )}
                 </div>
             </div>
 
-            <div className="text-right">
+            <div className='text-right'>
                 {isAssist ? (
-                    <div className="text-xs font-semibold text-slate-500">Assist</div>
+                    <div className='text-xs font-semibold text-slate-500'>Assist</div>
                 ) : (
-                    <div className="text-lg font-bold text-slate-900">
-                        {result.score.toFixed(1)}<span className="text-xs text-slate-400">/{result.maxScore}</span>
+                    <div className='text-lg font-bold text-slate-900'>
+                        {result.score.toFixed(1)}<span className='text-xs text-slate-400'>/{result.maxScore}</span>
                     </div>
                 )}
                 {!isAssist && (
-                    <div className="text-[11px] text-slate-500">{percentage.toFixed(0)}%</div>
+                    <div className='text-[11px] text-slate-500'>{percentage.toFixed(0)}%</div>
                 )}
             </div>
-        </div>
+        </GlassCard>
     );
 };
 
@@ -514,7 +568,61 @@ const normalizeQuestionResults = (questionResults?: QuestionResult[]) => {
     });
 };
 
-export const ResultsView: React.FC = () => {
+const normalizeConfession = (confession: any) => {
+    if (!confession) return undefined;
+    if (typeof confession === 'string') {
+        try {
+            const parsed = JSON.parse(confession);
+            if (parsed && typeof parsed === 'object') {
+                confession = parsed;
+            } else {
+                return { summary: confession };
+            }
+        } catch {
+            return { summary: confession };
+        }
+    }
+    if (typeof confession !== 'object') return undefined;
+    const normalizeIssue = (item: any) => ({
+        questionId: item.questionId ?? item.question_id,
+        message: item.message ?? item.description ?? item.note ?? '',
+    });
+    const normalizeWarning = (item: any) => {
+        if (typeof item === 'string') {
+            return { message: item };
+        }
+        return {
+            questionId: item.questionId ?? item.question_id,
+            message: item.message ?? item.description ?? '',
+        };
+    };
+    const normalizeRisk = (item: any) => {
+        if (typeof item === 'string') {
+            return { questionId: item, description: '' };
+        }
+        return {
+            questionId: item.questionId ?? item.question_id,
+            description: item.description ?? item.message ?? '',
+        };
+    };
+    return {
+        overallStatus: confession.overallStatus || confession.overall_status,
+        overallConfidence: confession.overallConfidence ?? confession.overall_confidence,
+        summary: confession.summary || '',
+        issues: Array.isArray(confession.issues) ? confession.issues.map(normalizeIssue) : [],
+        warnings: Array.isArray(confession.warnings) ? confession.warnings.map(normalizeWarning) : [],
+        highRiskQuestions: Array.isArray(confession.highRiskQuestions || confession.high_risk_questions)
+            ? (confession.highRiskQuestions || confession.high_risk_questions).map(normalizeRisk)
+            : [],
+        potentialErrors: Array.isArray(confession.potentialErrors || confession.potential_errors)
+            ? (confession.potentialErrors || confession.potential_errors).map(normalizeRisk)
+            : [],
+        generatedAt: confession.generatedAt || confession.generated_at,
+        source: confession.source,
+    };
+};
+
+export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails = false, hideGradingTransparency = false }) => {
     const {
         finalResults,
         workflowNodes,
@@ -523,9 +631,10 @@ export const ResultsView: React.FC = () => {
         setCurrentTab,
         classReport,
         submissionId,
-        pendingReview,
         reviewFocus,
-        setReviewFocus
+        setReviewFocus,
+        setFinalResults,
+        status
     } = useConsoleStore();
     const bookScanContext = useContext(AppContext) as AppContextType | null;
     const sessions = bookScanContext?.sessions || [];
@@ -533,6 +642,10 @@ export const ResultsView: React.FC = () => {
     const currentSession = sessions.find((s: any) => s.id === currentSessionId);
 
     const [detailViewIndex, setDetailViewIndex] = useState<number | null>(null);
+    // API 备用方案状态
+    const [apiFallbackLoading, setApiFallbackLoading] = useState(false);
+    const [apiFallbackError, setApiFallbackError] = useState<string | null>(null);
+    const apiFallbackAttemptedRef = React.useRef<Set<string>>(new Set());
     const [auditOpen, setAuditOpen] = useState(false);
     const [auditQuery, setAuditQuery] = useState('');
     const [showClassReport, setShowClassReport] = useState(false);
@@ -556,7 +669,6 @@ export const ResultsView: React.FC = () => {
 
     // 批注渲染状态 - 默认开启
     const [showAnnotations, setShowAnnotations] = useState(true);
-    const [annotatedImages, setAnnotatedImages] = useState<Map<number, string>>(new Map());
     const [annotationLoading, setAnnotationLoading] = useState<Set<number>>(new Set());
     // 🔥 新增：存储每页的批注数据，用于 Canvas 直接渲染
     const [pageAnnotationsData, setPageAnnotationsData] = useState<Map<number, VisualAnnotation[]>>(new Map());
@@ -600,6 +712,7 @@ export const ResultsView: React.FC = () => {
                 mergeSource: (q as any).mergeSource,
                 scoringPointResults: (q as any).scoringPointResults
             })),
+            confession: (agent.output as any)?.confession,
             startPage: (agent.output as any)?.startPage,
             endPage: (agent.output as any)?.endPage,
         }));
@@ -607,6 +720,7 @@ export const ResultsView: React.FC = () => {
     const normalizedResults = useMemo(() => (
         results.map((result) => ({
             ...result,
+            confession: normalizeConfession(result.confession),
             questionResults: normalizeQuestionResults(result.questionResults)
         }))
     ), [results]);
@@ -650,6 +764,164 @@ export const ResultsView: React.FC = () => {
         setReviewFocus(null);
     }, [reviewFocus, setReviewFocus]);
 
+    // 🔥 API 备用方案：当 WebSocket 失败时，主动调用 API 获取结果
+    useEffect(() => {
+        // 调试日志
+        console.log('[API Fallback Check]', {
+            submissionId,
+            finalResultsLength: finalResults.length,
+            status,
+            alreadyAttempted: submissionId ? apiFallbackAttemptedRef.current.has(submissionId) : false
+        });
+
+        // 条件：有 submissionId，没有结果，状态为 COMPLETED，且未尝试过
+        if (!submissionId || finalResults.length > 0 || status !== 'COMPLETED') {
+            console.log('[API Fallback] Skipping - conditions not met');
+            return;
+        }
+        if (apiFallbackAttemptedRef.current.has(submissionId)) {
+            console.log('[API Fallback] Skipping - already attempted for this submissionId');
+            return;
+        }
+
+        const fetchResultsFromApi = async () => {
+            apiFallbackAttemptedRef.current.add(submissionId);
+            setApiFallbackLoading(true);
+            setApiFallbackError(null);
+
+            try {
+                console.log('[API Fallback] Fetching results for batch:', submissionId);
+                const response = await gradingApi.getBatchResults(submissionId);
+
+                // 后端可能返回 results（camelCase）或 student_results（snake_case）
+                const rawResults = (response as any).results || response.student_results || [];
+                console.log('[API Fallback] Raw results:', rawResults.length, 'items');
+
+                if (rawResults.length > 0) {
+                    // 检测数据格式（camelCase 或 snake_case）
+                    const firstResult = rawResults[0];
+                    const isCamelCase = 'studentName' in firstResult;
+                    console.log('[API Fallback] Data format:', isCamelCase ? 'camelCase' : 'snake_case');
+
+                    // 转换 API 响应格式到前端格式
+                    const formattedResults: StudentResult[] = rawResults.map((r: any) => {
+                        if (isCamelCase) {
+                            // 数据已经是 camelCase 格式，直接使用
+                            return {
+                                studentName: r.studentName || 'Unknown',
+                                score: r.score || 0,
+                                maxScore: r.maxScore || 100,
+                                startPage: r.startPage,
+                                endPage: r.endPage,
+                                pageRange: r.pageRange,
+                                confidence: r.confidence,
+                                needsConfirmation: r.needsConfirmation,
+                                gradingMode: r.gradingMode,
+                                studentSummary: r.studentSummary,
+                                selfAudit: r.selfAudit,
+                                confession: r.confession,
+                                questionResults: (r.questionResults || []).map((q: any) => ({
+                                    questionId: q.questionId || '',
+                                    score: q.score || 0,
+                                    maxScore: q.maxScore || 0,
+                                    feedback: q.feedback || '',
+                                    confidence: q.confidence,
+                                    confidenceReason: q.confidenceReason,
+                                    selfCritique: q.selfCritique,
+                                    selfCritiqueConfidence: q.selfCritiqueConfidence,
+                                    rubricRefs: q.rubricRefs,
+                                    typoNotes: q.typoNotes,
+                                    pageIndices: q.pageIndices,
+                                    isCrossPage: q.isCrossPage,
+                                    mergeSource: q.mergeSource,
+                                    scoringPointResults: (q.scoringPointResults || []).map((spr: any) => ({
+                                        pointId: spr.pointId || spr.scoringPoint?.pointId,
+                                        description: spr.description || spr.scoringPoint?.description || '',
+                                        awarded: spr.awarded ?? 0,
+                                        maxPoints: spr.maxPoints ?? spr.scoringPoint?.score ?? 0,
+                                        evidence: spr.evidence || '',
+                                        rubricReference: spr.rubricReference,
+                                        rubricReferenceSource: spr.rubricReferenceSource,
+                                        decision: spr.decision,
+                                        reason: spr.reason,
+                                        scoringPoint: spr.scoringPoint ? {
+                                            description: spr.scoringPoint.description || '',
+                                            score: spr.scoringPoint.score || 0,
+                                            maxScore: spr.scoringPoint.score || 0,
+                                            isCorrect: (spr.awarded ?? 0) > 0,
+                                            isRequired: spr.scoringPoint.isRequired,
+                                            explanation: spr.reason || spr.evidence || '',
+                                        } : undefined,
+                                    })),
+                                })),
+                            };
+                        } else {
+                            // snake_case 格式，需要转换
+                            return {
+                                studentName: r.student_name || 'Unknown',
+                                score: r.total_score || 0,
+                                maxScore: r.max_score || 100,
+                                startPage: r.start_page,
+                                endPage: r.end_page,
+                                confidence: r.confidence,
+                                needsConfirmation: r.needs_confirmation,
+                                questionResults: (r.questions || []).map((q: any) => ({
+                                    questionId: q.question_id || '',
+                                    score: q.score || 0,
+                                    maxScore: q.max_score || 0,
+                                    feedback: q.feedback || '',
+                                    confidence: q.confidence,
+                                    confidenceReason: q.confidence_reason,
+                                    selfCritique: q.self_critique,
+                                    selfCritiqueConfidence: q.self_critique_confidence,
+                                    rubricRefs: q.rubric_refs,
+                                    typoNotes: q.typo_notes,
+                                    pageIndices: q.page_indices,
+                                    isCrossPage: q.is_cross_page,
+                                    mergeSource: q.merge_source,
+                                    scoringPointResults: (q.scoring_point_results || []).map((spr: any) => ({
+                                        pointId: spr.point_id || spr.scoring_point?.point_id,
+                                        description: spr.description || spr.scoring_point?.description || '',
+                                        awarded: spr.awarded ?? 0,
+                                        maxPoints: spr.max_points ?? spr.scoring_point?.score ?? 0,
+                                        evidence: spr.evidence || '',
+                                        rubricReference: spr.rubric_reference,
+                                        rubricReferenceSource: spr.rubric_reference_source,
+                                        decision: spr.decision,
+                                        reason: spr.reason,
+                                        scoringPoint: spr.scoring_point ? {
+                                            description: spr.scoring_point.description || '',
+                                            score: spr.scoring_point.score || 0,
+                                            maxScore: spr.scoring_point.score || 0,
+                                            isCorrect: (spr.awarded ?? 0) > 0,
+                                            isRequired: spr.scoring_point.is_required,
+                                            explanation: spr.reason || spr.evidence || '',
+                                        } : undefined,
+                                    })),
+                                })),
+                            };
+                        }
+                    });
+
+                    console.log('[API Fallback] Successfully fetched', formattedResults.length, 'results');
+                    setFinalResults(formattedResults);
+                } else {
+                    console.log('[API Fallback] No results found in API response');
+                    setApiFallbackError('API 返回空结果');
+                }
+            } catch (error) {
+                console.error('[API Fallback] Failed to fetch results:', error);
+                setApiFallbackError(error instanceof Error ? error.message : '获取结果失败');
+            } finally {
+                setApiFallbackLoading(false);
+            }
+        };
+
+        // 延迟执行，给 WebSocket 一些时间
+        const timer = setTimeout(fetchResultsFromApi, 2000);
+        return () => clearTimeout(timer);
+    }, [submissionId, finalResults.length, status, setFinalResults]);
+
     const totalStudents = sortedResults.length;
     const scoredResults = sortedResults.filter(r => !(r.gradingMode || '').startsWith('assist') && r.maxScore > 0);
     const scoredCount = scoredResults.length;
@@ -659,6 +931,22 @@ export const ResultsView: React.FC = () => {
     const needsConfirmCount = sortedResults.filter(r => r.needsConfirmation).length;
     const totalCrossPageQuestions = crossPageQuestions.length;
     const hasScores = scoredCount > 0;
+    const rubricCoverage = useMemo(() => {
+        let total = 0;
+        let withRef = 0;
+        sortedResults.forEach((student) => {
+            (student.questionResults || []).forEach((q) => {
+                (q.scoringPointResults || []).forEach((spr) => {
+                    total += 1;
+                    if (spr.rubricReference) {
+                        withRef += 1;
+                    }
+                });
+            });
+        });
+        if (total === 0) return null;
+        return withRef / total;
+    }, [sortedResults]);
     const metrics = [
         {
             label: 'Total Students',
@@ -711,76 +999,72 @@ export const ResultsView: React.FC = () => {
     // 获取存储的评分标准
     const parsedRubric = useConsoleStore((state) => state.parsedRubric);
 
-    // 批注渲染函数 - 调用后端 API 生成带批注的图片
-    const renderAnnotationsForPage = useCallback(async (pageIdx: number, imageUrl: string, studentKey: string) => {
+    // 批注渲染函数 - 前端 Canvas 渲染批注
+    const renderAnnotationsForPage = useCallback(async (pageIdx: number, imageUrl: string, studentKey: string, studentData: StudentResult | null) => {
         // 使用 studentKey + pageIdx 作为唯一标识，避免重复渲染
         const renderKey = `${studentKey}-${pageIdx}`;
-        
+
         // 如果已经处理过，跳过
         if (renderedPagesRef.current.has(renderKey)) return;
-        
+
         // 标记为已处理（立即标记，防止并发调用）
         renderedPagesRef.current.add(renderKey);
-        
+
         // 标记为加载中
         setAnnotationLoading(prev => new Set(prev).add(pageIdx));
-        
+
         try {
-            // 从当前学生的批改结果中提取该页的批注
-            const student = detailViewStudent;
+            // 从传入的学生数据中提取该页的批注（避免闭包问题）
+            const student = studentData;
             if (!student) return;
-            
+
             // 收集该页的所有批注
             const pageAnnotations: VisualAnnotation[] = [];
-            
-            // 从 questionResults 中提取批注
             student.questionResults?.forEach(q => {
-                // 检查该题目是否在当前页
-                const questionPages = q.pageIndices || [];
-                if (!questionPages.includes(pageIdx) && questionPages.length > 0) return;
-                
-                // 优先使用后端返回的 annotations 字段
-                if (q.annotations && q.annotations.length > 0) {
-                    q.annotations.forEach(ann => {
-                        // 只添加当前页的批注
-                        if (ann.page_index === undefined || ann.page_index === pageIdx) {
-                            pageAnnotations.push({
-                                annotation_type: ann.type,
-                                bounding_box: ann.bounding_box,
-                                text: ann.text || '',
-                                color: ann.color || '#FF0000',
-                            } as VisualAnnotation);
-                        }
-                    });
-                }
-                
-                // 从 steps 字段提取步骤批注
+                const questionPages = Array.isArray(q.pageIndices) ? q.pageIndices : [];
+                const questionHasPage = questionPages.includes(pageIdx);
+                const isMultiPage = questionPages.length > 1;
+                const hasSinglePageFallback = student.startPage !== undefined
+                    && student.endPage !== undefined
+                    && student.startPage === student.endPage
+                    && student.startPage === pageIdx;
+
+                const matchesQuestionPage = (pageValue?: number | null) => {
+                    if (pageValue !== null && pageValue !== undefined && !Number.isNaN(Number(pageValue))) {
+                        return Number(pageValue) === pageIdx;
+                    }
+                    if (isMultiPage) {
+                        return false;
+                    }
+                    return questionHasPage || hasSinglePageFallback;
+                };
+
                 if (q.steps && q.steps.length > 0) {
                     q.steps.forEach(step => {
-                        if (step.step_region) {
-                            // 构建 M/A mark 文本（如 "M1", "M0", "A1", "A0"）
-                            const markText = step.mark_type === 'M' 
-                                ? `M${step.mark_value}` 
+                        const stepRegion = step.step_region;
+                        const stepPage = stepRegion?.page_index ?? stepRegion?.pageIndex ?? step.page_index ?? step.pageIndex;
+                        if (!matchesQuestionPage(stepPage)) return;
+                        if (stepRegion) {
+                            const markText = step.mark_type === 'M'
+                                ? `M${step.mark_value}`
                                 : `A${step.mark_value}`;
-                            // 使用 m_mark 或 a_mark 类型，根据 mark_type 决定
                             const annotationType = step.mark_type === 'M' ? 'm_mark' : 'a_mark';
-                            
+
                             pageAnnotations.push({
                                 annotation_type: annotationType,
-                                bounding_box: step.step_region,
+                                bounding_box: stepRegion,
                                 text: markText,
                                 color: step.is_correct ? '#00AA00' : '#FF0000',
                             } as VisualAnnotation);
-                            
-                            // 如果步骤错误，额外添加错误圈选
+
                             if (!step.is_correct && step.feedback) {
                                 pageAnnotations.push({
                                     annotation_type: 'comment',
                                     bounding_box: {
-                                        x_min: Math.min((step.step_region.x_max || 0.8) + 0.02, 0.95),
-                                        y_min: step.step_region.y_min,
-                                        x_max: Math.min((step.step_region.x_max || 0.8) + 0.25, 1.0),
-                                        y_max: step.step_region.y_max,
+                                        x_min: Math.min((stepRegion.x_max || 0.8) + 0.02, 0.95),
+                                        y_min: stepRegion.y_min,
+                                        x_max: Math.min((stepRegion.x_max || 0.8) + 0.25, 1.0),
+                                        y_max: stepRegion.y_max,
                                     },
                                     text: step.feedback,
                                     color: '#0066FF',
@@ -789,12 +1073,12 @@ export const ResultsView: React.FC = () => {
                         }
                     });
                 }
-                
-                // 从 scoringPointResults 中提取错误区域批注
-                q.scoringPointResults?.forEach((spr: any, idx: number) => {
-                    // 如果有错误区域坐标，创建错误圈选批注
-                    if (spr.errorRegion || spr.error_region) {
-                        const errorRegion = spr.errorRegion || spr.error_region;
+
+                q.scoringPointResults?.forEach((spr: any) => {
+                    const errorRegion = spr.errorRegion || spr.error_region;
+                    const errorPage = errorRegion?.page_index ?? errorRegion?.pageIndex ?? spr.page_index ?? spr.pageIndex;
+                    if (!matchesQuestionPage(errorPage)) return;
+                    if (errorRegion) {
                         pageAnnotations.push({
                             annotation_type: 'error_circle',
                             bounding_box: errorRegion,
@@ -803,9 +1087,8 @@ export const ResultsView: React.FC = () => {
                         } as VisualAnnotation);
                     }
                 });
-                
-                // 添加答案区域的分数批注
-                if (q.answerRegion) {
+
+                if (q.answerRegion && matchesQuestionPage(q.answerRegion.page_index ?? q.answerRegion.pageIndex ?? q.page_index ?? q.pageIndex)) {
                     pageAnnotations.push({
                         annotation_type: 'score',
                         bounding_box: {
@@ -819,16 +1102,13 @@ export const ResultsView: React.FC = () => {
                     } as VisualAnnotation);
                 }
             });
-            
-            // 🔥 如果有批注坐标，存储批注数据用于 Canvas 直接渲染（快速路径）
+
             if (pageAnnotations.length > 0) {
-                console.log(`[Canvas渲染] 页面 ${pageIdx} 有 ${pageAnnotations.length} 个批注，使用前端 Canvas 直接渲染`);
                 setPageAnnotationsData(prev => {
                     const next = new Map(prev);
                     next.set(pageIdx, pageAnnotations);
                     return next;
                 });
-                // 标记为已完成（不需要 annotatedImages，因为会用 Canvas 渲染）
                 setAnnotationLoading(prev => {
                     const next = new Set(prev);
                     next.delete(pageIdx);
@@ -836,69 +1116,10 @@ export const ResultsView: React.FC = () => {
                 });
                 return;
             }
-            
-            // 获取图片的 base64（仅在需要调用 API 时才获取）
-            let imageBase64 = imageUrl;
-            if (imageUrl.startsWith('data:')) {
-                imageBase64 = imageUrl.split(',')[1] || imageUrl;
-            } else if (imageUrl.startsWith('http')) {
-                // 如果是 URL，需要先获取图片
-                const response = await fetch(imageUrl);
-                const blob = await response.blob();
-                const reader = new FileReader();
-                imageBase64 = await new Promise((resolve) => {
-                    reader.onload = () => {
-                        const result = reader.result as string;
-                        resolve(result.split(',')[1] || result);
-                    };
-                    reader.readAsDataURL(blob);
-                });
-            }
-            
-            // 如果没有批注坐标但有评分标准，调用 annotate-and-render API
-            if (parsedRubric?.questions && parsedRubric.questions.length > 0) {
-                const { annotateAndRender } = await import('@/services/annotationApi');
-                
-                // 构建评分标准
-                const rubrics = parsedRubric.questions.map(q => ({
-                    question_id: q.questionId,
-                    max_score: q.maxScore,
-                    question_text: q.questionText || '',
-                    standard_answer: q.standardAnswer || '',
-                    scoring_points: (q.scoringPoints || []).map(sp => ({
-                        description: sp.description,
-                        score: sp.score || 1,
-                        point_id: sp.pointId || '',
-                        is_required: sp.isRequired ?? true,
-                    })),
-                    grading_notes: q.gradingNotes || '',
-                }));
-                
-                try {
-                    const blob = await annotateAndRender(imageBase64, rubrics, pageIdx);
-                    const reader = new FileReader();
-                    const dataUrl = await new Promise<string>((resolve) => {
-                        reader.onload = () => resolve(reader.result as string);
-                        reader.readAsDataURL(blob);
-                    });
-                    
-                    setAnnotatedImages(prev => {
-                        const next = new Map(prev);
-                        next.set(pageIdx, dataUrl);
-                        return next;
-                    });
-                    return;
-                } catch (err) {
-                    console.error('调用 annotate-and-render API 失败:', err);
-                }
-            }
-            
-            // 如果是 Assist 模式且没有批注数据，生成演示批注
+
             const isAssistMode = (student.gradingMode || '').startsWith('assist') || student.maxScore <= 0;
             if (isAssistMode && pageAnnotations.length === 0) {
-                console.log('Assist 模式：生成演示批注');
-                // 生成一些演示批注来展示功能
-                // BoundingBox 使用 {x_min, y_min, x_max, y_max} 格式（归一化坐标 0.0-1.0）
+                console.log('Assist mode: using demo annotations');
                 const demoAnnotations: VisualAnnotation[] = [
                     {
                         annotation_type: 'step_check',
@@ -927,23 +1148,16 @@ export const ResultsView: React.FC = () => {
                     {
                         annotation_type: 'comment',
                         bounding_box: { x_min: 0.70, y_min: 0.55, x_max: 0.95, y_max: 0.63 },
-                        text: '演示批注',
+                        text: '示例批注',
                         color: '#0066CC',
                     },
                 ];
-                
-                try {
-                    const result = await renderAnnotationsToBase64(imageBase64, demoAnnotations);
-                    if (result.success && result.image_base64) {
-                        setAnnotatedImages(prev => {
-                            const next = new Map(prev);
-                            next.set(pageIdx, `data:image/png;base64,${result.image_base64}`);
-                            return next;
-                        });
-                    }
-                } catch (err) {
-                    console.error('渲染演示批注失败:', err);
-                }
+
+                setPageAnnotationsData(prev => {
+                    const next = new Map(prev);
+                    next.set(pageIdx, demoAnnotations);
+                    return next;
+                });
             }
         } catch (error) {
             console.error('渲染批注失败:', error);
@@ -954,15 +1168,17 @@ export const ResultsView: React.FC = () => {
                 return next;
             });
         }
-    }, [detailViewStudent, parsedRubric]);
+    }, [parsedRubric]);
 
     // 当开启批注显示时，渲染当前学生的所有页面
     useEffect(() => {
         if (!showAnnotations || !detailViewStudent) return;
-        
+
         // 获取学生唯一标识
         const studentKey = detailViewStudent.studentName || `student-${detailViewIndex}`;
-        
+        // 保存当前学生数据的引用，避免闭包问题
+        const currentStudent = detailViewStudent;
+
         const pages = new Set<number>();
         if (detailViewStudent.startPage !== undefined) {
             const start = detailViewStudent.startPage;
@@ -972,18 +1188,18 @@ export const ResultsView: React.FC = () => {
         detailViewStudent.questionResults?.forEach(q => {
             (q.pageIndices || []).forEach(p => pages.add(p));
         });
-        
+
         // 如果没有找到任何页面信息，默认使用第一页（索引 0）
         if (pages.size === 0) {
             pages.add(0);
         }
-        
+
         const uniquePages = Array.from(pages).filter(p => Number.isFinite(p));
-        
+
         uniquePages.forEach(pageIdx => {
             const imageUrl = uploadedImages[pageIdx] || currentSession?.images[pageIdx]?.url;
             if (imageUrl) {
-                renderAnnotationsForPage(pageIdx, imageUrl, studentKey);
+                renderAnnotationsForPage(pageIdx, imageUrl, studentKey, currentStudent);
             }
         });
     }, [showAnnotations, detailViewStudent, detailViewIndex, uploadedImages, currentSession, renderAnnotationsForPage]);
@@ -992,7 +1208,6 @@ export const ResultsView: React.FC = () => {
     useEffect(() => {
         if (!showAnnotations) {
             // 关闭批注时清理
-            setAnnotatedImages(new Map());
             setPageAnnotationsData(new Map());
             renderedPagesRef.current.clear();
         }
@@ -1000,8 +1215,6 @@ export const ResultsView: React.FC = () => {
 
     // 切换学生时清理该学生的渲染缓存
     useEffect(() => {
-        // 切换学生时，清理 annotatedImages 和 pageAnnotationsData
-        setAnnotatedImages(new Map());
         setPageAnnotationsData(new Map());
         renderedPagesRef.current.clear();
     }, [detailViewIndex]);
@@ -1025,31 +1238,6 @@ export const ResultsView: React.FC = () => {
     }, [detailViewIndex]);
 
     // ==================== 导出处理函数 ====================
-    
-    const handleExportAnnotatedImages = async () => {
-        if (!submissionId) return;
-        setExportLoading('images');
-        try {
-            const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || ''}/batch/export/annotated-images/${submissionId}`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ include_original: false }),
-            });
-            if (!response.ok) throw new Error('导出失败');
-            const blob = await response.blob();
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `grading_annotated_${submissionId}.zip`;
-            a.click();
-            URL.revokeObjectURL(url);
-        } catch (error) {
-            console.error('导出带批注图片失败:', error);
-        } finally {
-            setExportLoading(null);
-            setExportMenuOpen(false);
-        }
-    };
 
     const handleExportExcel = async () => {
         if (!submissionId) return;
@@ -1088,7 +1276,7 @@ export const ResultsView: React.FC = () => {
                     reader.readAsDataURL(smartExcelTemplate);
                 });
             }
-            
+
             const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || ''}/batch/export/smart-excel/${submissionId}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -1247,6 +1435,11 @@ export const ResultsView: React.FC = () => {
             const data = await gradingApi.getRubricReviewContext(submissionId);
             const parsed = normalizeRubricDraft(data.parsed_rubric || {});
             setRubricDraft(parsed);
+            
+            // 同步到 consoleStore，让 RubricOverview 组件也能访问
+            // 转换为 ParsedRubric 类型
+            useConsoleStore.getState().setParsedRubric(parsed as any);
+            
             const images = (data.rubric_images || []).map((img: string) =>
                 img.startsWith('data:') ? img : `data:image/jpeg;base64,${img}`
             );
@@ -1263,6 +1456,13 @@ export const ResultsView: React.FC = () => {
             loadRubricContext();
         }
     }, [rubricOpen, rubricDraft, loadRubricContext]);
+
+    // 组件初始化时自动加载 rubric 数据，让 RubricOverview 能显示
+    useEffect(() => {
+        if (submissionId && !useConsoleStore.getState().parsedRubric) {
+            loadRubricContext();
+        }
+    }, [submissionId, loadRubricContext]);
 
     const toggleRubricSelected = useCallback((questionId: string) => {
         setRubricSelectedIds((prev) => {
@@ -1416,6 +1616,149 @@ export const ResultsView: React.FC = () => {
             setRubricSubmitting(false);
         }
     };
+
+    // === Helper Functions (定义在所有早期返回之前，避免 React Error #300) ===
+    const handleSelectStudent = useCallback((index: number) => setDetailViewIndex(index), []);
+    const handleViewDetail = useCallback((student: StudentResult) => {
+        const index = sortedResults.findIndex(r => r.studentName === student.studentName);
+        setDetailViewIndex(index >= 0 ? index : 0);
+    }, [sortedResults]);
+
+    // 手动重试获取结果
+    const handleRetryFetch = useCallback(async () => {
+        if (!submissionId) return;
+
+        // 清除已尝试标记，允许重试
+        apiFallbackAttemptedRef.current.delete(submissionId);
+        setApiFallbackLoading(true);
+        setApiFallbackError(null);
+
+        try {
+            console.log('[Manual Retry] Fetching results for batch:', submissionId);
+            const response = await gradingApi.getBatchResults(submissionId);
+
+            // 后端可能返回 results（camelCase）或 student_results（snake_case）
+            const rawResults = (response as any).results || response.student_results || [];
+            console.log('[Manual Retry] Raw results:', rawResults.length, 'items');
+
+            if (rawResults.length > 0) {
+                // 检测数据格式（camelCase 或 snake_case）
+                const firstResult = rawResults[0];
+                const isCamelCase = 'studentName' in firstResult;
+                console.log('[Manual Retry] Data format:', isCamelCase ? 'camelCase' : 'snake_case');
+
+                // 转换 API 响应格式到前端格式
+                const formattedResults: StudentResult[] = rawResults.map((r: any) => {
+                    if (isCamelCase) {
+                        return {
+                            studentName: r.studentName || 'Unknown',
+                            score: r.score || 0,
+                            maxScore: r.maxScore || 100,
+                            startPage: r.startPage,
+                            endPage: r.endPage,
+                            pageRange: r.pageRange,
+                            confidence: r.confidence,
+                            needsConfirmation: r.needsConfirmation,
+                            gradingMode: r.gradingMode,
+                            studentSummary: r.studentSummary,
+                            selfAudit: r.selfAudit,
+                            confession: r.confession,
+                            questionResults: (r.questionResults || []).map((q: any) => ({
+                                questionId: q.questionId || '',
+                                score: q.score || 0,
+                                maxScore: q.maxScore || 0,
+                                feedback: q.feedback || '',
+                                confidence: q.confidence,
+                                confidenceReason: q.confidenceReason,
+                                selfCritique: q.selfCritique,
+                                selfCritiqueConfidence: q.selfCritiqueConfidence,
+                                rubricRefs: q.rubricRefs,
+                                typoNotes: q.typoNotes,
+                                pageIndices: q.pageIndices,
+                                isCrossPage: q.isCrossPage,
+                                mergeSource: q.mergeSource,
+                                scoringPointResults: (q.scoringPointResults || []).map((spr: any) => ({
+                                    pointId: spr.pointId || spr.scoringPoint?.pointId,
+                                    description: spr.description || spr.scoringPoint?.description || '',
+                                    awarded: spr.awarded ?? 0,
+                                    maxPoints: spr.maxPoints ?? spr.scoringPoint?.score ?? 0,
+                                    evidence: spr.evidence || '',
+                                    rubricReference: spr.rubricReference,
+                                    rubricReferenceSource: spr.rubricReferenceSource,
+                                    decision: spr.decision,
+                                    reason: spr.reason,
+                                    scoringPoint: spr.scoringPoint ? {
+                                        description: spr.scoringPoint.description || '',
+                                        score: spr.scoringPoint.score || 0,
+                                        maxScore: spr.scoringPoint.score || 0,
+                                        isCorrect: (spr.awarded ?? 0) > 0,
+                                        isRequired: spr.scoringPoint.isRequired,
+                                        explanation: spr.reason || spr.evidence || '',
+                                    } : undefined,
+                                })),
+                            })),
+                        };
+                    } else {
+                        return {
+                            studentName: r.student_name || 'Unknown',
+                            score: r.total_score || 0,
+                            maxScore: r.max_score || 100,
+                            startPage: r.start_page,
+                            endPage: r.end_page,
+                            confidence: r.confidence,
+                            needsConfirmation: r.needs_confirmation,
+                            questionResults: (r.questions || []).map((q: any) => ({
+                                questionId: q.question_id || '',
+                                score: q.score || 0,
+                                maxScore: q.max_score || 0,
+                                feedback: q.feedback || '',
+                                confidence: q.confidence,
+                                confidenceReason: q.confidence_reason,
+                                selfCritique: q.self_critique,
+                                selfCritiqueConfidence: q.self_critique_confidence,
+                                rubricRefs: q.rubric_refs,
+                                typoNotes: q.typo_notes,
+                                pageIndices: q.page_indices,
+                                isCrossPage: q.is_cross_page,
+                                mergeSource: q.merge_source,
+                                scoringPointResults: (q.scoring_point_results || []).map((spr: any) => ({
+                                    pointId: spr.point_id || spr.scoring_point?.point_id,
+                                    description: spr.description || spr.scoring_point?.description || '',
+                                    awarded: spr.awarded ?? 0,
+                                    maxPoints: spr.max_points ?? spr.scoring_point?.score ?? 0,
+                                    evidence: spr.evidence || '',
+                                    rubricReference: spr.rubric_reference,
+                                    rubricReferenceSource: spr.rubric_reference_source,
+                                    decision: spr.decision,
+                                    reason: spr.reason,
+                                    scoringPoint: spr.scoring_point ? {
+                                        description: spr.scoring_point.description || '',
+                                        score: spr.scoring_point.score || 0,
+                                        maxScore: spr.scoring_point.score || 0,
+                                        isCorrect: (spr.awarded ?? 0) > 0,
+                                        isRequired: spr.scoring_point.is_required,
+                                        explanation: spr.reason || spr.evidence || '',
+                                    } : undefined,
+                                })),
+                            })),
+                        };
+                    }
+                });
+
+                console.log('[Manual Retry] Successfully fetched', formattedResults.length, 'results');
+                setFinalResults(formattedResults);
+            } else {
+                setApiFallbackError('API 返回空结果');
+            }
+        } catch (error) {
+            console.error('[Manual Retry] Failed:', error);
+            setApiFallbackError(error instanceof Error ? error.message : '获取结果失败');
+        } finally {
+            setApiFallbackLoading(false);
+        }
+    }, [submissionId, setFinalResults]);
+
+    // === Conditional Returns (所有 hooks 必须在这些返回之前定义) ===
 
     if (rubricOpen) {
         return (
@@ -1748,7 +2091,16 @@ export const ResultsView: React.FC = () => {
                                             Page {pageIdx + 1}
                                         </div>
                                         {imageUrl ? (
-                                            <img src={imageUrl} alt={`Page ${pageIdx + 1}`} className="w-full h-auto" />
+                                            // 检查是否是 base64 数据，如果是则添加 data URI 前缀
+                                            imageUrl.startsWith('data:') || imageUrl.startsWith('/9j/') ? (
+                                                <img 
+                                                    src={imageUrl.startsWith('data:') ? imageUrl : `data:image/jpeg;base64,${imageUrl}`} 
+                                                    alt={`Page ${pageIdx + 1}`} 
+                                                    className="w-full h-auto" 
+                                                />
+                                            ) : (
+                                                <img src={imageUrl} alt={`Page ${pageIdx + 1}`} className="w-full h-auto" />
+                                            )
                                         ) : (
                                             <div className="p-10 text-center text-slate-400">Image missing</div>
                                         )}
@@ -1887,16 +2239,26 @@ export const ResultsView: React.FC = () => {
     if (detailViewStudent) {
         // (Detail View Logic - Simplified for brevity but functionally complete with improved styles)
         const isAssist = (detailViewStudent.gradingMode || '').startsWith('assist') || detailViewStudent.maxScore <= 0;
-        const pageIndices = detailViewStudent.questionResults?.flatMap(q => q.pageIndices || []) || [];
-        const fallbackPages: number[] = [];
+
+        // 🔥 修改：优先使用 startPage/endPage 范围内的所有页面，不过滤"冗余"页面
+        // 确保显示学生边界内的所有页面，而不只是有题目关联的页面
+        let uniquePages: number[] = [];
+
         if (detailViewStudent.startPage !== undefined) {
+            // 有学生边界时，显示边界内的所有页面
             const start = detailViewStudent.startPage;
             const end = detailViewStudent.endPage ?? start;
             for (let i = start; i <= end; i += 1) {
-                fallbackPages.push(i);
+                uniquePages.push(i);
             }
+        } else {
+            // 没有边界时，从 questionResults 中收集 pageIndices 作为回退
+            const pageIndices = detailViewStudent.questionResults?.flatMap(q => q.pageIndices || []) || [];
+            uniquePages = Array.from(new Set(pageIndices));
         }
-        const uniquePages = Array.from(new Set([...pageIndices, ...fallbackPages]))
+
+        // 过滤无效值并排序
+        uniquePages = uniquePages
             .filter(p => Number.isFinite(p))
             .sort((a, b) => a - b);
         const auditItems = (detailViewStudent.questionResults || []).filter((q) => (
@@ -1975,7 +2337,6 @@ export const ResultsView: React.FC = () => {
                                         onChange={(e) => {
                                             setShowAnnotations(e.target.checked);
                                             if (!e.target.checked) {
-                                                setAnnotatedImages(new Map());
                                                 setPageAnnotationsData(new Map());
                                             }
                                         }}
@@ -1994,11 +2355,9 @@ export const ResultsView: React.FC = () => {
                         )}
                         {uniquePages.map((pageIdx, pageIdxIndex) => {
                             const originalImageUrl = uploadedImages[pageIdx] || currentSession?.images[pageIdx]?.url;
-                            const annotatedImageUrl = annotatedImages.get(pageIdx);
                             const pageAnnotations = pageAnnotationsData.get(pageIdx);
                             const isLoading = annotationLoading.has(pageIdx);
                             const hasCanvasAnnotations = showAnnotations && pageAnnotations && pageAnnotations.length > 0;
-                            const displayImageUrl = showAnnotations && annotatedImageUrl ? annotatedImageUrl : originalImageUrl;
                             const isLastPage = pageIdxIndex === uniquePages.length - 1;
                             return (
                                 <div key={pageIdx} className={clsx("pb-6 border-b border-slate-100/80 space-y-2", isLastPage && "border-b-0 pb-0")}>
@@ -2009,17 +2368,17 @@ export const ResultsView: React.FC = () => {
                                         {showAnnotations && isLoading && (
                                             <div className="flex items-center gap-1 text-xs text-blue-500">
                                                 <Loader2 className="w-3 h-3 animate-spin" />
-                                                渲染中...
+                                                加载批注中...
                                             </div>
                                         )}
-                                        {showAnnotations && (annotatedImageUrl || hasCanvasAnnotations) && !isLoading && (
+                                        {showAnnotations && hasCanvasAnnotations && !isLoading && (
                                             <div className="flex items-center gap-1 text-xs text-emerald-500">
                                                 <Pencil className="w-3 h-3" />
-                                                已批注{hasCanvasAnnotations ? ' (Canvas)' : ''}
+                                                已标注 (Canvas)
                                             </div>
                                         )}
                                     </div>
-                                    {/* 🔥 优先使用 Canvas 渲染批注（快速路径） */}
+                                    {/* Canvas 渲染批注 */}
                                     {hasCanvasAnnotations && originalImageUrl ? (
                                         <AnnotationCanvas
                                             imageSrc={originalImageUrl}
@@ -2027,8 +2386,17 @@ export const ResultsView: React.FC = () => {
                                             className="w-full h-auto"
                                             showText={true}
                                         />
-                                    ) : displayImageUrl ? (
-                                        <img src={displayImageUrl} alt={`Page ${pageIdx + 1}`} className="w-full h-auto" />
+                                    ) : originalImageUrl ? (
+                                        // 检查是否是 base64 数据 URL，如果是则直接使用，否则作为普通 URL
+                                        originalImageUrl.startsWith('data:') || originalImageUrl.startsWith('/9j/') ? (
+                                            <img 
+                                                src={originalImageUrl.startsWith('data:') ? originalImageUrl : `data:image/jpeg;base64,${originalImageUrl}`} 
+                                                alt={`Page ${pageIdx + 1}`} 
+                                                className="w-full h-auto" 
+                                            />
+                                        ) : (
+                                            <img src={originalImageUrl} alt={`Page ${pageIdx + 1}`} className="w-full h-auto" />
+                                        )
                                     ) : (
                                         <div className="p-10 text-center text-slate-400">Image missing</div>
                                     )}
@@ -2050,7 +2418,7 @@ export const ResultsView: React.FC = () => {
                             </div>
 
                             {/* 🔥 批改透明度区块 - 显示第一次批改、自白、逻辑复核 */}
-                            {(detailViewStudent.draftQuestionDetails || detailViewStudent.selfReport || detailViewStudent.logicReviewedAt) && (
+                            {(detailViewStudent.draftQuestionDetails || detailViewStudent.confession || detailViewStudent.logicReviewedAt) && (
                                 <div className="border border-blue-100 bg-blue-50/30 rounded-xl p-4 space-y-4">
                                     <div className="flex items-center gap-2 text-blue-700 font-semibold text-sm">
                                         <AlertCircle className="w-4 h-4" />
@@ -2058,66 +2426,66 @@ export const ResultsView: React.FC = () => {
                                     </div>
 
                                     {/* 自白报告 - 增强版 */}
-                                    {detailViewStudent.selfReport && (
+                                    {detailViewStudent.confession && (
                                         <div className="bg-amber-50 rounded-lg p-4 border border-amber-200">
                                             <div className="flex items-center justify-between mb-3">
                                                 <div className="text-xs font-semibold text-amber-700 flex items-center gap-1.5">
                                                     <AlertTriangle className="w-4 h-4" />
-                                                    AI 自白报告
+                                                    AI Confession Report
                                                 </div>
-                                                {detailViewStudent.selfReport.generatedAt && (
+                                                {detailViewStudent.confession.generatedAt && (
                                                     <div className="text-[10px] text-amber-500">
-                                                        {new Date(detailViewStudent.selfReport.generatedAt).toLocaleString('zh-CN')}
+                                                        {new Date(detailViewStudent.confession.generatedAt).toLocaleString('zh-CN')}
                                                     </div>
                                                 )}
                                             </div>
-                                            
+
                                             {/* 状态和置信度 */}
                                             <div className="flex items-center gap-4 mb-3">
-                                                {detailViewStudent.selfReport.overallStatus && (
+                                                {detailViewStudent.confession.overallStatus && (
                                                     <div className={clsx(
                                                         "px-2.5 py-1 rounded-full text-xs font-semibold",
-                                                        detailViewStudent.selfReport.overallStatus === 'ok' 
+                                                        detailViewStudent.confession.overallStatus === 'ok'
                                                             ? "bg-emerald-100 text-emerald-700"
-                                                            : detailViewStudent.selfReport.overallStatus === 'caution'
-                                                            ? "bg-amber-100 text-amber-700"
-                                                            : "bg-rose-100 text-rose-700"
+                                                            : detailViewStudent.confession.overallStatus === 'caution'
+                                                                ? "bg-amber-100 text-amber-700"
+                                                                : "bg-rose-100 text-rose-700"
                                                     )}>
-                                                        状态: {detailViewStudent.selfReport.overallStatus === 'ok' ? '✓ 正常' 
-                                                            : detailViewStudent.selfReport.overallStatus === 'caution' ? '⚠ 需注意'
-                                                            : '⚠ 需复核'}
+                                                        状态: {detailViewStudent.confession.overallStatus === 'ok' ? '✓ 正常'
+                                                            : detailViewStudent.confession.overallStatus === 'caution' ? '⚠ 需注意'
+                                                                : '⚠ 需复核'}
                                                     </div>
                                                 )}
-                                                {detailViewStudent.selfReport.overallConfidence !== undefined && (
+                                                {detailViewStudent.confession.overallConfidence !== undefined && (
                                                     <div className="flex items-center gap-2">
                                                         <span className="text-xs text-amber-600">置信度:</span>
                                                         <div className="w-20 h-2 bg-amber-200 rounded-full overflow-hidden">
-                                                            <div 
+                                                            <div
                                                                 className={clsx(
                                                                     "h-full rounded-full transition-all",
-                                                                    detailViewStudent.selfReport.overallConfidence >= 0.8 ? "bg-emerald-500"
-                                                                        : detailViewStudent.selfReport.overallConfidence >= 0.5 ? "bg-amber-500"
-                                                                        : "bg-rose-500"
+                                                                    detailViewStudent.confession.overallConfidence >= 0.8 ? "bg-emerald-500"
+                                                                        : detailViewStudent.confession.overallConfidence >= 0.5 ? "bg-amber-500"
+                                                                            : "bg-rose-500"
                                                                 )}
-                                                                style={{ width: `${detailViewStudent.selfReport.overallConfidence * 100}%` }}
+                                                                style={{ width: `${detailViewStudent.confession.overallConfidence * 100}%` }}
                                                             />
                                                         </div>
                                                         <span className="text-xs font-mono text-amber-700">
-                                                            {(detailViewStudent.selfReport.overallConfidence * 100).toFixed(0)}%
+                                                            {(detailViewStudent.confession.overallConfidence * 100).toFixed(0)}%
                                                         </span>
                                                     </div>
                                                 )}
                                             </div>
 
                                             {/* 高风险题目 */}
-                                            {detailViewStudent.selfReport.highRiskQuestions && detailViewStudent.selfReport.highRiskQuestions.length > 0 && (
+                                            {detailViewStudent.confession.highRiskQuestions && detailViewStudent.confession.highRiskQuestions.length > 0 && (
                                                 <div className="mb-3 p-2.5 bg-rose-50 rounded-lg border border-rose-200">
                                                     <div className="text-[10px] uppercase tracking-wider text-rose-600 font-semibold mb-2 flex items-center gap-1">
                                                         <XCircle className="w-3 h-3" />
-                                                        高风险题目 ({detailViewStudent.selfReport.highRiskQuestions.length})
+                                                        高风险题目 ({detailViewStudent.confession.highRiskQuestions.length})
                                                     </div>
                                                     <div className="space-y-1.5">
-                                                        {detailViewStudent.selfReport.highRiskQuestions.map((item, idx) => (
+                                                        {detailViewStudent.confession.highRiskQuestions.map((item: { questionId?: string; description?: string }, idx: number) => (
                                                             <div key={idx} className="text-xs text-rose-700 flex items-start gap-2 bg-white/50 rounded px-2 py-1">
                                                                 <span className="font-mono font-semibold text-rose-500 shrink-0">Q{item.questionId}</span>
                                                                 <span className="text-rose-600">{item.description || '需要人工复核'}</span>
@@ -2128,14 +2496,14 @@ export const ResultsView: React.FC = () => {
                                             )}
 
                                             {/* 潜在问题 */}
-                                            {detailViewStudent.selfReport.potentialErrors && detailViewStudent.selfReport.potentialErrors.length > 0 && (
+                                            {detailViewStudent.confession.potentialErrors && detailViewStudent.confession.potentialErrors.length > 0 && (
                                                 <div className="mb-3 p-2.5 bg-orange-50 rounded-lg border border-orange-200">
                                                     <div className="text-[10px] uppercase tracking-wider text-orange-600 font-semibold mb-2 flex items-center gap-1">
                                                         <AlertTriangle className="w-3 h-3" />
-                                                        潜在错误 ({detailViewStudent.selfReport.potentialErrors.length})
+                                                        潜在错误 ({detailViewStudent.confession.potentialErrors.length})
                                                     </div>
                                                     <div className="space-y-1.5">
-                                                        {detailViewStudent.selfReport.potentialErrors.map((item: any, idx: number) => (
+                                                        {detailViewStudent.confession.potentialErrors.map((item: any, idx: number) => (
                                                             <div key={idx} className="text-xs text-orange-700 flex items-start gap-2 bg-white/50 rounded px-2 py-1">
                                                                 {item.questionId && <span className="font-mono font-semibold text-orange-500 shrink-0">Q{item.questionId}</span>}
                                                                 <span className="text-orange-600">{item.description || item.message}</span>
@@ -2146,14 +2514,14 @@ export const ResultsView: React.FC = () => {
                                             )}
 
                                             {/* 问题/警告 */}
-                                            {detailViewStudent.selfReport.issues && detailViewStudent.selfReport.issues.length > 0 && (
+                                            {detailViewStudent.confession.issues && detailViewStudent.confession.issues.length > 0 && (
                                                 <div className="p-2.5 bg-amber-100/50 rounded-lg border border-amber-300">
                                                     <div className="text-[10px] uppercase tracking-wider text-amber-600 font-semibold mb-2 flex items-center gap-1">
                                                         <Info className="w-3 h-3" />
-                                                        问题提示 ({detailViewStudent.selfReport.issues.length})
+                                                        问题提示 ({detailViewStudent.confession.issues.length})
                                                     </div>
                                                     <div className="space-y-1.5">
-                                                        {detailViewStudent.selfReport.issues.map((item, idx) => (
+                                                        {detailViewStudent.confession.issues.map((item: { questionId?: string; message?: string }, idx: number) => (
                                                             <div key={idx} className="text-xs text-amber-700 flex items-start gap-2 bg-white/50 rounded px-2 py-1">
                                                                 {item.questionId && <span className="font-mono font-semibold text-amber-500 shrink-0">Q{item.questionId}:</span>}
                                                                 <span>{item.message}</span>
@@ -2164,13 +2532,13 @@ export const ResultsView: React.FC = () => {
                                             )}
 
                                             {/* 警告 */}
-                                            {detailViewStudent.selfReport.warnings && detailViewStudent.selfReport.warnings.length > 0 && (
+                                            {detailViewStudent.confession.warnings && detailViewStudent.confession.warnings.length > 0 && (
                                                 <div className="mt-2 p-2.5 bg-yellow-50 rounded-lg border border-yellow-200">
                                                     <div className="text-[10px] uppercase tracking-wider text-yellow-600 font-semibold mb-2">
-                                                        警告 ({detailViewStudent.selfReport.warnings.length})
+                                                        警告 ({detailViewStudent.confession.warnings.length})
                                                     </div>
                                                     <div className="space-y-1">
-                                                        {detailViewStudent.selfReport.warnings.map((item: any, idx: number) => (
+                                                        {detailViewStudent.confession.warnings.map((item: any, idx: number) => (
                                                             <div key={idx} className="text-xs text-yellow-700">
                                                                 {item.questionId && <span className="font-mono text-yellow-500 mr-1">Q{item.questionId}:</span>}
                                                                 {item.message}
@@ -2181,9 +2549,9 @@ export const ResultsView: React.FC = () => {
                                             )}
 
                                             {/* 来源标识 */}
-                                            {detailViewStudent.selfReport.source && (
+                                            {detailViewStudent.confession.source && (
                                                 <div className="mt-2 text-[10px] text-amber-400 text-right">
-                                                    来源: {detailViewStudent.selfReport.source}
+                                                    来源: {detailViewStudent.confession.source}
                                                 </div>
                                             )}
                                         </div>
@@ -2274,7 +2642,7 @@ export const ResultsView: React.FC = () => {
                                                             </div>
                                                             {dq.selfCritique && (
                                                                 <div className="mt-1 text-[11px] text-amber-700 italic">
-                                                                    自白: {dq.selfCritique}
+                                                                    Confession: {dq.selfCritique}
                                                                 </div>
                                                             )}
                                                         </div>
@@ -2391,8 +2759,8 @@ export const ResultsView: React.FC = () => {
                                     <h3 className="text-sm font-semibold text-slate-700">Analysis Detail</h3>
                                 </div>
                                 {detailViewStudent.questionResults?.map((q, idx) => (
-                                    <div key={idx} className="border-b border-slate-100 pb-4 last:border-b-0">
-                                        <QuestionDetail question={q} gradingMode={detailViewStudent.gradingMode} />
+                                    <div key={`question-${q.questionId || 'unknown'}-${detailViewStudent.studentName}-${idx}`} className="border-b border-slate-100 pb-4 last:border-b-0">
+                                        <QuestionDetail question={q} gradingMode={detailViewStudent.gradingMode} defaultExpanded={defaultExpandDetails} />
                                     </div>
                                 ))}
                             </div>
@@ -2403,27 +2771,60 @@ export const ResultsView: React.FC = () => {
         );
     }
 
-    // === Helpers ===
-    const handleSelectStudent = (index: number) => setDetailViewIndex(index);
-    const handleViewDetail = (student: StudentResult) => {
-        const index = sortedResults.findIndex(r => r.studentName === student.studentName);
-        setDetailViewIndex(index >= 0 ? index : 0);
-    };
-
     // === Dashboard View ===
     if (results.length === 0) {
+        // 调试日志
+        console.log('[ResultsView Empty State]', {
+            submissionId,
+            status,
+            apiFallbackLoading,
+            apiFallbackError
+        });
+
         return (
             <div className="flex flex-col items-center justify-center h-full text-slate-400 gap-4">
                 <div className="p-8 flex flex-col items-center gap-4">
-                    <RocketOutlined className="text-4xl opacity-50" />
-                    <p className="font-medium">暂无批改结果</p>
-                    <SmoothButton onClick={() => setCurrentTab('process')} variant="ghost">
-                        <ArrowLeft className="w-4 h-4 mr-2" /> 返回批改过程
-                    </SmoothButton>
+                    {apiFallbackLoading ? (
+                        <>
+                            <Loader2 className="w-10 h-10 animate-spin text-blue-500" />
+                            <p className="font-medium text-slate-600">正在获取批改结果...</p>
+                        </>
+                    ) : (
+                        <>
+                            <RocketOutlined className="text-4xl opacity-50" />
+                            <p className="font-medium">暂无批改结果</p>
+                            {apiFallbackError && (
+                                <p className="text-sm text-red-500">{apiFallbackError}</p>
+                            )}
+                            {/* 始终显示重新获取按钮（当有 submissionId 或 status 为 COMPLETED 时） */}
+                            {(submissionId || status === 'COMPLETED') && (
+                                <SmoothButton onClick={handleRetryFetch} variant="primary" size="sm">
+                                    <Loader2 className="w-4 h-4 mr-2" /> 重新获取结果
+                                </SmoothButton>
+                            )}
+                            <SmoothButton onClick={() => setCurrentTab('process')} variant="ghost">
+                                <ArrowLeft className="w-4 h-4 mr-2" /> 返回批改过程
+                            </SmoothButton>
+                        </>
+                    )}
                 </div>
             </div>
         );
     }
+
+    const containerVariants = {
+        hidden: { opacity: 0 },
+        visible: {
+            opacity: 1,
+            transition: {
+                staggerChildren: 0.1
+            }
+        }
+    };
+    const itemVariants = {
+        hidden: { opacity: 0, y: 20 },
+        visible: { opacity: 1, y: 0 }
+    };
 
     return (
         <div className="h-full overflow-y-auto p-6 space-y-8 custom-scrollbar bg-white">
@@ -2509,37 +2910,22 @@ export const ResultsView: React.FC = () => {
                         <SmoothButton onClick={() => setShowClassReport(true)} variant="secondary" size="sm">
                             <BarChartOutlined className="mr-2" /> 班级报告
                         </SmoothButton>
-                        
+
                         {/* 导出下拉菜单 */}
                         <div className="relative">
-                            <SmoothButton 
-                                onClick={() => setExportMenuOpen(!exportMenuOpen)} 
-                                variant="secondary" 
+                            <SmoothButton
+                                onClick={() => setExportMenuOpen(!exportMenuOpen)}
+                                variant="secondary"
                                 size="sm"
                                 disabled={!submissionId}
                             >
-                                <Download className="w-4 h-4 mr-2" /> 
+                                <Download className="w-4 h-4 mr-2" />
                                 导出
                                 <ChevronDown className={clsx("w-4 h-4 ml-1 transition-transform", exportMenuOpen && "rotate-180")} />
                             </SmoothButton>
-                            
+
                             {exportMenuOpen && (
                                 <div className="absolute right-0 top-full mt-1 w-56 bg-white rounded-lg shadow-lg border border-slate-200 py-1 z-50">
-                                    <button
-                                        onClick={handleExportAnnotatedImages}
-                                        disabled={exportLoading === 'images'}
-                                        className="w-full px-4 py-2.5 text-left text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-3 disabled:opacity-50"
-                                    >
-                                        {exportLoading === 'images' ? (
-                                            <Loader2 className="w-4 h-4 animate-spin" />
-                                        ) : (
-                                            <Pencil className="w-4 h-4 text-slate-400" />
-                                        )}
-                                        <div>
-                                            <div className="font-medium">带批注图片</div>
-                                            <div className="text-[10px] text-slate-400">ZIP 打包下载</div>
-                                        </div>
-                                    </button>
                                     <button
                                         onClick={handleExportExcel}
                                         disabled={exportLoading === 'excel'}
@@ -2587,6 +2973,35 @@ export const ResultsView: React.FC = () => {
                 </div>
             </div>
 
+            <div className="rounded-2xl border border-slate-200 bg-white px-5 py-4">
+                <div className="flex items-center gap-2 text-sm font-semibold text-slate-700">
+                    <BookOpen className="h-4 w-4 text-slate-400" />
+                    评分依据透明度
+                </div>
+                <div className="mt-3 grid gap-4 md:grid-cols-3 text-xs text-slate-600">
+                    <div className="space-y-1">
+                        <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">来源</div>
+                        <div>
+                            {parsedRubric
+                                ? `解析评分标准 · ${parsedRubric.totalQuestions} 题 / ${parsedRubric.totalScore} 分`
+                                : '未解析评分标准'}
+                        </div>
+                    </div>
+                    <div className="space-y-1">
+                        <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">去重策略</div>
+                        <div>按题号归一 + 跨页题合并 + 分值纠偏</div>
+                    </div>
+                    <div className="space-y-1">
+                        <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">评分依据摘要</div>
+                        <div>
+                            {rubricCoverage === null
+                                ? '暂无评分点'
+                                : `评分点引用覆盖 ${(rubricCoverage * 100).toFixed(0)}%`}
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             {/* Results List */}
             <div className="space-y-4">
                 <div className="flex items-center justify-between px-1">
@@ -2600,13 +3015,13 @@ export const ResultsView: React.FC = () => {
                     )}
                 </div>
 
-                <div className="bg-white">
+                <motion.div className='bg-transparent space-y-3' variants={containerVariants} initial='hidden' animate='visible'>
                     {sortedResults.map((result, index) => (
-                        <div key={`${result.studentName}-${index}`} onClick={() => handleViewDetail(result)} className="cursor-pointer">
+                        <motion.div key={`${result.studentName}-${index}`} variants={itemVariants} onClick={() => handleViewDetail(result)} className='cursor-pointer'>
                             <ResultCard result={result} rank={index + 1} isExpanded={false} onExpand={() => { }} />
-                        </div>
+                        </motion.div>
                     ))}
-                </div>
+                </motion.div>
             </div>
 
             {/* Cross Page Alerts */}
@@ -2658,7 +3073,7 @@ export const ResultsView: React.FC = () => {
                                     <X className="w-5 h-5 text-slate-400" />
                                 </button>
                             </div>
-                            
+
                             <div className="p-6 space-y-4">
                                 {/* 模板上传 */}
                                 <div>
@@ -2694,7 +3109,7 @@ export const ResultsView: React.FC = () => {
                                         </label>
                                     </div>
                                 </div>
-                                
+
                                 {/* 格式描述 */}
                                 <div>
                                     <label className="block text-sm font-medium text-slate-700 mb-2">
@@ -2707,7 +3122,7 @@ export const ResultsView: React.FC = () => {
                                         className="w-full h-32 px-3 py-2 border border-slate-200 rounded-lg text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                                     />
                                 </div>
-                                
+
                                 {/* 示例提示 */}
                                 <div className="bg-blue-50 rounded-lg p-3">
                                     <div className="text-xs font-medium text-blue-700 mb-1">💡 提示</div>
@@ -2718,14 +3133,14 @@ export const ResultsView: React.FC = () => {
                                     </div>
                                 </div>
                             </div>
-                            
+
                             <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex justify-end gap-3">
                                 <SmoothButton variant="secondary" size="sm" onClick={() => setSmartExcelOpen(false)}>
                                     取消
                                 </SmoothButton>
-                                <SmoothButton 
-                                    variant="primary" 
-                                    size="sm" 
+                                <SmoothButton
+                                    variant="primary"
+                                    size="sm"
                                     onClick={handleSmartExcelSubmit}
                                     disabled={!smartExcelPrompt.trim() || smartExcelLoading}
                                 >

@@ -7,6 +7,7 @@ from .enums import ReviewAction
 
 class ReviewSignal(BaseModel):
     """审核信号"""
+
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
@@ -16,11 +17,11 @@ class ReviewSignal(BaseModel):
                 "override_score": 9.0,
                 "override_feedback": "经人工审核，学生答案基本正确",
                 "review_comment": "AI 评分偏低",
-                "reviewer_id": "teacher_001"
+                "reviewer_id": "teacher_001",
             }
         }
     )
-    
+
     submission_id: str = Field(..., description="提交 ID")
     question_id: Optional[str] = Field(None, description="题目 ID（可选，为空表示整份试卷）")
     action: ReviewAction = Field(..., description="审核操作")
@@ -32,6 +33,7 @@ class ReviewSignal(BaseModel):
 
 class PendingReview(BaseModel):
     """待审核项"""
+
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
@@ -42,11 +44,11 @@ class PendingReview(BaseModel):
                 "ai_score": 7.5,
                 "confidence": 0.68,
                 "reason": "置信度低于阈值 0.75",
-                "created_at": "2024-01-01T12:00:00Z"
+                "created_at": "2024-01-01T12:00:00Z",
             }
         }
     )
-    
+
     submission_id: str = Field(..., description="提交 ID")
     exam_id: str = Field(..., description="考试 ID")
     student_id: str = Field(..., description="学生 ID")

@@ -1,0 +1,11 @@
+{
+  "batch_id": "d48df4d3-e3f8-4e25-9792-77a62ee50a6f",
+  "exam_id": "mcp-e2e-20260128",
+  "status": "completed",
+  "current_stage": "completed",
+  "error": null,
+  "total_students": 0,
+  "completed_students": 0,
+  "unidentified_pages": 0,
+  "results": []
+}

@@ -43,10 +43,10 @@ class LayoutAnalysisService:
             "- bounding_box: [ymin, xmin, ymax, xmax] in normalized 0-1000 coordinates.\n\n"
             "Return JSON in this format:\n"
             "{\n"
-            "  \"regions\": [\n"
+            '  "regions": [\n'
             "    {\n"
-            "      \"question_id\": \"q1\",\n"
-            "      \"bounding_box\": [ymin, xmin, ymax, xmax]\n"
+            '      "question_id": "q1",\n'
+            '      "bounding_box": [ymin, xmin, ymax, xmax]\n'
             "    }\n"
             "  ]\n"
             "}\n\n"
@@ -87,9 +87,7 @@ class LayoutAnalysisService:
         regions_data = result_data.get("regions", [])
 
         if not regions_data:
-            raise ValueError(
-                f"No regions detected for page {page_index}; manual review required."
-            )
+            raise ValueError(f"No regions detected for page {page_index}; manual review required.")
 
         from PIL import Image
         import io
