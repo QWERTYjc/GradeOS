@@ -3555,3 +3555,62 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
                 "confidence": 0,
                 "question_details": [],
             }
+
+    async def generate_annotations(
+        self,
+        image_base64: str,
+        prompt: str,
+    ) -> Dict[str, Any]:
+        """
+        使用 VLM 分析图片生成批注坐标
+        
+        Args:
+            image_base64: 图片的 Base64 编码
+            prompt: 批注生成提示词
+        
+        Returns:
+            包含 annotations 列表的字典
+        """
+        try:
+            content = [
+                {"type": "text", "text": prompt},
+                {"type": "image_url", "image_url": f"data:image/jpeg;base64,{image_base64}"},
+            ]
+            
+            message = HumanMessage(content=content)
+            
+            # 调用 LLM
+            response = await self.llm.ainvoke([message])
+            response_text = response.content if hasattr(response, "content") else str(response)
+            
+            # 提取 JSON
+            if isinstance(response_text, str):
+                # 清理响应
+                clean_text = response_text.strip()
+                if "```json" in clean_text:
+                    start = clean_text.find("```json") + 7
+                    end = clean_text.find("```", start)
+                    clean_text = clean_text[start:end].strip()
+                elif "```" in clean_text:
+                    start = clean_text.find("```") + 3
+                    end = clean_text.find("```", start)
+                    clean_text = clean_text[start:end].strip()
+                
+                result = json.loads(clean_text)
+            else:
+                result = response_text
+            
+            # 验证结果格式
+            if not isinstance(result, dict):
+                result = {"annotations": []}
+            if "annotations" not in result:
+                result["annotations"] = []
+            
+            return result
+            
+        except json.JSONDecodeError as e:
+            logger.error(f"[generate_annotations] JSON 解析失败: {e}")
+            return {"annotations": [], "error": f"JSON 解析失败: {e}"}
+        except Exception as e:
+            logger.error(f"[generate_annotations] 生成批注失败: {e}", exc_info=True)
+            return {"annotations": [], "error": str(e)}

@@ -1,209 +1,446 @@
-"""批注批改 API 路由
+"""批注管理 API 路由
 
-提供带坐标批注的批改接口：
-- POST /api/grading/annotate - 批改并返回批注坐标
+独立的批注功能：
+- POST /api/annotations/generate - AI 生成批注坐标
+- GET /api/annotations/{history_id}/{student_key} - 获取批注列表
+- POST /api/annotations - 添加批注
+- PUT /api/annotations/{annotation_id} - 更新批注
+- DELETE /api/annotations/{annotation_id} - 删除批注
+- POST /api/annotations/export/pdf - 导出带批注的 PDF
 """
 
 import base64
+import io
+import json
 import logging
-from typing import List, Optional
-from fastapi import APIRouter, HTTPException
+import uuid
+from typing import List, Optional, Dict, Any
+from datetime import datetime
+
+from fastapi import APIRouter, HTTPException, Response
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from src.models.grading_models import QuestionRubric, ScoringPoint
-from src.services.annotation_grading import AnnotationGradingService
+from src.db.postgres_grading import (
+    GradingAnnotation,
+    save_annotation,
+    save_annotations_batch,
+    get_annotations,
+    delete_annotation,
+    delete_annotations_for_student,
+    update_annotation,
+    get_grading_history,
+    get_student_result,
+    get_page_images_for_student,
+)
 
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/grading", tags=["批注批改"])
+router = APIRouter(prefix="/annotations", tags=["批注管理"])
 
 
 # ==================== 请求/响应模型 ====================
 
 
-class ScoringPointInput(BaseModel):
-    """得分点输入"""
-
-    description: str = Field(..., description="得分点描述")
-    score: float = Field(..., description="分值")
-    point_id: str = Field(default="", description="得分点编号")
-    is_required: bool = Field(default=True, description="是否必须")
-
-
-class QuestionRubricInput(BaseModel):
-    """题目评分标准输入"""
-
-    question_id: str = Field(..., description="题号")
-    max_score: float = Field(..., description="满分")
-    question_text: str = Field(default="", description="题目内容")
-    standard_answer: str = Field(default="", description="标准答案")
-    scoring_points: List[ScoringPointInput] = Field(default_factory=list, description="得分点列表")
-    grading_notes: str = Field(default="", description="批改注意事项")
+class BoundingBoxInput(BaseModel):
+    """边界框坐标"""
+    x_min: float = Field(..., ge=0, le=1, description="左边界 (0.0-1.0)")
+    y_min: float = Field(..., ge=0, le=1, description="上边界 (0.0-1.0)")
+    x_max: float = Field(..., ge=0, le=1, description="右边界 (0.0-1.0)")
+    y_max: float = Field(..., ge=0, le=1, description="下边界 (0.0-1.0)")
 
 
-class AnnotateRequest(BaseModel):
-    """批注批改请求"""
-
-    image_base64: str = Field(..., description="图片 Base64 编码")
-    rubrics: List[QuestionRubricInput] = Field(..., description="评分标准列表")
-    page_index: int = Field(default=0, description="页码")
-
-
-class AnnotateResponse(BaseModel):
-    """批注批改响应"""
-
-    success: bool = Field(..., description="是否成功")
-    page_annotations: Optional[dict] = Field(None, description="页面批注信息")
-    error: Optional[str] = Field(None, description="错误信息")
+class AnnotationInput(BaseModel):
+    """批注输入"""
+    annotation_type: str = Field(..., description="批注类型: score, error_circle, comment, m_mark, a_mark, etc.")
+    bounding_box: BoundingBoxInput = Field(..., description="位置坐标")
+    text: str = Field(default="", description="批注文字")
+    color: str = Field(default="#FF0000", description="颜色")
+    question_id: str = Field(default="", description="关联题目 ID")
+    scoring_point_id: str = Field(default="", description="关联得分点 ID")
 
 
-class BatchAnnotateRequest(BaseModel):
-    """批量批注批改请求"""
+class CreateAnnotationRequest(BaseModel):
+    """创建批注请求"""
+    grading_history_id: str = Field(..., description="批改历史 ID")
+    student_key: str = Field(..., description="学生标识")
+    page_index: int = Field(..., ge=0, description="页码")
+    annotation: AnnotationInput = Field(..., description="批注数据")
 
-    images_base64: List[str] = Field(..., description="图片 Base64 列表")
-    rubrics: List[QuestionRubricInput] = Field(..., description="评分标准列表")
-    submission_id: str = Field(default="", description="提交 ID")
+
+class UpdateAnnotationRequest(BaseModel):
+    """更新批注请求"""
+    bounding_box: Optional[BoundingBoxInput] = None
+    text: Optional[str] = None
+    color: Optional[str] = None
+    annotation_type: Optional[str] = None
 
 
-class BatchAnnotateResponse(BaseModel):
-    """批量批注批改响应"""
+class GenerateAnnotationsRequest(BaseModel):
+    """生成批注请求"""
+    grading_history_id: str = Field(..., description="批改历史 ID")
+    student_key: str = Field(..., description="学生标识")
+    page_indices: Optional[List[int]] = Field(None, description="指定页码列表，None 表示所有页")
+    overwrite: bool = Field(default=False, description="是否覆盖已有批注")
 
+
+class ExportPdfRequest(BaseModel):
+    """导出 PDF 请求"""
+    grading_history_id: str = Field(..., description="批改历史 ID")
+    student_key: str = Field(..., description="学生标识")
+    include_summary: bool = Field(default=True, description="是否包含评分摘要页")
+
+
+class AnnotationResponse(BaseModel):
+    """批注响应"""
+    id: str
+    grading_history_id: str
+    student_key: str
+    page_index: int
+    annotation_type: str
+    bounding_box: Dict[str, float]
+    text: str
+    color: str
+    question_id: str
+    scoring_point_id: str
+    created_by: str
+    created_at: str
+    updated_at: str
+
+
+class AnnotationsListResponse(BaseModel):
+    """批注列表响应"""
     success: bool
-    result: Optional[dict] = None
-    error: Optional[str] = None
+    annotations: List[AnnotationResponse]
+    total: int
+
+
+class GenerateAnnotationsResponse(BaseModel):
+    """生成批注响应"""
+    success: bool
+    message: str
+    generated_count: int
+    annotations: List[AnnotationResponse]
 
 
 # ==================== API 路由 ====================
 
 
-@router.post("/annotate", response_model=AnnotateResponse, summary="批改单页并返回批注坐标")
-async def annotate_page(request: AnnotateRequest):
-    """
-    批改单页图片并返回带坐标的批注信息
-
-    - 输入：图片 Base64 + 评分标准
-    - 输出：批注坐标列表（分数位置、错误圈选、讲解位置等）
-    """
-    raise HTTPException(
-        status_code=410,
-        detail="后端批注渲染已禁用，请改为前端 Canvas 渲染。",
-    )
+@router.get(
+    "/{grading_history_id}/{student_key}",
+    response_model=AnnotationsListResponse,
+    summary="获取学生的批注列表"
+)
+async def list_annotations(
+    grading_history_id: str,
+    student_key: str,
+    page_index: Optional[int] = None,
+):
+    """获取指定学生的批注列表"""
     try:
-        # 解码图片
-        try:
-            image_data = base64.b64decode(request.image_base64)
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=f"图片 Base64 解码失败: {e}")
-
-        # 转换评分标准
-        rubrics = []
-        for r in request.rubrics:
-            scoring_points = [
-                ScoringPoint(
-                    description=sp.description,
-                    score=sp.score,
-                    point_id=sp.point_id,
-                    is_required=sp.is_required,
-                )
-                for sp in r.scoring_points
-            ]
-            rubrics.append(
-                QuestionRubric(
-                    question_id=r.question_id,
-                    max_score=r.max_score,
-                    question_text=r.question_text,
-                    standard_answer=r.standard_answer,
-                    scoring_points=scoring_points,
-                    grading_notes=r.grading_notes,
-                )
-            )
-
-        # 调用批注批改服务
-        service = AnnotationGradingService()
-        page_annotations = await service.grade_page_with_annotations(
-            image_data=image_data,
-            rubrics=rubrics,
-            page_index=request.page_index,
-        )
-
-        return AnnotateResponse(
+        annotations = await get_annotations(grading_history_id, student_key, page_index)
+        return AnnotationsListResponse(
             success=True,
-            page_annotations=page_annotations.to_dict(),
+            annotations=[
+                AnnotationResponse(
+                    id=ann.id,
+                    grading_history_id=ann.grading_history_id,
+                    student_key=ann.student_key,
+                    page_index=ann.page_index,
+                    annotation_type=ann.annotation_type,
+                    bounding_box=ann.bounding_box,
+                    text=ann.text,
+                    color=ann.color,
+                    question_id=ann.question_id,
+                    scoring_point_id=ann.scoring_point_id,
+                    created_by=ann.created_by,
+                    created_at=ann.created_at,
+                    updated_at=ann.updated_at,
+                )
+                for ann in annotations
+            ],
+            total=len(annotations),
         )
-
-    except HTTPException:
-        raise
     except Exception as e:
-        logger.error(f"批注批改失败: {e}", exc_info=True)
-        return AnnotateResponse(
-            success=False,
-            error=str(e),
-        )
+        logger.error(f"获取批注失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post(
-    "/annotate/batch", response_model=BatchAnnotateResponse, summary="批量批改并返回批注坐标"
+    "",
+    response_model=AnnotationResponse,
+    summary="添加批注"
 )
-async def annotate_batch(request: BatchAnnotateRequest):
-    """
-    批量批改多页图片并返回带坐标的批注信息
-    """
-    raise HTTPException(
-        status_code=410,
-        detail="后端批注渲染已禁用，请改为前端 Canvas 渲染。",
-    )
+async def create_annotation(request: CreateAnnotationRequest):
+    """教师手动添加批注"""
     try:
-        # 解码所有图片
-        pages = []
-        for i, img_b64 in enumerate(request.images_base64):
-            try:
-                pages.append(base64.b64decode(img_b64))
-            except Exception as e:
-                raise HTTPException(status_code=400, detail=f"第 {i+1} 张图片解码失败: {e}")
-
-        # 转换评分标准
-        rubrics = []
-        for r in request.rubrics:
-            scoring_points = [
-                ScoringPoint(
-                    description=sp.description,
-                    score=sp.score,
-                    point_id=sp.point_id,
-                    is_required=sp.is_required,
-                )
-                for sp in r.scoring_points
-            ]
-            rubrics.append(
-                QuestionRubric(
-                    question_id=r.question_id,
-                    max_score=r.max_score,
-                    question_text=r.question_text,
-                    standard_answer=r.standard_answer,
-                    scoring_points=scoring_points,
-                    grading_notes=r.grading_notes,
-                )
-            )
-
-        # 调用批注批改服务
-        service = AnnotationGradingService()
-        result = await service.grade_submission_with_annotations(
-            pages=pages,
-            rubrics=rubrics,
-            submission_id=request.submission_id,
+        annotation_id = str(uuid.uuid4())
+        now = datetime.now().isoformat()
+        
+        annotation = GradingAnnotation(
+            id=annotation_id,
+            grading_history_id=request.grading_history_id,
+            student_key=request.student_key,
+            page_index=request.page_index,
+            annotation_type=request.annotation.annotation_type,
+            bounding_box=request.annotation.bounding_box.model_dump(),
+            text=request.annotation.text,
+            color=request.annotation.color,
+            question_id=request.annotation.question_id,
+            scoring_point_id=request.annotation.scoring_point_id,
+            created_by="teacher",
+            created_at=now,
+            updated_at=now,
         )
-
-        return BatchAnnotateResponse(
-            success=True,
-            result=result.to_dict(),
+        
+        success = await save_annotation(annotation)
+        if not success:
+            raise HTTPException(status_code=500, detail="保存批注失败")
+        
+        return AnnotationResponse(
+            id=annotation.id,
+            grading_history_id=annotation.grading_history_id,
+            student_key=annotation.student_key,
+            page_index=annotation.page_index,
+            annotation_type=annotation.annotation_type,
+            bounding_box=annotation.bounding_box,
+            text=annotation.text,
+            color=annotation.color,
+            question_id=annotation.question_id,
+            scoring_point_id=annotation.scoring_point_id,
+            created_by=annotation.created_by,
+            created_at=annotation.created_at,
+            updated_at=annotation.updated_at,
         )
-
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"批量批注批改失败: {e}", exc_info=True)
-        return BatchAnnotateResponse(
-            success=False,
-            error=str(e),
+        logger.error(f"添加批注失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put(
+    "/{annotation_id}",
+    response_model=dict,
+    summary="更新批注"
+)
+async def update_annotation_endpoint(
+    annotation_id: str,
+    request: UpdateAnnotationRequest,
+):
+    """更新批注（位置、文字、颜色等）"""
+    try:
+        updates = {}
+        if request.bounding_box:
+            updates["bounding_box"] = request.bounding_box.model_dump()
+        if request.text is not None:
+            updates["text"] = request.text
+        if request.color is not None:
+            updates["color"] = request.color
+        if request.annotation_type is not None:
+            updates["annotation_type"] = request.annotation_type
+        
+        if not updates:
+            raise HTTPException(status_code=400, detail="没有提供更新字段")
+        
+        success = await update_annotation(annotation_id, updates)
+        if not success:
+            raise HTTPException(status_code=500, detail="更新批注失败")
+        
+        return {"success": True, "message": "批注已更新"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"更新批注失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete(
+    "/{annotation_id}",
+    response_model=dict,
+    summary="删除批注"
+)
+async def delete_annotation_endpoint(annotation_id: str):
+    """删除单个批注"""
+    try:
+        success = await delete_annotation(annotation_id)
+        if not success:
+            raise HTTPException(status_code=500, detail="删除批注失败")
+        return {"success": True, "message": "批注已删除"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"删除批注失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete(
+    "/{grading_history_id}/{student_key}/all",
+    response_model=dict,
+    summary="删除学生的所有批注"
+)
+async def delete_student_annotations(
+    grading_history_id: str,
+    student_key: str,
+    page_index: Optional[int] = None,
+):
+    """删除学生的所有批注（可指定页码）"""
+    try:
+        count = await delete_annotations_for_student(grading_history_id, student_key, page_index)
+        return {"success": True, "deleted_count": count}
+    except Exception as e:
+        logger.error(f"删除批注失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post(
+    "/generate",
+    response_model=GenerateAnnotationsResponse,
+    summary="AI 生成批注坐标"
+)
+async def generate_annotations(request: GenerateAnnotationsRequest):
+    """
+    使用 AI（VLM）分析图片，生成批注坐标
+    
+    基于已有的批改结果，为每个得分点定位坐标位置
+    """
+    try:
+        # 1. 获取批改历史和学生结果
+        history = await get_grading_history(request.grading_history_id)
+        if not history:
+            raise HTTPException(status_code=404, detail="批改历史不存在")
+        
+        student_result = await get_student_result(request.grading_history_id, request.student_key)
+        if not student_result:
+            raise HTTPException(status_code=404, detail="学生批改结果不存在")
+        
+        # 2. 获取页面图片
+        page_images = await get_page_images_for_student(request.grading_history_id, request.student_key)
+        if not page_images:
+            raise HTTPException(status_code=404, detail="未找到学生答题图片")
+        
+        # 3. 如果不覆盖，先检查是否已有批注
+        if not request.overwrite:
+            existing = await get_annotations(request.grading_history_id, request.student_key)
+            if existing:
+                return GenerateAnnotationsResponse(
+                    success=True,
+                    message=f"已存在 {len(existing)} 个批注，跳过生成。设置 overwrite=true 可覆盖。",
+                    generated_count=0,
+                    annotations=[
+                        AnnotationResponse(
+                            id=ann.id,
+                            grading_history_id=ann.grading_history_id,
+                            student_key=ann.student_key,
+                            page_index=ann.page_index,
+                            annotation_type=ann.annotation_type,
+                            bounding_box=ann.bounding_box,
+                            text=ann.text,
+                            color=ann.color,
+                            question_id=ann.question_id,
+                            scoring_point_id=ann.scoring_point_id,
+                            created_by=ann.created_by,
+                            created_at=ann.created_at,
+                            updated_at=ann.updated_at,
+                        )
+                        for ann in existing
+                    ],
+                )
+        else:
+            # 覆盖模式：先删除已有批注
+            await delete_annotations_for_student(request.grading_history_id, request.student_key)
+        
+        # 4. 调用 VLM 生成批注坐标
+        from src.services.annotation_generator import generate_annotations_for_student
+        
+        generated = await generate_annotations_for_student(
+            grading_history_id=request.grading_history_id,
+            student_key=request.student_key,
+            student_result=student_result,
+            page_images=page_images,
+            page_indices=request.page_indices,
         )
+        
+        # 5. 保存生成的批注
+        saved_count = await save_annotations_batch(generated)
+        
+        return GenerateAnnotationsResponse(
+            success=True,
+            message=f"成功生成 {saved_count} 个批注",
+            generated_count=saved_count,
+            annotations=[
+                AnnotationResponse(
+                    id=ann.id,
+                    grading_history_id=ann.grading_history_id,
+                    student_key=ann.student_key,
+                    page_index=ann.page_index,
+                    annotation_type=ann.annotation_type,
+                    bounding_box=ann.bounding_box,
+                    text=ann.text,
+                    color=ann.color,
+                    question_id=ann.question_id,
+                    scoring_point_id=ann.scoring_point_id,
+                    created_by=ann.created_by,
+                    created_at=ann.created_at,
+                    updated_at=ann.updated_at,
+                )
+                for ann in generated
+            ],
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"生成批注失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post(
+    "/export/pdf",
+    summary="导出带批注的 PDF"
+)
+async def export_annotated_pdf(request: ExportPdfRequest):
+    """
+    导出带批注的 PDF 文件
+    
+    将批注渲染到答题图片上，生成 PDF 文件
+    """
+    try:
+        # 1. 获取批改结果
+        student_result = await get_student_result(request.grading_history_id, request.student_key)
+        if not student_result:
+            raise HTTPException(status_code=404, detail="学生批改结果不存在")
+        
+        # 2. 获取页面图片
+        page_images = await get_page_images_for_student(request.grading_history_id, request.student_key)
+        if not page_images:
+            raise HTTPException(status_code=404, detail="未找到学生答题图片")
+        
+        # 3. 获取批注
+        annotations = await get_annotations(request.grading_history_id, request.student_key)
+        
+        # 4. 生成带批注的 PDF
+        from src.services.pdf_exporter import export_annotated_pdf as generate_pdf
+        
+        pdf_bytes = await generate_pdf(
+            student_result=student_result,
+            page_images=page_images,
+            annotations=annotations,
+            include_summary=request.include_summary,
+        )
+        
+        # 5. 返回 PDF 文件
+        filename = f"grading_{request.student_key}_{request.grading_history_id[:8]}.pdf"
+        
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "Content-Length": str(len(pdf_bytes)),
+            },
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"导出 PDF 失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))

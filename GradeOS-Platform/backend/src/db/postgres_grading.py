@@ -694,3 +694,275 @@ async def get_page_images(
     except Exception as e:
         logger.error(f"获取页面图像失败: {e}")
         return []
+
+
+# ==================== 批注数据持久化 ====================
+
+@dataclass
+class GradingAnnotation:
+    """批改批注记录"""
+    
+    id: str
+    grading_history_id: str
+    student_key: str
+    page_index: int
+    annotation_type: str  # score, error_circle, comment, m_mark, a_mark, etc.
+    bounding_box: Dict[str, float]  # {x_min, y_min, x_max, y_max}
+    text: str = ""
+    color: str = "#FF0000"
+    question_id: str = ""
+    scoring_point_id: str = ""
+    created_by: str = "ai"  # ai 或 teacher
+    created_at: str = ""
+    updated_at: str = ""
+
+
+_ANNOTATIONS_TABLE_READY = False
+
+
+async def ensure_annotations_table() -> None:
+    """确保批注表存在"""
+    global _ANNOTATIONS_TABLE_READY
+    if _ANNOTATIONS_TABLE_READY:
+        return
+
+    create_query = """
+        CREATE TABLE IF NOT EXISTS grading_annotations (
+            id VARCHAR(64) PRIMARY KEY,
+            grading_history_id VARCHAR(64) NOT NULL,
+            student_key VARCHAR(128) NOT NULL,
+            page_index INTEGER NOT NULL,
+            annotation_type VARCHAR(32) NOT NULL,
+            bounding_box JSONB NOT NULL,
+            text TEXT DEFAULT '',
+            color VARCHAR(16) DEFAULT '#FF0000',
+            question_id VARCHAR(32) DEFAULT '',
+            scoring_point_id VARCHAR(32) DEFAULT '',
+            created_by VARCHAR(16) DEFAULT 'ai',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        
+        CREATE INDEX IF NOT EXISTS idx_annotations_history ON grading_annotations(grading_history_id);
+        CREATE INDEX IF NOT EXISTS idx_annotations_student ON grading_annotations(grading_history_id, student_key);
+        CREATE INDEX IF NOT EXISTS idx_annotations_page ON grading_annotations(grading_history_id, student_key, page_index);
+    """
+    try:
+        await db.execute(create_query)
+        _ANNOTATIONS_TABLE_READY = True
+        logger.info("批注表已创建/确认")
+    except Exception as e:
+        logger.error(f"创建批注表失败: {e}")
+
+
+async def save_annotation(annotation: GradingAnnotation) -> bool:
+    """保存单个批注"""
+    await ensure_annotations_table()
+    
+    query = """
+        INSERT INTO grading_annotations (
+            id, grading_history_id, student_key, page_index,
+            annotation_type, bounding_box, text, color,
+            question_id, scoring_point_id, created_by, created_at, updated_at
+        ) VALUES (
+            :id, :grading_history_id, :student_key, :page_index,
+            :annotation_type, :bounding_box, :text, :color,
+            :question_id, :scoring_point_id, :created_by, :created_at, :updated_at
+        )
+        ON CONFLICT (id) DO UPDATE SET
+            bounding_box = EXCLUDED.bounding_box,
+            text = EXCLUDED.text,
+            color = EXCLUDED.color,
+            updated_at = CURRENT_TIMESTAMP
+    """
+    
+    try:
+        now = datetime.now().isoformat()
+        await db.execute(
+            query,
+            {
+                "id": annotation.id,
+                "grading_history_id": annotation.grading_history_id,
+                "student_key": annotation.student_key,
+                "page_index": annotation.page_index,
+                "annotation_type": annotation.annotation_type,
+                "bounding_box": json.dumps(annotation.bounding_box),
+                "text": annotation.text,
+                "color": annotation.color,
+                "question_id": annotation.question_id,
+                "scoring_point_id": annotation.scoring_point_id,
+                "created_by": annotation.created_by,
+                "created_at": annotation.created_at or now,
+                "updated_at": now,
+            },
+        )
+        return True
+    except Exception as e:
+        logger.error(f"保存批注失败: {e}")
+        return False
+
+
+async def save_annotations_batch(annotations: List[GradingAnnotation]) -> int:
+    """批量保存批注"""
+    await ensure_annotations_table()
+    
+    if not annotations:
+        return 0
+    
+    saved = 0
+    for ann in annotations:
+        if await save_annotation(ann):
+            saved += 1
+    
+    return saved
+
+
+async def get_annotations(
+    grading_history_id: str,
+    student_key: str,
+    page_index: Optional[int] = None,
+) -> List[GradingAnnotation]:
+    """获取批注列表"""
+    await ensure_annotations_table()
+    
+    if page_index is not None:
+        query = """
+            SELECT * FROM grading_annotations 
+            WHERE grading_history_id = :history_id 
+              AND student_key = :student_key 
+              AND page_index = :page_index
+            ORDER BY created_at
+        """
+        params = {
+            "history_id": grading_history_id,
+            "student_key": student_key,
+            "page_index": page_index,
+        }
+    else:
+        query = """
+            SELECT * FROM grading_annotations 
+            WHERE grading_history_id = :history_id 
+              AND student_key = :student_key
+            ORDER BY page_index, created_at
+        """
+        params = {
+            "history_id": grading_history_id,
+            "student_key": student_key,
+        }
+    
+    try:
+        rows = await db.fetch_all(query, params)
+        annotations = []
+        for row in rows:
+            bbox = row["bounding_box"]
+            if isinstance(bbox, str):
+                bbox = json.loads(bbox)
+            annotations.append(
+                GradingAnnotation(
+                    id=str(row["id"]),
+                    grading_history_id=str(row["grading_history_id"]),
+                    student_key=row["student_key"],
+                    page_index=row["page_index"],
+                    annotation_type=row["annotation_type"],
+                    bounding_box=bbox,
+                    text=row["text"] or "",
+                    color=row["color"] or "#FF0000",
+                    question_id=row["question_id"] or "",
+                    scoring_point_id=row["scoring_point_id"] or "",
+                    created_by=row["created_by"] or "ai",
+                    created_at=str(row["created_at"]) if row["created_at"] else "",
+                    updated_at=str(row["updated_at"]) if row["updated_at"] else "",
+                )
+            )
+        return annotations
+    except Exception as e:
+        logger.error(f"获取批注失败: {e}")
+        return []
+
+
+async def delete_annotation(annotation_id: str) -> bool:
+    """删除单个批注"""
+    await ensure_annotations_table()
+    
+    query = "DELETE FROM grading_annotations WHERE id = :id"
+    try:
+        await db.execute(query, {"id": annotation_id})
+        return True
+    except Exception as e:
+        logger.error(f"删除批注失败: {e}")
+        return False
+
+
+async def delete_annotations_for_student(
+    grading_history_id: str,
+    student_key: str,
+    page_index: Optional[int] = None,
+) -> int:
+    """删除学生的批注"""
+    await ensure_annotations_table()
+    
+    if page_index is not None:
+        query = """
+            DELETE FROM grading_annotations 
+            WHERE grading_history_id = :history_id 
+              AND student_key = :student_key 
+              AND page_index = :page_index
+        """
+        params = {
+            "history_id": grading_history_id,
+            "student_key": student_key,
+            "page_index": page_index,
+        }
+    else:
+        query = """
+            DELETE FROM grading_annotations 
+            WHERE grading_history_id = :history_id 
+              AND student_key = :student_key
+        """
+        params = {
+            "history_id": grading_history_id,
+            "student_key": student_key,
+        }
+    
+    try:
+        result = await db.execute(query, params)
+        return result if isinstance(result, int) else 0
+    except Exception as e:
+        logger.error(f"删除批注失败: {e}")
+        return 0
+
+
+async def update_annotation(
+    annotation_id: str,
+    updates: Dict[str, Any],
+) -> bool:
+    """更新批注"""
+    await ensure_annotations_table()
+    
+    allowed_fields = {"bounding_box", "text", "color", "annotation_type"}
+    filtered_updates = {k: v for k, v in updates.items() if k in allowed_fields}
+    
+    if not filtered_updates:
+        return False
+    
+    set_clauses = []
+    params = {"id": annotation_id}
+    
+    for field, value in filtered_updates.items():
+        if field == "bounding_box":
+            set_clauses.append(f"{field} = :{field}")
+            params[field] = json.dumps(value) if isinstance(value, dict) else value
+        else:
+            set_clauses.append(f"{field} = :{field}")
+            params[field] = value
+    
+    set_clauses.append("updated_at = CURRENT_TIMESTAMP")
+    
+    query = f"UPDATE grading_annotations SET {', '.join(set_clauses)} WHERE id = :id"
+    
+    try:
+        await db.execute(query, params)
+        return True
+    except Exception as e:
+        logger.error(f"更新批注失败: {e}")
+        return False
