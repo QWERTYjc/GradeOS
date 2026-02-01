@@ -5793,6 +5793,7 @@ async def export_node(state: BatchGradingGraphState) -> Dict[str, Any]:
 
                 # 从 state 中获取 parsed_rubric
                 parsed_rubric = state.get("parsed_rubric")
+                current_stage = state.get("current_stage")
                 
                 grading_history = GradingHistory(
                     id=history_id,
@@ -5803,12 +5804,13 @@ async def export_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                     completed_at=datetime.now().isoformat(),
                     total_students=total_students,
                     average_score=average_score,
+                    rubric_data=parsed_rubric,  # 保存到 rubric_data 字段
+                    current_stage=current_stage,  # 保存当前阶段
                     result_data={
                         "has_failures": has_failures,
                         "failed_pages_count": len(failed_pages),
                         "cross_page_questions": cross_page_questions,
                         "merged_questions": merged_questions,
-                        "parsed_rubric": parsed_rubric,  # 添加 parsed_rubric
                     },
                 )
 

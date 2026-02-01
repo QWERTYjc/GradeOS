@@ -2650,40 +2650,107 @@ async def get_batch_status(batch_id: str, orchestrator: Orchestrator = Depends(g
 async def get_rubric_review_context(
     batch_id: str, orchestrator: Orchestrator = Depends(get_orchestrator)
 ):
-    """获取 rubric review 页面上下文"""
-    try:
-        if not orchestrator:
-            raise HTTPException(status_code=503, detail="编排器未初始化")
-
-        run_id = f"batch_grading_{batch_id}"
-        run_info = await orchestrator.get_run_info(run_id)
-        if not run_info:
+    """获取 rubric review 页面上下文（支持从文件存储和数据库读取）"""
+    
+    async def _load_rubric_images_from_storage() -> List[str]:
+        """从文件存储加载 rubric 图片"""
+        try:
+            file_storage = get_file_storage_service()
+            stored_files = await file_storage.list_batch_files(batch_id)
+            if not stored_files:
+                return []
+            
+            rubric_files = [
+                item for item in stored_files
+                if item.metadata.get("type") == "rubric" or item.filename.startswith("rubric_page")
+            ]
+            if not rubric_files:
+                return []
+            
+            rubric_files.sort(key=lambda f: f.filename)
+            images: List[str] = []
+            for item in rubric_files:
+                data = await file_storage.get_file(item.file_id)
+                if not data:
+                    continue
+                images.append(base64.b64encode(data).decode("utf-8"))
+            
+            logger.info(f"从文件存储加载了 {len(images)} 张 rubric 图片")
+            return images
+        except Exception as exc:
+            logger.debug(f"从文件存储加载 rubric 图片失败: {exc}")
+            return []
+    
+    async def _load_from_db() -> RubricReviewContextResponse:
+        """从数据库加载 rubric 数据"""
+        history = await _maybe_await(get_grading_history(batch_id))
+        if not history:
             raise HTTPException(status_code=404, detail="批次不存在")
-
-        state = run_info.state or {}
-        parsed_rubric = state.get("parsed_rubric")
-
-        cached = batch_image_cache.get(batch_id, {})
-        cached_images = cached.get("rubric_images_ready", {}).get("images") if cached else None
-        rubric_images: List[str] = cached_images or []
-
-        if not rubric_images and state.get("rubric_images"):
+        
+        parsed_rubric = None
+        if history.rubric_data:
             try:
-                rubric_images = []
-                for img in state.get("rubric_images", []):
-                    if isinstance(img, (bytes, bytearray)):
-                        rubric_images.append(base64.b64encode(img).decode("utf-8"))
-                    elif isinstance(img, str) and img:
-                        rubric_images.append(img)
+                if isinstance(history.rubric_data, str):
+                    parsed_rubric = json.loads(history.rubric_data)
+                elif isinstance(history.rubric_data, dict):
+                    parsed_rubric = history.rubric_data
             except Exception as exc:
-                logger.debug(f"Failed to convert rubric images: {exc}")
+                logger.debug(f"解析数据库中的 rubric_data 失败: {exc}")
+        
+        rubric_images = await _load_rubric_images_from_storage()
+        
+        logger.info(f"从数据库加载 rubric 上下文: parsed_rubric={'有' if parsed_rubric else '无'}, images={len(rubric_images)}")
+        
         return RubricReviewContextResponse(
             batch_id=batch_id,
-            status=run_info.status.value if run_info.status else None,
-            current_stage=state.get("current_stage"),
+            status=history.status,
+            current_stage=history.current_stage,
             parsed_rubric=parsed_rubric,
             rubric_images=rubric_images,
         )
+    
+    try:
+        # 1. 优先从 LangGraph state 读取（实时数据）
+        if orchestrator:
+            run_id = f"batch_grading_{batch_id}"
+            run_info = await orchestrator.get_run_info(run_id)
+            
+            if run_info:
+                state = run_info.state or {}
+                parsed_rubric = state.get("parsed_rubric")
+                
+                # 尝试从缓存读取图片
+                cached = batch_image_cache.get(batch_id, {})
+                cached_images = cached.get("rubric_images_ready", {}).get("images") if cached else None
+                rubric_images: List[str] = cached_images or []
+                
+                # 从 state 读取图片
+                if not rubric_images and state.get("rubric_images"):
+                    try:
+                        rubric_images = []
+                        for img in state.get("rubric_images", []):
+                            if isinstance(img, (bytes, bytearray)):
+                                rubric_images.append(base64.b64encode(img).decode("utf-8"))
+                            elif isinstance(img, str) and img:
+                                rubric_images.append(img)
+                    except Exception as exc:
+                        logger.debug(f"从 state 转换 rubric 图片失败: {exc}")
+                
+                # 如果从 state 获取到了数据，直接返回
+                if parsed_rubric or rubric_images:
+                    logger.info(f"从 LangGraph state 加载 rubric: parsed_rubric={'有' if parsed_rubric else '无'}, images={len(rubric_images)}")
+                    return RubricReviewContextResponse(
+                        batch_id=batch_id,
+                        status=run_info.status.value if run_info.status else None,
+                        current_stage=state.get("current_stage"),
+                        parsed_rubric=parsed_rubric,
+                        rubric_images=rubric_images,
+                    )
+        
+        # 2. Fallback: 从数据库和文件存储读取
+        logger.info(f"LangGraph state 无数据，尝试从数据库加载 rubric: batch_id={batch_id}")
+        return await _load_from_db()
+        
     except HTTPException:
         raise
     except Exception as exc:

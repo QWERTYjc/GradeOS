@@ -28,6 +28,8 @@ class GradingHistory:
     total_students: int = 0
     average_score: Optional[float] = None
     result_data: Optional[Dict[str, Any]] = None
+    rubric_data: Optional[Dict[str, Any]] = None  # 存储 parsed_rubric
+    current_stage: Optional[str] = None  # 当前阶段
 
 
 @dataclass
@@ -176,6 +178,8 @@ async def ensure_grading_history_schema() -> None:
             await conn.execute("ALTER TABLE grading_history ADD COLUMN IF NOT EXISTS total_students INTEGER")
             await conn.execute("ALTER TABLE grading_history ADD COLUMN IF NOT EXISTS average_score DOUBLE PRECISION")
             await conn.execute("ALTER TABLE grading_history ADD COLUMN IF NOT EXISTS result_data JSONB")
+            await conn.execute("ALTER TABLE grading_history ADD COLUMN IF NOT EXISTS rubric_data JSONB")
+            await conn.execute("ALTER TABLE grading_history ADD COLUMN IF NOT EXISTS current_stage VARCHAR(100)")
             await conn.commit()
         _GRADING_HISTORY_SCHEMA_READY = True
     except Exception as exc:
@@ -202,7 +206,7 @@ async def ensure_student_results_schema() -> None:
 
 
 async def save_grading_history(history: GradingHistory) -> None:
-    """???????????PostgreSQL"""
+    """保存批改历史到 PostgreSQL"""
     if not history.created_at:
         history.created_at = datetime.now().isoformat()
 
@@ -211,15 +215,17 @@ async def save_grading_history(history: GradingHistory) -> None:
     query = """
         INSERT INTO grading_history 
         (id, batch_id, class_ids, created_at, completed_at, status, 
-         total_students, average_score, result_data)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+         total_students, average_score, result_data, rubric_data, current_stage)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (batch_id) DO UPDATE SET
             class_ids = EXCLUDED.class_ids,
             completed_at = EXCLUDED.completed_at,
             status = EXCLUDED.status,
             total_students = EXCLUDED.total_students,
             average_score = EXCLUDED.average_score,
-            result_data = EXCLUDED.result_data
+            result_data = EXCLUDED.result_data,
+            rubric_data = EXCLUDED.rubric_data,
+            current_stage = EXCLUDED.current_stage
     """
     params = (
         history.id,
@@ -231,6 +237,8 @@ async def save_grading_history(history: GradingHistory) -> None:
         history.total_students,
         history.average_score,
         json.dumps(history.result_data) if history.result_data else None,
+        json.dumps(history.rubric_data) if history.rubric_data else None,
+        history.current_stage,
     )
 
     try:
@@ -284,6 +292,13 @@ async def get_grading_history(batch_id_or_id: str) -> Optional[GradingHistory]:
             else:
                 result_data = raw_result_data
 
+            # 处理 rubric_data 字段
+            raw_rubric_data = row.get("rubric_data")
+            if isinstance(raw_rubric_data, str):
+                rubric_data = json.loads(raw_rubric_data) if raw_rubric_data else None
+            else:
+                rubric_data = raw_rubric_data
+
             # 处理日期字段（可能是 datetime 对象或字符串）
             created_at_value = row["created_at"]
             if hasattr(created_at_value, 'isoformat'):
@@ -311,6 +326,8 @@ async def get_grading_history(batch_id_or_id: str) -> Optional[GradingHistory]:
                 total_students=row["total_students"] or 0,
                 average_score=float(row["average_score"]) if row["average_score"] else None,
                 result_data=result_data,
+                rubric_data=rubric_data,
+                current_stage=row.get("current_stage"),
             )
     except Exception as e:
         logger.error(f"从 PostgreSQL 获取批改历史失败: {e}")

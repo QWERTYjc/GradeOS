@@ -150,7 +150,7 @@ export function RubricOverview() {
                   <div className="space-y-1">
                     {confession.issues.map((issue, idx) => (
                       <div
-                        key={idx}
+                        key={`issue-${issue.questionId || 'general'}-${idx}`}
                         className={`text-xs p-2 rounded flex items-start gap-2 ${issue.severity === 'high'
                           ? 'bg-rose-50 text-rose-700 border border-rose-200'
                           : issue.severity === 'medium'
@@ -183,7 +183,7 @@ export function RubricOverview() {
                   </div>
                   <div className="space-y-1">
                     {confession.uncertainties.map((uncertainty, idx) => (
-                      <div key={idx} className="text-xs text-blue-600 bg-white/50 rounded p-2 pl-4 border-l-2 border-blue-300">
+                      <div key={`uncertainty-${idx}`} className="text-xs text-blue-600 bg-white/50 rounded p-2 pl-4 border-l-2 border-blue-300">
                         • {uncertainty}
                       </div>
                     ))}
@@ -198,7 +198,7 @@ export function RubricOverview() {
                   <div className="grid grid-cols-2 gap-2">
                     {confession.qualityChecks.map((check, idx) => (
                       <div
-                        key={idx}
+                        key={`check-${check.check}-${idx}`}
                         className={`text-xs p-2 rounded flex items-start gap-2 ${check.passed
                           ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                           : 'bg-amber-50 text-amber-700 border border-amber-200'
