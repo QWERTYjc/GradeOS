@@ -1220,32 +1220,48 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
     }, [apiBase]);
 
     const handleGenerateAnnotations = useCallback(async () => {
-        if (!submissionId || !detailViewStudent?.studentName) return;
+        if (!submissionId || !detailViewStudent?.studentName) {
+            console.error('[批注生成] 缺少必要参数:', { submissionId, studentName: detailViewStudent?.studentName });
+            setAnnotationStatus({ type: 'error', message: '缺少批改历史ID或学生姓名' });
+            return;
+        }
         const studentKey = detailViewStudent.studentName;
         setAnnotationGenerating(true);
         setAnnotationStatus({ type: 'loading', message: 'AI 批注生成中...' });
+        
+        const url = `${apiBase}/annotations/generate`;
+        const payload = {
+            grading_history_id: submissionId,
+            student_key: studentKey,
+            overwrite: false,
+        };
+        
+        console.log('[批注生成] 开始请求:', { url, payload });
+        
         try {
-            const res = await fetch(`${apiBase}/annotations/generate`, {
+            const res = await fetch(url, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    grading_history_id: submissionId,
-                    student_key: studentKey,
-                    overwrite: false,
-                }),
+                body: JSON.stringify(payload),
             });
-            const payload = await res.json().catch(() => null);
+            
+            console.log('[批注生成] 响应状态:', res.status, res.statusText);
+            
+            const resPayload = await res.json().catch(() => null);
+            console.log('[批注生成] 响应内容:', resPayload);
+            
             if (!res.ok) {
-                throw new Error(payload?.detail || payload?.message || '生成批注失败');
+                throw new Error(resPayload?.detail || resPayload?.message || `HTTP ${res.status}: ${res.statusText}`);
             }
             setShowAnnotations(true);
             apiAnnotationsLoadedRef.current.delete(`${submissionId}-${studentKey}`);
             const count = await fetchAnnotationsForStudent(submissionId, studentKey, { silent: true });
             setAnnotationStatus({
                 type: 'success',
-                message: payload?.message || (count > 0 ? `已加载 ${count} 个批注` : '批注生成完成'),
+                message: resPayload?.message || (count > 0 ? `已加载 ${count} 个批注` : '批注生成完成'),
             });
         } catch (error) {
+            console.error('[批注生成] 失败:', error);
             setAnnotationStatus({
                 type: 'error',
                 message: error instanceof Error ? error.message : '生成批注失败',
@@ -1256,32 +1272,49 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
     }, [submissionId, detailViewStudent, apiBase, fetchAnnotationsForStudent]);
 
     const handleExportAnnotatedPdf = useCallback(async () => {
-        if (!submissionId || !detailViewStudent?.studentName) return;
+        if (!submissionId || !detailViewStudent?.studentName) {
+            console.error('[PDF导出] 缺少必要参数:', { submissionId, studentName: detailViewStudent?.studentName });
+            setExportStatus({ type: 'error', message: '缺少批改历史ID或学生姓名' });
+            return;
+        }
         setExportPdfLoading(true);
         setExportStatus({ type: 'loading', message: '正在导出批注版 PDF...' });
+        
+        const url = `${apiBase}/annotations/export/pdf`;
+        const payload = {
+            grading_history_id: submissionId,
+            student_key: detailViewStudent.studentName,
+            include_summary: true,
+        };
+        
+        console.log('[PDF导出] 开始请求:', { url, payload });
+        
         try {
-            const res = await fetch(`${apiBase}/annotations/export/pdf`, {
+            const res = await fetch(url, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    grading_history_id: submissionId,
-                    student_key: detailViewStudent.studentName,
-                    include_summary: true,
-                }),
+                body: JSON.stringify(payload),
             });
+            
+            console.log('[PDF导出] 响应状态:', res.status, res.statusText);
+            
             if (!res.ok) {
-                const payload = await res.json().catch(() => null);
-                throw new Error(payload?.detail || payload?.message || '导出 PDF 失败');
+                const errPayload = await res.json().catch(() => null);
+                console.error('[PDF导出] 错误响应:', errPayload);
+                throw new Error(errPayload?.detail || errPayload?.message || `HTTP ${res.status}: ${res.statusText}`);
             }
             const blob = await res.blob();
-            const url = URL.createObjectURL(blob);
+            console.log('[PDF导出] 文件大小:', blob.size, 'bytes');
+            
+            const objUrl = URL.createObjectURL(blob);
             const a = document.createElement('a');
-            a.href = url;
+            a.href = objUrl;
             a.download = `批注版_${detailViewStudent.studentName}.pdf`;
             a.click();
-            URL.revokeObjectURL(url);
+            URL.revokeObjectURL(objUrl);
             setExportStatus({ type: 'success', message: '批注版 PDF 已导出' });
         } catch (error) {
+            console.error('[PDF导出] 失败:', error);
             setExportStatus({
                 type: 'error',
                 message: error instanceof Error ? error.message : '导出 PDF 失败',
