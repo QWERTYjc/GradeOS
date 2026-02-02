@@ -441,9 +441,11 @@ function getToolColor(colorName: string): string {
 }
 
 // 绘制函数（简化版）
+const ANNOTATION_BG_ALPHA = 0.7;
+
 function drawScore(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, text: string, color: string) {
   ctx.font = 'bold 18px sans-serif';
-  ctx.fillStyle = 'rgba(255,255,255,0.9)';
+  ctx.fillStyle = `rgba(255,255,255,${ANNOTATION_BG_ALPHA})`;
   ctx.fillRect(x, y, w, h);
   ctx.fillStyle = color;
   ctx.fillText(text, x + 4, y + h - 4);
@@ -460,7 +462,7 @@ function drawEllipse(ctx: CanvasRenderingContext2D, x: number, y: number, w: num
 function drawMark(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, text: string, color: string) {
   ctx.beginPath();
   ctx.arc(x + w/2, y + h/2, Math.min(w, h)/2, 0, Math.PI * 2);
-  ctx.fillStyle = 'rgba(255,255,255,0.9)';
+  ctx.fillStyle = `rgba(255,255,255,${ANNOTATION_BG_ALPHA})`;
   ctx.fill();
   ctx.strokeStyle = color;
   ctx.lineWidth = 2;
@@ -498,7 +500,7 @@ function drawCross(ctx: CanvasRenderingContext2D, x: number, y: number, w: numbe
 function drawComment(ctx: CanvasRenderingContext2D, x: number, y: number, text: string, color: string) {
   ctx.font = '12px sans-serif';
   const metrics = ctx.measureText(text);
-  ctx.fillStyle = 'rgba(255,255,240,0.95)';
+  ctx.fillStyle = `rgba(255,255,240,${ANNOTATION_BG_ALPHA})`;
   ctx.fillRect(x, y, metrics.width + 8, 20);
   ctx.strokeStyle = color;
   ctx.lineWidth = 1;
