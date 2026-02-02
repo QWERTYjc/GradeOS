@@ -12,6 +12,7 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime
 
 from src.db.postgres_grading import GradingAnnotation, GradingPageImage, StudentGradingResult
+from src.db.postgres_images import get_batch_images_as_bytes_list
 
 
 logger = logging.getLogger(__name__)
@@ -22,6 +23,7 @@ async def generate_annotations_for_student(
     student_key: str,
     student_result: StudentGradingResult,
     page_images: List[GradingPageImage],
+    batch_id: Optional[str] = None,
     page_indices: Optional[List[int]] = None,
 ) -> List[GradingAnnotation]:
     """
@@ -58,6 +60,37 @@ async def generate_annotations_for_student(
     for img in page_images:
         if page_indices is None or img.page_index in page_indices:
             page_image_map[img.page_index] = img
+
+    # 批次图片作为兜底（当未找到页面图片或页面图片缺失URL时）
+    fallback_images: Dict[int, bytes] = {}
+    needs_fallback = not page_image_map or any(
+        not getattr(img, "file_url", None) for img in page_images
+    )
+    if batch_id and needs_fallback:
+        try:
+            batch_images = await get_batch_images_as_bytes_list(batch_id, "answer")
+            if batch_images:
+                fallback_images = {idx: img for idx, img in enumerate(batch_images)}
+                logger.info(
+                    f"[Annotation] 已加载 batch_images 作为兜底: batch_id={batch_id}, count={len(batch_images)}"
+                )
+        except Exception as e:
+            logger.warning(f"[Annotation] 兜底加载 batch_images 失败: {e}")
+
+    if not page_image_map and fallback_images:
+        for idx in fallback_images.keys():
+            if page_indices is not None and idx not in page_indices:
+                continue
+            page_image_map[idx] = GradingPageImage(
+                id=str(uuid.uuid4()),
+                grading_history_id=grading_history_id,
+                student_key=student_key,
+                page_index=idx,
+                file_id="",
+                file_url=None,
+                content_type="image/jpeg",
+                created_at=now,
+            )
     
     if not page_image_map:
         logger.warning(f"学生 {student_key} 没有可用的页面图片")
@@ -72,6 +105,7 @@ async def generate_annotations_for_student(
                 page_index=page_idx,
                 page_image=page_image,
                 question_results=question_results,
+                fallback_images=fallback_images or None,
             )
             annotations.extend(page_annotations)
         except Exception as e:
@@ -87,6 +121,7 @@ async def _generate_annotations_for_page(
     page_index: int,
     page_image: GradingPageImage,
     question_results: List[Dict[str, Any]],
+    fallback_images: Optional[Dict[int, bytes]] = None,
 ) -> List[GradingAnnotation]:
     """为单个页面生成批注"""
     annotations: List[GradingAnnotation] = []
@@ -104,7 +139,7 @@ async def _generate_annotations_for_page(
         return annotations
     
     # 获取图片数据
-    image_data = await _fetch_image_data(page_image)
+    image_data = await _fetch_image_data(page_image, fallback_images=fallback_images)
     if not image_data:
         logger.warning(f"无法获取页面 {page_index} 的图片数据")
         # 使用估算位置生成批注
@@ -148,7 +183,10 @@ async def _generate_annotations_for_page(
     return annotations
 
 
-async def _fetch_image_data(page_image: GradingPageImage) -> Optional[bytes]:
+async def _fetch_image_data(
+    page_image: GradingPageImage,
+    fallback_images: Optional[Dict[int, bytes]] = None,
+) -> Optional[bytes]:
     """获取图片数据"""
     try:
         if page_image.file_url:
@@ -157,6 +195,10 @@ async def _fetch_image_data(page_image: GradingPageImage) -> Optional[bytes]:
                 response = await client.get(page_image.file_url)
                 if response.status_code == 200:
                     return response.content
+        if fallback_images:
+            fallback = fallback_images.get(page_image.page_index)
+            if fallback:
+                return fallback
         return None
     except Exception as e:
         logger.error(f"获取图片失败: {e}")

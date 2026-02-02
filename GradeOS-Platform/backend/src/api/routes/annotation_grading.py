@@ -358,6 +358,7 @@ async def generate_annotations(request: GenerateAnnotationsRequest):
             student_key=request.student_key,
             student_result=student_result,
             page_images=page_images,
+            batch_id=history.batch_id if history else None,
             page_indices=request.page_indices,
         )
         
