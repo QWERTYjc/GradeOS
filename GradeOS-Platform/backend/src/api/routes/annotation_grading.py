@@ -411,6 +411,8 @@ async def export_annotated_pdf(request: ExportPdfRequest):
         student_result = await get_student_result(request.grading_history_id, request.student_key)
         if not student_result:
             raise HTTPException(status_code=404, detail="学生批改结果不存在")
+
+        history = await get_grading_history(request.grading_history_id)
         
         # 2. 获取页面图片
         page_images = await get_page_images_for_student(request.grading_history_id, request.student_key)
