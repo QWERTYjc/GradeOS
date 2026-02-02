@@ -809,7 +809,19 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
     const [rubricSubmitting, setRubricSubmitting] = useState(false);
     const [rubricMessage, setRubricMessage] = useState<string | null>(null);
 
-    const apiBase = process.env.NEXT_PUBLIC_API_URL || '';
+    // API Base - 直接使用统一的 API_BASE
+    const getApiUrl = () => {
+        if (typeof window === 'undefined') return 'http://localhost:8001/api';
+        const hostname = window.location.hostname;
+        if (hostname === 'localhost' || hostname === '127.0.0.1') {
+            return 'http://localhost:8001/api';
+        }
+        if (hostname.includes('railway.app')) {
+            return 'https://gradeos-production.up.railway.app/api';
+        }
+        return '/api';
+    };
+    const apiBase = getApiUrl();
     // 批注渲染状态 - 默认开启
     const [showAnnotations, setShowAnnotations] = useState(true);
     const [annotationLoading, setAnnotationLoading] = useState<Set<number>>(new Set());
@@ -1163,7 +1175,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
         if (!gradingHistoryId || !studentKey) return 0;
         setAnnotationFetchLoading(true);
         try {
-            const res = await fetch(`${apiBase}/api/annotations/${gradingHistoryId}/${encodeURIComponent(studentKey)}`);
+            const res = await fetch(`${apiBase}/annotations/${gradingHistoryId}/${encodeURIComponent(studentKey)}`);
             if (!res.ok) {
                 const payload = await res.json().catch(() => null);
                 throw new Error(payload?.detail || payload?.message || '加载批注失败');
@@ -1213,7 +1225,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
         setAnnotationGenerating(true);
         setAnnotationStatus({ type: 'loading', message: 'AI 批注生成中...' });
         try {
-            const res = await fetch(`${apiBase}/api/annotations/generate`, {
+            const res = await fetch(`${apiBase}/annotations/generate`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -1248,7 +1260,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
         setExportPdfLoading(true);
         setExportStatus({ type: 'loading', message: '正在导出批注版 PDF...' });
         try {
-            const res = await fetch(`${apiBase}/api/annotations/export/pdf`, {
+            const res = await fetch(`${apiBase}/annotations/export/pdf`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -1292,7 +1304,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
         if (!submissionId || !detailViewStudent?.studentName) return;
         setAnnotationStatus({ type: 'loading', message: '保存批注中...' });
         try {
-            const res = await fetch(`${apiBase}/api/annotations`, {
+            const res = await fetch(`${apiBase}/annotations`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -1339,7 +1351,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
         if (!annotationId) return;
         setAnnotationStatus({ type: 'loading', message: '删除批注中...' });
         try {
-            const res = await fetch(`${apiBase}/api/annotations/${annotationId}`, { method: 'DELETE' });
+            const res = await fetch(`${apiBase}/annotations/${annotationId}`, { method: 'DELETE' });
             if (!res.ok) {
                 const payload = await res.json().catch(() => null);
                 throw new Error(payload?.detail || payload?.message || '删除批注失败');
@@ -1357,7 +1369,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
     const handleAnnotationUpdate = useCallback(async (pageIdx: number, annotationId: string, updates: Partial<PageAnnotation>) => {
         if (!annotationId) return;
         try {
-            const res = await fetch(`${apiBase}/api/annotations/${annotationId}`, {
+            const res = await fetch(`${apiBase}/annotations/${annotationId}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
