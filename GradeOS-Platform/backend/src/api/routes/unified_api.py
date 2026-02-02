@@ -1743,6 +1743,23 @@ async def get_grading_history_detail(import_id: str):
                         or item.student_id
                         or f"Student {idx + 1}"
                     )
+                    
+                    # 🔥 关键修复：获取学生答题图片
+                    from src.db.postgres_grading import get_page_images_for_student
+                    page_images = await get_page_images_for_student(pg_history.id, item.student_key)
+                    
+                    # 将图片数据附加到 result 中
+                    if page_images:
+                        result["images"] = [
+                            {
+                                "id": img.id,
+                                "url": img.file_url or f"/api/batch/files/{img.file_id}/download",
+                                "page_index": img.page_index,
+                                "content_type": img.content_type or "image/jpeg",
+                            }
+                            for img in sorted(page_images, key=lambda x: x.page_index)
+                        ]
+                    
                     items.append(
                         {
                             "item_id": str(item.id),
@@ -1825,6 +1842,24 @@ async def get_grading_history_detail(import_id: str):
                     or item.student_id
                     or f"Student {idx + 1}"
                 )
+                
+                # 🔥 关键修复：获取学生答题图片（fallback分支）
+                from src.db.postgres_grading import get_page_images_for_student
+                try:
+                    page_images = await get_page_images_for_student(row["id"], item.student_key)
+                    if page_images:
+                        result["images"] = [
+                            {
+                                "id": img.id,
+                                "url": img.file_url or f"/api/batch/files/{img.file_id}/download",
+                                "page_index": img.page_index,
+                                "content_type": img.content_type or "image/jpeg",
+                            }
+                            for img in sorted(page_images, key=lambda x: x.page_index)
+                        ]
+                except Exception as e:
+                    logger.warning(f"获取学生图片失败: {e}")
+                
                 items.append(
                     {
                         "item_id": item.id,

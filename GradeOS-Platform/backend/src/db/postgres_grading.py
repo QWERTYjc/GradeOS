@@ -595,6 +595,81 @@ async def get_student_results(grading_history_id: str) -> List[StudentGradingRes
         return []
 
 
+async def get_student_result(
+    grading_history_id: str,
+    student_key: str,
+) -> Optional[StudentGradingResult]:
+    """Get a single student's grading result."""
+    try:
+        query = """
+            SELECT * FROM student_grading_results
+            WHERE grading_history_id = %s AND student_key = %s
+            LIMIT 1
+        """
+        params = (grading_history_id, student_key)
+        log_sql_operation("SELECT", query, params)
+
+        async with db.connection() as conn:
+            cursor = await conn.execute(query, params)
+            row = await cursor.fetchone()
+
+        if not row:
+            log_sql_operation("SELECT", "student_grading_results", result_count=0)
+            return None
+
+        log_sql_operation("SELECT", "student_grading_results", result_count=1)
+
+        raw_result_data = row["result_data"]
+        if isinstance(raw_result_data, str):
+            result_data = json.loads(raw_result_data) if raw_result_data else None
+        else:
+            result_data = raw_result_data
+
+        imported_at_value = row["imported_at"]
+        if hasattr(imported_at_value, "isoformat"):
+            imported_at_value = imported_at_value.isoformat()
+        elif imported_at_value:
+            imported_at_value = str(imported_at_value)
+        else:
+            imported_at_value = None
+
+        revoked_at_value = row["revoked_at"]
+        if hasattr(revoked_at_value, "isoformat"):
+            revoked_at_value = revoked_at_value.isoformat()
+        elif revoked_at_value:
+            revoked_at_value = str(revoked_at_value)
+        else:
+            revoked_at_value = None
+
+        confession_value = row.get("confession") if hasattr(row, "get") else row["confession"]
+
+        return StudentGradingResult(
+            id=str(row["id"]),
+            grading_history_id=str(row["grading_history_id"]),
+            student_key=row["student_key"],
+            class_id=row["class_id"],
+            student_id=row["student_id"],
+            score=float(row["score"]) if row["score"] else None,
+            max_score=float(row["max_score"]) if row["max_score"] else None,
+            summary=row["summary"],
+            confession=confession_value,
+            result_data=result_data,
+            imported_at=imported_at_value,
+            revoked_at=revoked_at_value,
+        )
+    except Exception as e:
+        logger.error(f"???????(single): {e}")
+        return None
+
+
+async def get_page_images_for_student(
+    grading_history_id: str,
+    student_key: str,
+) -> List[GradingPageImage]:
+    """Get page images for a specific student."""
+    return await get_page_images(grading_history_id, student_key)
+
+
 async def save_page_image(image: GradingPageImage) -> None:
     """保存批改页面图像到 PostgreSQL"""
     if not image.created_at:

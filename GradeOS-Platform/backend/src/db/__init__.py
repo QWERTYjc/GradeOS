@@ -47,8 +47,10 @@ from .postgres_grading import (
     StudentGradingResult,
     save_student_result,
     get_student_results,
+    get_student_result,
     GradingPageImage,
     get_page_images,
+    get_page_images_for_student,
 )
 
 # PostgreSQL 图片存储
@@ -94,8 +96,10 @@ __all__ = [
     "StudentGradingResult",
     "save_student_result",
     "get_student_results",
+    "get_student_result",
     "GradingPageImage",
     "get_page_images",
+    "get_page_images_for_student",
     "HomeworkSubmission",
     "save_homework_submission",
     "get_homework_submissions",

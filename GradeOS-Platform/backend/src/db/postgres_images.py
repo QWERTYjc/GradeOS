@@ -227,7 +227,15 @@ async def get_batch_images(
             result = await conn.execute(query, params)
             rows = await result.fetchall()
         
-        images = [(row[0], row[1]) for row in rows]
+        images = []
+        for row in rows:
+            try:
+                image_index = row["image_index"]
+                image_data = row["image_data"]
+            except Exception:
+                image_index = row[0]
+                image_data = row[1]
+            images.append((image_index, image_data))
         log_sql_operation("SELECT", "batch_images", result_count=len(images))
         logger.debug(f"[BatchImages] 获取图片: batch_id={batch_id}, count={len(images)}")
         return images
