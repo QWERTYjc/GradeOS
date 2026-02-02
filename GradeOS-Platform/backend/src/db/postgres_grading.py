@@ -800,7 +800,6 @@ async def ensure_annotations_table() -> None:
     global _ANNOTATIONS_TABLE_READY
     if _ANNOTATIONS_TABLE_READY:
         return
-
     create_query = """
         CREATE TABLE IF NOT EXISTS grading_annotations (
             id VARCHAR(64) PRIMARY KEY,
@@ -816,14 +815,19 @@ async def ensure_annotations_table() -> None:
             created_by VARCHAR(16) DEFAULT 'ai',
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-        
-        CREATE INDEX IF NOT EXISTS idx_annotations_history ON grading_annotations(grading_history_id);
-        CREATE INDEX IF NOT EXISTS idx_annotations_student ON grading_annotations(grading_history_id, student_key);
-        CREATE INDEX IF NOT EXISTS idx_annotations_page ON grading_annotations(grading_history_id, student_key, page_index);
+        )
     """
+    index_queries = [
+        "CREATE INDEX IF NOT EXISTS idx_annotations_history ON grading_annotations(grading_history_id)",
+        "CREATE INDEX IF NOT EXISTS idx_annotations_student ON grading_annotations(grading_history_id, student_key)",
+        "CREATE INDEX IF NOT EXISTS idx_annotations_page ON grading_annotations(grading_history_id, student_key, page_index)",
+    ]
     try:
-        await db.execute(create_query)
+        async with db.connection() as conn:
+            await conn.execute(create_query)
+            for statement in index_queries:
+                await conn.execute(statement)
+            await conn.commit()
         _ANNOTATIONS_TABLE_READY = True
         logger.info("批注表已创建/确认")
     except Exception as e:
@@ -839,11 +843,7 @@ async def save_annotation(annotation: GradingAnnotation) -> bool:
             id, grading_history_id, student_key, page_index,
             annotation_type, bounding_box, text, color,
             question_id, scoring_point_id, created_by, created_at, updated_at
-        ) VALUES (
-            :id, :grading_history_id, :student_key, :page_index,
-            :annotation_type, :bounding_box, :text, :color,
-            :question_id, :scoring_point_id, :created_by, :created_at, :updated_at
-        )
+        ) VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (id) DO UPDATE SET
             bounding_box = EXCLUDED.bounding_box,
             text = EXCLUDED.text,
@@ -853,24 +853,24 @@ async def save_annotation(annotation: GradingAnnotation) -> bool:
     
     try:
         now = datetime.now().isoformat()
-        await db.execute(
-            query,
-            {
-                "id": annotation.id,
-                "grading_history_id": annotation.grading_history_id,
-                "student_key": annotation.student_key,
-                "page_index": annotation.page_index,
-                "annotation_type": annotation.annotation_type,
-                "bounding_box": json.dumps(annotation.bounding_box),
-                "text": annotation.text,
-                "color": annotation.color,
-                "question_id": annotation.question_id,
-                "scoring_point_id": annotation.scoring_point_id,
-                "created_by": annotation.created_by,
-                "created_at": annotation.created_at or now,
-                "updated_at": now,
-            },
+        params = (
+            annotation.id,
+            annotation.grading_history_id,
+            annotation.student_key,
+            annotation.page_index,
+            annotation.annotation_type,
+            json.dumps(annotation.bounding_box),
+            annotation.text,
+            annotation.color,
+            annotation.question_id,
+            annotation.scoring_point_id,
+            annotation.created_by,
+            annotation.created_at or now,
+            now,
         )
+        async with db.connection() as conn:
+            await conn.execute(query, params)
+            await conn.commit()
         return True
     except Exception as e:
         logger.error(f"保存批注失败: {e}")
@@ -903,30 +903,25 @@ async def get_annotations(
     if page_index is not None:
         query = """
             SELECT * FROM grading_annotations 
-            WHERE grading_history_id = :history_id 
-              AND student_key = :student_key 
-              AND page_index = :page_index
+            WHERE grading_history_id = %s 
+              AND student_key = %s 
+              AND page_index = %s
             ORDER BY created_at
         """
-        params = {
-            "history_id": grading_history_id,
-            "student_key": student_key,
-            "page_index": page_index,
-        }
+        params = (grading_history_id, student_key, page_index)
     else:
         query = """
             SELECT * FROM grading_annotations 
-            WHERE grading_history_id = :history_id 
-              AND student_key = :student_key
+            WHERE grading_history_id = %s 
+              AND student_key = %s
             ORDER BY page_index, created_at
         """
-        params = {
-            "history_id": grading_history_id,
-            "student_key": student_key,
-        }
+        params = (grading_history_id, student_key)
     
     try:
-        rows = await db.fetch_all(query, params)
+        async with db.connection() as conn:
+            cursor = await conn.execute(query, params)
+            rows = await cursor.fetchall()
         annotations = []
         for row in rows:
             bbox = row["bounding_box"]
@@ -959,9 +954,11 @@ async def delete_annotation(annotation_id: str) -> bool:
     """删除单个批注"""
     await ensure_annotations_table()
     
-    query = "DELETE FROM grading_annotations WHERE id = :id"
+    query = "DELETE FROM grading_annotations WHERE id = %s"
     try:
-        await db.execute(query, {"id": annotation_id})
+        async with db.connection() as conn:
+            await conn.execute(query, (annotation_id,))
+            await conn.commit()
         return True
     except Exception as e:
         logger.error(f"删除批注失败: {e}")
@@ -979,29 +976,25 @@ async def delete_annotations_for_student(
     if page_index is not None:
         query = """
             DELETE FROM grading_annotations 
-            WHERE grading_history_id = :history_id 
-              AND student_key = :student_key 
-              AND page_index = :page_index
+            WHERE grading_history_id = %s 
+              AND student_key = %s 
+              AND page_index = %s
         """
-        params = {
-            "history_id": grading_history_id,
-            "student_key": student_key,
-            "page_index": page_index,
-        }
+        params = (grading_history_id, student_key, page_index)
     else:
         query = """
             DELETE FROM grading_annotations 
-            WHERE grading_history_id = :history_id 
-              AND student_key = :student_key
+            WHERE grading_history_id = %s 
+              AND student_key = %s
         """
-        params = {
-            "history_id": grading_history_id,
-            "student_key": student_key,
-        }
+        params = (grading_history_id, student_key)
     
     try:
-        result = await db.execute(query, params)
-        return result if isinstance(result, int) else 0
+        async with db.connection() as conn:
+            cursor = await conn.execute(query, params)
+            deleted = cursor.rowcount if hasattr(cursor, "rowcount") else 0
+            await conn.commit()
+        return deleted
     except Exception as e:
         logger.error(f"删除批注失败: {e}")
         return 0
@@ -1019,24 +1012,27 @@ async def update_annotation(
     
     if not filtered_updates:
         return False
-    
+
     set_clauses = []
-    params = {"id": annotation_id}
-    
+    values: List[Any] = []
+
     for field, value in filtered_updates.items():
         if field == "bounding_box":
-            set_clauses.append(f"{field} = :{field}")
-            params[field] = json.dumps(value) if isinstance(value, dict) else value
+            set_clauses.append(f"{field} = %s")
+            values.append(json.dumps(value) if isinstance(value, dict) else value)
         else:
-            set_clauses.append(f"{field} = :{field}")
-            params[field] = value
-    
+            set_clauses.append(f"{field} = %s")
+            values.append(value)
+
     set_clauses.append("updated_at = CURRENT_TIMESTAMP")
-    
-    query = f"UPDATE grading_annotations SET {', '.join(set_clauses)} WHERE id = :id"
-    
+
+    query = f"UPDATE grading_annotations SET {', '.join(set_clauses)} WHERE id = %s"
+    values.append(annotation_id)
+
     try:
-        await db.execute(query, params)
+        async with db.connection() as conn:
+            await conn.execute(query, tuple(values))
+            await conn.commit()
         return True
     except Exception as e:
         logger.error(f"更新批注失败: {e}")
