@@ -35,6 +35,7 @@ async def export_annotated_pdf(
     page_images: List[GradingPageImage],
     annotations: List[GradingAnnotation],
     include_summary: bool = True,
+    fallback_images: Optional[Dict[int, bytes]] = None,
 ) -> bytes:
     """
     导出带批注的 PDF
@@ -82,7 +83,7 @@ async def export_annotated_pdf(
     for page_image in sorted_images:
         try:
             # 获取图片数据
-            image_data = await _fetch_image_data(page_image)
+            image_data = await _fetch_image_data(page_image, fallback_images=fallback_images)
             if not image_data:
                 logger.warning(f"无法获取页面 {page_image.page_index} 的图片")
                 continue
@@ -373,7 +374,10 @@ def _draw_cross_mark(draw: ImageDraw.ImageDraw, bbox: tuple, color: tuple):
     draw.line([(x_max, y_min), (x_min, y_max)], fill=color, width=3)
 
 
-async def _fetch_image_data(page_image: GradingPageImage) -> Optional[bytes]:
+async def _fetch_image_data(
+    page_image: GradingPageImage,
+    fallback_images: Optional[Dict[int, bytes]] = None,
+) -> Optional[bytes]:
     """获取图片数据"""
     try:
         if page_image.file_url:
@@ -381,6 +385,10 @@ async def _fetch_image_data(page_image: GradingPageImage) -> Optional[bytes]:
                 response = await client.get(page_image.file_url)
                 if response.status_code == 200:
                     return response.content
+        if fallback_images:
+            fallback = fallback_images.get(page_image.page_index)
+            if fallback:
+                return fallback
         return None
     except Exception as e:
         logger.error(f"获取图片失败: {e}")

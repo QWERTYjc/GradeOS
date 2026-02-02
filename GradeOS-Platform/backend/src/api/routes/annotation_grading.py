@@ -33,6 +33,7 @@ from src.db.postgres_grading import (
     get_student_result,
     get_page_images_for_student,
 )
+from src.db.postgres_images import get_batch_images_as_bytes_list
 
 
 logger = logging.getLogger(__name__)
@@ -317,7 +318,7 @@ async def generate_annotations(request: GenerateAnnotationsRequest):
         # 2. 获取页面图片
         page_images = await get_page_images_for_student(request.grading_history_id, request.student_key)
         if not page_images:
-            raise HTTPException(status_code=404, detail="未找到学生答题图片")
+            logger.warning("未找到学生答题图片，尝试使用 batch_images 兜底")
         
         # 3. 如果不覆盖，先检查是否已有批注
         if not request.overwrite:
@@ -413,8 +414,15 @@ async def export_annotated_pdf(request: ExportPdfRequest):
         
         # 2. 获取页面图片
         page_images = await get_page_images_for_student(request.grading_history_id, request.student_key)
+        fallback_images = None
         if not page_images:
-            raise HTTPException(status_code=404, detail="未找到学生答题图片")
+            if history:
+                fallback_list = await get_batch_images_as_bytes_list(history.batch_id, "answer")
+                if fallback_list:
+                    fallback_images = {idx: img for idx, img in enumerate(fallback_list)}
+                    logger.warning("未找到学生答题图片，使用 batch_images 兜底导出 PDF")
+            if not fallback_images:
+                raise HTTPException(status_code=404, detail="未找到学生答题图片")
         
         # 3. 获取批注
         annotations = await get_annotations(request.grading_history_id, request.student_key)
@@ -427,6 +435,7 @@ async def export_annotated_pdf(request: ExportPdfRequest):
             page_images=page_images,
             annotations=annotations,
             include_summary=request.include_summary,
+            fallback_images=fallback_images,
         )
         
         # 5. 返回 PDF 文件
