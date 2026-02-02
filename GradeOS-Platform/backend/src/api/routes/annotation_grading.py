@@ -13,9 +13,11 @@ import base64
 import io
 import json
 import logging
+import re
 import uuid
 from typing import List, Optional, Dict, Any
 from datetime import datetime
+from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException, Response
 from fastapi.responses import StreamingResponse
@@ -441,13 +443,18 @@ async def export_annotated_pdf(request: ExportPdfRequest):
         )
         
         # 5. 返回 PDF 文件
-        filename = f"grading_{request.student_key}_{request.grading_history_id[:8]}.pdf"
+        raw_filename = f"grading_{request.student_key}_{request.grading_history_id[:8]}.pdf"
+        safe_student = re.sub(r"[^A-Za-z0-9._-]+", "_", request.student_key) or "student"
+        safe_filename = f"grading_{safe_student}_{request.grading_history_id[:8]}.pdf"
+        encoded_filename = quote(raw_filename)
         
         return Response(
             content=pdf_bytes,
             media_type="application/pdf",
             headers={
-                "Content-Disposition": f'attachment; filename="{filename}"',
+                "Content-Disposition": (
+                    f'attachment; filename="{safe_filename}"; filename*=UTF-8\'\'{encoded_filename}'
+                ),
                 "Content-Length": str(len(pdf_bytes)),
             },
         )
