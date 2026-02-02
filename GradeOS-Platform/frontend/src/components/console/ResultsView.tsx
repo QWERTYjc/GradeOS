@@ -2906,8 +2906,12 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                                             }}
                                             onAnnotationUpdate={(annotationId, updates) => {
                                                 if (annotationId.startsWith('temp-')) {
+                                                    const safeUpdates: Partial<PageAnnotation> = {
+                                                        ...updates,
+                                                        annotation_type: updates.annotation_type as PageAnnotation['annotation_type'],
+                                                    };
                                                     updatePageAnnotations(pageIdx, (current) => current.map((ann) => (
-                                                        ann.id === annotationId ? { ...ann, ...updates } : ann
+                                                        ann.id === annotationId ? { ...ann, ...safeUpdates } : ann
                                                     )));
                                                     return;
                                                 }
