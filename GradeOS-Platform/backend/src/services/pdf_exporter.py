@@ -30,6 +30,21 @@ ANNOTATION_COLORS = {
 DEFAULT_FONT_SIZE = 24
 
 
+def _get_pdf_font_name() -> str:
+    """Return a PDF font name that supports CJK if available."""
+    try:
+        from reportlab.pdfbase import pdfmetrics
+        from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+
+        font_name = "STSong-Light"
+        if font_name not in pdfmetrics.getRegisteredFontNames():
+            pdfmetrics.registerFont(UnicodeCIDFont(font_name))
+        return font_name
+    except Exception as e:
+        logger.warning(f"无法注册 CJK 字体，回退到 Helvetica: {e}")
+        return "Helvetica"
+
+
 async def export_annotated_pdf(
     student_result: StudentGradingResult,
     page_images: List[GradingPageImage],
@@ -150,14 +165,15 @@ def _draw_summary_page(c, student_result: StudentGradingResult, page_width: floa
     
     margin = 30 * mm
     y = page_height - margin
+    font_name = _get_pdf_font_name()
     
     # 标题
-    c.setFont("Helvetica-Bold", 24)
+    c.setFont(font_name, 24)
     c.drawString(margin, y, "Grading Report")
     y -= 15 * mm
     
     # 学生信息
-    c.setFont("Helvetica", 14)
+    c.setFont(font_name, 14)
     c.drawString(margin, y, f"Student: {student_result.student_key}")
     y -= 8 * mm
     
@@ -166,7 +182,7 @@ def _draw_summary_page(c, student_result: StudentGradingResult, page_width: floa
     max_score = student_result.max_score or 100
     percentage = (score / max_score * 100) if max_score > 0 else 0
     
-    c.setFont("Helvetica-Bold", 18)
+    c.setFont(font_name, 18)
     c.drawString(margin, y, f"Score: {score} / {max_score} ({percentage:.1f}%)")
     y -= 15 * mm
     
@@ -180,11 +196,11 @@ def _draw_summary_page(c, student_result: StudentGradingResult, page_width: floa
     )
     
     if question_results:
-        c.setFont("Helvetica-Bold", 14)
+        c.setFont(font_name, 14)
         c.drawString(margin, y, "Question Details:")
         y -= 8 * mm
         
-        c.setFont("Helvetica", 11)
+        c.setFont(font_name, 11)
         for q in question_results[:15]:  # 最多显示 15 道题
             qid = q.get("question_id") or q.get("questionId") or "?"
             q_score = q.get("score", 0)
@@ -202,7 +218,7 @@ def _draw_summary_page(c, student_result: StudentGradingResult, page_width: floa
                 break
     
     # 页脚
-    c.setFont("Helvetica", 9)
+    c.setFont(font_name, 9)
     c.drawString(margin, 20, f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
     c.drawString(page_width - margin - 80, 20, "GradeOS")
 
