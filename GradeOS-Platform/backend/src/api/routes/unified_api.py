@@ -1301,7 +1301,7 @@ async def import_grading_results(
             average_score=history_record.average_score,
             result_data=history_record.result_data,
         )
-        save_grading_history(updated_history)
+        await save_grading_history(updated_history)
         history_id = history_record.id
     else:
         history_id = str(uuid.uuid4())
@@ -1317,7 +1317,7 @@ async def import_grading_results(
             average_score=None,
             result_data=None,
         )
-        save_grading_history(history)
+        await save_grading_history(history)
 
     for target in request.targets:
         if not target.student_ids:
@@ -1449,7 +1449,7 @@ async def import_grading_results(
                     result_data=result,
                     imported_at=now,
                 )
-                save_student_result(student_result)
+                await save_student_result(student_result)
 
         records.append(GradingImportRecord(**record))
 
@@ -1811,7 +1811,7 @@ async def get_grading_history_detail(import_id: str):
                 "revoked_at": None,
             }
             items = []
-            for idx, item in enumerate(get_student_results(row["id"])):
+            for idx, item in enumerate(await get_student_results(row["id"])):
                 result = item.result_data or {}
                 if isinstance(result, str):
                     try:
@@ -2425,7 +2425,7 @@ async def get_class_statistics(class_id: str, homework_id: Optional[str] = None)
     graded_count = len(scores)
 
     if not scores:
-        histories = list_grading_history(class_id=class_id, limit=200)
+        histories = await list_grading_history(class_id=class_id, limit=200)
         history_ids = []
         for history in histories:
             result_meta = history.result_data or {}
@@ -2436,7 +2436,7 @@ async def get_class_statistics(class_id: str, homework_id: Optional[str] = None)
 
         fallback_scores = []
         for history_id in history_ids:
-            for item in get_student_results(history_id):
+            for item in await get_student_results(history_id):
                 if item.score is not None:
                     fallback_scores.append(item.score)
 

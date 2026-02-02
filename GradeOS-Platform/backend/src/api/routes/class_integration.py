@@ -201,12 +201,12 @@ async def import_grading_to_class(
     """
     logger.info(f"导入批改结果到班级: batch_id={batch_id}, classes={request.class_ids}")
 
-    def _load_from_db() -> List[Dict[str, Any]]:
-        history = get_grading_history(batch_id)
+    async def _load_from_db() -> List[Dict[str, Any]]:
+        history = await get_grading_history(batch_id)
         if not history:
             return []
         results: List[Dict[str, Any]] = []
-        for row in get_student_results(history.id):
+        for row in await get_student_results(history.id):
             data = row.result_data
             if isinstance(data, str):
                 try:
@@ -237,11 +237,11 @@ async def import_grading_to_class(
                 if final_output:
                     student_results = final_output.get("student_results", [])
         else:
-            student_results = _load_from_db()
+            student_results = await _load_from_db()
             if not student_results:
                 raise HTTPException(status_code=404, detail="批改批次不存在")
     else:
-        student_results = _load_from_db()
+        student_results = await _load_from_db()
 
     if not student_results:
         raise HTTPException(status_code=400, detail="未找到批改结果")
@@ -276,7 +276,7 @@ async def import_grading_to_class(
         total_students=len(student_results),
         average_score=avg_score,
     )
-    save_grading_history(history)
+    await save_grading_history(history)
 
     # 保存学生结果
     imported_count = 0
@@ -306,7 +306,7 @@ async def import_grading_to_class(
                 result_data=result,
                 imported_at=datetime.now().isoformat(),
             )
-            save_student_result(student_result)
+            await save_student_result(student_result)
             imported_count += 1
 
     logger.info(f"批改结果已导入: history_id={history_id}, count={imported_count}")
@@ -332,7 +332,7 @@ async def revoke_grading_import(
     logger.info(f"撤回批改导入: batch_id={batch_id}, class_id={request.class_id}")
 
     # 查找历史记录
-    history = get_grading_history(batch_id)
+    history = await get_grading_history(batch_id)
     if not history:
         raise HTTPException(status_code=404, detail="批改记录不存在")
 
@@ -389,7 +389,7 @@ async def get_class_grading_history(
     """
     logger.info(f"获取班级批改历史: class_id={class_id}")
 
-    histories = list_grading_history(class_id=class_id, limit=limit)
+    histories = await list_grading_history(class_id=class_id, limit=limit)
 
     records = [
         GradingHistoryItem(

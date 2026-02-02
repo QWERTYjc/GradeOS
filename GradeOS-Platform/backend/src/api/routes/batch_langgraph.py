@@ -3406,7 +3406,7 @@ async def submit_results_review(
 
         if request.results:
             try:
-                history = get_grading_history(request.batch_id)
+                history = await get_grading_history(request.batch_id)
                 if history:
                     raw_history_data = history.result_data
                     history_data: Dict[str, Any] = {}
@@ -3424,7 +3424,7 @@ async def submit_results_review(
                     homework_id = history_data.get("homework_id") if history_data else None
 
                     existing_results = {
-                        row.student_key: row for row in get_student_results(history.id)
+                        row.student_key: row for row in await get_student_results(history.id)
                     }
 
                     updated_scores: List[float] = []
@@ -3536,7 +3536,7 @@ async def submit_results_review(
                             confession=existing_row.confession if existing_row else None,
                             result_data=existing_data,
                         )
-                        save_student_result(student_result)
+                        await save_student_result(student_result)
 
                         if class_id and homework_id and student_result.student_id:
                             upsert_homework_submission_grade(
@@ -3569,7 +3569,7 @@ async def submit_results_review(
                             if isinstance(summary, dict):
                                 summary["average_score"] = history.average_score
                             history.result_data = history_data
-                        save_grading_history(history)
+                        await save_grading_history(history)
             except Exception as exc:
                 logger.error("保存复核结果失败: %s", exc, exc_info=True)
 
