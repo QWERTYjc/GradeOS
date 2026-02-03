@@ -24,6 +24,21 @@ type RubricAlternativeSolutionDraft = {
   note?: string;
 };
 
+type LLMConfession = {
+  risks?: string[];
+  uncertainties?: string[];
+  blindSpots?: string[];
+  needsReview?: string[];
+  confidence?: number;
+  selfReviewed?: boolean;
+  selfReviewApplied?: boolean;
+};
+
+type QuestionConfession = {
+  risk?: string;
+  uncertainty?: string;
+};
+
 type RubricQuestionDraft = {
   questionId: string;
   maxScore: number;
@@ -31,6 +46,7 @@ type RubricQuestionDraft = {
   standardAnswer: string;
   gradingNotes: string;
   reviewNote: string;
+  confession?: QuestionConfession;
   scoringPoints: RubricScoringPointDraft[];
   alternativeSolutions: RubricAlternativeSolutionDraft[];
   criteria: string[];
@@ -42,11 +58,14 @@ type ParsedRubricDraft = {
   totalScore: number;
   generalNotes: string;
   rubricFormat: string;
+  confession?: LLMConfession;
+  selfReviewChanges?: string[];
   questions: RubricQuestionDraft[];
 };
 
 const workflowSteps = [
   { id: "rubric_parse", label: "Rubric Parse" },
+  { id: "rubric_self_review", label: "Auto Review" },
   { id: "rubric_review", label: "Rubric Review" },
   { id: "grade_batch", label: "Student Grading" },
   { id: "logic_review", label: "Logic Review" },
@@ -58,6 +77,11 @@ const normalizeRubric = (raw: Record<string, unknown>): ParsedRubricDraft => {
   const rawQuestions = (raw?.questions as Array<Record<string, unknown>>) || [];
   const questions: RubricQuestionDraft[] = rawQuestions.map((q, idx: number) => {
     const questionId = String(q.questionId || q.question_id || q.id || idx + 1);
+    const rawConfession = (q.confession as Record<string, unknown>) || {};
+    const confession: QuestionConfession = {
+      risk: String(rawConfession.risk || ""),
+      uncertainty: String(rawConfession.uncertainty || ""),
+    };
     const scoringPoints = ((q.scoringPoints as Array<Record<string, unknown>>) || (q.scoring_points as Array<Record<string, unknown>>) || []).map((sp, spIdx: number) => ({
       pointId: String(sp.pointId || sp.point_id || `${questionId}.${spIdx + 1}`),
       description: String(sp.description || ""),
@@ -84,6 +108,7 @@ const normalizeRubric = (raw: Record<string, unknown>): ParsedRubricDraft => {
       standardAnswer: String(q.standardAnswer || q.standard_answer || ""),
       gradingNotes: String(q.gradingNotes || q.grading_notes || ""),
       reviewNote: String(q.reviewNote || q.review_note || ""),
+      confession,
       scoringPoints,
       alternativeSolutions,
       criteria: Array.isArray(q.criteria) ? q.criteria : [],
@@ -96,11 +121,28 @@ const normalizeRubric = (raw: Record<string, unknown>): ParsedRubricDraft => {
     raw?.totalScore ?? raw?.total_score ?? questions.reduce((sum, q) => sum + (q.maxScore || 0), 0)
   );
 
+  const rawConfession = (raw?.confession as Record<string, unknown>) || {};
+  const confession: LLMConfession = {
+    risks: Array.isArray(rawConfession.risks) ? (rawConfession.risks as string[]) : [],
+    uncertainties: Array.isArray(rawConfession.uncertainties) ? (rawConfession.uncertainties as string[]) : [],
+    blindSpots: Array.isArray(rawConfession.blindSpots || rawConfession.blind_spots)
+      ? ((rawConfession.blindSpots || rawConfession.blind_spots) as string[])
+      : [],
+    needsReview: Array.isArray(rawConfession.needsReview || rawConfession.needs_review)
+      ? ((rawConfession.needsReview || rawConfession.needs_review) as string[])
+      : [],
+    confidence: Number(rawConfession.confidence ?? 1),
+    selfReviewed: Boolean(rawConfession.selfReviewed ?? rawConfession.self_reviewed ?? false),
+    selfReviewApplied: Boolean(rawConfession.selfReviewApplied ?? rawConfession.self_review_applied ?? false),
+  };
+
   return {
     totalQuestions,
     totalScore,
     generalNotes: String(raw?.generalNotes || raw?.general_notes || ""),
     rubricFormat: String(raw?.rubricFormat || raw?.rubric_format || "standard"),
+    confession,
+    selfReviewChanges: Array.isArray(raw?.self_review_changes) ? raw.self_review_changes : [],
     questions,
   };
 };
@@ -149,6 +191,7 @@ export default function RubricReviewPage() {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [globalNote, setGlobalNote] = useState("");
   const [compactView, setCompactView] = useState(true);
+  const [onlyFlagged, setOnlyFlagged] = useState(false);
   const [currentStage, setCurrentStage] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -255,7 +298,10 @@ export default function RubricReviewPage() {
     socket.onmessage = (event) => {
       try {
         const message = JSON.parse(event.data);
-        if (message.type === "llm_stream_chunk" && message.nodeId === "rubric_parse") {
+        if (
+          message.type === "llm_stream_chunk"
+          && (message.nodeId === "rubric_parse" || message.nodeId === "rubric_self_review")
+        ) {
           const chunk = message.chunk || "";
           if (!chunk) return;
           const combined = streamBufferRef.current + chunk;
@@ -444,6 +490,9 @@ export default function RubricReviewPage() {
     if (!currentStage) return 0;
     const mapping: Record<string, string> = {
       rubric_parse_completed: "rubric_parse",
+      rubric_self_review_completed: "rubric_self_review",
+      rubric_self_review_skipped: "rubric_self_review",
+      rubric_self_review_failed: "rubric_self_review",
       rubric_review_completed: "rubric_review",
       rubric_review_skipped: "rubric_review",
       grade_batch_completed: "grade_batch",
@@ -479,9 +528,24 @@ export default function RubricReviewPage() {
 
   const questionCards = useMemo(() => {
     if (!rubricDraft) return [];
-    return rubricDraft.questions.map((q) => {
+    const confession = rubricDraft.confession || {};
+    const flaggedByNeedsReview = new Set<string>();
+    (confession.needsReview || []).forEach((item) => {
+      const match = String(item).match(/Q(\d+)/i);
+      if (match?.[1]) flaggedByNeedsReview.add(match[1]);
+    });
+    const filteredQuestions = onlyFlagged
+      ? rubricDraft.questions.filter((q) => {
+          const hasQuestionConfession = Boolean(q.confession?.risk || q.confession?.uncertainty);
+          const inNeedsReview = flaggedByNeedsReview.has(String(q.questionId));
+          return hasQuestionConfession || inNeedsReview;
+        })
+      : rubricDraft.questions;
+    return filteredQuestions.map((q) => {
       const isSelected = selectedIds.has(q.questionId);
       const isExpanded = expandedIds.has(q.questionId);
+      const hasConfession = Boolean(q.confession?.risk || q.confession?.uncertainty);
+      const isNeededReview = flaggedByNeedsReview.has(String(q.questionId));
       return (
         <div
           key={q.questionId}
@@ -501,6 +565,11 @@ export default function RubricReviewPage() {
                     <div className="text-[10px] font-semibold text-slate-500">满分 {q.maxScore}</div>
                     <div className="text-xs font-semibold text-slate-800">题目 {q.questionId}</div>
                   </div>
+                  {(hasConfession || isNeededReview) && (
+                    <div className="flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] text-amber-700">
+                      {hasConfession ? "AI提醒" : "需复核"}
+                    </div>
+                  )}
                 </div>
                 <div className="flex items-center gap-2">
                   <button
@@ -541,6 +610,16 @@ export default function RubricReviewPage() {
                     <li>评分要点：{q.criteria.join(" · ")}</li>
                   )}
                 </ul>
+                {(q.confession?.risk || q.confession?.uncertainty) && (
+                  <div className="mt-3 space-y-1 text-[11px] text-amber-700">
+                    {q.confession?.risk && (
+                      <div>AI 风险：{q.confession.risk}</div>
+                    )}
+                    {q.confession?.uncertainty && (
+                      <div>AI 不确定：{q.confession.uncertainty}</div>
+                    )}
+                  </div>
+                )}
 
                 {q.scoringPoints.length > 0 && (
                   <div className="mt-3">
@@ -636,6 +715,19 @@ export default function RubricReviewPage() {
                   <span className={clsx(isSelected ? "text-rose-500" : "text-slate-500")}>标记问题</span>
                 </label>
               </div>
+              {(q.confession?.risk || q.confession?.uncertainty || isNeededReview) && (
+                <div className="mt-3 flex flex-wrap gap-2 text-xs">
+                  {q.confession?.risk && (
+                    <span className="rounded-full bg-rose-50 px-3 py-1 text-rose-700">AI 风险：{q.confession.risk}</span>
+                  )}
+                  {q.confession?.uncertainty && (
+                    <span className="rounded-full bg-amber-50 px-3 py-1 text-amber-700">AI 不确定：{q.confession.uncertainty}</span>
+                  )}
+                  {isNeededReview && (
+                    <span className="rounded-full bg-purple-50 px-3 py-1 text-purple-700">建议复核</span>
+                  )}
+                </div>
+              )}
 
               <div className="mt-5 grid gap-4">
                 <div>
@@ -807,6 +899,7 @@ export default function RubricReviewPage() {
     rubricDraft,
     selectedIds,
     expandedIds,
+    onlyFlagged,
     toggleSelected,
     toggleExpanded,
     updateQuestion,
@@ -938,12 +1031,57 @@ export default function RubricReviewPage() {
               </div>
             )}
 
+          {/* AI 自白 & 自动复核摘要 */}
+          {rubricDraft?.confession && (
+            <div className="rounded-xl border border-amber-200 bg-amber-50/40 p-4">
+              <div className="flex items-center justify-between">
+                <div className="text-xs font-semibold text-amber-800">AI 自白摘要</div>
+                <div className="flex items-center gap-2 text-[10px] text-amber-700">
+                  <span>置信度 {(rubricDraft.confession.confidence ?? 1) * 100 | 0}%</span>
+                  {rubricDraft.confession.selfReviewed && (
+                    <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-emerald-700">已自动复核</span>
+                  )}
+                </div>
+              </div>
+              <div className="mt-2 flex flex-wrap gap-2 text-[10px] text-amber-700">
+                {(rubricDraft.confession.risks || []).map((risk, idx) => (
+                  <span key={`risk-${idx}`} className="rounded-full bg-rose-100 px-2 py-0.5 text-rose-700">{risk}</span>
+                ))}
+                {(rubricDraft.confession.uncertainties || []).map((u, idx) => (
+                  <span key={`unc-${idx}`} className="rounded-full bg-amber-100 px-2 py-0.5">{u}</span>
+                ))}
+                {(rubricDraft.confession.blindSpots || []).map((b, idx) => (
+                  <span key={`blind-${idx}`} className="rounded-full bg-blue-100 px-2 py-0.5 text-blue-700">{b}</span>
+                ))}
+                {(rubricDraft.confession.needsReview || []).map((n, idx) => (
+                  <span key={`nr-${idx}`} className="rounded-full bg-purple-100 px-2 py-0.5 text-purple-700">{n}</span>
+                ))}
+              </div>
+              {rubricDraft.selfReviewChanges && rubricDraft.selfReviewChanges.length > 0 && (
+                <div className="mt-2 text-[11px] text-amber-700">
+                  自动复核修正：{rubricDraft.selfReviewChanges.join(" · ")}
+                </div>
+              )}
+            </div>
+          )}
+
             {/* Global Controls */}
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="text-sm text-slate-500">
                 共 {rubricDraft.totalQuestions} 题，总分 <span className="font-semibold text-slate-900">{rubricDraft.totalScore}</span>
               </div>
               <div className="flex items-center gap-2">
+              <button
+                onClick={() => setOnlyFlagged((prev) => !prev)}
+                className={clsx(
+                  "rounded-full border px-3 py-1 text-xs font-semibold transition-colors",
+                  onlyFlagged
+                    ? "border-amber-200 bg-amber-50 text-amber-700 hover:border-amber-300"
+                    : "border-slate-200 bg-white text-slate-600 hover:border-slate-300"
+                )}
+              >
+                {onlyFlagged ? "显示全部" : "仅看AI提示"}
+              </button>
                 <button
                   onClick={() => setCompactView((prev) => !prev)}
                   className={clsx(

@@ -980,17 +980,60 @@ class LLMReasoningClient:
           "evidence": "【原文引用】学生写了...",
           "evidence_region": {{"x_min": 0.1, "y_min": 0.2, "x_max": 0.4, "y_max": 0.25}}
         }}
-      ]
+      ],
+      "audit": {{
+        "confidence": 0.85,
+        "uncertainties": ["符号可能识别不清"],
+        "risk_flags": ["formula_ambiguity"],
+        "needs_review": false
+      }}
     }}
   ],
   "page_summary": "简要总结",
   "student_info": {{"name": "", "student_id": ""}}
 }}
-```"""
+```
+
+## ⚠️ 审计信息要求（audit字段）
+每道题的 question_details 必须包含 audit 字段，用于后续风险评估和人工复核：
+
+- **confidence** (float, 0-1): 本题批改的置信度
+  - 0.9-1.0: 非常确定
+  - 0.7-0.9: 比较确定
+  - 0.5-0.7: 有些不确定
+  - <0.5: 很不确定，建议复核
+
+- **uncertainties** (list[str]): 不确定点列表（每条不超过50字）
+  - 例如: ["字迹模糊，数字可能识别错误", "公式第二步不太清楚"]
+  - 没有不确定点则为空列表 []
+
+- **risk_flags** (list[str]): 风险标签列表（从以下选项中选择）
+  - full_marks: 满分风险（需要确认是否真的完全正确）
+  - zero_marks: 零分风险（需要确认是否真的完全错误）
+  - boundary_score: 边界分数（刚好及格/不及格等临界情况）
+  - low_confidence: 低置信度（confidence < 0.6）
+  - evidence_gap: 证据不足（缺少明确的原文引用）
+  - formula_ambiguity: 公式识别模糊
+  - alternative_solution: 可能是另类解法
+  - 没有风险则为空列表 []
+
+- **needs_review** (bool): 是否需要人工复核
+  - true: 建议人工复核
+  - false: 不需要复核
+
+### 审计信息填写规则
+1. **诚实评估**：置信度要真实反映你的确定程度，不要高估
+2. **具体明确**：uncertainties 要具体指出哪里不确定，不要泛泛而谈
+3. **严格标记**：满足以下任一条件必须标记 needs_review=true：
+   - confidence < 0.6
+   - 满分或零分
+   - risk_flags 包含 evidence_gap
+   - 学生使用了非标准解法
+4. **风险优先**：宁可多标记风险，也不要遗漏潜在问题"""
 
     def _parse_grading_response(self, response_text: str, max_score: float) -> Dict[str, Any]:
         """
-        解析评分响应，并确保 evidence 字段被正确填充
+        解析评分响应，并确保 evidence 和 audit 字段被正确填充
 
         Args:
             response_text: LLM 响应文本
@@ -1006,8 +1049,9 @@ class LLMReasoningClient:
         
         result = json.loads(json_text)
 
-        # 确保所有 scoring_point_results 都有 evidence 字段
+        # 确保所有 question_details 都有 evidence 和 audit 字段
         for q in result.get("question_details", []):
+            # 处理 scoring_point_results 中的 evidence 字段
             for spr in q.get("scoring_point_results", []):
                 # 检查 evidence 是否为空或无效
                 evidence = spr.get("evidence", "")
@@ -1027,6 +1071,47 @@ class LLMReasoningClient:
                         )
 
                     logger.warning(f"evidence 字段为空，已自动补充: {spr['evidence']}")
+            
+            # 确保每道题都有 audit 字段
+            if "audit" not in q or not q["audit"]:
+                # 自动生成 audit 字段
+                score = q.get("score", 0)
+                max_q_score = q.get("max_score", 0)
+                confidence = q.get("confidence", 0.7)
+                
+                # 根据评分情况自动生成审计信息
+                audit = {
+                    "confidence": confidence,
+                    "uncertainties": [],
+                    "risk_flags": [],
+                    "needs_review": False
+                }
+                
+                # 自动标记风险
+                if max_q_score > 0:
+                    if score >= max_q_score:
+                        audit["risk_flags"].append("full_marks")
+                    elif score == 0:
+                        audit["risk_flags"].append("zero_marks")
+                
+                if confidence < 0.6:
+                    audit["risk_flags"].append("low_confidence")
+                    audit["needs_review"] = True
+                
+                # 检查是否有空证据
+                has_empty_evidence = False
+                for spr in q.get("scoring_point_results", []):
+                    evidence = spr.get("evidence", "").strip()
+                    if not evidence or evidence in ["无", "N/A", "null", "None"]:
+                        has_empty_evidence = True
+                        break
+                
+                if has_empty_evidence:
+                    audit["risk_flags"].append("evidence_gap")
+                    audit["needs_review"] = True
+                
+                q["audit"] = audit
+                logger.debug(f"audit 字段缺失，已自动生成: {audit}")
 
         return result
 
@@ -1146,7 +1231,13 @@ class LLMReasoningClient:
                     "awarded": 5,
                     "evidence": "【必填】学生在结论处写'因此答案为5'，但正确答案应为4，扣2分"
                 }}
-            ]
+            ],
+            "audit": {{
+                "confidence": 0.8,
+                "uncertainties": ["第2步逻辑推理过程不太清晰"],
+                "risk_flags": [],
+                "needs_review": false
+            }}
         }}
     ],
     "page_summary": "本页包含第1-3题，学生整体表现良好，主要在计算方面有失误",
@@ -1156,6 +1247,13 @@ class LLMReasoningClient:
     }}
 }}
 ```
+
+## ⚠️ 审计信息（audit字段）- 必填
+每道题必须包含 audit 字段，用于风险评估：
+- **confidence** (0-1): 本题批改置信度
+- **uncertainties** (list): 不确定点（简短，每条≤50字）
+- **risk_flags** (list): 风险标签（full_marks/zero_marks/boundary_score/low_confidence/evidence_gap/formula_ambiguity/alternative_solution）
+- **needs_review** (bool): 是否需要人工复核（满分/零分/低置信度/证据不足时应为true）
 
 ## 重要评分原则
 1. **严格遵循评分标准**：每个得分点必须有明确依据

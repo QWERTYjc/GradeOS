@@ -13,7 +13,7 @@ from src.services.distributed_transaction import (
     SagaTransaction,
     ReviewOverrideSagaBuilder,
 )
-from src.services.grading_confession import generate_confession
+# grading_confession 已删除（批改和审计一体化改造）
 from src.services.student_summary import generate_student_summary, generate_class_summary
 
 # 批注批改服务
@@ -32,26 +32,6 @@ from src.services.post_grading_annotator import (
     create_annotator_for_mode,
 )
 
-# 批改记忆系统
-from src.services.grading_memory import (
-    GradingMemoryService,
-    MemoryType,
-    MemoryImportance,
-    MemoryEntry,
-    get_memory_service,
-    init_memory_service_with_db,
-    reset_memory_service,
-)
-
-# 记忆存储后端
-from src.services.memory_storage import (
-    MemoryStorageBackend,
-    InMemoryStorageBackend,
-    RedisStorageBackend,
-    PostgresStorageBackend,
-    MultiLayerStorageBackend,
-    create_storage_backend,
-)
 
 __all__ = [
     "CacheService",
@@ -66,8 +46,7 @@ __all__ = [
     "SagaTransactionStatus",
     "SagaTransaction",
     "ReviewOverrideSagaBuilder",
-    # Confession
-    "generate_confession",
+    # Student and class summary
     "generate_student_summary",
     "generate_class_summary",
     # 批注批改服务
@@ -81,19 +60,4 @@ __all__ = [
     "AnnotatorConfig",
     "AnnotationMode",
     "create_annotator_for_mode",
-    # 批改记忆系统
-    "GradingMemoryService",
-    "MemoryType",
-    "MemoryImportance",
-    "MemoryEntry",
-    "get_memory_service",
-    "init_memory_service_with_db",
-    "reset_memory_service",
-    # 记忆存储后端
-    "MemoryStorageBackend",
-    "InMemoryStorageBackend",
-    "RedisStorageBackend",
-    "PostgresStorageBackend",
-    "MultiLayerStorageBackend",
-    "create_storage_backend",
 ]

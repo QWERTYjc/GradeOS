@@ -171,14 +171,6 @@ async def lifespan(app: FastAPI):
         await enhanced_api_service.start()
         logger.info("增强 API 服务已启动")
 
-    # 初始化批改记忆系统（支持 Redis + PostgreSQL 后端）
-    try:
-        from src.services.grading_memory import init_memory_service_with_db
-
-        await init_memory_service_with_db(pool_manager=pool_manager, redis_client=redis_client)
-        logger.info("批改记忆服务已初始化")
-    except Exception as e:
-        logger.warning(f"批改记忆服务初始化失败（将使用文件存储）: {e}")
 
     # 初始化编排器（两种模式都需要）
     try:
@@ -304,15 +296,6 @@ try:
     logger.info("辅助批改 API 已注册")
 except ImportError as e:
     logger.warning(f"辅助批改 API 导入失败: {e}")
-
-# 记忆管理 API (新增)
-try:
-    from src.api.routes import memory_api
-
-    app.include_router(memory_api.router, prefix="/api", tags=["记忆管理"])
-    logger.info("记忆管理 API 已注册")
-except ImportError as e:
-    logger.warning(f"记忆管理 API 导入失败: {e}")
 
 # Phase 6: 班级系统集成 API (延迟导入避免循环依赖)
 try:
