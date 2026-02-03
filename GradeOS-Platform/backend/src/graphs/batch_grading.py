@@ -735,6 +735,14 @@ async def rubric_parse_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                 "total_score": result.total_score,
                 "rubric_format": result.rubric_format,
                 "general_notes": result.general_notes,
+                # LLM 直接生成的自白（极短）
+                "confession": result.confession.to_dict() if hasattr(result.confession, 'to_dict') else {
+                    "risks": getattr(result.confession, 'risks', []),
+                    "uncertainties": getattr(result.confession, 'uncertainties', []),
+                    "blindSpots": getattr(result.confession, 'blind_spots', []),
+                    "needsReview": getattr(result.confession, 'needs_review', []),
+                    "confidence": getattr(result.confession, 'confidence', 1.0),
+                },
                 "questions": [
                     {
                         "id": q.question_id,
@@ -744,6 +752,11 @@ async def rubric_parse_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                         "standard_answer": q.standard_answer,
                         "source_pages": getattr(q, "source_pages", []),
                         "criteria": [sp.description for sp in q.scoring_points],
+                        # LLM 直接生成的题目级自白（极短）
+                        "confession": q.confession.to_dict() if hasattr(q.confession, 'to_dict') else {
+                            "risk": getattr(q.confession, 'risk', ''),
+                            "uncertainty": getattr(q.confession, 'uncertainty', ''),
+                        },
                         "scoring_points": [
                             {
                                 "point_id": sp.point_id or f"{q.question_id}.{idx + 1}",
@@ -974,6 +987,379 @@ def _preserve_images_in_result(state: BatchGradingGraphState, result: Dict[str, 
     if state.get("student_boundaries"):
         result["student_boundaries"] = state.get("student_boundaries")
     return result
+
+
+async def rubric_self_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
+    """
+    评分标准自动复核节点（基于自白的 LLM 复核）
+    
+    在人工复核之前，基于 LLM 生成的 confession（自白）和原图，
+    自动调用 LLM 复核并修正解析结果中的风险点和不确定项。
+    
+    触发条件：
+    - confession 中有 needs_review 项
+    - confession 中有 risks 或 uncertainties
+    - 整体置信度 < 0.9
+    """
+    batch_id = state["batch_id"]
+    parsed_rubric = state.get("parsed_rubric", {})
+    rubric_images = state.get("rubric_images", [])
+    api_key = state.get("api_key") or os.getenv("LLM_API_KEY") or os.getenv("OPENROUTER_API_KEY")
+    
+    # 获取 confession
+    confession = parsed_rubric.get("confession", {})
+    overall_confidence = confession.get("confidence", 1.0)
+    needs_review = confession.get("needsReview") or confession.get("needs_review") or []
+    risks = confession.get("risks", [])
+    uncertainties = confession.get("uncertainties", [])
+    blind_spots = confession.get("blindSpots") or confession.get("blind_spots") or []
+    
+    # 判断是否需要自动复核
+    should_self_review = (
+        needs_review or 
+        (risks and len(risks) > 0) or 
+        (uncertainties and len(uncertainties) > 0) or
+        overall_confidence < 0.9
+    )
+    
+    if not should_self_review:
+        logger.info(f"[rubric_self_review] skip (no issues): batch_id={batch_id}, confidence={overall_confidence}")
+        return _preserve_images_in_result(state, {
+            "current_stage": "rubric_self_review_skipped",
+            "percentage": 16.0,
+            "timestamps": {
+                **state.get("timestamps", {}),
+                "rubric_self_review_at": datetime.now().isoformat(),
+            },
+        })
+    
+    if not api_key or not rubric_images:
+        logger.info(f"[rubric_self_review] skip (no api_key or images): batch_id={batch_id}")
+        return _preserve_images_in_result(state, {
+            "current_stage": "rubric_self_review_skipped",
+            "percentage": 16.0,
+            "timestamps": {
+                **state.get("timestamps", {}),
+                "rubric_self_review_at": datetime.now().isoformat(),
+            },
+        })
+    
+    logger.info(
+        f"[rubric_self_review] 开始自动复核: batch_id={batch_id}, "
+        f"risks={len(risks)}, uncertainties={len(uncertainties)}, "
+        f"needs_review={len(needs_review)}, confidence={overall_confidence}"
+    )
+    
+    # 广播进度
+    await _broadcast_progress(
+        batch_id,
+        {
+            "type": "agent_update",
+            "agentId": "rubric-self-review",
+            "agentName": "Rubric Self Review",
+            "agentLabel": "Rubric Self Review",
+            "parentNodeId": "rubric_self_review",
+            "status": "running",
+            "progress": 0,
+            "message": "开始自动复核解析结果...",
+        },
+    )
+    
+    try:
+        from src.services.llm_reasoning import LLMReasoningClient
+        
+        client = LLMReasoningClient(api_key=api_key)
+        
+        # 构建复核提示词
+        review_prompt = _build_self_review_prompt(parsed_rubric, confession)
+        
+        # 流式回调
+        async def stream_callback(stream_type: str, chunk: str) -> None:
+            await _broadcast_progress(
+                batch_id,
+                {
+                    "type": "llm_stream_chunk",
+                    "nodeId": "rubric_self_review",
+                    "agentId": "rubric-self-review",
+                    "nodeName": "Rubric Self Review",
+                    "streamType": stream_type,
+                    "chunk": chunk,
+                },
+            )
+        
+        # 调用 LLM 进行复核
+        response = await client.analyze_with_vision(
+            images=rubric_images,
+            prompt=review_prompt,
+            stream_callback=stream_callback,
+        )
+        
+        result_text = response.get("response", "")
+        
+        # 解析复核结果
+        updated_rubric = _parse_self_review_result(result_text, parsed_rubric)
+        
+        # 更新 confession 状态
+        if updated_rubric.get("confession"):
+            updated_rubric["confession"]["self_reviewed"] = True
+            updated_rubric["confession"]["self_review_applied"] = True
+        
+        logger.info(f"[rubric_self_review] 自动复核完成: batch_id={batch_id}")
+        
+        await _broadcast_progress(
+            batch_id,
+            {
+                "type": "agent_update",
+                "agentId": "rubric-self-review",
+                "agentName": "Rubric Self Review",
+                "agentLabel": "Rubric Self Review",
+                "parentNodeId": "rubric_self_review",
+                "status": "completed",
+                "progress": 100,
+                "message": "自动复核完成",
+            },
+        )
+        
+        # 广播复核结果
+        await _broadcast_progress(
+            batch_id,
+            {
+                "type": "rubric_self_reviewed",
+                "batch_id": batch_id,
+                "changes_made": updated_rubric.get("self_review_changes", []),
+                "confidence_before": overall_confidence,
+                "confidence_after": updated_rubric.get("confession", {}).get("confidence", overall_confidence),
+            },
+        )
+        
+        return _preserve_images_in_result(state, {
+            "parsed_rubric": updated_rubric,
+            "current_stage": "rubric_self_review_completed",
+            "percentage": 17.0,
+            "timestamps": {
+                **state.get("timestamps", {}),
+                "rubric_self_review_at": datetime.now().isoformat(),
+            },
+        })
+        
+    except Exception as e:
+        logger.warning(f"[rubric_self_review] 自动复核失败: {e}", exc_info=True)
+        await _broadcast_progress(
+            batch_id,
+            {
+                "type": "agent_update",
+                "agentId": "rubric-self-review",
+                "agentName": "Rubric Self Review",
+                "agentLabel": "Rubric Self Review",
+                "parentNodeId": "rubric_self_review",
+                "status": "failed",
+                "progress": 100,
+                "message": f"自动复核失败: {str(e)}",
+            },
+        )
+        # 失败时不阻塞流程，继续使用原有的 parsed_rubric
+        return _preserve_images_in_result(state, {
+            "current_stage": "rubric_self_review_failed",
+            "percentage": 17.0,
+            "timestamps": {
+                **state.get("timestamps", {}),
+                "rubric_self_review_at": datetime.now().isoformat(),
+            },
+        })
+
+
+def _build_self_review_prompt(parsed_rubric: Dict[str, Any], confession: Dict[str, Any]) -> str:
+    """构建自动复核的提示词"""
+    risks = confession.get("risks", [])
+    uncertainties = confession.get("uncertainties", [])
+    blind_spots = confession.get("blindSpots") or confession.get("blind_spots") or []
+    needs_review = confession.get("needsReview") or confession.get("needs_review") or []
+    
+    # 收集题目级别的风险
+    question_issues = []
+    for q in parsed_rubric.get("questions", []):
+        q_conf = q.get("confession", {})
+        if q_conf.get("risk") or q_conf.get("uncertainty"):
+            question_issues.append({
+                "question_id": q.get("question_id"),
+                "risk": q_conf.get("risk", ""),
+                "uncertainty": q_conf.get("uncertainty", ""),
+            })
+    
+    prompt = f"""你是一位专业的评分标准复核专家。请根据以下自白（confession）信息，重新审视原图并修正解析结果。
+
+## 当前解析结果摘要
+- 总题数: {parsed_rubric.get('total_questions', 0)}
+- 总分: {parsed_rubric.get('total_score', 0)}
+- 置信度: {confession.get('confidence', 1.0):.2f}
+
+## 自白信息（需要复核的问题）
+"""
+    
+    if risks:
+        prompt += f"\n### 风险点\n"
+        for r in risks:
+            prompt += f"- {r}\n"
+    
+    if uncertainties:
+        prompt += f"\n### 不确定点\n"
+        for u in uncertainties:
+            prompt += f"- {u}\n"
+    
+    if blind_spots:
+        prompt += f"\n### 可能遗漏\n"
+        for b in blind_spots:
+            prompt += f"- {b}\n"
+    
+    if needs_review:
+        prompt += f"\n### 建议复核\n"
+        for n in needs_review:
+            prompt += f"- {n}\n"
+    
+    if question_issues:
+        prompt += f"\n### 题目级问题\n"
+        for qi in question_issues:
+            prompt += f"- Q{qi['question_id']}: "
+            if qi['risk']:
+                prompt += f"风险={qi['risk']} "
+            if qi['uncertainty']:
+                prompt += f"不确定={qi['uncertainty']}"
+            prompt += "\n"
+    
+    prompt += """
+## 当前解析的题目结构
+"""
+    for q in parsed_rubric.get("questions", []):
+        prompt += f"\n### 题目 {q.get('question_id')} (满分 {q.get('max_score')} 分)\n"
+        prompt += f"得分点: {len(q.get('scoring_points', []))} 个\n"
+        for sp in q.get("scoring_points", []):
+            prompt += f"  - [{sp.get('point_id')}] {sp.get('description')} ({sp.get('score')}分)\n"
+    
+    prompt += """
+## 任务
+请仔细查看原图，针对上述自白中的问题进行复核：
+1. 确认或修正题目数量
+2. 确认或修正各题分值
+3. 确认或修正得分点
+4. 补充可能遗漏的内容
+
+## 输出格式（仅返回 JSON，不要 markdown 代码块）
+如果需要修正，返回：
+{{
+  "has_changes": true,
+  "changes": ["修正1的描述", "修正2的描述"],
+  "updated_confidence": 0.95,
+  "corrections": [
+    {{
+      "question_id": "修正的题目ID",
+      "field": "max_score|scoring_points|standard_answer",
+      "old_value": "原值",
+      "new_value": "新值",
+      "reason": "修正原因"
+    }}
+  ]
+}}
+
+如果确认无需修正，返回：
+{{
+  "has_changes": false,
+  "confirmation": "确认当前解析正确",
+  "updated_confidence": 0.95
+}}
+
+注意：
+- 只修正有明确问题的内容
+- 不要过度修正或猜测
+- 修正后的置信度应该提高"""
+    
+    return prompt
+
+
+def _parse_self_review_result(result_text: str, original_rubric: Dict[str, Any]) -> Dict[str, Any]:
+    """解析自动复核结果"""
+    import json
+    
+    updated_rubric = copy.deepcopy(original_rubric)
+    
+    try:
+        # 提取 JSON
+        json_text = result_text
+        if "```json" in result_text:
+            json_start = result_text.find("```json") + 7
+            json_end = result_text.find("```", json_start)
+            if json_end > json_start:
+                json_text = result_text[json_start:json_end].strip()
+        elif "```" in result_text:
+            json_start = result_text.find("```") + 3
+            json_end = result_text.find("```", json_start)
+            if json_end > json_start:
+                json_text = result_text[json_start:json_end].strip()
+        
+        if not json_text.startswith("{"):
+            brace_start = json_text.find("{")
+            if brace_start >= 0:
+                json_text = json_text[brace_start:]
+        
+        data = json.loads(json_text)
+        
+        if data.get("has_changes"):
+            # 记录修正
+            updated_rubric["self_review_changes"] = data.get("changes", [])
+            
+            # 应用修正
+            corrections = data.get("corrections", [])
+            for correction in corrections:
+                qid = correction.get("question_id")
+                field = correction.get("field")
+                new_value = correction.get("new_value")
+                
+                if not qid or not field or new_value is None:
+                    continue
+                
+                # 找到对应题目
+                for q in updated_rubric.get("questions", []):
+                    if q.get("question_id") == qid or q.get("id") == qid:
+                        if field == "max_score":
+                            try:
+                                q["max_score"] = float(new_value)
+                            except (ValueError, TypeError):
+                                pass
+                        elif field == "standard_answer":
+                            q["standard_answer"] = str(new_value)
+                        elif field == "scoring_points" and isinstance(new_value, list):
+                            # 更新得分点（更复杂的逻辑）
+                            q["scoring_points"] = new_value
+                        break
+            
+            # 更新置信度
+            if "updated_confidence" in data:
+                if "confession" not in updated_rubric:
+                    updated_rubric["confession"] = {}
+                updated_rubric["confession"]["confidence"] = float(data["updated_confidence"])
+            
+            # 重新计算总分
+            updated_rubric["total_score"] = sum(
+                q.get("max_score", 0) for q in updated_rubric.get("questions", [])
+            )
+            
+            logger.info(f"[rubric_self_review] 应用了 {len(corrections)} 个修正")
+        else:
+            # 无修正，但可能更新置信度
+            updated_rubric["self_review_changes"] = []
+            if "updated_confidence" in data:
+                if "confession" not in updated_rubric:
+                    updated_rubric["confession"] = {}
+                updated_rubric["confession"]["confidence"] = float(data["updated_confidence"])
+            logger.info("[rubric_self_review] 确认解析正确，无需修正")
+            
+    except json.JSONDecodeError as e:
+        logger.warning(f"[rubric_self_review] 无法解析复核结果 JSON: {e}")
+        updated_rubric["self_review_changes"] = []
+    except Exception as e:
+        logger.warning(f"[rubric_self_review] 处理复核结果失败: {e}")
+        updated_rubric["self_review_changes"] = []
+    
+    return updated_rubric
 
 
 async def rubric_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
@@ -2947,7 +3333,13 @@ def _merge_logic_review_fields(
     
     # 1. 更新置信度（逻辑复核决定最终置信度）
     if "confidence" in review_item:
-        merged["confidence"] = review_item["confidence"]
+        new_confidence = _safe_float(review_item["confidence"])
+        merged["confidence"] = new_confidence
+        audit = merged.get("audit") if isinstance(merged.get("audit"), dict) else {}
+        audit = dict(audit)
+        audit["confidence"] = new_confidence
+        audit["updated_at"] = datetime.now().isoformat()
+        merged["audit"] = audit
     if "confidence_reason" in review_item:
         merged["confidence_reason"] = review_item["confidence_reason"]
     if "confidenceReason" in review_item:
@@ -3957,151 +4349,88 @@ def _collect_question_details(student: Dict[str, Any]) -> List[Dict[str, Any]]:
     return details if isinstance(details, list) else []
 
 
-def _extract_confession_questions(student: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Select questions for confession analysis (risk-prioritized, but never empty)."""
-    details = _collect_question_details(student)
-    if not details:
-        return []
-
-    max_questions = int(os.getenv("CONFESSION_MAX_QUESTIONS", "20"))
-    if max_questions <= 0:
-        max_questions = len(details)
-
-    scored: List[tuple] = []
-    for idx, q in enumerate(details):
-        score = 0
-        max_score = q.get("max_score") or q.get("maxScore") or 0
-        awarded = q.get("score") or 0
-        confidence = q.get("confidence")
-        if max_score and awarded >= max_score:
-            score += 2
-        if max_score and awarded == 0:
-            score += 2
-        if confidence is not None:
-            try:
-                conf_val = float(confidence)
-                if conf_val < 0.7:
-                    score += 1
-                if conf_val < 0.5:
-                    score += 2
-            except Exception:
-                pass
-
-        scoring_points = q.get("scoring_point_results") or q.get("scoring_results") or []
-        for sp in scoring_points or []:
-            if not isinstance(sp, dict):
-                continue
-            evidence = (sp.get("evidence") or "").strip()
-            if not evidence or evidence.lower() in ("n/a", "null", "none", "无"):
-                score += 1
-                break
-
-        if q.get("used_alternative_solution"):
-            score += 1
-
-        scored.append((score, idx, q))
-
-    if not scored or all(item[0] == 0 for item in scored):
-        return details[:max_questions]
-
-    scored.sort(key=lambda item: (-item[0], item[1]))
-    ordered = [item[2] for item in scored]
-    return ordered[:max_questions]
+# _extract_confession_questions 函数已删除（批改和审计一体化改造）
 
 
 def _extract_logic_review_questions(student: Dict[str, Any]) -> List[Dict[str, Any]]:
     """
-    Extract questions that require logic review based on confession signals.
-
-    - Only review questions flagged by confession (low confidence / risk signals).
-    - If confession is empty, skip logic review to save tokens.
+    Extract questions that require logic review based on audit signals.
+    
+    改造说明：
+    - 不再依赖 confession 数据（已删除）
+    - 改为基于题目的 audit 信息（risk_flags, needs_review, confidence）
+    - 如果 audit 信息为空，则使用启发式规则
     """
     details = _collect_question_details(student)
 
     if not details:
         return []
 
-    confession_data = student.get("confession") or {}
-    if not confession_data:
-        logger.debug("[_extract_logic_review_questions] no confession, fallback to heuristics")
-
     flagged_question_ids: set = set()
-
-    high_risk = confession_data.get("high_risk_questions") or []
-    if isinstance(high_risk, list):
-        for item in high_risk:
-            if isinstance(item, dict):
-                qid = item.get("question_id") or item.get("questionId")
-                if qid:
-                    flagged_question_ids.add(_normalize_question_id(str(qid)))
-            elif isinstance(item, (str, int)):
-                flagged_question_ids.add(_normalize_question_id(str(item)))
-
-    issues = confession_data.get("issues") or []
-    if isinstance(issues, list):
-        for issue in issues:
-            if isinstance(issue, dict):
-                qid = issue.get("question_id") or issue.get("questionId")
-                if qid:
-                    flagged_question_ids.add(_normalize_question_id(str(qid)))
-
-    potential_errors = confession_data.get("potential_errors") or []
-    if isinstance(potential_errors, list):
-        for err in potential_errors:
-            if isinstance(err, dict):
-                qid = err.get("question_id") or err.get("questionId")
-                if qid:
-                    flagged_question_ids.add(_normalize_question_id(str(qid)))
-
-    warnings = confession_data.get("warnings") or []
-    if isinstance(warnings, list):
-        for warn in warnings:
-            if isinstance(warn, dict):
-                qid = warn.get("question_id") or warn.get("questionId")
-                if qid:
-                    flagged_question_ids.add(_normalize_question_id(str(qid)))
-
     confidence_threshold = float(os.getenv("LOGIC_REVIEW_CONFIDENCE_THRESHOLD", "0.7"))
+
+    # 基于 audit 信息筛选需要复核的题目
     for q in details:
         qid = _normalize_question_id(q.get("question_id") or q.get("questionId") or "")
-        self_critique_conf = q.get("self_critique_confidence")
-        if self_critique_conf is not None:
+        audit = q.get("audit") or {}
+        
+        # 1. 检查是否标记为需要复核
+        if audit.get("needs_review"):
+            flagged_question_ids.add(qid)
+            continue
+        
+        # 2. 检查置信度
+        confidence = audit.get("confidence")
+        if confidence is not None:
             try:
-                if float(self_critique_conf) < confidence_threshold:
+                if float(confidence) < confidence_threshold:
                     flagged_question_ids.add(qid)
+                    continue
             except (ValueError, TypeError):
                 pass
+        
+        # 3. 检查风险标记
+        risk_flags = audit.get("risk_flags") or []
+        high_risk_flags = ["full_marks", "zero_marks", "boundary_score", "low_confidence", "evidence_gap"]
+        if isinstance(risk_flags, list) and any(flag in high_risk_flags for flag in risk_flags):
+            flagged_question_ids.add(qid)
+            continue
+        
+        # 4. 检查不确定点
+        uncertainties = audit.get("uncertainties") or []
+        if isinstance(uncertainties, list) and len(uncertainties) > 0:
+            flagged_question_ids.add(qid)
 
-        self_critique = q.get("self_critique") or ""
-        if isinstance(self_critique, str):
-            uncertainty_keywords = [
-                "???",
-                "??",
-                "????",
-                "????",
-                "????",
-                "uncertain",
-                "may",
-                "might",
-                "review",
-                "unclear",
-            ]
-            if any(kw in self_critique.lower() for kw in uncertainty_keywords):
+    # 如果没有标记任何题目，使用启发式规则
+    if not flagged_question_ids:
+        force_all = os.getenv("LOGIC_REVIEW_FORCE_ALL", "true").lower() in ("1", "true", "yes")
+        if not force_all:
+            logger.debug("[_extract_logic_review_questions] no flagged questions, skipping logic review")
+            return []
+        
+        # 强制全部复核模式：基于启发式规则选择高风险题目
+        for q in details:
+            qid = _normalize_question_id(q.get("question_id") or q.get("questionId") or "")
+            score = q.get("score", 0)
+            max_score = q.get("max_score", 0)
+            confidence = q.get("confidence", 1.0)
+            
+            # 满分或零分
+            if max_score > 0 and (score >= max_score or score == 0):
+                flagged_question_ids.add(qid)
+            # 低置信度
+            elif confidence < confidence_threshold:
                 flagged_question_ids.add(qid)
 
     max_questions = int(os.getenv("LOGIC_REVIEW_MAX_QUESTIONS", "0"))
+    
+    # 如果仍然没有标记任何题目，返回空列表或全部题目
     if not flagged_question_ids:
-        force_all = os.getenv("LOGIC_REVIEW_FORCE_ALL", "true").lower() in (
-            "1",
-            "true",
-            "yes",
-        )
-        if not force_all:
-            return []
         if max_questions > 0:
             return details[:max_questions]
-        return details
+        return details if force_all else []
 
+    # 收集被标记的题目
     review_questions: List[Dict[str, Any]] = []
     for q in details:
         qid = _normalize_question_id(q.get("question_id") or q.get("questionId") or "")
@@ -4113,382 +4442,7 @@ def _extract_logic_review_questions(student: Dict[str, Any]) -> List[Dict[str, A
     return review_questions
 
 
-def _derive_memory_candidates(
-    confession_data: Dict[str, Any],
-    student_key: str,
-) -> List[Dict[str, Any]]:
-    """Derive memory candidates from confession payload when LLM omitted them."""
-    existing = confession_data.get("memory_candidates")
-    if isinstance(existing, list) and existing:
-        return existing
-
-    max_candidates = int(os.getenv("CONFESSION_MEMORY_MAX_CANDIDATES", "6"))
-    candidates: List[Dict[str, Any]] = []
-
-    def _add_candidate(item: Dict[str, Any], memory_type: str, pattern: str, lesson: str) -> None:
-        if not pattern or len(candidates) >= max_candidates:
-            return
-        issue_id = item.get("issue_id") or f"{student_key}-{len(candidates)+1}"
-        candidates.append(
-            {
-                "issue_id": issue_id,
-                "memory_type": memory_type,
-                "memory_pattern": pattern,
-                "memory_lesson": lesson,
-            }
-        )
-
-    for err in confession_data.get("potential_errors", []) or []:
-        if not isinstance(err, dict):
-            continue
-        likelihood = err.get("likelihood", "medium")
-        if likelihood not in ("high", "medium"):
-            continue
-        pattern = f"{err.get('error_type', 'error')}: {err.get('description', '')}".strip()
-        lesson = err.get("lesson") or "高风险错误模式需要优先复核"
-        _add_candidate(err, "error_pattern", pattern, lesson)
-
-    for gap in confession_data.get("evidence_gaps", []) or []:
-        if not isinstance(gap, dict):
-            continue
-        severity = gap.get("severity", "medium")
-        if severity not in ("high", "critical"):
-            continue
-        pattern = f"evidence_gap: {gap.get('gap', '')}".strip()
-        lesson = gap.get("lesson") or "证据不足时应降低置信度并标记复核"
-        _add_candidate(gap, "risk_signal", pattern, lesson)
-
-    for anomaly in confession_data.get("score_anomalies", []) or []:
-        if not isinstance(anomaly, dict):
-            continue
-        pattern = f"score_anomaly: {anomaly.get('anomaly_type', '')}".strip()
-        lesson = anomaly.get("lesson") or anomaly.get("explanation") or "异常分数需要二次核验"
-        _add_candidate(anomaly, "calibration", pattern, lesson)
-
-    return candidates
-
-
-def _build_confession_prompt(
-    student: Dict[str, Any],
-    question_details: List[Dict[str, Any]],
-    rubric_map: Dict[str, Dict[str, Any]],
-    memory_context: Optional[Dict[str, Any]] = None,
-) -> str:
-    """
-    构建自白 (Confession) LLM 提示词
-
-    自白的核心功能：风险披露 / 透明度报告
-    - 不具备批改结果的更正能力
-    - 只允许说假设、信息缺口、不确定点、可能出错点
-    - 禁止编造"我查过/我看到了"之类证据
-    - **集成记忆系统**：基于历史经验进行风险分析
-    """
-    student_key = student.get("student_key") or student.get("student_name") or "Unknown"
-
-    lines = [
-        "# 角色：资深批改质量审计师 (Confession / Risk Disclosure)",
-        "",
-        "## 核心任务",
-        "你是一位经验丰富的质量审计师，拥有**共享记忆**能力，能够基于历史批改经验进行风险分析。",
-        "你的任务是**披露批改风险**，并结合历史教训提出警示。",
-        "你必须对评分目标/约束进行逐条合规自查（confession），说明是否满足与原因。",
-        "交代：'我凭什么这么说 / 我哪里不确定 / 我可能在瞎猜 / 历史上类似情况如何'",
-        "",
-        "## 严格约束",
-        "1. **禁止更正**：你不能修改任何评分结果，只能披露风险",
-        '2. **禁止编造证据**：禁止说"我查过/我看到了/根据图片..."等',
-        "3. **只允许披露**：假设、信息缺口、不确定点、可能出错点、置信度",
-        "4. **诚实校准**：如果不确定，必须明确说明不确定程度",
-        "5. **具体可核验**：每条风险必须绑定 question_id/point_id，并给出可复核线索",
-        "6. **针对性**：禁止泛泛而谈；每条结论必须指向具体题目与证据缺口",
-        "7. **可执行复核**：为每个潜在错误给出可操作的核验步骤/检查项",
-        "8. **概率说明**：对潜在错误标注发生可能性，并说明依据",
-        "",
-        "## 输出质量要求",
-        "- 每条 issue/风险必须绑定 question_id、point_id（如有）以及 page_index/pageIndices（如有）",
-        "- 必须给出可复核线索（证据文本/位置/评分点/标准答案对照）",
-        "- 至少给出 2 条最关键风险（若确无风险，需说明原因）",
-        "- review_actions 必须包含可执行动作与优先级（high/medium/low）",
-        "",
-        "## 需要披露的内容类型",
-        "- **目标合规自查 (objective_checks)**：对评分目标/约束逐条说明是否达成",
-        "- **假设清单 (assumptions)**：批改时做了哪些隐含假设？",
-        "- **信息缺口 (information_gaps)**：缺少什么信息导致判断困难？",
-        "- **证据缺口 (evidence_gaps)**：哪些评分点缺乏充分证据？",
-        "- **不确定点 (uncertainties)**：哪些判断置信度低？为什么？",
-        "- **可能出错点 (potential_errors)**：哪些地方最可能是幻觉或误判？",
-        "- **复核建议 (review_actions)**：需要人工复核的具体动作与优先级",
-        "- **记忆候选 (memory_candidates)**：可沉淀为长期经验的模式",
-        "- **整体置信度 (overall_confidence)**：0.0-1.0，校准后的置信度",
-        "",
-        "## 高风险信号识别（重点关注）",
-        "",
-        "### 1. 评分异常信号",
-        "- **满分/零分风险**：满分或零分的评分需要额外审视",
-        "- **得分与证据不匹配**：给高分但证据模糊，或扣分但理由不充分",
-        "- **边界分数**：刚好踩线的分数（如 59/60 分）需要特别说明",
-        "- **置信度与得分矛盾**：低置信度但给了明确分数",
-        "",
-        "### 2. 证据质量信号",
-        "- **空证据/模糊证据**：evidence 字段为空或过于笼统",
-        "- **位置信息缺失**：没有明确指出证据在图片中的位置",
-        "- **自相矛盾**：feedback 和 evidence 内容冲突",
-        "- **公式识别风险**：数学公式可能被误读",
-        "",
-        "### 3. 题型特定风险",
-        "- **开放题风险**：主观评分依赖判断，容易有偏差",
-        "- **多步骤题风险**：错误传递可能导致重复扣分",
-        "- **另类解法风险**：学生可能使用非标准但正确的解法",
-        "- **跨页题风险**：信息分散在多页，可能遗漏内容",
-        "",
-        "### 4. 系统性风险",
-        "- **字迹识别**：字迹潦草可能导致误读",
-        "- **图片质量**：模糊、倾斜、光线问题",
-        "- **评分标准理解**：可能误解了某个得分点的含义",
-        "",
-        f"## 学生标识: {student_key}",
-        "",
-        "## 批改摘要（供你做风险分析）",
-    ]
-
-    # 统计风险指标
-    total_questions = len(question_details)
-    high_score_count = 0  # 满分题数
-    zero_score_count = 0  # 零分题数
-    low_confidence_count = 0  # 低置信度题数
-    empty_evidence_count = 0  # 空证据题数
-
-    for idx, question in enumerate(question_details[:20]):
-        qid = _normalize_question_id(
-            question.get("question_id") or question.get("questionId")
-        ) or str(idx + 1)
-        rubric = rubric_map.get(qid, {})
-        score = question.get("score", 0)
-        max_score = question.get("max_score", rubric.get("max_score", 0))
-        confidence = question.get("confidence", 0.0)
-        student_answer = _trim_text(question.get("student_answer", ""), 300)
-        feedback = _trim_text(question.get("feedback", ""), 200)
-        page_indices = (
-            question.get("page_indices")
-            or question.get("pageIndices")
-            or question.get("page_index")
-            or question.get("pageIndex")
-        )
-        if isinstance(page_indices, (int, float)):
-            page_indices = [int(page_indices)]
-        if not isinstance(page_indices, list):
-            page_indices = []
-
-        # 统计风险指标
-        if max_score > 0 and score >= max_score:
-            high_score_count += 1
-        if score == 0 and max_score > 0:
-            zero_score_count += 1
-        if confidence < 0.7:
-            low_confidence_count += 1
-
-        # 标记可能的风险
-        risk_flags = []
-        if max_score > 0 and score >= max_score:
-            risk_flags.append("⚠️满分")
-        if score == 0 and max_score > 0:
-            risk_flags.append("⚠️零分")
-        if confidence < 0.7:
-            risk_flags.append(f"⚠️低置信度({confidence:.2f})")
-
-        risk_str = " ".join(risk_flags) if risk_flags else ""
-        lines.append(f"- Q{qid}: {score}/{max_score} (置信度: {confidence:.2f}) {risk_str}")
-        if page_indices:
-            lines.append(f"  页面: {page_indices}")
-        if student_answer:
-            lines.append(f"  学生答案: {student_answer}")
-        if feedback:
-            lines.append(f"  反馈: {feedback}")
-
-        scoring_points = (
-            question.get("scoring_point_results") or question.get("scoring_results") or []
-        )
-        if scoring_points:
-            for sp in scoring_points[:4]:
-                if not isinstance(sp, dict):
-                    continue
-                point_id = sp.get("point_id") or sp.get("pointId") or ""
-                awarded = sp.get("awarded", sp.get("score", 0))
-                evidence = _trim_text(sp.get("evidence", ""), 100)
-                rubric_ref = sp.get("rubric_reference") or sp.get("rubricReference") or ""
-
-                # 检查证据质量
-                evidence_flag = ""
-                if not evidence or evidence.strip() in ["", "无", "N/A", "null", "None"]:
-                    evidence_flag = " ⚠️空证据"
-                    empty_evidence_count += 1
-
-                lines.append(
-                    f"    - {point_id}: {awarded}分, 证据: {evidence or '无'}{evidence_flag}"
-                    f"{' 引用: ' + rubric_ref if rubric_ref else ''}"
-                )
-        lines.append("")
-
-    # 添加风险摘要
-    lines.append("## 批改风险摘要")
-    lines.append(f"- 总题数: {total_questions}")
-    lines.append(
-        f"- 满分题数: {high_score_count} {'(需要审视)' if high_score_count > total_questions * 0.5 else ''}"
-    )
-    lines.append(
-        f"- 零分题数: {zero_score_count} {'(需要审视)' if zero_score_count > total_questions * 0.3 else ''}"
-    )
-    lines.append(
-        f"- 低置信度题数: {low_confidence_count} {'(重点关注)' if low_confidence_count > 0 else ''}"
-    )
-    lines.append(
-        f"- 空证据题数: {empty_evidence_count} {'(必须披露)' if empty_evidence_count > 0 else ''}"
-    )
-    lines.append("")
-
-    # 添加记忆上下文（如果有）
-    if memory_context:
-        lines.append("## 共享记忆：历史批改经验")
-        lines.append("以下信息来自历史批改数据的积累，请据此进行更准确的风险分析：")
-        lines.append("")
-
-        # 历史错误模式
-        error_patterns = memory_context.get("historical_error_patterns", [])
-        if error_patterns:
-            lines.append("### 历史常见错误模式")
-            for i, pattern in enumerate(error_patterns[:5], 1):
-                lines.append(
-                    f"{i}. **{pattern['pattern']}** (出现 {pattern['occurrence_count']} 次, "
-                    f"可信度 {pattern['confidence']:.0%})"
-                )
-                lines.append(f"   教训: {pattern['lesson']}")
-            lines.append("")
-
-        # 修正历史
-        corrections = memory_context.get("correction_history", [])
-        if corrections:
-            lines.append("### 历史重大修正案例")
-            lines.append("以下是历史上被大幅修正的评分案例，**务必引以为戒**：")
-            for i, corr in enumerate(corrections[:3], 1):
-                lines.append(f"{i}. {corr['pattern']}")
-                if corr.get("context") and corr["context"].get("difference"):
-                    lines.append(f"   分数差距: {abs(corr['context']['difference'])} 分")
-            lines.append("")
-
-        # 置信度校准
-        calibrations = memory_context.get("calibration_suggestions", {})
-        if calibrations:
-            lines.append("### 置信度校准建议")
-            lines.append("基于历史数据，你的置信度预测可能需要调整：")
-            for qt, suggestion in calibrations.items():
-                if suggestion.get("has_data"):
-                    adj = suggestion["adjustment"]
-                    lines.append(
-                        f"- **{qt}**: 历史数据显示置信度{'偏高' if adj < 0 else '偏低'} "
-                        f"{abs(adj):.2f}，建议{'下调' if adj < 0 else '上调'}"
-                    )
-            lines.append("")
-
-        # 当前批次模式
-        batch_patterns = memory_context.get("batch_patterns", {})
-        if batch_patterns.get("error_patterns"):
-            lines.append("### 当前批次已发现的模式")
-            lines.append("在当前批次中已经发现以下模式，请注意是否存在相同问题：")
-            for pattern, count in list(batch_patterns["error_patterns"].items())[:5]:
-                lines.append(f"- {pattern}: 已出现 {count} 次")
-            lines.append("")
-
-        # 记忆系统统计
-        stats = memory_context.get("memory_stats", {})
-        if stats:
-            lines.append(f"### 记忆系统状态")
-            lines.append(f"- 总记忆条目: {stats.get('total_memories', 0)}")
-            lines.append(f"- 错误模式记录: {stats.get('error_pattern_count', 0)}")
-            lines.append(f"- 修正历史记录: {stats.get('correction_count', 0)}")
-            lines.append("")
-
-    schema_hint = {
-        "student_key": student_key,
-        "confession": {
-            "objective_checks": [
-                {
-                    "objective": "按评分标准给分、避免幻觉",
-                    "status": "complied | partial | violated | unknown",
-                    "notes": "是否满足及原因",
-                }
-            ],
-            "assumptions": [
-                {"question_id": "1", "assumption": "假设描述", "impact": "如果假设错误的影响"}
-            ],
-            "information_gaps": [
-                {"question_id": "1", "gap": "缺少的信息", "needed_for": "这个信息用于什么判断"}
-            ],
-            "evidence_gaps": [
-                {
-                    "question_id": "1",
-                    "point_id": "1.1",
-                    "gap": "证据不足描述",
-                    "severity": "high | medium | low",
-                }
-            ],
-            "uncertainties": [
-                {
-                    "question_id": "1",
-                    "uncertainty": "不确定点描述",
-                    "confidence": 0.0,
-                    "reason": "为什么不确定",
-                }
-            ],
-            "potential_errors": [
-                {
-                    "question_id": "1",
-                    "error_type": "hallucination | misread | logic_leap | evidence_mismatch | formula_error | alternative_solution",
-                    "description": "可能错误描述",
-                    "likelihood": "low | medium | high",
-                }
-            ],
-            "score_anomalies": [
-                {
-                    "question_id": "1",
-                    "anomaly_type": "full_marks | zero_marks | boundary_score | confidence_mismatch",
-                    "explanation": "为什么这个分数可能有问题",
-                }
-            ],
-            "review_actions": [
-                {
-                    "question_id": "1",
-                    "action": "建议人工复核某个评分点",
-                    "priority": "high | medium | low",
-                    "why": "原因说明",
-                }
-            ],
-            "memory_candidates": [
-                {
-                    "issue_id": "issue_1",
-                    "memory_type": "error_pattern | calibration | scoring_insight | risk_signal",
-                    "memory_pattern": "可复用的错误模式/经验",
-                    "memory_lesson": "对应的教训",
-                }
-            ],
-            "overall_confidence": 0.0,
-            "calibration_note": "置信度校准说明：考虑了哪些因素",
-            "high_risk_questions": ["1", "2"],
-            "summary": "自白总结：我可能在哪里出错了...",
-        },
-    }
-
-    lines.append("")
-    lines.append("## 输出要求")
-    lines.append("请仅输出 JSON，不要添加额外说明或 markdown。")
-    lines.append("记住：你是在做'风险说明书'，不是审计报告。")
-    lines.append("**重点**：务必披露所有满分、零分、低置信度、空证据的题目！")
-    lines.append("每条 issues / uncertainties / potential_errors / evidence_gaps 必须包含 question_id，能对应到 scoring_point 的请附 point_id，并引用具体证据或学生作答片段。")
-    lines.append("summary 必须点名 2-3 个最重要的题号与风险类型，避免泛泛而谈。")
-    lines.append("必须包含 objective_checks；如存在高风险/证据缺口，给出 review_actions 与 memory_candidates。")
-    lines.append("")
-    lines.append("输出 JSON 模板：")
-    lines.append(json.dumps(schema_hint, ensure_ascii=False, indent=2))
-    return "\n".join(lines)
+# _build_confession_prompt 函数已删除（批改和审计一体化改造）
 
 
 def _extract_json_from_response(text: str) -> str:
@@ -4539,535 +4493,8 @@ def _extract_json_from_response(text: str) -> str:
     return text.strip()
 
 
-async def confession_node(state: BatchGradingGraphState) -> Dict[str, Any]:
-    """
-    忏悔/自白节点 (Confession Node) - 集成共享记忆系统
-
-    每个学生进行一次 LLM 自白/忏悔，审查批改结果：
-    - 低置信度评分点
-    - 证据不足的评分
-    - 可能的识别错误
-    - 需要人工复核的题目
-    - **新增**：基于历史记忆进行风险分析
-    - **新增**：将发现的模式记录到记忆系统
-
-    工作流位置：grade_batch → confession → logic_review
-    """
-    batch_id = state["batch_id"]
-    student_results_raw = state.get("student_results", []) or []
-    
-    # 🔧 去重：由于 Send 并行任务会多次触发后续节点，student_results 可能包含重复
-    # 使用 student_key 去重，保留最后一个（最新的）结果
-    seen_keys = set()
-    student_results = []
-    for result in reversed(student_results_raw):
-        student_key = result.get("student_key") or result.get("student_name") or f"unknown_{len(seen_keys)}"
-        if student_key not in seen_keys:
-            seen_keys.add(student_key)
-            student_results.append(result)
-    student_results = list(reversed(student_results))  # 恢复原顺序
-    
-    if len(student_results) != len(student_results_raw):
-        logger.info(
-            f"[confession] 去重: {len(student_results_raw)} → {len(student_results)} 学生 "
-            f"(removed duplicates: {[r.get('student_key') for r in student_results_raw if r.get('student_key') not in {s.get('student_key') for s in student_results}]})"
-        )
-    
-    # 🔍 DEBUG: 关键日志 - 记录 confession_node 入口
-    logger.warning(
-        f"[confession] 🔍 DEBUG: 进入 confession_node, batch_id={batch_id}, "
-        f"student_results_count={len(student_results)}, "
-        f"state_keys={sorted(list(state.keys()))}"
-    )
-    parsed_rubric = state.get("parsed_rubric", {}) or {}
-    api_key = state.get("api_key") or os.getenv("LLM_API_KEY") or os.getenv("OPENROUTER_API_KEY")
-    grading_mode = _resolve_grading_mode(state.get("inputs", {}), parsed_rubric)
-
-    def _log_confession_done(reason: str, count: int) -> None:
-        message = (
-            f"[confession] OK completed ({reason}): batch_id={batch_id}, students={count}"
-        )
-        logger.info(message)
-        logger.info(f"[confession_done] batch_id={batch_id}, students={count}, reason={reason}")
-        workflow_logger.info(message)
-        workflow_logger.info(f"[confession_done] batch_id={batch_id}, students={count}")
-
-    async def _persist_batch_memory(stage: str) -> None:
-        try:
-            saved = await memory_service.save_batch_memory_async(batch_id)
-            if saved:
-                logger.info(
-                    f"[confession] batch memory persisted: batch_id={batch_id}, stage={stage}"
-                )
-        except Exception as exc:
-            logger.warning(
-                f"[confession] batch memory persist failed: batch_id={batch_id}, stage={stage}, error={exc}"
-            )
-
-    async def _apply_confession_memory(
-        confession_payload: Dict[str, Any],
-        student_key: str,
-    ) -> None:
-        if not confession_payload or not isinstance(confession_payload, dict):
-            return
-        if not confession_payload.get("memory_candidates"):
-            confession_payload["memory_candidates"] = _derive_memory_candidates(
-                confession_payload, student_key
-            )
-        try:
-            from src.services.grading_confession import update_memory_from_confession
-
-            async def _run_update() -> Dict[str, Any]:
-                return await update_memory_from_confession(
-                    confession=confession_payload,
-                    memory_service=memory_service,
-                    batch_id=batch_id,
-                    subject=subject,
-                )
-
-            timeout_raw = os.getenv("CONFESSION_MEMORY_TIMEOUT_SECONDS", "2.5")
-            try:
-                timeout_s = float(timeout_raw)
-            except ValueError:
-                timeout_s = 2.5
-            if timeout_s <= 0:
-                timeout_s = 2.5
-
-            background_raw = os.getenv("CONFESSION_MEMORY_BACKGROUND", "1")
-            allow_background = background_raw.lower() not in {"0", "false", "no"}
-
-            started_at = time.monotonic()
-            try:
-                if timeout_s > 0:
-                    updates = await asyncio.wait_for(_run_update(), timeout=timeout_s)
-                else:
-                    updates = await _run_update()
-                duration_s = time.monotonic() - started_at
-                confession_payload["memory_updates"] = updates.get("memory_updates", [])
-                confession_payload["memory_update_summary"] = {
-                    "created": updates.get("total_created", 0),
-                    "confirmed": updates.get("total_confirmed", 0),
-                    "duration_s": round(duration_s, 2),
-                }
-            except asyncio.TimeoutError:
-                duration_s = time.monotonic() - started_at
-                logger.warning(
-                    f"[confession] memory update timeout student={student_key} "
-                    f"after {duration_s:.2f}s (deferred)"
-                )
-                confession_payload["memory_update_summary"] = {
-                    "created": 0,
-                    "confirmed": 0,
-                    "status": "deferred",
-                    "duration_s": round(duration_s, 2),
-                }
-                if allow_background:
-                    async def _background_update() -> None:
-                        try:
-                            await _run_update()
-                            logger.info(
-                                f"[confession] memory update completed in background "
-                                f"student={student_key}"
-                            )
-                        except Exception as bg_exc:
-                            logger.warning(
-                                f"[confession] background memory update failed "
-                                f"student={student_key}: {bg_exc}"
-                            )
-
-                    asyncio.create_task(_background_update())
-        except Exception as exc:
-            logger.warning(
-                f"[confession] memory update failed student={student_key}: {exc}"
-            )
-
-    def _build_confession_skip_results(reason: str) -> List[Dict[str, Any]]:
-        if not student_results:
-            return []
-        now_ts = datetime.now().isoformat()
-        skipped_results: List[Dict[str, Any]] = []
-        for student in student_results:
-            updated = dict(student)
-            if not updated.get("confession"):
-                updated["confession"] = {
-                    "summary": f"confession skipped ({reason})",
-                    "issues": [],
-                    "warnings": [],
-                    "highRiskQuestions": [],
-                    "overallStatus": "skipped",
-                    "overallConfidence": None,
-                    "generated_at": now_ts,
-                    "source": "skip",
-                    "skip_reason": reason,
-                }
-            skipped_results.append(updated)
-        return skipped_results
-
-    # 获取科目（用于记忆隔离）
-    # 科目来源优先级：state["subject"] > inputs["subject"] > "general"
-    subject = state.get("subject") or state.get("inputs", {}).get("subject", "general")
-
-    # 初始化记忆服务
-    from src.services.grading_memory import get_memory_service, MemoryType, MemoryImportance
-
-    memory_service = get_memory_service()
-
-    # 创建批次记忆（按科目隔离）
-    memory_service.create_batch_memory(batch_id, subject=subject)
-
-    logger.info(f"[confession] 批次记忆已创建: batch_id={batch_id}, subject={subject}")
-
-    # 辅助模式跳过自白
-    if grading_mode.startswith("assist"):
-        logger.info(f"[confession] skip (assist mode): batch_id={batch_id}")
-        _log_confession_done("assist mode", len(student_results))
-        skipped_results = _build_confession_skip_results("assist mode")
-        await _persist_batch_memory("assist")
-        return {
-            "confessed_results": skipped_results,
-            "student_results": skipped_results,
-            "current_stage": "confession_completed",
-            "percentage": 80.0,
-            "timestamps": {
-                **state.get("timestamps", {}),
-                "confession_at": datetime.now().isoformat(),
-            },
-        }
-
-    if not student_results:
-        _log_confession_done("no student_results", 0)
-        await _persist_batch_memory("no student_results")
-        return {
-            "confessed_results": [],
-            "student_results": [],
-            "current_stage": "confession_completed",
-            "percentage": 80.0,
-            "timestamps": {
-                **state.get("timestamps", {}),
-                "confession_at": datetime.now().isoformat(),
-            },
-        }
-
-    rubric_map = _build_rubric_question_map(parsed_rubric)
-
-    if not api_key:
-        logger.warning(f"[confession] no API key, using rule-based report: batch_id={batch_id}")
-        # 使用基于规则的自白
-        from src.services.grading_confession import generate_confession
-
-        updated_results = []
-        for student in student_results:
-            updated = dict(student)
-            student_key = (
-                updated.get("student_key")
-                or updated.get("student_name")
-                or updated.get("studentName")
-                or "Unknown"
-            )
-            question_details = _extract_confession_questions(student)
-            if question_details:
-                # 为每个题目生成规则自白
-                for q in question_details:
-                    rule_report = generate_confession(
-                        evidence={},
-                        score_result={"question_details": [q]},
-                        page_index=0,
-                    )
-                    if not updated.get("confession"):
-                        updated["confession"] = rule_report
-                    else:
-                        updated["confession"]["issues"].extend(rule_report.get("issues", []))
-                        updated["confession"]["warnings"].extend(rule_report.get("warnings", []))
-            if updated.get("confession"):
-                await _apply_confession_memory(updated["confession"], student_key)
-            updated_results.append(updated)
-        _log_confession_done("rule-based", len(updated_results))
-        await _persist_batch_memory("rule-based")
-        return {
-            "confessed_results": updated_results,
-            "student_results": updated_results,
-            "current_stage": "confession_completed",
-            "percentage": 80.0,
-            "timestamps": {
-                **state.get("timestamps", {}),
-                "confession_at": datetime.now().isoformat(),
-            },
-        }
-
-    from src.services.llm_reasoning import LLMReasoningClient
-
-    reasoning_client = LLMReasoningClient(api_key=api_key, rubric_registry=None)
-    max_workers = int(os.getenv("CONFESSION_MAX_WORKERS", "3"))
-
-    updated_results: List[Optional[Dict[str, Any]]] = [None] * len(student_results)
-
-    async def report_student(payload: Dict[str, Any]) -> Dict[str, Any]:
-        index = payload["index"]
-        student = payload["student"]
-        student_key = (
-            student.get("student_key") or student.get("student_name") or f"Student {index + 1}"
-        )
-        agent_id = f"report-worker-{index}"
-
-        try:
-            await _broadcast_progress(
-                batch_id,
-                {
-                    "type": "agent_update",
-                    "agentId": agent_id,
-                    "agentName": student_key,
-                    "agentLabel": student_key,
-                    "parentNodeId": "confession",
-                    "status": "running",
-                    "progress": 0,
-                    "message": "Generating confession...",
-                },
-            )
-
-            question_details = _extract_confession_questions(student)
-            if not question_details:
-                updated_student = dict(student)
-                updated_student["confession"] = {
-                    "overall_status": "ok",
-                    "issues": [],
-                    "warnings": [],
-                    "summary": "无题目需要审查",
-                    "generated_at": datetime.now().isoformat(),
-                }
-                await _broadcast_progress(
-                    batch_id,
-                {
-                    "type": "agent_update",
-                    "agentId": agent_id,
-                    "agentLabel": student_key,
-                    "parentNodeId": "confession",
-                    "status": "completed",
-                    "progress": 100,
-                    "message": "Confession skipped (no questions)",
-                },
-                )
-                return {"index": index, "result": updated_student}
-
-            # 获取记忆上下文（按科目隔离）
-            memory_context = memory_service.generate_confession_context(
-                question_details=question_details,
-                batch_id=batch_id,
-                subject=subject,  # 科目隔离：确保不同科目的批改经验不会混用
-            )
-
-            # 记录批次内的置信度分布
-            for q in question_details:
-                qt = q.get("question_type") or "unknown"
-                conf = q.get("confidence", 0.7)
-                memory_service.record_batch_confidence(batch_id, qt, conf)
-
-                # 检测并记录风险信号
-                score = q.get("score", 0)
-                max_score = q.get("max_score", 0)
-                if max_score > 0 and score >= max_score:
-                    memory_service.record_batch_risk_signal(
-                        batch_id, "满分风险", q.get("question_id", "?"), "medium"
-                    )
-                if score == 0 and max_score > 0:
-                    memory_service.record_batch_risk_signal(
-                        batch_id, "零分风险", q.get("question_id", "?"), "medium"
-                    )
-                if conf < 0.5:
-                    memory_service.record_batch_risk_signal(
-                        batch_id, "极低置信度", q.get("question_id", "?"), "high"
-                    )
-
-            prompt = _build_confession_prompt(
-                student, question_details, rubric_map, memory_context
-            )
-
-            response_text = ""
-            try:
-                async for chunk in reasoning_client._call_text_api_stream(prompt):
-                    output_text, thinking_text = split_thinking_content(chunk)
-                    if output_text:
-                        response_text += output_text
-                        await _broadcast_progress(
-                            batch_id,
-                            {
-                                "type": "llm_stream_chunk",
-                                "nodeId": "confession",
-                                "nodeName": "Confession",
-                                "agentId": agent_id,
-                                "agentLabel": student_key,
-                                "streamType": "output",
-                                "chunk": output_text,
-                            },
-                        )
-            except Exception as exc:
-                logger.warning(f"[confession] LLM failed student={student_key}: {exc}")
-                response_text = ""
-
-            confession_data = None
-            if response_text:
-                try:
-                    json_text = _extract_json_from_response(response_text)
-                    payload = json.loads(json_text)
-                    
-                    # 输出完整 confession JSON（用于调试）
-                    logger.info(f"🔍 Confession 完整JSON (学生={student_key}):\n{json.dumps(payload, ensure_ascii=False, indent=2)}")
-                    
-                    # LLM ???? confession ? confession ??
-                    confession_data = (
-                        payload.get("confession") or payload
-                    )
-                    # ???????snake_case -> camelCase ???
-                    if isinstance(confession_data, dict):
-                        if (
-                            "overall_confidence" in confession_data
-                            and "overallStatus" not in confession_data
-                        ):
-                            conf = confession_data.get("overall_confidence", 0)
-                            if conf >= 0.8:
-                                confession_data["overallStatus"] = "ok"
-                            elif conf >= 0.5:
-                                confession_data["overallStatus"] = "caution"
-                            else:
-                                confession_data["overallStatus"] = "needs_review"
-                        if "high_risk_questions" in confession_data:
-                            hrq = confession_data["high_risk_questions"]
-                            if isinstance(hrq, list) and hrq and isinstance(hrq[0], str):
-                                confession_data["highRiskQuestions"] = [
-                                    {"questionId": q, "description": ""} for q in hrq
-                                ]
-                            else:
-                                confession_data["highRiskQuestions"] = hrq
-                        if "overall_confidence" in confession_data:
-                            confession_data["overallConfidence"] = confession_data["overall_confidence"]
-                except Exception as exc:
-                    logger.warning(f"[confession] parse failed student={student_key}: {exc}")
-
-            updated_student = dict(student)
-            if confession_data:
-                confession_data["generated_at"] = datetime.now().isoformat()
-                confession_data["source"] = "llm"
-                confession_data["memory_context_used"] = bool(memory_context)
-                updated_student["confession"] = confession_data
-
-                # ???????????????
-                try:
-                    potential_errors = confession_data.get("potential_errors", [])
-                    for err in potential_errors:
-                        if isinstance(err, dict):
-                            error_type = err.get("error_type", "unknown")
-                            likelihood = err.get("likelihood", "medium")
-                            if likelihood in ["high", "medium"]:
-                                memory_service.record_batch_error_pattern(
-                                    batch_id=batch_id,
-                                    pattern=f"{error_type}: {err.get('description', '')}",
-                                    question_id=err.get("question_id", "?"),
-                                )
-
-                    evidence_gaps = confession_data.get("evidence_gaps", [])
-                    for gap in evidence_gaps:
-                        if isinstance(gap, dict):
-                            severity = gap.get("severity", "medium")
-                            if severity in ["high", "critical"]:
-                                memory_service.record_batch_error_pattern(
-                                    batch_id=batch_id,
-                                    pattern=f"????: {gap.get('gap', '')}",
-                                    question_id=gap.get("question_id", "?"),
-                                )
-
-                    high_risk = confession_data.get("high_risk_questions", [])
-                    for hrq in high_risk:
-                        qid = hrq if isinstance(hrq, str) else hrq.get("questionId", "?")
-                        memory_service.record_batch_risk_signal(
-                            batch_id=batch_id,
-                            signal="???????",
-                            question_id=qid,
-                            severity="high",
-                        )
-                except Exception as mem_exc:
-                    logger.warning(f"[confession] ??????: {mem_exc}")
-                await _apply_confession_memory(confession_data, student_key)
-            else:
-                # ???????
-                from src.services.grading_confession import generate_confession
-
-                fallback_report = generate_confession(
-                    evidence={},
-                    score_result={"question_details": question_details},
-                    page_index=0,
-                )
-                fallback_report["source"] = "rule_fallback"
-                updated_student["confession"] = fallback_report
-                await _apply_confession_memory(fallback_report, student_key)
-
-            await _broadcast_progress(
-                batch_id,
-                {
-                    "type": "agent_update",
-                    "agentId": agent_id,
-                    "agentLabel": student_key,
-                    "parentNodeId": "confession",
-                    "status": "completed",
-                    "progress": 100,
-                    "message": "Confession generated",
-                    "output": {
-                        "confession": updated_student.get("confession"),
-                    },
-                },
-            )
-            return {"index": index, "result": updated_student}
-        except Exception as exc:
-            logger.warning(f"[confession] worker failed student={student_key}: {exc}")
-            return {"index": index, "result": dict(student)}
-
-    report_runner = RunnableLambda(report_student)
-    inputs = [{"index": idx, "student": student} for idx, student in enumerate(student_results)]
-    config = RunnableConfig(max_concurrency=max_workers) if max_workers > 0 else RunnableConfig()
-    results = await report_runner.abatch(inputs, config=config)
-    for result in results:
-        if not result:
-            continue
-        updated_results[result["index"]] = result["result"]
-
-    final_results = [r if r else student_results[i] for i, r in enumerate(updated_results)]
-
-    logger.info(f"[confession] completed for {len(final_results)} students: batch_id={batch_id}")
-    _log_confession_done("llm", len(final_results))
-
-    # 保存记忆到持久化存储
-    try:
-        save_async_raw = os.getenv("CONFESSION_MEMORY_SAVE_ASYNC", "1")
-        save_async = save_async_raw.lower() not in {"0", "false", "no"}
-        if save_async:
-            async def _background_save() -> None:
-                try:
-                    await asyncio.to_thread(memory_service.save_to_storage)
-                    logger.info(
-                        f"[confession] memory save completed (background): batch_id={batch_id}"
-                    )
-                except Exception as bg_exc:
-                    logger.warning(
-                        f"[confession] background memory save failed: batch_id={batch_id}, error={bg_exc}"
-                    )
-    
-            asyncio.create_task(_background_save())
-        else:
-            memory_service.save_to_storage()
-            logger.info(f"[confession] memory saved (sync): batch_id={batch_id}")
-        await _persist_batch_memory("llm")
-        logger.info(f"[confession] ??????????? batch_id={batch_id}")
-    except Exception as e:
-        logger.warning(f"[confession] ?????????: {e}")
-
-    return {
-        "confessed_results": final_results,
-        "student_results": final_results,
-        "current_stage": "confession_completed",
-        "percentage": 80.0,
-        "timestamps": {
-            **state.get("timestamps", {}),
-            "confession_at": datetime.now().isoformat(),
-        },
-    }
+# confession_node 函数已删除（批改和审计一体化改造）
+# 原 confession 节点的功能已合并到 grade_batch 节点中
 
 
 def _build_logic_review_prompt(
@@ -5075,13 +4502,17 @@ def _build_logic_review_prompt(
     question_details: List[Dict[str, Any]],
     rubric_map: Dict[str, Dict[str, Any]],
     limits: Dict[str, int],
-    confession: Optional[Dict[str, Any]] = None,
 ) -> str:
     """
     构建逻辑复核 (Logic Review) LLM 提示词
+    
+    改造说明（批改和审计一体化）：
+    - 移除了 confession 参数（已删除 confession 节点）
+    - 改为直接使用题目中的 audit 信息进行复核决策
+    - audit 信息包含：confidence, uncertainties, risk_flags, needs_review
 
     逻辑复核的核心功能：验证/审计 + 一致性修复
-    - 只能基于批改结果、评分标准解析结果和自白结果
+    - 只能基于批改结果、评分标准解析结果和审计信息
     - 不允许引入新事实/新推理
     - 要有批判性思维，查漏补缺
     - 具备有限的修正能力（明显错误）
@@ -5092,19 +4523,13 @@ def _build_logic_review_prompt(
 
     逻辑复核必须是"无状态"的：
     1. 不能引用历史批改经验或记忆
-    2. 不能使用 generate_confession_context() 的输出
-    3. 评分决策完全基于当前评分标准和学生答案
+    2. 评分决策完全基于当前评分标准和学生答案
+    3. audit 信息仅用于确定复核重点，不直接影响评分
 
     允许的输入：
     - student: 当前学生的批改结果
-    - question_details: 当前批改的题目详情
+    - question_details: 当前批改的题目详情（含 audit 信息）
     - rubric_map: 评分标准（从 parsed_rubric 构建）
-    - confession: 自白报告（仅用于交叉验证，不影响评分）
-
-    禁止的输入：
-    - 任何来自 GradingMemoryService 的数据
-    - 历史批改模式或经验
-    - 校准建议或置信度调整
     =========================================
     """
     student_key = student.get("student_key") or student.get("student_name") or "Unknown"
@@ -5182,7 +4607,7 @@ def _build_logic_review_prompt(
         "## 可用信息源（仅限这些）",
         "- 批改结果（评分、证据、反馈）",
         "- 评分标准（rubric）—— **修正的唯一依据**",
-        "- 自白报告（仅供参考，不作为修正依据）",
+        "- 审计信息（仅供参考，不作为修正依据）",
         "",
         "## 输出内容",
         "- **review_corrections**：只包含明显错误的修正",
@@ -5193,20 +4618,39 @@ def _build_logic_review_prompt(
         "",
     ]
 
-    # 添加自白信息（如果有）
-    if confession:
-        lines.append("## 自白报告摘要（供你交叉验证）")
-        if confession.get("high_risk_questions"):
-            lines.append(f"- 高风险题目: {confession.get('high_risk_questions')}")
-        if confession.get("overall_confidence"):
-            lines.append(f"- 整体置信度: {confession.get('overall_confidence')}")
-        if confession.get("potential_errors"):
-            lines.append("- 披露的可能错误点:")
-            for err in confession.get("potential_errors", [])[:5]:
-                if isinstance(err, dict):
-                    lines.append(
-                        f"  - Q{err.get('question_id', '?')}: {err.get('description', '')}"
-                    )
+    # 添加审计信息摘要（基于 audit 字段）
+    high_risk_count = 0
+    low_confidence_count = 0
+    needs_review_count = 0
+    risk_summary = []
+    
+    for q in question_details[:max_questions]:
+        audit = q.get("audit") or {}
+        qid = _normalize_question_id(q.get("question_id") or q.get("questionId")) or "?"
+        
+        # 统计风险
+        if audit.get("needs_review"):
+            needs_review_count += 1
+        
+        confidence = audit.get("confidence", 1.0)
+        if confidence < 0.6:
+            low_confidence_count += 1
+        
+        risk_flags = audit.get("risk_flags") or []
+        if any(flag in ["full_marks", "zero_marks", "evidence_gap"] for flag in risk_flags):
+            high_risk_count += 1
+            risk_summary.append(f"Q{qid}: {', '.join(risk_flags)}")
+    
+    if high_risk_count > 0 or low_confidence_count > 0 or needs_review_count > 0:
+        lines.append("## 审计风险摘要（供你重点关注）")
+        lines.append(f"- 需要复核题目数: {needs_review_count}")
+        lines.append(f"- 低置信度题目数: {low_confidence_count}")
+        lines.append(f"- 高风险题目数: {high_risk_count}")
+        
+        if risk_summary:
+            lines.append("- 具体风险标记:")
+            for summary in risk_summary[:5]:
+                lines.append(f"  - {summary}")
         lines.append("")
 
     lines.append("## 题目摘要（供你做一致性检查）")
@@ -5331,8 +4775,8 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     =========================================
     """
     batch_id = state["batch_id"]
-    # 优先读取 confessed_results（confession 节点输出），回退到 student_results
-    student_results_raw = state.get("confessed_results") or state.get("student_results", []) or []
+    # 直接读取 student_results（confession 节点已移除）
+    student_results_raw = state.get("student_results", []) or []
     
     # 🔧 去重：由于 Send 并行任务可能导致重复，使用 student_key 去重
     seen_keys = set()
@@ -5367,18 +4811,6 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
             f"[logic_review_done] batch_id={batch_id}, students={count}, reviewed={reviewed}"
         )
 
-    async def _persist_batch_memory(stage: str) -> None:
-        try:
-            saved = await memory_service.save_batch_memory_async(batch_id)
-            if saved:
-                logger.info(
-                    f"[logic_review] batch memory persisted: batch_id={batch_id}, stage={stage}"
-                )
-        except Exception as exc:
-            logger.warning(
-                f"[logic_review] batch memory persist failed: batch_id={batch_id}, stage={stage}, error={exc}"
-            )
-
     def _build_logic_review_skip_results(reason: str) -> List[Dict[str, Any]]:
         if not student_results:
             return []
@@ -5399,16 +4831,10 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
             skipped_results.append(updated)
         return skipped_results
 
-    # 获取记忆服务
-    from src.services.grading_memory import get_memory_service, MemoryType, MemoryImportance
-
-    memory_service = get_memory_service()
-
     if grading_mode.startswith("assist"):
         logger.info(f"[logic_review] skip (assist mode): batch_id={batch_id}")
         _log_logic_review_done("assist mode", len(student_results), 0)
         skipped_results = _build_logic_review_skip_results("assist mode")
-        await _persist_batch_memory("assist")
         return {
             "reviewed_results": skipped_results,
             "student_results": skipped_results,
@@ -5423,7 +4849,6 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
 
     if not student_results:
         _log_logic_review_done("no student_results", 0, 0)
-        await _persist_batch_memory("no student_results")
         return {
             "reviewed_results": [],
             "student_results": [],
@@ -5462,7 +4887,6 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
             }
             updated_results.append(updated)
         _log_logic_review_done("rule-based", len(updated_results), 0)
-        await _persist_batch_memory("rule-based")
         return {
             "reviewed_results": updated_results,
             "student_results": updated_results,
@@ -5541,7 +4965,6 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                 question_details,
                 rubric_map,
                 limits,
-                confession=student.get("confession"),
             )
 
             response_text = ""
@@ -5628,21 +5051,8 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                         original_score = _safe_float(q.get("score", 0))
                         new_score = _safe_float(merged.get("score", 0))
                         if abs(new_score - original_score) >= 0.5:
-                            review_reason = review_map[qid].get("review_reason", "")
-                            for corr in review_map[qid].get("review_corrections", []):
-                                if isinstance(corr, dict):
-                                    review_reason = corr.get("review_reason", review_reason)
-                                    break
-                            memory_service.record_correction(
-                                batch_id=batch_id,
-                                question_id=qid,
-                                original_score=original_score,
-                                corrected_score=new_score,
-                                reason=review_reason or "逻辑复核修正",
-                                source="logic_review",
-                            )
                     except Exception as mem_exc:
-                        logger.debug(f"[logic_review] 记录修正失败: {mem_exc}")
+                        logger.debug(f"[logic_review] 分数修正失败: {mem_exc}")
                 else:
                     updated_details.append(dict(q))
             updated_student["question_details"] = updated_details
@@ -5704,17 +5114,6 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
             logic_review_results.append(review_payload)
 
     final_results = [r for r in updated_results if r is not None]
-
-    # 整合批次记忆到长期记忆
-    try:
-        new_memories = memory_service.consolidate_batch_memory(batch_id)
-        memory_service.save_to_storage()
-        await _persist_batch_memory("llm")
-        logger.info(
-            f"[logic_review] 记忆整合完成: batch_id={batch_id}, 新增 {new_memories} 条长期记忆"
-        )
-    except Exception as e:
-        logger.warning(f"[logic_review] 记忆整合失败: {e}")
 
     _log_logic_review_done("llm", len(final_results), len(logic_review_results))
     return {
@@ -6475,15 +5874,13 @@ def create_batch_grading_graph(
     工作流：
     1. intake: 接收文件
     2. preprocess: 图像预处理
-    3. rubric_parse: 解析评分标准
-    4. rubric_review: 人工审核（可跳过）
-    5. grade_batch (并行): 按学生或批次大小并行批改
-    6. simple_aggregate: 简单聚合为学生结果
-    7. confession: 自白节点（风险分析）
-    8. logic_review: 逻辑复核
-
-    10. review: 结果审核
-    11. export: 导出结果
+    3. rubric_parse: 解析评分标准（含自白/confession 生成）
+    4. rubric_self_review: 自动复核（基于自白，LLM 自动修正）
+    5. rubric_review: 人工审核（可跳过）
+    6. grade_batch (并行): 按学生或批次大小并行批改（含审计信息）
+    7. logic_review: 逻辑复核（基于审计信息）
+    8. review: 结果审核
+    9. export: 导出结果
 
     流程图：
     ```
@@ -6491,21 +5888,17 @@ def create_batch_grading_graph(
       ↓
     preprocess
       ↓
-    rubric_parse
+    rubric_parse  ← 解析评分标准 + 生成自白（confession）
       ↓
-    rubric_review (可跳过)
+    rubric_self_review  ← 自动复核（基于自白和原图修正）
+      ↓
+    rubric_review (可跳过)  ← 人工复核
       ↓
     ┌─────────────────┐
-    │ grade_batch (N) │  ← 并行批改（按学生分批）
+    │ grade_batch (N) │  ← 并行批改（按学生分批，含审计信息）
     └─────────────────┘
       ↓
-    simple_aggregate  ← 简单聚合
-      ↓
-    confession  ← 自白（记忆系统）
-      ↓
-    logic_review  ← 逻辑复核
-      ↓
-
+    logic_review  ← 逻辑复核（基于审计信息）
       ↓
     review
       ↓
@@ -6551,12 +5944,13 @@ def create_batch_grading_graph(
     graph.add_node("preprocess", preprocess_node)
     # graph.add_node("index", index_node)  # 已移除：不再需要索引层
     graph.add_node("rubric_parse", rubric_parse_node)
+    graph.add_node("rubric_self_review", rubric_self_review_node)  # 自动复核节点（基于自白）
     graph.add_node("rubric_review", rubric_review_node)
     graph.add_node("grade_batch", grade_batch_node)
     # graph.add_node("simple_aggregate", simple_aggregate_node)  # 已移除：grade_batch 直接输出 student_results
     # graph.add_node("cross_page_merge", cross_page_merge_node)  # 已移除：不再需要跨页合并
     # graph.add_node("index_merge", index_merge_node)  # 已移除：不再需要索引聚合
-    graph.add_node("confession", confession_node)
+    # graph.add_node("confession", confession_node)  # 已移除：批改和审计一体化改造
     graph.add_node("logic_review", logic_review_node)
 
     graph.add_node("review", review_node)
@@ -6565,9 +5959,10 @@ def create_batch_grading_graph(
     # 入口点
     graph.set_entry_point("intake")
 
-    # 简化流程：intake → preprocess → rubric_parse → rubric_review (可选)
+    # 简化流程：intake → preprocess → rubric_parse → rubric_self_review → rubric_review (可选)
     graph.add_edge("intake", "preprocess")
     graph.add_edge("preprocess", "rubric_parse")
+    graph.add_edge("rubric_parse", "rubric_self_review")  # 解析后先进行自动复核
     
     # ✅ 先添加占位节点,用于跳过 review 时的路由
     async def grading_fanout_placeholder_node(state: BatchGradingGraphState) -> Dict[str, Any]:
@@ -6583,7 +5978,7 @@ def create_batch_grading_graph(
     
     # ✅ 修复:添加条件路由,根据 enable_review 决定是否需要 rubric_review
     def should_review_rubric(state: BatchGradingGraphState) -> str:
-        """决定是否需要 rubric review"""
+        """决定是否需要 rubric review（在自动复核之后）"""
         batch_id = state.get("batch_id", "unknown")
         enable_review = state.get("inputs", {}).get("enable_review", True)
         parsed_rubric = state.get("parsed_rubric", {})
@@ -6602,8 +5997,9 @@ def create_batch_grading_graph(
         logger.info(f"[should_review_rubric] 需要 review: batch_id={batch_id}")
         return "do_review"
     
+    # rubric_self_review 后进行条件路由（决定是否需要人工复核）
     graph.add_conditional_edges(
-        "rubric_parse",
+        "rubric_self_review",
         should_review_rubric,
         {
             "do_review": "rubric_review",
@@ -6617,7 +6013,7 @@ def create_batch_grading_graph(
         grading_fanout_router,
         [
             "grade_batch",
-            "confession",
+            "logic_review",  # 跳过 confession，直接到 logic_review
         ],
     )
     
@@ -6627,7 +6023,7 @@ def create_batch_grading_graph(
         grading_fanout_router,
         [
             "grade_batch",
-            "confession",
+            "logic_review",  # 跳过 confession，直接到 logic_review
         ],
     )
 
@@ -6636,11 +6032,12 @@ def create_batch_grading_graph(
     # 导致状态聚合前就检查 student_results 数量，产生竞态条件。
     # 
     # 解决方案：直接使用普通边，LangGraph 会自动等待所有 Send 任务完成、
-    # 状态聚合后，再进入下一个节点（confession）。
-    graph.add_edge("grade_batch", "confession")
+    # 状态聚合后，再进入下一个节点（logic_review）。
+    # confession 节点已移除，批改和审计一体化
+    graph.add_edge("grade_batch", "logic_review")
 
-    # 简化流程：confession → logic_review → review → export → END
-    graph.add_edge("confession", "logic_review")
+    # 简化流程：logic_review → review → export → END
+    # （confession 节点已移除）
     graph.add_edge("logic_review", "review")
     graph.add_edge("review", "export")
     graph.add_edge("export", END)

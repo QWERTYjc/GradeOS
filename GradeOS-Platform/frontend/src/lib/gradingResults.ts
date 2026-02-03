@@ -1,4 +1,4 @@
-import { StudentResult, SelfAudit } from '@/store/consoleStore';
+import { StudentResult, SelfAudit, AuditInfo } from '@/store/consoleStore';
 
 type RawObject = Record<string, unknown>;
 
@@ -74,12 +74,27 @@ const normalizeConfessionPayload = (confession: unknown): unknown => {
   return confession;
 };
 
+const normalizeAudit = (audit: unknown): AuditInfo | undefined => {
+  if (!audit || typeof audit !== 'object') return undefined;
+  const raw = audit as RawObject;
+  const uncertainties = raw.uncertainties || raw.audit_uncertainties || [];
+  const riskFlags = raw.riskFlags || raw.risk_flags || raw.audit_flags || [];
+  return {
+    confidence: Number(raw.confidence ?? raw.overall_confidence ?? raw.audit_confidence),
+    uncertainties: Array.isArray(uncertainties) ? uncertainties.map((v) => String(v)) : [],
+    riskFlags: Array.isArray(riskFlags) ? riskFlags.map((v) => String(v)) : [],
+    needsReview: Boolean(raw.needsReview ?? raw.needs_review ?? false),
+    updatedAt: (raw.updatedAt || raw.updated_at) as string | undefined,
+  };
+};
+
 export const normalizeStudentResults = (raw: RawObject[]): StudentResult[] => {
   if (!Array.isArray(raw)) return [];
   return raw.map((r: RawObject) => {
     const rawQuestions = r.questionResults || r.question_results || [];
     const questionResults = Array.isArray(rawQuestions)
       ? rawQuestions.map((q: RawObject) => {
+        const audit = normalizeAudit(q.audit || q.audit_info || q.auditInfo);
         const rawPointResults =
           q.scoring_point_results ||
           q.scoringPointResults ||
@@ -135,7 +150,7 @@ export const normalizeStudentResults = (raw: RawObject[]): StudentResult[] => {
           feedback: (q.feedback ?? '') as string,
           studentAnswer: (q.studentAnswer ?? q.student_answer ?? '') as string,
           questionType: (q.questionType ?? q.question_type ?? '') as string,
-          confidence: q.confidence as number | undefined,
+          confidence: (audit?.confidence ?? q.confidence) as number | undefined,
           confidenceReason: (q.confidence_reason || q.confidenceReason) as string | undefined,
           selfCritique: (q.self_critique || q.selfCritique) as string | undefined,
           selfCritiqueConfidence: (q.self_critique_confidence || q.selfCritiqueConfidence) as number | undefined,
@@ -158,18 +173,22 @@ export const normalizeStudentResults = (raw: RawObject[]): StudentResult[] => {
               reviewReason: (c.review_reason || c.reviewReason) as string | undefined,
             }));
           })(),
-          needsReview: (q.needsReview ?? q.needs_review ?? false) as boolean,
+          needsReview: (audit?.needsReview ?? q.needsReview ?? q.needs_review ?? false) as boolean,
           reviewReasons: (() => {
             const rawReasons = (q.reviewReasons || q.review_reasons) as unknown;
             if (!Array.isArray(rawReasons)) return [];
             return (rawReasons as unknown[]).map((v) => String(v));
           })(),
           auditFlags: (() => {
+            if (audit?.riskFlags && audit.riskFlags.length > 0) {
+              return audit.riskFlags;
+            }
             const rawFlags = (q.auditFlags || q.audit_flags) as unknown;
             if (!Array.isArray(rawFlags)) return [];
             return (rawFlags as unknown[]).map((v) => String(v));
           })(),
           honestyNote: (q.honestyNote || q.honesty_note) as string | undefined,
+          audit,
           pageIndices: (() => {
             const rawPages = (q.page_indices ?? q.pageIndices) as unknown;
             if (Array.isArray(rawPages)) {

@@ -324,7 +324,7 @@ async def broadcast_progress(batch_id: str, message: dict):
         cached[msg_type] = message
     if msg_type == "llm_stream_chunk":
         node_id = message.get("nodeId") or ""
-        if node_id in ("rubric_parse", "rubric_review"):
+        if node_id in ("rubric_parse", "rubric_self_review", "rubric_review"):
             cached = batch_image_cache.setdefault(batch_id, {})
             stream_cache = cached.setdefault("llm_stream_cache", {})
             cache_key = f"{node_id}:{message.get('agentId') or 'all'}:{message.get('streamType') or 'output'}"
@@ -1613,6 +1613,7 @@ def _get_node_display_name(node_name: str) -> str:
         "preprocess": "Preprocess",
         "index": "Index",
         "rubric_parse": "Rubric Parse",
+        "rubric_self_review": "Auto Review",
         "rubric_review": "Rubric Review",
         "grading_fanout": "Batch Fanout",
         "grade_batch": "Batch Grading",
@@ -3027,9 +3028,9 @@ async def get_batch_results(batch_id: str, orchestrator: Orchestrator = Depends(
         state = run_info.state or {}
 
         # 优先从 student_results 获取结果
+        # 注意：confessed_results 已移除（批改和审计一体化改造）
         student_results = (
             state.get("reviewed_results")
-            or state.get("confessed_results")
             or state.get("student_results", [])
         )
 
@@ -3040,7 +3041,6 @@ async def get_batch_results(batch_id: str, orchestrator: Orchestrator = Depends(
                 if final_output:
                     student_results = (
                         final_output.get("reviewed_results")
-                        or final_output.get("confessed_results")
                         or final_output.get("student_results", [])
                     )
             except Exception as e:
@@ -3964,23 +3964,6 @@ async def get_batch_confession(
                             update_copy = dict(update)
                             update_copy.setdefault("student_key", student_key)
                             memory_updates.append(update_copy)
-
-                from src.services.grading_memory import get_memory_service
-
-                memory_service = get_memory_service()
-                batch_memory = memory_service.get_batch_memory(batch_id)
-
-                if batch_memory:
-                    for correction in batch_memory.corrections:
-                        memory_updates.append(
-                            {
-                                "type": "correction",
-                                "question_id": correction.get("question_id"),
-                                "original_score": correction.get("original_score"),
-                                "corrected_score": correction.get("corrected_score"),
-                                "reason": correction.get("reason"),
-                            }
-                        )
             except Exception as exc:
                 logger.debug(f"Failed to collect memory updates: {exc}")
 
