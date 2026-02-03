@@ -189,7 +189,7 @@ const RENDER_CONFIG = {
   lineWidthCheck: 3,
   // 透明度
   highlightAlpha: 0.3,
-  bgAlpha: 0.9,
+  bgAlpha: 0.7,
   // 内边距
   commentPadding: 4,
 };
@@ -332,7 +332,7 @@ function drawComment(
   const textHeight = RENDER_CONFIG.fontSizeComment;
 
   // 背景
-  ctx.fillStyle = `rgba(255, 255, 255, 0.95)`;
+  ctx.fillStyle = `rgba(255, 255, 255, ${RENDER_CONFIG.bgAlpha})`;
   ctx.fillRect(x, y, textWidth + padding * 2, textHeight + padding * 2);
   
   // 边框
@@ -386,7 +386,7 @@ function drawMark(
   const textY = y + (h - textHeight) / 2;
   
   // 背景圆角矩形
-  ctx.fillStyle = `rgba(255, 255, 255, 0.95)`;
+  ctx.fillStyle = `rgba(255, 255, 255, ${RENDER_CONFIG.bgAlpha})`;
   const bgX = textX - padding;
   const bgY = textY - padding;
   const bgW = textWidth + padding * 2;

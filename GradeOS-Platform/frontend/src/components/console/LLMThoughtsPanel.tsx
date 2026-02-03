@@ -3,16 +3,8 @@
 import React, { useMemo, useState, useEffect, useRef, useCallback } from 'react';
 import clsx from 'clsx';
 import { useConsoleStore } from '@/store/consoleStore';
-import { GlassCard } from '@/components/design-system/GlassCard';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Sparkles, Terminal, Activity, BrainCircuit, X, Users } from 'lucide-react';
-
-type StreamTab = 'output' | 'thinking';
-
-const tabLabels: Record<StreamTab, string> = {
-  output: 'Output',
-  thinking: 'Thinking',
-};
+import { Radio, Sparkles, ChevronDown, Pause, Play } from 'lucide-react';
 
 interface LLMThoughtsPanelProps {
   className?: string;
@@ -21,249 +13,272 @@ interface LLMThoughtsPanelProps {
 
 export default function LLMThoughtsPanel({ className, onClose }: LLMThoughtsPanelProps) {
   const llmThoughts = useConsoleStore((state) => state.llmThoughts);
-  const selectedAgentId = useConsoleStore((state) => state.selectedAgentId);
   const selectedNodeId = useConsoleStore((state) => state.selectedNodeId);
   const workflowNodes = useConsoleStore((state) => state.workflowNodes);
-  const [focusAgentLabel, setFocusAgentLabel] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<StreamTab>('output');
-  const [isPinned, setIsPinned] = useState(true);
+  
+  const [autoScroll, setAutoScroll] = useState(true);
+  const [selectedStudent, setSelectedStudent] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const lastScrollHeight = useRef(0);
 
-  const activeLabel = useMemo(() => {
-    if (!selectedAgentId && !selectedNodeId) return 'All Streams';
-    if (selectedAgentId) {
-      const agentNode = workflowNodes.find((node) =>
-        node.children?.some((agent) => agent.id === selectedAgentId)
-      );
-      const agent = agentNode?.children?.find((item) => item.id === selectedAgentId);
-      return agent?.label || selectedAgentId;
+  // 获取当前节点的显示名称
+  const currentNodeName = useMemo(() => {
+    if (!selectedNodeId) return 'AI Stream';
+    const node = workflowNodes.find((n) => n.id === selectedNodeId);
+    return node?.label || selectedNodeId;
+  }, [selectedNodeId, workflowNodes]);
+
+  // 过滤当前节点的思维流
+  const filteredThoughts = useMemo(() => {
+    let thoughts = llmThoughts;
+    
+    // 按节点过滤
+    if (selectedNodeId) {
+      thoughts = thoughts.filter((t) => t.nodeId === selectedNodeId);
     }
-    const node = workflowNodes.find((item) => item.id === selectedNodeId);
-    return node?.label || selectedNodeId || 'All Streams';
-  }, [selectedAgentId, selectedNodeId, workflowNodes]);
+    
+    // 按学生过滤
+    if (selectedStudent) {
+      thoughts = thoughts.filter((t) => {
+        const label = t.agentLabel || t.agentId || '';
+        return label === selectedStudent || label.startsWith(`${selectedStudent} -`);
+      });
+    }
+    
+    // 只显示 output 类型（主要内容）
+    return thoughts
+      .filter((t) => (t.streamType || 'output') === 'output')
+      .sort((a, b) => a.timestamp - b.timestamp);
+  }, [llmThoughts, selectedNodeId, selectedStudent]);
 
-  const thoughts = useMemo(() => {
-    const filteredByTarget = llmThoughts.filter((t) => {
-      if (selectedAgentId) {
-        return t.agentId === selectedAgentId;
-      }
-      if (selectedNodeId) {
-        return t.nodeId === selectedNodeId;
-      }
-      return true;
-    });
-    const filteredByFocus = focusAgentLabel
-      ? filteredByTarget.filter((t) => (t.agentLabel || t.agentId) === focusAgentLabel)
-      : filteredByTarget;
-    const filteredByTab = filteredByFocus.filter((t) => (t.streamType || 'output') === activeTab);
-    return filteredByTab.sort((a, b) => a.timestamp - b.timestamp);
-  }, [llmThoughts, activeTab, selectedAgentId, selectedNodeId, focusAgentLabel]);
+  // 提取学生列表
+  const students = useMemo(() => {
+    const studentSet = new Set<string>();
+    llmThoughts
+      .filter((t) => !selectedNodeId || t.nodeId === selectedNodeId)
+      .forEach((t) => {
+        const label = t.agentLabel || t.agentId;
+        if (label) {
+          // 提取学生名（去掉页码后缀）
+          const match = label.match(/^(.+?)\s*(?:-\s*P\d+)?$/);
+          if (match) studentSet.add(match[1]);
+        }
+      });
+    return Array.from(studentSet).sort();
+  }, [llmThoughts, selectedNodeId]);
 
-  const totalCount = llmThoughts.length;
+  // 检查是否有正在进行的流
+  const hasActiveStream = useMemo(() => {
+    return filteredThoughts.some((t) => !t.isComplete);
+  }, [filteredThoughts]);
 
-  const agentFilters = useMemo(() => {
-    const counts = new Map<string, number>();
-    llmThoughts.forEach((t) => {
-      const label = t.agentLabel || t.agentId;
-      if (!label) return;
-      counts.set(label, (counts.get(label) || 0) + 1);
-    });
-    return Array.from(counts.entries())
-      .map(([label, count]) => ({ label, count }))
-      .sort((a, b) => a.label.localeCompare(b.label));
-  }, [llmThoughts]);
-
+  // 自动滚动到底部
   const scrollToBottom = useCallback(() => {
-    if (!scrollRef.current) return;
-    scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
   }, []);
 
+  // 监听内容变化，自动滚动
+  useEffect(() => {
+    if (autoScroll && scrollRef.current) {
+      const newHeight = scrollRef.current.scrollHeight;
+      if (newHeight !== lastScrollHeight.current) {
+        scrollToBottom();
+        lastScrollHeight.current = newHeight;
+      }
+    }
+  }, [filteredThoughts, autoScroll, scrollToBottom]);
+
+  // 处理滚动事件
   const handleScroll = useCallback(() => {
-    const container = scrollRef.current;
-    if (!container) return;
-    const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
-    setIsPinned(distanceFromBottom < 40);
+    if (!scrollRef.current) return;
+    const { scrollTop, scrollHeight, clientHeight } = scrollRef.current;
+    const isNearBottom = scrollHeight - scrollTop - clientHeight < 50;
+    setAutoScroll(isNearBottom);
   }, []);
-
-  const handleWheel = useCallback((event: React.WheelEvent<HTMLDivElement>) => {
-    if (event.deltaY < 0) {
-      setIsPinned(false);
-    }
-  }, []);
-
-  const handleTouchMove = useCallback(() => {
-    setIsPinned(false);
-  }, []);
-
-  useEffect(() => {
-    if (isPinned) {
-      scrollToBottom();
-    }
-  }, [thoughts, isPinned, scrollToBottom]);
-
-  useEffect(() => {
-    if (selectedAgentId) {
-      setFocusAgentLabel(null);
-    }
-  }, [selectedAgentId]);
 
   return (
-    <GlassCard
-      className={clsx("h-full min-h-0 flex flex-col p-0 overflow-hidden", className)}
-      hoverEffect={false}
-    >
-      <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100 bg-white/50 backdrop-blur-md z-10">
-        <div>
-          <div className="flex items-center gap-2 mb-0.5">
-            <Activity className="w-3 h-3 text-indigo-500" />
-            <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400">AI Live Stream</p>
-          </div>
-          <p className="text-sm font-bold text-slate-800 flex items-center gap-2">
-            {activeLabel}
-            {totalCount > 0 && (
-              <span className="bg-slate-100 text-slate-500 text-[10px] px-1.5 py-0.5 rounded font-mono">
-                {totalCount}
-              </span>
-            )}
-          </p>
-          {agentFilters.length > 1 && (
-            <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[10px] text-slate-500">
-              <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2 py-0.5 font-semibold uppercase tracking-widest">
-                <Users className="h-3 w-3" />
-                Students
-              </span>
-              <button
-                type="button"
-                onClick={() => setFocusAgentLabel(null)}
-                className={clsx(
-                  'rounded-full px-2 py-0.5 font-semibold border transition',
-                  !focusAgentLabel ? 'bg-indigo-500 text-white border-indigo-500' : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300'
-                )}
-              >
-                All
-              </button>
-              {agentFilters.map((agent) => (
-                <button
-                  key={agent.label}
-                  type="button"
-                  onClick={() => setFocusAgentLabel(agent.label)}
-                  className={clsx(
-                    'rounded-full px-2 py-0.5 font-semibold border transition',
-                    focusAgentLabel === agent.label
-                      ? 'bg-indigo-500 text-white border-indigo-500'
-                      : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300'
-                  )}
-                >
-                  {agent.label}
-                  <span className="ml-1 text-[9px] opacity-70">{agent.count}</span>
-                </button>
-              ))}
+    <div className={clsx(
+      "h-full flex flex-col bg-gradient-to-b from-slate-900 to-slate-950 rounded-xl overflow-hidden border border-slate-800/50",
+      className
+    )}>
+      {/* Header */}
+      <div className="flex-shrink-0 px-4 py-3 border-b border-slate-800/50 bg-slate-900/80 backdrop-blur-sm">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="relative">
+              <Radio className="w-4 h-4 text-emerald-400" />
+              {hasActiveStream && (
+                <span className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-emerald-400 rounded-full animate-ping" />
+              )}
             </div>
-          )}
-        </div>
-
-        <div className="flex items-center gap-2">
-          {!isPinned && (
+            <div>
+              <h3 className="text-sm font-semibold text-white">{currentNodeName}</h3>
+              <p className="text-[10px] text-slate-500 uppercase tracking-wider">
+                {hasActiveStream ? 'Live Stream' : 'Stream Complete'}
+              </p>
+            </div>
+          </div>
+          
+          <div className="flex items-center gap-2">
+            {/* 自动滚动控制 */}
             <button
               type="button"
-              onClick={scrollToBottom}
-              className="hidden sm:inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-semibold text-slate-500 transition hover:text-slate-700 hover:border-slate-300"
+              onClick={() => {
+                setAutoScroll(!autoScroll);
+                if (!autoScroll) scrollToBottom();
+              }}
+              className={clsx(
+                "p-1.5 rounded-lg transition-all",
+                autoScroll 
+                  ? "bg-emerald-500/20 text-emerald-400" 
+                  : "bg-slate-800 text-slate-500 hover:text-slate-300"
+              )}
+              title={autoScroll ? "Auto-scroll ON" : "Auto-scroll OFF"}
             >
-              Back to latest
+              {autoScroll ? <ChevronDown className="w-4 h-4" /> : <Pause className="w-4 h-4" />}
             </button>
-          )}
-          <div className="flex rounded-lg bg-slate-100/80 p-1 relative">
-            {(Object.keys(tabLabels) as StreamTab[]).map((tab) => (
+            
+            {/* 关闭按钮 */}
+            {onClose && (
               <button
-                key={tab}
-                onClick={() => setActiveTab(tab)}
+                type="button"
+                onClick={onClose}
+                className="p-1.5 rounded-lg bg-slate-800 text-slate-500 hover:text-slate-300 hover:bg-slate-700 transition-all"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            )}
+          </div>
+        </div>
+        
+        {/* 学生筛选器 */}
+        {students.length > 1 && (
+          <div className="mt-3 flex flex-wrap gap-1.5">
+            <button
+              type="button"
+              onClick={() => setSelectedStudent(null)}
+              className={clsx(
+                "px-2.5 py-1 rounded-full text-[10px] font-semibold transition-all",
+                !selectedStudent
+                  ? "bg-indigo-500 text-white"
+                  : "bg-slate-800 text-slate-400 hover:text-white hover:bg-slate-700"
+              )}
+            >
+              All
+            </button>
+            {students.map((student) => (
+              <button
+                key={student}
+                type="button"
+                onClick={() => setSelectedStudent(student)}
                 className={clsx(
-                  'relative px-3 py-1 text-xs font-bold rounded-md transition-all z-10',
-                  activeTab === tab ? 'text-indigo-600' : 'text-slate-500 hover:text-slate-700'
+                  "px-2.5 py-1 rounded-full text-[10px] font-semibold transition-all",
+                  selectedStudent === student
+                    ? "bg-indigo-500 text-white"
+                    : "bg-slate-800 text-slate-400 hover:text-white hover:bg-slate-700"
                 )}
               >
-                {activeTab === tab && (
-                  <motion.div
-                    layoutId="activeTab"
-                    className="absolute inset-0 bg-white rounded-md shadow-sm border border-slate-200/50"
-                    transition={{ type: "spring", stiffness: 400, damping: 30 }}
-                  />
-                )}
-                <span className="relative z-10 flex items-center gap-1.5">
-                  {tab === 'thinking' ? <BrainCircuit className="w-3 h-3" /> : <Terminal className="w-3 h-3" />}
-                  {tabLabels[tab]}
-                </span>
+                {student}
               </button>
             ))}
           </div>
-          {onClose && (
-            <button
-              type="button"
-              onClick={onClose}
-              aria-label="Close stream panel"
-              className="h-8 w-8 rounded-lg border border-slate-200/60 bg-white/70 text-slate-400 transition-colors hover:text-slate-700 hover:bg-white"
-            >
-              <X className="w-4 h-4 mx-auto" />
-            </button>
-          )}
-        </div>
+        )}
       </div>
 
+      {/* Content */}
       <div
         ref={scrollRef}
         onScroll={handleScroll}
-        onWheel={handleWheel}
-        onTouchMove={handleTouchMove}
-        className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 py-3 space-y-3 custom-scrollbar bg-slate-50/30 pointer-events-auto"
+        className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-4 space-y-3"
+        style={{ scrollBehavior: autoScroll ? 'smooth' : 'auto' }}
       >
         <AnimatePresence initial={false}>
-          {thoughts.length === 0 ? (
+          {filteredThoughts.length === 0 ? (
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
-              className="h-full flex flex-col items-center justify-center text-slate-400 gap-2"
+              className="h-full flex flex-col items-center justify-center text-slate-600 gap-3 py-12"
             >
-              <Sparkles className="w-8 h-8 opacity-30" />
-              <span className="text-xs font-medium italic">No signal yet...</span>
+              <Sparkles className="w-10 h-10 opacity-30" />
+              <p className="text-sm font-medium">Waiting for AI stream...</p>
             </motion.div>
           ) : (
-            thoughts.map((thought) => (
+            filteredThoughts.map((thought, index) => (
               <motion.div
                 key={thought.id}
-                initial={{ opacity: 0, y: 10, scale: 0.98 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                className="rounded-xl border border-white bg-white/60 shadow-sm p-3 hover:bg-white/80 transition-colors"
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.2 }}
+                className="group"
               >
-                <div className="flex items-center justify-between text-[11px] text-slate-400 mb-2 font-mono">
-                  <div className="flex items-center gap-2">
-                    <span className="font-bold text-indigo-600/80 bg-indigo-50 px-1.5 py-0.5 rounded">
-                      {thought.nodeName || thought.nodeId}
+                {/* 消息头 */}
+                <div className="flex items-center gap-2 mb-1.5">
+                  {thought.agentLabel && (
+                    <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 text-[10px] font-semibold">
+                      {thought.agentLabel}
                     </span>
-                    {thought.agentLabel && (
-                      <span className="bg-emerald-50 text-emerald-600 px-1.5 py-0.5 rounded font-semibold">
-                        {thought.agentLabel}
-                      </span>
-                    )}
-                  </div>
-                  <span>{new Date(thought.timestamp).toLocaleTimeString()}</span>
-                </div>
-                <div className="text-xs leading-relaxed text-slate-700 font-mono whitespace-pre-wrap break-words">
-                  {thought.content}
-                </div>
-                {!thought.isComplete && (
-                  <div className="mt-2 flex items-center gap-2 text-[10px] text-indigo-500 font-bold uppercase tracking-wider">
-                    <span className="relative flex h-2 w-2">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
-                      <span className="relative inline-flex rounded-full h-2 w-2 bg-indigo-500"></span>
+                  )}
+                  <span className="text-[10px] text-slate-600 font-mono">
+                    {new Date(thought.timestamp).toLocaleTimeString()}
+                  </span>
+                  {!thought.isComplete && (
+                    <span className="flex items-center gap-1 text-[10px] text-amber-400 font-semibold">
+                      <span className="w-1.5 h-1.5 bg-amber-400 rounded-full animate-pulse" />
+                      streaming
                     </span>
-                    Streaming...
-                  </div>
-                )}
+                  )}
+                </div>
+                
+                {/* 消息内容 */}
+                <div className={clsx(
+                  "rounded-lg p-3 text-sm leading-relaxed font-mono transition-all",
+                  "bg-slate-800/50 text-slate-300 border border-slate-700/50",
+                  !thought.isComplete && "border-amber-500/30"
+                )}>
+                  <pre className="whitespace-pre-wrap break-words text-xs">
+                    {thought.content}
+                  </pre>
+                </div>
               </motion.div>
             ))
           )}
         </AnimatePresence>
+        
+        {/* 滚动到底部的指示器 */}
+        {!autoScroll && filteredThoughts.length > 0 && (
+          <motion.button
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.9 }}
+            type="button"
+            onClick={() => {
+              setAutoScroll(true);
+              scrollToBottom();
+            }}
+            className="sticky bottom-2 left-1/2 -translate-x-1/2 px-4 py-2 rounded-full bg-indigo-500 text-white text-xs font-semibold shadow-lg shadow-indigo-500/25 hover:bg-indigo-400 transition-all flex items-center gap-2"
+          >
+            <ChevronDown className="w-4 h-4" />
+            Jump to latest
+          </motion.button>
+        )}
       </div>
-    </GlassCard>
+      
+      {/* Footer 状态栏 */}
+      <div className="flex-shrink-0 px-4 py-2 border-t border-slate-800/50 bg-slate-900/50">
+        <div className="flex items-center justify-between text-[10px] text-slate-500">
+          <span>{filteredThoughts.length} messages</span>
+          {hasActiveStream && (
+            <span className="flex items-center gap-1.5 text-emerald-400">
+              <Play className="w-3 h-3" />
+              Receiving...
+            </span>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }

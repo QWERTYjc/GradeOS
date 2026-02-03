@@ -54,6 +54,9 @@ from src.db import (
     get_grading_history,
     get_student_results,
     get_page_images,
+    # PostgreSQL 图片存储
+    save_batch_images_concurrent,
+    get_batch_images_as_bytes_list,
 )
 
 
@@ -778,9 +781,38 @@ async def submit_batch(
             f"answer_pages={total_pages}"
         )
 
-        # 📁 持久化存储原始文件（可选，通过环境变量 ENABLE_FILE_STORAGE 控制）
+        # 📁 持久化存储原始文件到 PostgreSQL（高性能，替代本地文件存储）
+        # 使用 PostgreSQL BYTEA 存储，避免本地文件系统瓶颈
         stored_files: List[StoredFile] = []
-        if os.getenv("ENABLE_FILE_STORAGE", "true").lower() == "true":
+        use_pg_storage = os.getenv("USE_PG_IMAGE_STORAGE", "true").lower() == "true"
+        
+        if use_pg_storage:
+            try:
+                # 并发保存图片到 PostgreSQL（比本地文件快很多）
+                answer_count = await save_batch_images_concurrent(
+                    batch_id=batch_id,
+                    images=answer_images,
+                    image_type="answer",
+                    max_concurrent=20,  # 高并发写入
+                )
+                logger.info(f"[PG-Storage] 答题图片保存完成: batch_id={batch_id}, count={answer_count}")
+                
+                # 保存评分标准图片
+                if rubric_images:
+                    rubric_count = await save_batch_images_concurrent(
+                        batch_id=batch_id,
+                        images=rubric_images,
+                        image_type="rubric",
+                        max_concurrent=10,
+                    )
+                    logger.info(f"[PG-Storage] 评分标准保存完成: batch_id={batch_id}, count={rubric_count}")
+                
+            except Exception as e:
+                logger.warning(f"[PG-Storage] PostgreSQL 存储失败，回退到本地存储: {e}")
+                use_pg_storage = False  # 回退标记
+        
+        # 回退到本地文件存储（如果 PostgreSQL 存储失败或禁用）
+        if not use_pg_storage and os.getenv("ENABLE_FILE_STORAGE", "true").lower() == "true":
             try:
                 file_storage = get_file_storage_service()
 
@@ -2593,8 +2625,21 @@ async def get_rubric_review_context(
 ):
     """获取 rubric review 页面上下文（支持从文件存储和数据库读取）"""
     
+    async def _load_rubric_images_from_pg() -> List[str]:
+        """从 PostgreSQL batch_images 表加载 rubric 图片（优先）"""
+        try:
+            images_bytes = await get_batch_images_as_bytes_list(batch_id, "rubric")
+            if not images_bytes:
+                return []
+            images = [base64.b64encode(img).decode("utf-8") for img in images_bytes]
+            logger.info(f"[PG-Storage] 从 PostgreSQL 加载了 {len(images)} 张 rubric 图片")
+            return images
+        except Exception as exc:
+            logger.debug(f"从 PostgreSQL 加载 rubric 图片失败: {exc}")
+            return []
+    
     async def _load_rubric_images_from_storage() -> List[str]:
-        """从文件存储加载 rubric 图片"""
+        """从文件存储加载 rubric 图片（备用）"""
         try:
             file_storage = get_file_storage_service()
             stored_files = await file_storage.list_batch_files(batch_id)
@@ -2638,7 +2683,10 @@ async def get_rubric_review_context(
             except Exception as exc:
                 logger.debug(f"解析数据库中的 rubric_data 失败: {exc}")
         
-        rubric_images = await _load_rubric_images_from_storage()
+        # 优先从 PostgreSQL 加载图片
+        rubric_images = await _load_rubric_images_from_pg()
+        if not rubric_images:
+            rubric_images = await _load_rubric_images_from_storage()
         
         logger.info(f"从数据库加载 rubric 上下文: parsed_rubric={'有' if parsed_rubric else '无'}, images={len(rubric_images)}")
         
@@ -2705,7 +2753,22 @@ async def get_results_review_context(
 ):
     """获取 results review 页面上下文"""
 
+    async def _load_answer_images_from_pg() -> List[str]:
+        """从 PostgreSQL batch_images 表加载答题图片（优先）"""
+        try:
+            images_bytes = await get_batch_images_as_bytes_list(batch_id, "answer")
+            if not images_bytes:
+                return []
+            # 转换为 base64 字符串
+            images = [base64.b64encode(img).decode("utf-8") for img in images_bytes]
+            logger.info(f"[PG-Storage] 从 PostgreSQL 加载了 {len(images)} 张答题图片")
+            return images
+        except Exception as exc:
+            logger.debug(f"Failed to load answer images from PostgreSQL: {exc}")
+            return []
+
     async def _load_answer_images_from_storage() -> List[str]:
+        """从本地文件存储加载答题图片（备用）"""
         try:
             file_storage = get_file_storage_service()
             stored_files = await file_storage.list_batch_files(batch_id)
@@ -2932,6 +2995,10 @@ async def get_results_review_context(
                     if db_images:
                         answer_images = db_images
         if not answer_images:
+            # 优先从 PostgreSQL batch_images 表加载
+            answer_images = await _load_answer_images_from_pg()
+        if not answer_images:
+            # 回退到本地文件存储
             answer_images = await _load_answer_images_from_storage()
         
         # 从 state 中获取 parsed_rubric
@@ -3358,7 +3425,7 @@ async def submit_results_review(
 
         if request.results:
             try:
-                history = get_grading_history(request.batch_id)
+                history = await get_grading_history(request.batch_id)
                 if history:
                     raw_history_data = history.result_data
                     history_data: Dict[str, Any] = {}
@@ -3376,7 +3443,7 @@ async def submit_results_review(
                     homework_id = history_data.get("homework_id") if history_data else None
 
                     existing_results = {
-                        row.student_key: row for row in get_student_results(history.id)
+                        row.student_key: row for row in await get_student_results(history.id)
                     }
 
                     updated_scores: List[float] = []
@@ -3488,7 +3555,7 @@ async def submit_results_review(
                             confession=existing_row.confession if existing_row else None,
                             result_data=existing_data,
                         )
-                        save_student_result(student_result)
+                        await save_student_result(student_result)
 
                         if class_id and homework_id and student_result.student_id:
                             upsert_homework_submission_grade(
@@ -3521,7 +3588,7 @@ async def submit_results_review(
                             if isinstance(summary, dict):
                                 summary["average_score"] = history.average_score
                             history.result_data = history_data
-                        save_grading_history(history)
+                        await save_grading_history(history)
             except Exception as exc:
                 logger.error("保存复核结果失败: %s", exc, exc_info=True)
 

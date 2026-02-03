@@ -20,6 +20,16 @@ from src.utils.llm_thinking import split_thinking_content
 
 logger = logging.getLogger(__name__)
 
+
+# PostgreSQL 图片存储（延迟导入以避免循环依赖）
+def _get_pg_image_reader():
+    """获取 PostgreSQL 图片读取函数"""
+    try:
+        from src.db.postgres_images import get_batch_images_as_bytes_list
+        return get_batch_images_as_bytes_list
+    except ImportError:
+        return None
+
 # Stdout-visible workflow markers for Railway verification.
 workflow_logger = logging.getLogger("gradeos.workflow")
 
@@ -933,7 +943,8 @@ async def rubric_parse_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     # 注意：不序列化 RubricRegistry，因为 grade_batch_node 会从 parsed_rubric 重建
     # 这样可以避免类型转换问题
 
-    return {
+    # 🔧 修复：显式传递图片数据，防止在 state 传递中丢失（大批量图片场景）
+    result = {
         "parsed_rubric": parsed_rubric,
         "current_stage": "rubric_parse_completed",
         "percentage": 15.0,
@@ -942,6 +953,27 @@ async def rubric_parse_node(state: BatchGradingGraphState) -> Dict[str, Any]:
             "rubric_parse_at": datetime.now().isoformat(),
         },
     }
+    
+    # 确保图片数据不丢失
+    if state.get("processed_images"):
+        result["processed_images"] = state.get("processed_images")
+    if state.get("answer_images"):
+        result["answer_images"] = state.get("answer_images")
+    if state.get("student_boundaries"):
+        result["student_boundaries"] = state.get("student_boundaries")
+    
+    return result
+
+
+def _preserve_images_in_result(state: BatchGradingGraphState, result: Dict[str, Any]) -> Dict[str, Any]:
+    """确保图片数据在节点返回时不丢失（修复大批量图片场景）"""
+    if state.get("processed_images"):
+        result["processed_images"] = state.get("processed_images")
+    if state.get("answer_images"):
+        result["answer_images"] = state.get("answer_images")
+    if state.get("student_boundaries"):
+        result["student_boundaries"] = state.get("student_boundaries")
+    return result
 
 
 async def rubric_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
@@ -956,36 +988,36 @@ async def rubric_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
 
     if grading_mode.startswith("assist"):
         logger.info(f"[rubric_review] skip (assist mode): batch_id={batch_id}")
-        return {
+        return _preserve_images_in_result(state, {
             "current_stage": "rubric_review_skipped",
             "percentage": 18.0,
             "timestamps": {
                 **state.get("timestamps", {}),
                 "rubric_review_at": datetime.now().isoformat(),
             },
-        }
+        })
 
     if not parsed_rubric or not parsed_rubric.get("questions"):
         logger.info(f"[rubric_review] skip (no rubric): batch_id={batch_id}")
-        return {
+        return _preserve_images_in_result(state, {
             "current_stage": "rubric_review_skipped",
             "percentage": 18.0,
             "timestamps": {
                 **state.get("timestamps", {}),
                 "rubric_review_at": datetime.now().isoformat(),
             },
-        }
+        })
 
     if not enable_review:
         logger.info(f"[rubric_review] skip (review disabled): batch_id={batch_id}")
-        return {
+        return _preserve_images_in_result(state, {
             "current_stage": "rubric_review_skipped",
             "percentage": 18.0,
             "timestamps": {
                 **state.get("timestamps", {}),
                 "rubric_review_at": datetime.now().isoformat(),
             },
-        }
+        })
 
     review_request = {
         "type": "rubric_review_required",
@@ -1047,7 +1079,7 @@ async def rubric_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
         )
         updated_rubric["rubric_context"] = _format_rubric_context_from_dict(updated_rubric)
 
-    return {
+    return _preserve_images_in_result(state, {
         "parsed_rubric": updated_rubric,
         "rubric_review_result": review_response,
         "current_stage": "rubric_review_completed",
@@ -1056,7 +1088,7 @@ async def rubric_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
             **state.get("timestamps", {}),
             "rubric_review_at": datetime.now().isoformat(),
         },
-    }
+    })
 
 
 def grading_fanout_router(state: BatchGradingGraphState) -> List[Send]:
@@ -1075,23 +1107,72 @@ def grading_fanout_router(state: BatchGradingGraphState) -> List[Send]:
 
     batch_id = state["batch_id"]
     inputs = state.get("inputs", {})
-    processed_images = state.get("processed_images") or state.get("answer_images") or []
     rubric = state.get("rubric", "")
     parsed_rubric = state.get("parsed_rubric", {})
     api_key = state.get("api_key", "")
     student_boundaries = state.get("student_boundaries")
     
+    # 🔧 修复：从多个来源获取图片，并添加详细日志诊断大批量图片丢失问题
+    processed_images = state.get("processed_images") or []
+    answer_images = state.get("answer_images") or []
+    
+    # 优先使用 processed_images（已预处理），fallback 到 answer_images（原始）
+    images_to_use = processed_images if processed_images else answer_images
+    
+    logger.info(
+        f"[grading_fanout] 图片来源诊断: batch_id={batch_id}, "
+        f"processed_images={len(processed_images)}, answer_images={len(answer_images)}, "
+        f"state_keys={list(state.keys())}"
+    )
+    
     if not student_boundaries:
-        student_boundaries = _build_student_boundaries(state, len(processed_images))
+        student_boundaries = _build_student_boundaries(state, len(images_to_use))
         if student_boundaries:
             logger.info(f"[grading_fanout] 生成 {len(student_boundaries)} 个学生边界")
 
-    if not processed_images:
-        logger.warning(f"[grading_fanout] ⚠️ 没有待批改的图像: batch_id={batch_id}")
-        logger.warning(f"[grading_fanout] 🔍 调试: state keys={list(state.keys())}")
-        logger.warning(f"[grading_fanout] 🔍 answer_images count={len(state.get('answer_images', []))}")
-        logger.warning(f"[grading_fanout] 🔍 processed_images count={len(state.get('processed_images', []))}")
-        return [Send("confession", state)]
+    if not images_to_use:
+        logger.warning(f"[grading_fanout] ⚠️ state 中没有图片，尝试恢复: batch_id={batch_id}")
+        logger.debug(f"[grading_fanout] 🔍 诊断: state keys={sorted(list(state.keys()))}")
+        logger.debug(f"[grading_fanout] 🔍 inputs keys={sorted(list(inputs.keys())) if inputs else 'None'}")
+        
+        # 1. 先尝试从 inputs 中恢复
+        input_answer_images = inputs.get("answer_images") or []
+        if input_answer_images:
+            logger.info(f"[grading_fanout] ✅ 从 inputs 恢复 {len(input_answer_images)} 张图片")
+            images_to_use = input_answer_images
+        else:
+            # 2. 尝试从 PostgreSQL 读取（最后一道防线）
+            pg_reader = _get_pg_image_reader()
+            if pg_reader:
+                try:
+                    # 在同步上下文中运行异步函数
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        # 如果已有事件循环，创建新任务
+                        import concurrent.futures
+                        with concurrent.futures.ThreadPoolExecutor() as executor:
+                            future = executor.submit(asyncio.run, pg_reader(batch_id, "answer"))
+                            pg_images = future.result(timeout=60)
+                    else:
+                        pg_images = loop.run_until_complete(pg_reader(batch_id, "answer"))
+                    
+                    if pg_images:
+                        logger.info(f"[grading_fanout] ✅ 从 PostgreSQL 恢复 {len(pg_images)} 张图片")
+                        # 转换为 base64 格式（与 answer_images 格式一致）
+                        import base64
+                        images_to_use = [
+                            f"data:image/jpeg;base64,{base64.b64encode(img).decode('utf-8')}"
+                            for img in pg_images
+                        ]
+                except Exception as e:
+                    logger.error(f"[grading_fanout] ❌ PostgreSQL 读取图片失败: {e}")
+            
+            if not images_to_use:
+                logger.error(f"[grading_fanout] ❌ 无法恢复图片，跳过批改直接进入 confession")
+                return [Send("confession", state)]
+    
+    # 更新变量名以保持后续代码兼容
+    processed_images = images_to_use
 
     # 不再从 page_index_contexts 推导 student_boundaries
     # 如果前端没有提供 student_mapping，则按批次大小分配
@@ -1505,7 +1586,8 @@ def _infer_question_type(question: Dict[str, Any]) -> str:
 
     if standard_answer:
         answer_clean = re.sub(r"\s+", "", standard_answer)
-        if len(answer_clean) <= 4 and re.fullmatch(r"[0-9A-Za-z\\-+.=()（）/]+", answer_clean):
+        # 注意: 在字符类中 - 需要放在末尾避免被解释为范围
+        if len(answer_clean) <= 4 and re.fullmatch(r"[0-9A-Za-z+.=()（）/\\-]+", answer_clean):
             return "objective"
         if len(standard_answer) > 30 or "\n" in standard_answer:
             return "subjective"
@@ -2428,11 +2510,7 @@ async def _grade_batch_node_impl(state: Dict[str, Any]) -> Dict[str, Any]:
                 second_pass_used += 1
                 return True
 
-        max_pages_per_student = int(os.getenv("GRADING_MAX_PAGES_PER_STUDENT", "12"))
-        use_student_grading = len(images) <= max_pages_per_student
-        student_error = None
-
-        # 🚀 使用 grade_student 一次 LLM call 批改整个学生
+        # 🚀 始终使用 grade_student 一次 LLM call 批改整个学生（避免逐页浪费 token）
         async def stream_callback(stream_type: str, chunk: str) -> None:
             await _broadcast_progress(
                 batch_id,
@@ -2461,10 +2539,10 @@ async def _grade_batch_node_impl(state: Dict[str, Any]) -> Dict[str, Any]:
             },
         )
 
-        if use_student_grading:
+        try:
             logger.info(f"[grade_batch] grade_student for {batch_student_key} pages={len(images)}")
 
-            # grade_student
+            # grade_student - 一次性批改整个学生
             student_result = await reasoning_client.grade_student(
                 images=images,
                 student_key=batch_student_key,
@@ -2474,7 +2552,7 @@ async def _grade_batch_node_impl(state: Dict[str, Any]) -> Dict[str, Any]:
                 stream_callback=stream_callback,
             )
 
-            # Convert to legacy page result format.
+            # Convert to legacy page result format
             if student_result.get("status") == "completed":
                 total_score = student_result.get("total_score", 0)
                 max_score = student_result.get("max_score", 0)
@@ -2496,111 +2574,62 @@ async def _grade_batch_node_impl(state: Dict[str, Any]) -> Dict[str, Any]:
                         "batch_index": batch_index,
                     }
                 )
-            else:
-                student_error = student_result.get("error", "Unknown error")
-                logger.warning(
-                    f"[grade_batch] grade_student failed for {batch_student_key}: {student_error}"
+                
+                await emit_agent_update(
+                    "completed",
+                    f"Grading completed: {total_score}/{max_score}",
+                    progress=100,
                 )
-                use_student_grading = False
-
-        if not use_student_grading:
-            if student_error:
-                logger.warning(f"[grade_batch] fallback to per-page grading: {student_error}")
             else:
-                logger.info(
-                    "[grade_batch] page count exceeds limit; "
-                    f"fallback to per-page: pages={len(images)} limit={max_pages_per_student}"
+                error_msg = student_result.get("error", "Unknown error")
+                logger.error(
+                    f"[grade_batch] grade_student failed for {batch_student_key}: {error_msg}"
                 )
-
-            await emit_agent_update(
-                "running",
-                "Fallback to per-page grading",
-                progress=10,
-            )
-
-            for idx, image in enumerate(images):
-                page_index = page_indices[idx] if idx < len(page_indices) else idx
-                page_context = page_index_contexts.get(page_index)
-                page_max_score = _estimate_page_max_score(local_parsed_rubric, page_context)
-                try:
-                    page_result = await reasoning_client.grade_page(
-                        image=image,
-                        rubric=rubric,
-                        max_score=page_max_score,
-                        parsed_rubric=local_parsed_rubric,
-                        page_context=page_context,
-                        stream_callback=stream_callback,
-                    )
-                    
-                    # 输出完整页面批改结果 JSON（用于调试）
-                    import json
-                    logger.info(f"📄 页面 {page_index} 批改结果完整JSON:\n{json.dumps(page_result, ensure_ascii=False, indent=2)}")
-                    
-                except Exception as exc:
-                    logger.warning(f"[grade_batch] page {page_index} grading failed: {exc}")
-                    page_results.append(
-                        {
-                            "page_index": page_index,
-                            "page_indices": [page_index],
-                            "status": "failed",
-                            "error": str(exc),
-                            "score": 0,
-                            "max_score": page_max_score,
-                            "confidence": 0,
-                            "feedback": "",
-                            "question_details": [],
-                            "question_numbers": [],
-                            "student_key": batch_student_key,
-                            "student_name": batch_student_name,
-                            "student_id": batch_student_id,
-                            "batch_index": batch_index,
-                            "is_blank_page": bool(
-                                page_context and page_context.get("is_cover_page")
-                            ),
-                        }
-                    )
-                    await mark_page_done(page_index, f"Graded page {idx + 1}/{len(images)}")
-                    continue
-
-                question_numbers = page_result.get("question_numbers")
-                if not question_numbers and page_context:
-                    question_numbers = page_context.get("question_numbers", [])
-
-                status = "completed"
-                if page_result.get("confidence", 0) <= 0 and not page_result.get(
-                    "question_details"
-                ):
-                    status = "failed"
-
-                question_details = page_result.get("question_details", [])
-                if isinstance(question_details, list):
-                    for item in question_details:
-                        if not isinstance(item, dict):
-                            continue
-                        if not item.get("page_indices") and item.get("page_index") is None and item.get("pageIndex") is None:
-                            item["page_indices"] = [page_index]
-                            item["pageIndices"] = [page_index]
-
+                
+                await emit_agent_update(
+                    "failed",
+                    f"Grading failed: {error_msg}",
+                    progress=0,
+                )
+                
                 page_results.append(
                     {
-                        "page_index": page_index,
-                        "page_indices": [page_index],
-                        "status": status,
-                        "score": page_result.get("score", 0),
-                        "max_score": page_result.get("max_score", page_max_score),
-                        "confidence": page_result.get("confidence", 0),
-                        "feedback": page_result.get("feedback", ""),
-                        "question_details": question_details,
-                        "question_numbers": question_numbers or [],
+                        "page_index": page_indices[0] if page_indices else 0,
+                        "page_indices": page_indices,
+                        "status": "failed",
+                        "error": error_msg,
                         "student_key": batch_student_key,
                         "student_name": batch_student_name,
                         "student_id": batch_student_id,
                         "batch_index": batch_index,
-                        "is_blank_page": bool(page_context and page_context.get("is_cover_page")),
                     }
                 )
 
-                await mark_page_done(page_index, f"Graded page {idx + 1}/{len(images)}")
+        except Exception as exc:
+            logger.error(
+                f"[grade_batch] Unexpected exception for {batch_student_key}: {exc}",
+                exc_info=True
+            )
+            
+            await emit_agent_update(
+                "failed",
+                f"System error: {str(exc)[:100]}",
+                progress=0,
+            )
+            
+            page_results.append(
+                {
+                    "page_index": page_indices[0] if page_indices else 0,
+                    "page_indices": page_indices,
+                    "status": "failed",
+                    "error": f"System exception: {str(exc)}",
+                    "student_key": batch_student_key,
+                    "student_name": batch_student_name,
+                    "student_id": batch_student_id,
+                    "batch_index": batch_index,
+                }
+            )
+
     except Exception as e:
         batch_error = str(e)
         logger.error(f"[grade_batch] 批次 {batch_index} 批改失败: {e}", exc_info=True)
@@ -2702,14 +2731,22 @@ async def _grade_batch_node_impl(state: Dict[str, Any]) -> Dict[str, Any]:
     )
     logger.debug(f"[grade_batch] Student results count: {len(student_results)}")
 
-    # 🔍 输出完整的批改结果 JSON
+    # 🔍 DEBUG: 关键日志 - 记录 grade_batch 返回
+    logger.warning(
+        f"[grade_batch] 🔍 DEBUG: 准备返回结果, batch_index={batch_index}, "
+        f"student_key={batch_student_key}, student_results_count={len(student_results)}, "
+        f"page_results_count={len(page_results)}"
+    )
 
     # 返回结果（使用 add reducer 聚合，直接输出 student_results）
-    return {
+    result = {
         "student_results": student_results,
         "grading_results": page_results,  # 保留用于调试/日志
         "batch_progress": progress_info,
     }
+    
+    logger.warning(f"[grade_batch] 🔍 DEBUG: 返回 result keys={list(result.keys())}")
+    return result
 
 
 def _apply_student_result_overrides(
@@ -2892,6 +2929,109 @@ def _build_student_results_from_page_results(
         student_results.append(entry)
 
     return student_results
+
+
+def _merge_logic_review_fields(
+    original_question: Dict[str, Any],
+    review_item: Dict[str, Any]
+) -> Dict[str, Any]:
+    """
+    合并逻辑复核结果到原始题目数据。
+    
+    逻辑复核输出的字段（confidence, review_summary, review_corrections 等）
+    会覆盖或补充原始题目的对应字段。
+    
+    关键：逻辑复核后的 confidence 应该作为最终显示的置信度。
+    """
+    merged = dict(original_question)
+    
+    # 1. 更新置信度（逻辑复核决定最终置信度）
+    if "confidence" in review_item:
+        merged["confidence"] = review_item["confidence"]
+    if "confidence_reason" in review_item:
+        merged["confidence_reason"] = review_item["confidence_reason"]
+    if "confidenceReason" in review_item:
+        merged["confidence_reason"] = review_item["confidenceReason"]
+    
+    # 2. 更新自我反思相关字段
+    if "self_critique" in review_item:
+        merged["self_critique"] = review_item["self_critique"]
+    if "selfCritique" in review_item:
+        merged["self_critique"] = review_item["selfCritique"]
+    if "self_critique_confidence" in review_item:
+        merged["self_critique_confidence"] = review_item["self_critique_confidence"]
+    if "selfCritiqueConfidence" in review_item:
+        merged["self_critique_confidence"] = review_item["selfCritiqueConfidence"]
+    
+    # 3. 更新复核摘要
+    if "review_summary" in review_item:
+        merged["review_summary"] = review_item["review_summary"]
+    if "reviewSummary" in review_item:
+        merged["review_summary"] = review_item["reviewSummary"]
+    
+    # 4. 处理分数修正
+    review_corrections = review_item.get("review_corrections") or review_item.get("reviewCorrections") or []
+    if review_corrections:
+        merged["review_corrections"] = review_corrections
+        
+        # 应用分数修正到 scoring_point_results
+        scoring_results = merged.get("scoring_point_results") or []
+        correction_map = {}
+        for corr in review_corrections:
+            if isinstance(corr, dict):
+                point_id = corr.get("point_id") or corr.get("pointId")
+                if point_id:
+                    correction_map[point_id] = corr
+        
+        if scoring_results and correction_map:
+            updated_scoring = []
+            total_score_delta = 0
+            for spr in scoring_results:
+                point_id = spr.get("point_id") or spr.get("pointId")
+                if point_id and point_id in correction_map:
+                    corr = correction_map[point_id]
+                    original_awarded = _safe_float(spr.get("awarded", 0))
+                    corrected_awarded = _safe_float(corr.get("correct_awarded", corr.get("correctAwarded", original_awarded)))
+                    
+                    updated_spr = dict(spr)
+                    updated_spr["awarded"] = corrected_awarded
+                    updated_spr["review_adjusted"] = True
+                    updated_spr["review_before"] = {
+                        "awarded": original_awarded,
+                        "decision": spr.get("decision"),
+                        "reason": spr.get("reason"),
+                        "evidence": spr.get("evidence"),
+                    }
+                    updated_spr["review_reason"] = corr.get("review_reason") or corr.get("reviewReason") or ""
+                    
+                    # 更新 decision
+                    if corrected_awarded > 0:
+                        updated_spr["decision"] = "得分（复核修正）"
+                    else:
+                        updated_spr["decision"] = "不得分（复核修正）"
+                    
+                    total_score_delta += corrected_awarded - original_awarded
+                    updated_scoring.append(updated_spr)
+                else:
+                    updated_scoring.append(dict(spr))
+            
+            merged["scoring_point_results"] = updated_scoring
+            
+            # 重新计算总分
+            if total_score_delta != 0:
+                original_score = _safe_float(merged.get("score", 0))
+                merged["score"] = max(0, original_score + total_score_delta)
+    
+    # 5. 更新 honesty_note
+    if "honesty_note" in review_item:
+        merged["honesty_note"] = review_item["honesty_note"]
+    if "honestyNote" in review_item:
+        merged["honesty_note"] = review_item["honestyNote"]
+    
+    # 6. 标记已复核
+    merged["logic_reviewed"] = True
+    
+    return merged
 
 
 def _recompute_student_totals(student: Dict[str, Any]) -> None:
@@ -4414,7 +4554,31 @@ async def confession_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     工作流位置：grade_batch → confession → logic_review
     """
     batch_id = state["batch_id"]
-    student_results = state.get("student_results", []) or []
+    student_results_raw = state.get("student_results", []) or []
+    
+    # 🔧 去重：由于 Send 并行任务会多次触发后续节点，student_results 可能包含重复
+    # 使用 student_key 去重，保留最后一个（最新的）结果
+    seen_keys = set()
+    student_results = []
+    for result in reversed(student_results_raw):
+        student_key = result.get("student_key") or result.get("student_name") or f"unknown_{len(seen_keys)}"
+        if student_key not in seen_keys:
+            seen_keys.add(student_key)
+            student_results.append(result)
+    student_results = list(reversed(student_results))  # 恢复原顺序
+    
+    if len(student_results) != len(student_results_raw):
+        logger.info(
+            f"[confession] 去重: {len(student_results_raw)} → {len(student_results)} 学生 "
+            f"(removed duplicates: {[r.get('student_key') for r in student_results_raw if r.get('student_key') not in {s.get('student_key') for s in student_results}]})"
+        )
+    
+    # 🔍 DEBUG: 关键日志 - 记录 confession_node 入口
+    logger.warning(
+        f"[confession] 🔍 DEBUG: 进入 confession_node, batch_id={batch_id}, "
+        f"student_results_count={len(student_results)}, "
+        f"state_keys={sorted(list(state.keys()))}"
+    )
     parsed_rubric = state.get("parsed_rubric", {}) or {}
     api_key = state.get("api_key") or os.getenv("LLM_API_KEY") or os.getenv("OPENROUTER_API_KEY")
     grading_mode = _resolve_grading_mode(state.get("inputs", {}), parsed_rubric)
@@ -4954,74 +5118,76 @@ def _build_logic_review_prompt(
     max_evidence_chars = limits.get("max_evidence_chars", 120)
 
     lines = [
-        "# 角色：资深逻辑复核专家 (Logic Review / Audit & Correction Expert)",
+        "# 角色：逻辑复核审计员 (Logic Review Auditor)",
         "",
-        "你是一位拥有丰富阅卷经验的逻辑复核专家，专门负责审计批改结果的一致性和准确性。",
+        "你是一位严谨的逻辑复核审计员，专门负责审计批改结果中的**明显错误**。",
         "",
-        "## 核心任务",
-        "判定：'批改对不对 / 有没有漏洞'，并**修正发现的错误**",
-        "你是验证审计者+修正者，检查批改是否自洽，发现错误时必须更正。",
+        "## 核心原则（必须严格遵守）",
+        "",
+        "### ⚠️ 最高优先级：只纠正明显错误",
+        "1. **只修正明显的、无可争议的错误**",
+        "   - 证据明确说正确但给了 0 分",
+        "   - 证据明确说错误但给了分",
+        "   - 分数超出满分或为负数",
+        "   - 得分点分数累加错误",
+        "",
+        "2. **绝对禁止酌情给分**",
+        '   - 不得因为"学生可能理解了"而给分',
+        '   - 不得因为"答案接近正确"而给部分分（除非评分标准明确允许）',
+        '   - 不得因为"解题思路正确"而给分（除非评分标准明确允许）',
+        "",
+        "3. **严格基于评分标准**",
+        "   - 所有修正必须有评分标准中的明确依据",
+        "   - 如果评分标准未覆盖某种情况，**保留原判**",
+        "   - 不得自行解释或扩展评分标准",
+        "",
+        "4. **批判性思维**",
+        "   - 对自白中披露的风险点持怀疑态度，独立验证",
+        '   - 不要轻信任何"可能"、"应该"的推测',
+        "   - 宁可漏纠也不可错纠",
+        "",
+        "### 🔴 无法判断时的处理",
+        "当遇到以下情况时，**不修正**，但必须：",
+        "- 降低该题的 `confidence` 值（设为 0.3-0.5）",
+        "- 在 `honesty_note` 中详细说明无法判断的原因",
+        "- 标记 `self_critique_confidence` 为低值",
+        "",
+        "无法判断的情况包括：",
+        "- 评分标准不够清晰",
+        "- 学生答案表述模糊",
+        "- 证据与评分标准的对应关系不明确",
+        "- 存在多种合理解释",
         "",
         "## 检查维度",
-        "1. **一致性**：评分与证据是否一致？与反馈是否一致？",
-        "2. **完备性**：是否遗漏关键评分点？是否有未覆盖的题目？",
-        "3. **可推导性**：结论是否由证据推出？是否存在跳步 (non sequitur)？",
-        "4. **可验证性**：给出的证据是否可以验证评分决定？",
-        "5. **数学正确性**：得分累加是否正确？是否超出满分？",
+        "1. **证据一致性**：evidence 与 awarded 是否一致？",
+        "2. **数学正确性**：分数累加是否正确？是否溢出？",
+        "3. **标准符合性**：评分是否符合评分标准的字面要求？",
         "",
-        "## 批改经验：常见逻辑错误模式",
-        "",
-        "### 1. 评分逻辑错误",
-        "- **重复扣分**：前步错误已扣分，后步因此产生的错误不应重复扣分",
-        "- **错误传递忽视**：前步计算错误但方法正确，后步应按前步结果继续给分",
-        "- **得分点遗漏**：评分标准中的某些得分点未被评判",
-        "- **分数溢出**：某题得分超过满分或为负数",
-        "- **累加错误**：得分点分数之和与题目总分不一致",
-        "",
-        "### 2. 证据与评分矛盾",
-        "- **证据说对但扣分**：evidence 说学生正确，但 awarded = 0",
-        "- **证据说错但给分**：evidence 说学生错误，但 awarded > 0",
-        "- **证据空但有分**：没有证据支持的给分决定",
-        "- **证据与反馈冲突**：evidence 和 feedback 内容矛盾",
-        "",
-        "### 3. 标准应用错误",
-        "- **标准理解偏差**：评分标准被错误理解或应用",
-        "- **另类解法误判**：正确的非标准解法被错误扣分",
-        "- **部分分给予不当**：应给部分分的情况给了零分或满分",
-        "",
-        "## 约束与修正权限",
-        '1. **禁止引入新事实**：不能说"我看到了..."，只能基于已有信息判断',
-        "2. **必须修正错误**：发现逻辑错误、证据冲突、评分不一致时，必须在 review_corrections 中提出修正",
-        "3. **修正需有依据**：每个修正必须引用已有证据或评分标准作为依据",
-        "4. **批判性思维**：对自白中披露的风险点进行交叉验证",
-        "5. **保守修正原则**：只修正有明确依据的错误，不确定时保留原判",
-        "",
-        "## 修正决策树",
+        "## 修正决策（严格按此执行）",
         "```",
-        "if 证据明确说正确 and awarded == 0:",
-        "    → 修正为得分（给出 review_reason）",
-        "elif 证据明确说错误 and awarded > 0:",
-        "    → 修正为扣分（给出 review_reason）",
-        "elif 证据与反馈矛盾:",
-        "    → 以证据为准进行修正",
+        "if 证据【明确且无歧义地】说正确 and awarded == 0:",
+        "    → 修正为得分",
+        "elif 证据【明确且无歧义地】说错误 and awarded > 0:",
+        "    → 修正为扣分",
         "elif 得分超出满分 or 得分为负:",
-        "    → 修正为合理分数",
-        "elif 前步错误导致后步错误 and 后步已扣分:",
-        "    → 恢复后步得分（错误不重复扣）",
+        "    → 修正为合理边界值",
+        "elif 分数累加明显错误:",
+        "    → 修正累加结果",
+        "elif 存在任何不确定性:",
+        "    → 保留原判 + 降低置信度 + 写明 honesty_note",
         "else:",
-        "    → 保留原判，在 honesty_note 中说明不确定",
+        "    → 保留原判",
         "```",
         "",
         "## 可用信息源（仅限这些）",
         "- 批改结果（评分、证据、反馈）",
-        "- 评分标准（rubric）",
-        "- 自白报告（如有）",
+        "- 评分标准（rubric）—— **修正的唯一依据**",
+        "- 自白报告（仅供参考，不作为修正依据）",
         "",
         "## 输出内容",
-        "- **errors**：逻辑错误、与证据矛盾",
-        "- **contradictions**：内部不一致",
-        "- **missing**：遗漏的评分点或验证",
-        "- **review_corrections**：**必须填写**的评分修正，包含 point_id、correct_awarded、correct_decision、review_reason",
+        "- **review_corrections**：只包含明显错误的修正",
+        "- **confidence**：评分置信度（无法判断时设为 0.3-0.5）",
+        "- **honesty_note**：无法判断时的详细说明",
         "",
         f"## 学生标识: {student_key}",
         "",
@@ -5166,7 +5332,23 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     """
     batch_id = state["batch_id"]
     # 优先读取 confessed_results（confession 节点输出），回退到 student_results
-    student_results = state.get("confessed_results") or state.get("student_results", []) or []
+    student_results_raw = state.get("confessed_results") or state.get("student_results", []) or []
+    
+    # 🔧 去重：由于 Send 并行任务可能导致重复，使用 student_key 去重
+    seen_keys = set()
+    student_results = []
+    for result in reversed(student_results_raw):
+        student_key = result.get("student_key") or result.get("student_name") or f"unknown_{len(seen_keys)}"
+        if student_key not in seen_keys:
+            seen_keys.add(student_key)
+            student_results.append(result)
+    student_results = list(reversed(student_results))
+    
+    if len(student_results) != len(student_results_raw):
+        logger.info(
+            f"[logic_review] 去重: {len(student_results_raw)} → {len(student_results)} 学生"
+        )
+    
     parsed_rubric = state.get("parsed_rubric", {}) or {}
     api_key = state.get("api_key") or os.getenv("LLM_API_KEY") or os.getenv("OPENROUTER_API_KEY")
     grading_mode = _resolve_grading_mode(state.get("inputs", {}), parsed_rubric)
@@ -5674,6 +5856,14 @@ async def export_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     Requirements: 9.4, 11.4
     """
     batch_id = state["batch_id"]
+    
+    # 🔍 DEBUG: 关键日志 - 记录 export_node 入口
+    logger.warning(
+        f"[export] 🔍 DEBUG: 进入 export_node, batch_id={batch_id}, "
+        f"student_results={len(state.get('student_results', []))}, "
+        f"confessed_results={len(state.get('confessed_results', []))}, "
+        f"reviewed_results={len(state.get('reviewed_results', []))}"
+    )
     # 优先读取 reviewed_results，回退到 confessed_results，再回退到 student_results
     student_results = state.get("reviewed_results") or state.get("confessed_results") or state.get("student_results", [])
     cross_page_questions = state.get("cross_page_questions", [])
@@ -6441,16 +6631,13 @@ def create_batch_grading_graph(
         ],
     )
 
-    # 并行批改后通过汇聚门控进入 confession
-    # 只有当所有页面都批改完成后，才继续执行
-    graph.add_conditional_edges(
-        "grade_batch",
-        grading_merge_gate,
-        {
-            "continue": "confession",
-            "wait": END,
-        },
-    )
+    # 🔥 修复：移除有问题的 grading_merge_gate 条件边
+    # 问题：并行 Send 任务完成时，每个任务都会独立触发条件边，
+    # 导致状态聚合前就检查 student_results 数量，产生竞态条件。
+    # 
+    # 解决方案：直接使用普通边，LangGraph 会自动等待所有 Send 任务完成、
+    # 状态聚合后，再进入下一个节点（confession）。
+    graph.add_edge("grade_batch", "confession")
 
     # 简化流程：confession → logic_review → review → export → END
     graph.add_edge("confession", "logic_review")
@@ -6492,37 +6679,67 @@ def _count_graded_pages(grading_results: List[Dict[str, Any]]) -> int:
 
 def grading_merge_gate(state: BatchGradingGraphState) -> str:
     """
-    批改汇聚门控
+    批改汇聚门控（已弃用）
 
-    检查是否所有并行批改任务都已完成。
-    通过比较 grading_results（已批改页面数）和 processed_images（总页面数）。
+    ⚠️ 此函数当前未被使用！
+    
+    原问题：当使用 Send 进行并行批改时，每个并行任务完成后都会独立触发此条件边，
+    但此时状态聚合可能还未完成，导致 student_results 数量检查失败，返回 "wait" → END，
+    整个图被提前标记为 "completed"，跳过了 confession 和 logic_review。
+    
+    修复方案：移除条件边，改为直接使用普通边 (add_edge)，让 LangGraph 自动等待
+    所有 Send 任务完成并聚合状态后，再进入下一个节点。
+    
+    保留此函数以便未来调试或参考。
     """
     batch_id = state.get("batch_id", "unknown")
-    processed_images = state.get("processed_images") or []
     grading_results = state.get("grading_results") or []
     student_results = state.get("student_results") or []
+    student_boundaries = state.get("student_boundaries") or []
+    
+    total_students = len(student_boundaries) if student_boundaries else 0
+    completed_students = len(student_results)
+    
+    # 🔍 DEBUG: 详细日志记录每次调用的状态
+    logger.warning(
+        f"[grading_merge] 🔍 DEBUG entry: batch_id={batch_id}, "
+        f"completed={completed_students}, total={total_students}, "
+        f"student_keys={[s.get('student_key') for s in student_results]}, "
+        f"boundary_keys={[b.get('student_key') for b in student_boundaries]}, "
+        f"state_keys={sorted(list(state.keys()))}"
+    )
+    
+    logger.info(
+        f"[grading_merge] 诊断: batch_id={batch_id}, "
+        f"completed_students={completed_students}, total_students={total_students}, "
+        f"student_results={len(student_results)}, grading_results={len(grading_results)}"
+    )
 
-    total_pages = len(processed_images)
-    graded_pages = _count_graded_pages(grading_results)
-
-    # 如果总页数为0（异常情况），且有结果（可能逻辑错误），或者都没结果
-    if total_pages == 0:
-        logger.warning("[grading_merge] 总页数为 0，直接继续")
-        return "continue"
-
-    progress = (graded_pages / total_pages) * 100
-    # 降低日志级别以减少冗余，只在关键节点打日志
-    if graded_pages % 5 == 0 or graded_pages >= total_pages:
-        logger.info(
-            f"[grading_merge] 进度检查: {graded_pages}/{total_pages} ({progress:.1f}%)"
-        )
-
-    # 检查是否全部完成
-    if graded_pages >= total_pages:
-        logger.info("[grading_merge] ✅ 所有批次完成，进入自白阶段")
+    # 🔧 修复：优先检查 student_results（grade_student 模式）
+    # 如果有 student_boundaries，就按学生数量判断
+    if total_students > 0:
+        if completed_students >= total_students:
+            logger.info(f"[grading_merge] ✅ 所有 {total_students} 个学生批改完成，进入自白阶段")
+            logger.warning(f"[grading_merge] 🔍 DEBUG: returning 'continue' - all students done")
+            return "continue"
+        else:
+            logger.info(f"[grading_merge] ⏳ 学生批改进度: {completed_students}/{total_students}")
+            logger.warning(f"[grading_merge] 🔍 DEBUG: returning 'wait' - {completed_students}/{total_students} students")
+            return "wait"
+    
+    # 🔧 Fallback：如果没有 student_boundaries，检查是否有任何批改结果
+    if student_results:
+        logger.info(f"[grading_merge] ✅ 有 {len(student_results)} 个学生结果（无边界信息），进入自白阶段")
+        logger.warning(f"[grading_merge] 🔍 DEBUG: returning 'continue' - fallback with {len(student_results)} results")
         return "continue"
     
-    # 还有未完成的任务，当前分支结束
+    if grading_results:
+        logger.info(f"[grading_merge] ✅ 有 {len(grading_results)} 个页面结果，进入自白阶段")
+        return "continue"
+    
+    # 没有任何结果，继续等待（可能还在处理中）
+    logger.warning("[grading_merge] ⚠️ 没有批改结果，继续等待")
+    logger.warning(f"[grading_merge] 🔍 DEBUG: returning 'wait' - no results at all")
     return "wait"
 
 

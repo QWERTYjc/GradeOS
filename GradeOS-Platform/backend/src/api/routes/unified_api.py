@@ -1351,7 +1351,7 @@ async def import_grading_results(
             average_score=history_record.average_score,
             result_data=history_record.result_data,
         )
-        save_grading_history(updated_history)
+        await save_grading_history(updated_history)
         history_id = history_record.id
     else:
         history_id = str(uuid.uuid4())
@@ -1367,7 +1367,7 @@ async def import_grading_results(
             average_score=None,
             result_data=None,
         )
-        save_grading_history(history)
+        await save_grading_history(history)
 
     for target in request.targets:
         if not target.student_ids:
@@ -1499,7 +1499,7 @@ async def import_grading_results(
                     result_data=result,
                     imported_at=now,
                 )
-                save_student_result(student_result)
+                await save_student_result(student_result)
 
         records.append(GradingImportRecord(**record))
 
@@ -1533,6 +1533,10 @@ async def get_grading_history(
         # 使用异步版本获取批改历史
         histories = await list_grading_history_async(class_id=class_id, limit=50)
         for history in histories:
+            # 🔧 过滤失败的批次
+            if history.status in ('failed', 'error'):
+                continue
+            
             class_ids = history.class_ids or []
             if isinstance(class_ids, str):
                 class_ids = [class_ids]
@@ -1617,6 +1621,11 @@ async def get_grading_history(
                 except Exception:
                     result_meta = {}
 
+            # 🔧 过滤失败的批次
+            row_status = row.get("status") or ""
+            if row_status in ('failed', 'error'):
+                continue
+                
             if allowed_class_ids is not None:
                 teacher_match = row.get("teacher_id") or result_meta.get("teacher_id") or result_meta.get("teacherId")
                 if teacher_match and teacher_id and teacher_match == teacher_id:
@@ -1854,6 +1863,25 @@ async def get_grading_history_detail(import_id: str):
                             or item.student_id
                             or f"Student {idx + 1}"
                         )
+                        
+                        # 🔥 关键修复：获取学生答题图片
+                        from src.db.postgres_grading import get_page_images_for_student
+                        try:
+                            page_images = await get_page_images_for_student(pg_history.id, item.student_key)
+                            # 将图片数据附加到 result 中
+                            if page_images:
+                                result["images"] = [
+                                    {
+                                        "id": img.id,
+                                        "url": img.file_url or f"/api/batch/files/{img.file_id}/download",
+                                        "page_index": img.page_index,
+                                        "content_type": img.content_type or "image/jpeg",
+                                    }
+                                    for img in sorted(page_images, key=lambda x: x.page_index)
+                                ]
+                        except Exception as e:
+                            logger.warning(f"获取学生图片失败: {e}")
+                        
                         items.append(
                             {
                                 "item_id": str(item.id),
@@ -1922,7 +1950,7 @@ async def get_grading_history_detail(import_id: str):
                 "revoked_at": None,
             }
             items = []
-            for idx, item in enumerate(get_student_results(row["id"])):
+            for idx, item in enumerate(await get_student_results(row["id"])):
                 result = item.result_data or {}
                 if isinstance(result, str):
                     try:
@@ -1936,6 +1964,24 @@ async def get_grading_history_detail(import_id: str):
                     or item.student_id
                     or f"Student {idx + 1}"
                 )
+                
+                # 🔥 关键修复：获取学生答题图片（fallback分支）
+                from src.db.postgres_grading import get_page_images_for_student
+                try:
+                    page_images = await get_page_images_for_student(row["id"], item.student_key)
+                    if page_images:
+                        result["images"] = [
+                            {
+                                "id": img.id,
+                                "url": img.file_url or f"/api/batch/files/{img.file_id}/download",
+                                "page_index": img.page_index,
+                                "content_type": img.content_type or "image/jpeg",
+                            }
+                            for img in sorted(page_images, key=lambda x: x.page_index)
+                        ]
+                except Exception as e:
+                    logger.warning(f"获取学生图片失败: {e}")
+                
                 items.append(
                     {
                         "item_id": item.id,
@@ -2632,7 +2678,7 @@ async def get_class_statistics(class_id: str, homework_id: Optional[str] = None)
     graded_count = len(scores)
 
     if not scores:
-        histories = list_grading_history(class_id=class_id, limit=200)
+        histories = await list_grading_history(class_id=class_id, limit=200)
         history_ids = []
         for history in histories:
             result_meta = history.result_data or {}
@@ -2643,7 +2689,7 @@ async def get_class_statistics(class_id: str, homework_id: Optional[str] = None)
 
         fallback_scores = []
         for history_id in history_ids:
-            for item in get_student_results(history_id):
+            for item in await get_student_results(history_id):
                 if item.score is not None:
                     fallback_scores.append(item.score)
 

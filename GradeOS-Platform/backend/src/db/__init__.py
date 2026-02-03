@@ -47,8 +47,21 @@ from .postgres_grading import (
     StudentGradingResult,
     save_student_result,
     get_student_results,
+    get_student_result,
     GradingPageImage,
     get_page_images,
+    get_page_images_for_student,
+)
+
+# PostgreSQL 图片存储
+from .postgres_images import (
+    BatchImage,
+    save_batch_images,
+    save_batch_images_concurrent,
+    get_batch_images,
+    get_batch_images_as_bytes_list,
+    delete_batch_images,
+    get_batch_image_count,
 )
 
 __all__ = [
@@ -83,8 +96,10 @@ __all__ = [
     "StudentGradingResult",
     "save_student_result",
     "get_student_results",
+    "get_student_result",
     "GradingPageImage",
     "get_page_images",
+    "get_page_images_for_student",
     "HomeworkSubmission",
     "save_homework_submission",
     "get_homework_submissions",
@@ -95,4 +110,12 @@ __all__ = [
     "list_assistant_concepts",
     "save_assistant_mastery_snapshot",
     "list_assistant_mastery_snapshots",
+    # PostgreSQL 图片存储
+    "BatchImage",
+    "save_batch_images",
+    "save_batch_images_concurrent",
+    "get_batch_images",
+    "get_batch_images_as_bytes_list",
+    "delete_batch_images",
+    "get_batch_image_count",
 ]

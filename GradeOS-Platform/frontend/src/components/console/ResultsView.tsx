@@ -3,7 +3,7 @@
 import React, { useState, useContext, useMemo, useEffect, useCallback } from 'react';
 import { useConsoleStore, StudentResult, QuestionResult } from '@/store/consoleStore';
 import clsx from 'clsx';
-import { ArrowLeft, ChevronDown, ChevronUp, CheckCircle, XCircle, Download, GitMerge, AlertCircle, Layers, FileText, Info, X, AlertTriangle, BookOpen, ListOrdered, Loader2, Shield, Pencil } from 'lucide-react';
+import { ArrowLeft, ChevronDown, ChevronUp, CheckCircle, XCircle, Download, GitMerge, AlertCircle, Layers, FileText, Info, X, AlertTriangle, BookOpen, ListOrdered, Loader2, Shield, Pencil, Target, BrainCircuit } from 'lucide-react';
 import { CrownOutlined, BarChartOutlined, UsergroupAddOutlined, CheckCircleOutlined, ExclamationCircleOutlined, RocketOutlined } from '@ant-design/icons';
 import { Popover } from 'antd';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -15,6 +15,7 @@ import { SmoothButton } from '@/components/design-system/SmoothButton';
 import { gradingApi } from '@/services/api';
 import type { VisualAnnotation } from '@/types/annotation';
 import AnnotationCanvas from '@/components/grading/AnnotationCanvas';
+import AnnotationEditor from '@/components/grading/AnnotationEditor';
 
 interface ResultCardProps {
     result: StudentResult;
@@ -33,6 +34,11 @@ interface ResultsViewProps {
 }
 
 const LOW_CONFIDENCE_THRESHOLD = 0.7;
+
+type PageAnnotation = VisualAnnotation & {
+    id?: string;
+    page_index?: number;
+};
 
 type ReviewQuestionDraft = {
     questionId: string;
@@ -213,7 +219,12 @@ const renderParagraphs = (text: string) => {
     ));
 };
 
-const QuestionDetail: React.FC<{ question: QuestionResult; gradingMode?: string; defaultExpanded?: boolean }> = ({ question, gradingMode, defaultExpanded = false }) => {
+const QuestionDetail: React.FC<{ 
+    question: QuestionResult; 
+    gradingMode?: string; 
+    defaultExpanded?: boolean;
+    confession?: StudentResult['confession'];
+}> = ({ question, gradingMode, defaultExpanded = false, confession }) => {
     const percentage = question.maxScore > 0 ? (question.score / question.maxScore) * 100 : 0;
     const questionLabel = question.questionId === 'unknown' ? '未识别' : question.questionId;
     const normalizedType = (question.questionType || '').toLowerCase();
@@ -233,6 +244,7 @@ const QuestionDetail: React.FC<{ question: QuestionResult; gradingMode?: string;
     const hasDetails = Boolean(question.studentAnswer)
         || (showScoringDetails && ((question.scoringPointResults?.length || 0) > 0 || (question.scoringPoints?.length || 0) > 0));
     const [detailsOpen, setDetailsOpen] = useState(defaultExpanded);
+    const [analysisOpen, setAnalysisOpen] = useState(false);
     const scoreLabel = isAssist ? 'Assist' : (question.maxScore > 0 ? `${question.score} / ${question.maxScore}` : 'N/A');
     const scoreClass = isAssist || question.maxScore <= 0
         ? 'text-slate-400'
@@ -244,6 +256,17 @@ const QuestionDetail: React.FC<{ question: QuestionResult; gradingMode?: string;
         if (normalizedType === 'subjective') return { label: 'Subjective', className: 'border-amber-200 text-amber-600 bg-amber-50' };
         return { label: normalizedType, className: 'border-slate-200 text-slate-500 bg-slate-50' };
     })();
+    
+    // 提取当前题目的 AI 解析信息
+    const questionAnalysis = useMemo(() => {
+        if (!confession) return null;
+        const qid = question.questionId?.toString();
+        const issues = (confession.issues || []).filter(i => i.questionId === qid);
+        const highRisk = (confession.highRiskQuestions || []).filter(h => h.questionId === qid);
+        const errors = (confession.potentialErrors || []).filter(e => e.questionId === qid);
+        if (issues.length === 0 && highRisk.length === 0 && errors.length === 0) return null;
+        return { issues, highRisk, errors };
+    }, [confession, question.questionId]);
 
     return (
         <div className="p-4 space-y-3">
@@ -294,22 +317,33 @@ const QuestionDetail: React.FC<{ question: QuestionResult; gradingMode?: string;
                         Pages: <span className="font-mono text-slate-500">{question.pageIndices.map(p => p + 1).join(', ')}</span>
                     </div>
                 )}
-                {/* 始终显示置信度（如果有） */}
-                {question.confidence !== undefined && (
-                    <div className={clsx(
-                        "flex items-center gap-1.5",
-                        question.confidence >= 0.8 ? "text-emerald-600" : question.confidence >= 0.6 ? "text-amber-600" : "text-red-500"
-                    )}>
-                        {question.confidence >= 0.8 ? (
-                            <CheckCircle className="w-3 h-3" />
-                        ) : question.confidence >= 0.6 ? (
-                            <AlertCircle className="w-3 h-3" />
-                        ) : (
-                            <AlertTriangle className="w-3 h-3" />
-                        )}
-                        置信度: <span className="font-mono font-semibold">{(question.confidence * 100).toFixed(0)}%</span>
-                    </div>
-                )}
+                {/* 显示置信度 - 优先使用逻辑复核后的置信度 */}
+                {(() => {
+                    // 优先使用逻辑复核置信度 > self_critique_confidence > 原始 confidence
+                    const displayConfidence = (question as any).selfCritiqueConfidence 
+                        ?? (question as any).self_critique_confidence 
+                        ?? question.confidence;
+                    const isReviewed = (question as any).logicReviewed || (question as any).logic_reviewed;
+                    
+                    if (displayConfidence === undefined) return null;
+                    
+                    return (
+                        <div className={clsx(
+                            "flex items-center gap-1.5",
+                            displayConfidence >= 0.8 ? "text-emerald-600" : displayConfidence >= 0.6 ? "text-amber-600" : "text-red-500"
+                        )}>
+                            {displayConfidence >= 0.8 ? (
+                                <CheckCircle className="w-3 h-3" />
+                            ) : displayConfidence >= 0.6 ? (
+                                <AlertCircle className="w-3 h-3" />
+                            ) : (
+                                <AlertTriangle className="w-3 h-3" />
+                            )}
+                            置信度: <span className="font-mono font-semibold">{(displayConfidence * 100).toFixed(0)}%</span>
+                            {isReviewed && <span className="text-[9px] text-slate-400">(复核)</span>}
+                        </div>
+                    );
+                })()}
                 {/* 显示评分标准引用数量 */}
                 {question.rubricRefs && question.rubricRefs.length > 0 && (
                     <div className="flex items-center gap-1.5 text-blue-600">
@@ -333,60 +367,117 @@ const QuestionDetail: React.FC<{ question: QuestionResult; gradingMode?: string;
                     {showScoringDetails ? (
                         question.scoringPointResults && question.scoringPointResults.length > 0 ? (
                             <div className="mt-3 space-y-2">
-                                <div className="text-xs font-semibold text-slate-500">评分步骤</div>
-                                {question.scoringPointResults.map((spr, idx) => (
-                                    <div key={idx} className="rounded-md border border-slate-200 p-3">
-                                        <div className="flex items-start justify-between gap-4">
-                                            <div className="space-y-1 flex-1">
-                                                <div className="text-xs text-slate-700 font-medium leading-relaxed">
-                                                    {spr.pointId && <span className="font-mono text-slate-400 mr-2 text-[10px]">[{spr.pointId}]</span>}
-                                                    <MathText className="inline" text={spr.scoringPoint?.description || spr.description || "N/A"} />
-                                                    <Popover
-                                                        title={<span className="font-semibold">评分标准详情</span>}
-                                                        content={
-                                                            <div className="max-w-xs text-xs space-y-2 p-1">
-                                                                <div className="font-medium text-slate-700">{spr.scoringPoint?.description || spr.description}</div>
-                                                                <div className="flex justify-between text-slate-500">
-                                                                    <span>Max: {spr.maxPoints ?? spr.scoringPoint?.score ?? 0}</span>
-                                                                    <span>{spr.scoringPoint?.isRequired ? 'Required' : 'Optional'}</span>
-                                                                </div>
-                                                                {spr.rubricReference && (
-                                                                    <div className="mt-2 pt-2 border-t border-slate-100">
-                                                                        <div className="text-[10px] text-blue-600 font-semibold mb-1">评分标准引用</div>
-                                                                        <div className="text-slate-600 bg-blue-50 p-1.5 rounded text-[10px]">
-                                                                            <span className="font-mono text-blue-700">[{spr.rubricReference}]</span>
-                                                                            {spr.rubricReferenceSource && (
-                                                                                <span className="ml-1 text-slate-500">{spr.rubricReferenceSource}</span>
-                                                                            )}
-                                                                        </div>
-                                                                    </div>
-                                                                )}
-                                                            </div>
-                                                        }
-                                                    >
-                                                        <Info className="w-3 h-3 inline ml-1.5 text-slate-300 hover:text-blue-400 cursor-help" />
-                                                    </Popover>
-                                                </div>
-                                                <div className="text-[11px] text-slate-500">
-                                                    判定: {spr.decision || (spr.awarded > 0 ? '得分' : '不得分')}
-                                                    {spr.reason && <span className="ml-1 opacity-75">- {spr.reason}</span>}
-                                                </div>
-                                                {/* 评分标准引用标签 */}
-                                                {spr.rubricReference && (
-                                                    <div className="flex items-center gap-1.5 mt-1">
-                                                        <BookOpen className="w-3 h-3 text-blue-500" />
-                                                        <span className="text-[10px] font-mono text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded">
-                                                            引用: {spr.rubricReference}
+                                <div className="text-xs font-semibold text-slate-500 flex items-center gap-2">
+                                    <Target className="w-3.5 h-3.5" />
+                                    评分标准对照
+                                </div>
+                                {question.scoringPointResults.map((spr, idx) => {
+                                    // 构建评分标准引用文本（如果没有则基于 pointId 和 description 生成）
+                                    const rubricRef = spr.rubricReference 
+                                        || (spr as any).rubric_reference 
+                                        || (spr.pointId && spr.description ? `[${spr.pointId}] ${spr.description}` : null)
+                                        || (spr.scoringPoint?.description ? `[${spr.pointId || idx + 1}] ${spr.scoringPoint.description}` : null);
+                                    
+                                    // 是否被逻辑复核修正过
+                                    const isReviewAdjusted = (spr as any).reviewAdjusted || (spr as any).review_adjusted;
+                                    const reviewBefore = (spr as any).reviewBefore || (spr as any).review_before;
+                                    const reviewReason = (spr as any).reviewReason || (spr as any).review_reason;
+                                    
+                                    return (
+                                    <div key={idx} className={clsx(
+                                        "rounded-lg border p-3 transition-all",
+                                        isReviewAdjusted 
+                                            ? "border-amber-300 bg-amber-50/50" 
+                                            : spr.awarded > 0 
+                                                ? "border-emerald-200 bg-emerald-50/30" 
+                                                : "border-slate-200 bg-slate-50/30"
+                                    )}>
+                                        <div className="flex items-start justify-between gap-3">
+                                            {/* 左侧：评分标准内容 */}
+                                            <div className="flex-1 space-y-2">
+                                                {/* 评分标准引用标签 - 放在顶部更醒目 */}
+                                                <div className="flex items-center gap-2 flex-wrap">
+                                                    {spr.pointId && (
+                                                        <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-indigo-100 text-indigo-700 border border-indigo-200">
+                                                            得分点 {spr.pointId}
                                                         </span>
-                                                    </div>
-                                                )}
+                                                    )}
+                                                    {rubricRef && (
+                                                        <Popover
+                                                            content={
+                                                                <div className="max-w-xs text-xs">
+                                                                    <div className="font-semibold mb-1">评分标准引用</div>
+                                                                    <div className="text-slate-600">{rubricRef}</div>
+                                                                </div>
+                                                            }
+                                                            trigger="hover"
+                                                            placement="top"
+                                                        >
+                                                            <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-blue-100 text-blue-700 border border-blue-200 flex items-center gap-1 cursor-help">
+                                                                <BookOpen className="w-3 h-3" />
+                                                                标准引用
+                                                            </span>
+                                                        </Popover>
+                                                    )}
+                                                    {isReviewAdjusted && (
+                                                        <Popover
+                                                            content={
+                                                                <div className="max-w-xs text-xs">
+                                                                    <div className="font-semibold mb-1 text-amber-700">逻辑复核修正</div>
+                                                                    {reviewBefore && (
+                                                                        <div className="text-slate-500 mb-1">
+                                                                            原分数: {reviewBefore.awarded} → 修正: {spr.awarded}
+                                                                        </div>
+                                                                    )}
+                                                                    {reviewReason && (
+                                                                        <div className="text-slate-600">{reviewReason}</div>
+                                                                    )}
+                                                                </div>
+                                                            }
+                                                            trigger="hover"
+                                                            placement="top"
+                                                        >
+                                                            <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-100 text-amber-700 border border-amber-200 flex items-center gap-1 cursor-help">
+                                                                <Shield className="w-3 h-3" />
+                                                                已复核
+                                                            </span>
+                                                        </Popover>
+                                                    )}
+                                                </div>
+                                                
+                                                {/* 评分标准描述 */}
+                                                <div className="text-xs text-slate-700 leading-relaxed">
+                                                    <MathText className="inline" text={spr.scoringPoint?.description || spr.description || "N/A"} />
+                                                </div>
+                                                
+                                                {/* 判定理由 */}
+                                                <div className={clsx(
+                                                    "text-[11px] px-2 py-1.5 rounded",
+                                                    spr.awarded > 0 ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-600"
+                                                )}>
+                                                    <span className="font-semibold">
+                                                        {spr.awarded > 0 ? '✓ ' : '✗ '}
+                                                        {spr.decision || (spr.awarded > 0 ? '得分' : '不得分')}
+                                                    </span>
+                                                    {spr.reason && <span className="ml-1.5 opacity-80">— {spr.reason}</span>}
+                                                </div>
                                             </div>
-                                            <div className={clsx("font-mono font-semibold text-sm whitespace-nowrap", spr.awarded > 0 ? "text-emerald-600" : "text-slate-400")}>
-                                                {spr.awarded}/{spr.maxPoints ?? spr.scoringPoint?.score ?? 0}
+                                            
+                                            {/* 右侧：分数 */}
+                                            <div className={clsx(
+                                                "flex flex-col items-center justify-center px-3 py-2 rounded-lg min-w-[60px]",
+                                                spr.awarded > 0 ? "bg-emerald-500 text-white" : "bg-slate-200 text-slate-500"
+                                            )}>
+                                                <span className="font-mono font-bold text-lg leading-none">
+                                                    {spr.awarded}
+                                                </span>
+                                                <span className="text-[10px] opacity-80">
+                                                    / {spr.maxPoints ?? (spr as any).max_points ?? spr.scoringPoint?.score ?? spr.awarded ?? 1}
+                                                </span>
                                             </div>
                                         </div>
                                     </div>
-                                ))}
+                                )})}
                             </div>
                         ) : question.scoringPoints && question.scoringPoints.length > 0 ? (
                             // Fallback for simple scoring points list without rich results
@@ -416,6 +507,57 @@ const QuestionDetail: React.FC<{ question: QuestionResult; gradingMode?: string;
                     ) : (
                         <div className="mt-2 text-xs text-slate-500 italic">
                             {isAssist ? 'No scoring breakdown in Assist mode.' : 'No detailed analysis for this question type.'}
+                        </div>
+                    )}
+                    
+                    {/* AI 解析区块 - 可折叠 */}
+                    {questionAnalysis && (
+                        <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50/50 overflow-hidden">
+                            <button 
+                                type="button"
+                                onClick={() => setAnalysisOpen(!analysisOpen)}
+                                className="w-full px-3 py-2 cursor-pointer hover:bg-amber-100/50 transition-colors flex items-center justify-between"
+                            >
+                                <span className="text-[11px] font-semibold text-amber-700 flex items-center gap-1.5">
+                                    <BrainCircuit className="w-3.5 h-3.5" />
+                                    AI 解析 ({(questionAnalysis.issues.length + questionAnalysis.highRisk.length + questionAnalysis.errors.length)})
+                                </span>
+                                <ChevronDown className={clsx("w-4 h-4 text-amber-500 transition-transform", analysisOpen && "rotate-180")} />
+                            </button>
+                            {analysisOpen && (
+                                <div className="px-3 pb-3 space-y-2">
+                                    {questionAnalysis.highRisk.length > 0 && (
+                                        <div className="space-y-1">
+                                            {questionAnalysis.highRisk.map((item, i) => (
+                                                <div key={i} className="text-[11px] text-rose-700 bg-rose-50 px-2 py-1.5 rounded border border-rose-200 flex items-start gap-1.5">
+                                                    <XCircle className="w-3 h-3 mt-0.5 flex-shrink-0" />
+                                                    <span>{item.description || '需要人工复核'}</span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                    {questionAnalysis.errors.length > 0 && (
+                                        <div className="space-y-1">
+                                            {questionAnalysis.errors.map((item, i) => (
+                                                <div key={i} className="text-[11px] text-orange-700 bg-orange-50 px-2 py-1.5 rounded border border-orange-200 flex items-start gap-1.5">
+                                                    <AlertTriangle className="w-3 h-3 mt-0.5 flex-shrink-0" />
+                                                    <span>{item.description || '潜在错误'}</span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                    {questionAnalysis.issues.length > 0 && (
+                                        <div className="space-y-1">
+                                            {questionAnalysis.issues.map((item, i) => (
+                                                <div key={i} className="text-[11px] text-amber-700 bg-amber-100/50 px-2 py-1.5 rounded border border-amber-200 flex items-start gap-1.5">
+                                                    <Info className="w-3 h-3 mt-0.5 flex-shrink-0" />
+                                                    <span>{item.message || '提示信息'}</span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
                         </div>
                     )}
 
@@ -669,13 +811,39 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
     const [rubricSubmitting, setRubricSubmitting] = useState(false);
     const [rubricMessage, setRubricMessage] = useState<string | null>(null);
 
+    // API Base - 直接使用统一的 API_BASE
+    const getApiUrl = () => {
+        if (typeof window === 'undefined') return 'http://localhost:8001/api';
+        const hostname = window.location.hostname;
+        if (hostname === 'localhost' || hostname === '127.0.0.1') {
+            return 'http://localhost:8001/api';
+        }
+        if (hostname.includes('railway.app')) {
+            return 'https://gradeos-production.up.railway.app/api';
+        }
+        return '/api';
+    };
+    const apiBase = getApiUrl();
     // 批注渲染状态 - 默认开启
     const [showAnnotations, setShowAnnotations] = useState(true);
     const [annotationLoading, setAnnotationLoading] = useState<Set<number>>(new Set());
+    const [annotationGenerating, setAnnotationGenerating] = useState(false);
+    const [annotationFetchLoading, setAnnotationFetchLoading] = useState(false);
+    const [annotationEditMode, setAnnotationEditMode] = useState(false);
+    const [annotationStatus, setAnnotationStatus] = useState<{ type: 'idle' | 'loading' | 'success' | 'error'; message: string | null }>({
+        type: 'idle',
+        message: null,
+    });
     // 🔥 新增：存储每页的批注数据，用于 Canvas 直接渲染
-    const [pageAnnotationsData, setPageAnnotationsData] = useState<Map<number, VisualAnnotation[]>>(new Map());
+    const [pageAnnotationsData, setPageAnnotationsData] = useState<Map<number, PageAnnotation[]>>(new Map());
     // 使用 ref 跟踪已处理的页面，避免 useEffect 无限循环
     const renderedPagesRef = React.useRef<Set<string>>(new Set());
+    const apiAnnotationsLoadedRef = React.useRef<Set<string>>(new Set());
+    const [exportPdfLoading, setExportPdfLoading] = useState(false);
+    const [exportStatus, setExportStatus] = useState<{ type: 'idle' | 'loading' | 'success' | 'error'; message: string | null }>({
+        type: 'idle',
+        message: null,
+    });
 
     // 导出相关状态
     const [exportMenuOpen, setExportMenuOpen] = useState(false);
@@ -1001,6 +1169,268 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
     // 获取存储的评分标准
     const parsedRubric = useConsoleStore((state) => state.parsedRubric);
 
+    const fetchAnnotationsForStudent = useCallback(async (
+        gradingHistoryId: string,
+        studentKey: string,
+        options?: { silent?: boolean }
+    ): Promise<number> => {
+        if (!gradingHistoryId || !studentKey) return 0;
+        setAnnotationFetchLoading(true);
+        try {
+            const res = await fetch(`${apiBase}/annotations/${gradingHistoryId}/${encodeURIComponent(studentKey)}`);
+            if (!res.ok) {
+                const payload = await res.json().catch(() => null);
+                throw new Error(payload?.detail || payload?.message || '加载批注失败');
+            }
+            const payload = await res.json().catch(() => null);
+            const annotations = Array.isArray(payload?.annotations) ? payload.annotations : [];
+            if (annotations.length === 0) return 0;
+
+            const next = new Map<number, PageAnnotation[]>();
+            annotations.forEach((ann: any) => {
+                const pageIndex = Number(ann.page_index);
+                if (!Number.isFinite(pageIndex)) return;
+                const list = next.get(pageIndex) ?? [];
+                list.push({
+                    id: ann.id,
+                    annotation_type: ann.annotation_type,
+                    bounding_box: ann.bounding_box,
+                    text: ann.text || '',
+                    color: ann.color,
+                    question_id: ann.question_id,
+                    scoring_point_id: ann.scoring_point_id,
+                    page_index: pageIndex,
+                } as PageAnnotation);
+                next.set(pageIndex, list);
+            });
+
+            setPageAnnotationsData(next);
+            renderedPagesRef.current.clear();
+            next.forEach((_, pageIdx) => {
+                renderedPagesRef.current.add(`${studentKey}-${pageIdx}`);
+            });
+            return annotations.length;
+        } catch (error) {
+            if (!options?.silent) {
+                throw error;
+            }
+            console.warn('加载批注失败:', error);
+            return 0;
+        } finally {
+            setAnnotationFetchLoading(false);
+        }
+    }, [apiBase]);
+
+    const handleGenerateAnnotations = useCallback(async () => {
+        if (!submissionId || !detailViewStudent?.studentName) {
+            console.error('[批注生成] 缺少必要参数:', { submissionId, studentName: detailViewStudent?.studentName });
+            setAnnotationStatus({ type: 'error', message: '缺少批改历史ID或学生姓名' });
+            return;
+        }
+        const studentKey = detailViewStudent.studentName;
+        setAnnotationGenerating(true);
+        setAnnotationStatus({ type: 'loading', message: 'AI 批注生成中...' });
+        
+        const url = `${apiBase}/annotations/generate`;
+        const payload = {
+            grading_history_id: submissionId,
+            student_key: studentKey,
+            overwrite: false,
+        };
+        
+        console.log('[批注生成] 开始请求:', { url, payload });
+        
+        try {
+            const res = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            });
+            
+            console.log('[批注生成] 响应状态:', res.status, res.statusText);
+            
+            const resPayload = await res.json().catch(() => null);
+            console.log('[批注生成] 响应内容:', resPayload);
+            
+            if (!res.ok) {
+                throw new Error(resPayload?.detail || resPayload?.message || `HTTP ${res.status}: ${res.statusText}`);
+            }
+            setShowAnnotations(true);
+            apiAnnotationsLoadedRef.current.delete(`${submissionId}-${studentKey}`);
+            const count = await fetchAnnotationsForStudent(submissionId, studentKey, { silent: true });
+            setAnnotationStatus({
+                type: 'success',
+                message: resPayload?.message || (count > 0 ? `已加载 ${count} 个批注` : '批注生成完成'),
+            });
+        } catch (error) {
+            console.error('[批注生成] 失败:', error);
+            setAnnotationStatus({
+                type: 'error',
+                message: error instanceof Error ? error.message : '生成批注失败',
+            });
+        } finally {
+            setAnnotationGenerating(false);
+        }
+    }, [submissionId, detailViewStudent, apiBase, fetchAnnotationsForStudent]);
+
+    const handleExportAnnotatedPdf = useCallback(async () => {
+        if (!submissionId || !detailViewStudent?.studentName) {
+            console.error('[PDF导出] 缺少必要参数:', { submissionId, studentName: detailViewStudent?.studentName });
+            setExportStatus({ type: 'error', message: '缺少批改历史ID或学生姓名' });
+            return;
+        }
+        setExportPdfLoading(true);
+        setExportStatus({ type: 'loading', message: '正在导出批注版 PDF...' });
+        
+        const url = `${apiBase}/annotations/export/pdf`;
+        const payload = {
+            grading_history_id: submissionId,
+            student_key: detailViewStudent.studentName,
+            include_summary: true,
+        };
+        
+        console.log('[PDF导出] 开始请求:', { url, payload });
+        
+        try {
+            const res = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            });
+            
+            console.log('[PDF导出] 响应状态:', res.status, res.statusText);
+            
+            if (!res.ok) {
+                const errPayload = await res.json().catch(() => null);
+                console.error('[PDF导出] 错误响应:', errPayload);
+                throw new Error(errPayload?.detail || errPayload?.message || `HTTP ${res.status}: ${res.statusText}`);
+            }
+            const blob = await res.blob();
+            console.log('[PDF导出] 文件大小:', blob.size, 'bytes');
+            
+            const objUrl = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = objUrl;
+            a.download = `批注版_${detailViewStudent.studentName}.pdf`;
+            a.click();
+            URL.revokeObjectURL(objUrl);
+            setExportStatus({ type: 'success', message: '批注版 PDF 已导出' });
+        } catch (error) {
+            console.error('[PDF导出] 失败:', error);
+            setExportStatus({
+                type: 'error',
+                message: error instanceof Error ? error.message : '导出 PDF 失败',
+            });
+        } finally {
+            setExportPdfLoading(false);
+        }
+    }, [submissionId, detailViewStudent, apiBase]);
+
+    const updatePageAnnotations = useCallback((pageIdx: number, updater: (current: PageAnnotation[]) => PageAnnotation[]) => {
+        setPageAnnotationsData(prev => {
+            const next = new Map(prev);
+            const current = next.get(pageIdx) ?? [];
+            next.set(pageIdx, updater(current));
+            return next;
+        });
+    }, []);
+
+    const handleAnnotationAdd = useCallback(async (pageIdx: number, annotation: Omit<PageAnnotation, 'id' | 'page_index'>) => {
+        if (!submissionId || !detailViewStudent?.studentName) return;
+        setAnnotationStatus({ type: 'loading', message: '保存批注中...' });
+        try {
+            const res = await fetch(`${apiBase}/annotations`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    grading_history_id: submissionId,
+                    student_key: detailViewStudent.studentName,
+                    page_index: pageIdx,
+                    annotation: {
+                        annotation_type: annotation.annotation_type,
+                        bounding_box: annotation.bounding_box,
+                        text: annotation.text || '',
+                        color: annotation.color || '#0066FF',
+                        question_id: annotation.question_id || '',
+                        scoring_point_id: annotation.scoring_point_id || '',
+                    },
+                }),
+            });
+            const payload = await res.json().catch(() => null);
+            if (!res.ok) {
+                throw new Error(payload?.detail || payload?.message || '保存批注失败');
+            }
+            updatePageAnnotations(pageIdx, (current) => ([
+                ...current,
+                {
+                    id: payload?.id,
+                    annotation_type: payload?.annotation_type || annotation.annotation_type,
+                    bounding_box: payload?.bounding_box || annotation.bounding_box,
+                    text: payload?.text || annotation.text,
+                    color: payload?.color || annotation.color,
+                    question_id: payload?.question_id || annotation.question_id,
+                    scoring_point_id: payload?.scoring_point_id || annotation.scoring_point_id,
+                    page_index: pageIdx,
+                } as PageAnnotation,
+            ]));
+            setAnnotationStatus({ type: 'success', message: '批注已保存' });
+        } catch (error) {
+            setAnnotationStatus({
+                type: 'error',
+                message: error instanceof Error ? error.message : '保存批注失败',
+            });
+        }
+    }, [submissionId, detailViewStudent, apiBase, updatePageAnnotations]);
+
+    const handleAnnotationDelete = useCallback(async (pageIdx: number, annotationId: string) => {
+        if (!annotationId) return;
+        setAnnotationStatus({ type: 'loading', message: '删除批注中...' });
+        try {
+            const res = await fetch(`${apiBase}/annotations/${annotationId}`, { method: 'DELETE' });
+            if (!res.ok) {
+                const payload = await res.json().catch(() => null);
+                throw new Error(payload?.detail || payload?.message || '删除批注失败');
+            }
+            updatePageAnnotations(pageIdx, (current) => current.filter((ann) => ann.id !== annotationId));
+            setAnnotationStatus({ type: 'success', message: '批注已删除' });
+        } catch (error) {
+            setAnnotationStatus({
+                type: 'error',
+                message: error instanceof Error ? error.message : '删除批注失败',
+            });
+        }
+    }, [apiBase, updatePageAnnotations]);
+
+    const handleAnnotationUpdate = useCallback(async (pageIdx: number, annotationId: string, updates: Partial<PageAnnotation>) => {
+        if (!annotationId) return;
+        try {
+            const res = await fetch(`${apiBase}/annotations/${annotationId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    bounding_box: updates.bounding_box,
+                    text: updates.text,
+                    color: updates.color,
+                    annotation_type: updates.annotation_type,
+                }),
+            });
+            if (!res.ok) {
+                const payload = await res.json().catch(() => null);
+                throw new Error(payload?.detail || payload?.message || '更新批注失败');
+            }
+            updatePageAnnotations(pageIdx, (current) => current.map((ann) => (
+                ann.id === annotationId
+                    ? { ...ann, ...updates }
+                    : ann
+            )));
+        } catch (error) {
+            setAnnotationStatus({
+                type: 'error',
+                message: error instanceof Error ? error.message : '更新批注失败',
+            });
+        }
+    }, [apiBase, updatePageAnnotations]);
+
     // 批注渲染函数 - 前端 Canvas 渲染批注
     const renderAnnotationsForPage = useCallback(async (pageIdx: number, imageUrl: string, studentKey: string, studentData: StudentResult | null) => {
         // 使用 studentKey + pageIdx 作为唯一标识，避免重复渲染
@@ -1178,33 +1608,56 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
 
         // 获取学生唯一标识
         const studentKey = detailViewStudent.studentName || `student-${detailViewIndex}`;
+        const loadKey = submissionId ? `${submissionId}-${studentKey}` : '';
         // 保存当前学生数据的引用，避免闭包问题
         const currentStudent = detailViewStudent;
+        let cancelled = false;
 
-        const pages = new Set<number>();
-        if (detailViewStudent.startPage !== undefined) {
-            const start = detailViewStudent.startPage;
-            const end = detailViewStudent.endPage ?? start;
-            for (let i = start; i <= end; i++) pages.add(i);
-        }
-        detailViewStudent.questionResults?.forEach(q => {
-            (q.pageIndices || []).forEach(p => pages.add(p));
-        });
-
-        // 如果没有找到任何页面信息，默认使用第一页（索引 0）
-        if (pages.size === 0) {
-            pages.add(0);
-        }
-
-        const uniquePages = Array.from(pages).filter(p => Number.isFinite(p));
-
-        uniquePages.forEach(pageIdx => {
-            const imageUrl = uploadedImages[pageIdx] || currentSession?.images[pageIdx]?.url;
-            if (imageUrl) {
-                renderAnnotationsForPage(pageIdx, imageUrl, studentKey, currentStudent);
+        const loadAnnotations = async () => {
+            let usedApiAnnotations = false;
+            if (submissionId && loadKey && !apiAnnotationsLoadedRef.current.has(loadKey)) {
+                const count = await fetchAnnotationsForStudent(submissionId, studentKey, { silent: true });
+                if (count > 0) {
+                    apiAnnotationsLoadedRef.current.add(loadKey);
+                    usedApiAnnotations = true;
+                }
+            } else if (pageAnnotationsData.size > 0 && loadKey) {
+                usedApiAnnotations = true;
             }
-        });
-    }, [showAnnotations, detailViewStudent, detailViewIndex, uploadedImages, currentSession, renderAnnotationsForPage]);
+
+            if (usedApiAnnotations || cancelled) return;
+            if (annotationEditMode) return;
+
+            const pages = new Set<number>();
+            if (detailViewStudent.startPage !== undefined) {
+                const start = detailViewStudent.startPage;
+                const end = detailViewStudent.endPage ?? start;
+                for (let i = start; i <= end; i += 1) pages.add(i);
+            }
+            detailViewStudent.questionResults?.forEach(q => {
+                (q.pageIndices || []).forEach(p => pages.add(p));
+            });
+
+            // 如果没有找到任何页面信息，默认使用第一页（索引 0）
+            if (pages.size === 0) {
+                pages.add(0);
+            }
+
+            const uniquePages = Array.from(pages).filter(p => Number.isFinite(p));
+
+            uniquePages.forEach(pageIdx => {
+                const imageUrl = uploadedImages[pageIdx] || currentSession?.images[pageIdx]?.url;
+                if (imageUrl) {
+                    renderAnnotationsForPage(pageIdx, imageUrl, studentKey, currentStudent);
+                }
+            });
+        };
+
+        void loadAnnotations();
+        return () => {
+            cancelled = true;
+        };
+    }, [showAnnotations, detailViewStudent, detailViewIndex, uploadedImages, currentSession, renderAnnotationsForPage, submissionId, fetchAnnotationsForStudent, pageAnnotationsData.size, annotationEditMode]);
 
     // 当切换学生或关闭批注时，清理已渲染的图片缓存
     useEffect(() => {
@@ -1212,6 +1665,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
             // 关闭批注时清理
             setPageAnnotationsData(new Map());
             renderedPagesRef.current.clear();
+            apiAnnotationsLoadedRef.current.clear();
         }
     }, [showAnnotations]);
 
@@ -2329,29 +2783,110 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                 <div className="flex-1 min-h-0 overflow-hidden flex">
                     {/* Image Panel */}
                     <div className="w-1/2 h-full min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain p-6 border-r border-slate-200 custom-scrollbar space-y-6 bg-white">
-                        {/* 批注开关 */}
+                        {/* 批注工具栏 */}
                         <div className="flex items-center justify-between pb-4 border-b border-slate-100">
                             <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-[0.2em]">
                                 答题图片
                             </span>
-                            <label className="flex items-center gap-2 cursor-pointer">
-                                <span className="text-xs text-slate-500">显示批注</span>
-                                <div className="relative">
-                                    <input
-                                        type="checkbox"
-                                        checked={showAnnotations}
-                                        onChange={(e) => {
-                                            setShowAnnotations(e.target.checked);
-                                            if (!e.target.checked) {
-                                                setPageAnnotationsData(new Map());
+                            <div className="flex items-center gap-3">
+                                {/* 生成批注按钮 */}
+                                <button
+                                    onClick={handleGenerateAnnotations}
+                                    disabled={annotationGenerating || annotationFetchLoading}
+                                    className="text-[11px] text-blue-600 hover:text-blue-700 font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                                >
+                                    {annotationGenerating && <Loader2 className="w-3 h-3 animate-spin" />}
+                                    {annotationGenerating ? '生成中...' : '生成批注'}
+                                </button>
+                                {/* 导出 PDF 按钮 */}
+                                <button
+                                    onClick={handleExportAnnotatedPdf}
+                                    disabled={exportPdfLoading}
+                                    className="text-[11px] text-emerald-600 hover:text-emerald-700 font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                                >
+                                    {exportPdfLoading && <Loader2 className="w-3 h-3 animate-spin" />}
+                                    {exportPdfLoading ? '导出中...' : '导出批注 PDF'}
+                                </button>
+                                {/* 编辑批注按钮 */}
+                                <button
+                                    onClick={() => {
+                                        setAnnotationEditMode((prev) => {
+                                            const next = !prev;
+                                            if (next) {
+                                                setShowAnnotations(true);
                                             }
-                                        }}
-                                        className="sr-only peer"
-                                    />
-                                    <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-500"></div>
+                                            return next;
+                                        });
+                                    }}
+                                    className={clsx(
+                                        "text-[11px] font-medium flex items-center gap-1",
+                                        annotationEditMode ? 'text-amber-600' : 'text-slate-500 hover:text-slate-600'
+                                    )}
+                                >
+                                    <Pencil className="w-3 h-3" />
+                                    {annotationEditMode ? '退出编辑' : '编辑批注'}
+                                </button>
+                                {/* 批注开关 */}
+                                <label className="flex items-center gap-2 cursor-pointer">
+                                    <span className="text-xs text-slate-500">显示批注</span>
+                                    <div className="relative">
+                                        <input
+                                            type="checkbox"
+                                            checked={showAnnotations}
+                                            onChange={(e) => {
+                                                setShowAnnotations(e.target.checked);
+                                                if (!e.target.checked) {
+                                                    setPageAnnotationsData(new Map());
+                                                    setAnnotationEditMode(false);
+                                                }
+                                            }}
+                                            className="sr-only peer"
+                                        />
+                                        <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-500"></div>
+                                    </div>
+                                    <Pencil className="w-3.5 h-3.5 text-slate-400" />
+                                </label>
+                            </div>
+                            {(annotationFetchLoading || annotationStatus.message || exportStatus.message) && (
+                                <div className="flex items-center gap-3 text-[11px]">
+                                    {annotationFetchLoading && (
+                                        <span className="flex items-center gap-1 text-slate-500">
+                                            <Loader2 className="w-3 h-3 animate-spin" />
+                                            正在加载批注...
+                                        </span>
+                                    )}
+                                    {annotationStatus.message && (
+                                        <span
+                                            className={clsx(
+                                                "flex items-center gap-1",
+                                                annotationStatus.type === 'error'
+                                                    ? 'text-rose-600'
+                                                    : annotationStatus.type === 'success'
+                                                        ? 'text-emerald-600'
+                                                        : 'text-slate-500'
+                                            )}
+                                        >
+                                            {annotationStatus.type === 'loading' && <Loader2 className="w-3 h-3 animate-spin" />}
+                                            {annotationStatus.message}
+                                        </span>
+                                    )}
+                                    {exportStatus.message && (
+                                        <span
+                                            className={clsx(
+                                                "flex items-center gap-1",
+                                                exportStatus.type === 'error'
+                                                    ? 'text-rose-600'
+                                                    : exportStatus.type === 'success'
+                                                        ? 'text-emerald-600'
+                                                        : 'text-slate-500'
+                                            )}
+                                        >
+                                            {exportStatus.type === 'loading' && <Loader2 className="w-3 h-3 animate-spin" />}
+                                            {exportStatus.message}
+                                        </span>
+                                    )}
                                 </div>
-                                <Pencil className="w-3.5 h-3.5 text-slate-400" />
-                            </label>
+                            )}
                         </div>
                         {uniquePages.length === 0 && (
                             <div className="flex flex-col items-center justify-center h-full text-slate-400 gap-2">
@@ -2361,9 +2896,10 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                         )}
                         {uniquePages.map((pageIdx, pageIdxIndex) => {
                             const originalImageUrl = uploadedImages[pageIdx] || currentSession?.images[pageIdx]?.url;
-                            const pageAnnotations = pageAnnotationsData.get(pageIdx);
+                            const pageAnnotations = pageAnnotationsData.get(pageIdx) || [];
                             const isLoading = annotationLoading.has(pageIdx);
-                            const hasCanvasAnnotations = showAnnotations && pageAnnotations && pageAnnotations.length > 0;
+                            const hasCanvasAnnotations = showAnnotations && pageAnnotations.length > 0;
+                            const canEditAnnotations = showAnnotations && annotationEditMode && !!originalImageUrl;
                             const isLastPage = pageIdxIndex === uniquePages.length - 1;
                             return (
                                 <div key={pageIdx} className={clsx("pb-6 border-b border-slate-100/80 space-y-2", isLastPage && "border-b-0 pb-0")}>
@@ -2380,17 +2916,74 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                                         {showAnnotations && hasCanvasAnnotations && !isLoading && (
                                             <div className="flex items-center gap-1 text-xs text-emerald-500">
                                                 <Pencil className="w-3 h-3" />
-                                                已标注 (Canvas)
+                                                {annotationEditMode ? '可编辑批注' : '已标注 (Canvas)'}
                                             </div>
                                         )}
                                     </div>
-                                    {/* Canvas 渲染批注 */}
-                                    {hasCanvasAnnotations && originalImageUrl ? (
+                                    {/* Canvas 渲染批注 / 编辑器 */}
+                                    {canEditAnnotations ? (
+                                        <AnnotationEditor
+                                            imageSrc={originalImageUrl}
+                                            annotations={pageAnnotations.map((ann, idx) => ({
+                                                id: ann.id || `temp-${pageIdx}-${idx}`,
+                                                annotation_type: ann.annotation_type,
+                                                bounding_box: ann.bounding_box,
+                                                text: ann.text || '',
+                                                color: ann.color || '#0066FF',
+                                                question_id: ann.question_id || '',
+                                                scoring_point_id: ann.scoring_point_id || '',
+                                            }))}
+                                            onAnnotationsChange={(next) => {
+                                                updatePageAnnotations(pageIdx, () => next.map((ann) => ({
+                                                    id: ann.id,
+                                                    annotation_type: ann.annotation_type as any,
+                                                    bounding_box: ann.bounding_box,
+                                                    text: ann.text,
+                                                    color: ann.color,
+                                                    question_id: ann.question_id,
+                                                    scoring_point_id: ann.scoring_point_id,
+                                                    page_index: pageIdx,
+                                                })));
+                                            }}
+                                            onAnnotationDelete={(annotationId) => {
+                                                if (annotationId.startsWith('temp-')) {
+                                                    updatePageAnnotations(pageIdx, (current) => current.filter((ann) => ann.id !== annotationId));
+                                                    return;
+                                                }
+                                                handleAnnotationDelete(pageIdx, annotationId);
+                                            }}
+                                            onAnnotationAdd={(annotation) => {
+                                                handleAnnotationAdd(pageIdx, annotation as any);
+                                            }}
+                                            onAnnotationUpdate={(annotationId, updates) => {
+                                                if (annotationId.startsWith('temp-')) {
+                                                    const safeUpdates: Partial<PageAnnotation> = {
+                                                        ...updates,
+                                                        annotation_type: updates.annotation_type as PageAnnotation['annotation_type'],
+                                                    };
+                                                    updatePageAnnotations(pageIdx, (current) => current.map((ann) => (
+                                                        ann.id === annotationId ? { ...ann, ...safeUpdates } : ann
+                                                    )));
+                                                    return;
+                                                }
+                                                handleAnnotationUpdate(pageIdx, annotationId, updates as any);
+                                            }}
+                                            className="w-full"
+                                        />
+                                    ) : hasCanvasAnnotations && originalImageUrl ? (
                                         <AnnotationCanvas
                                             imageSrc={originalImageUrl}
                                             annotations={pageAnnotations}
                                             className="w-full h-auto"
                                             showText={true}
+                                            onAnnotationClick={(annotation) => {
+                                                console.log('[批注点击]', annotation);
+                                                // 如果批注关联了题目和得分点，滚动到对应位置
+                                                if (annotation.question_id) {
+                                                    const questionElement = document.getElementById(`question-${annotation.question_id}`);
+                                                    questionElement?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                                }
+                                            }}
                                         />
                                     ) : originalImageUrl ? (
                                         // 检查是否是 base64 数据 URL，如果是则直接使用，否则作为普通 URL
@@ -2423,341 +3016,6 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                                 <div className="text-xs font-medium text-slate-500 tracking-wide">{isAssist ? 'Assisted Grading' : 'Total Score'}</div>
                             </div>
 
-                            {/* 🔥 批改透明度区块 - 显示第一次批改、自白、逻辑复核 */}
-                            {(detailViewStudent.draftQuestionDetails || detailViewStudent.confession || detailViewStudent.logicReviewedAt) && (
-                                <div className="border border-blue-100 bg-blue-50/30 rounded-xl p-4 space-y-4">
-                                    <div className="flex items-center gap-2 text-blue-700 font-semibold text-sm">
-                                        <AlertCircle className="w-4 h-4" />
-                                        批改透明度
-                                    </div>
-
-                                    {/* 自白报告 - 增强版 */}
-                                    {detailViewStudent.confession && (
-                                        <div className="bg-amber-50 rounded-lg p-4 border border-amber-200">
-                                            <div className="flex items-center justify-between mb-3">
-                                                <div className="text-xs font-semibold text-amber-700 flex items-center gap-1.5">
-                                                    <AlertTriangle className="w-4 h-4" />
-                                                    AI Confession Report
-                                                </div>
-                                                {detailViewStudent.confession.generatedAt && (
-                                                    <div className="text-[10px] text-amber-500">
-                                                        {new Date(detailViewStudent.confession.generatedAt).toLocaleString('zh-CN')}
-                                                    </div>
-                                                )}
-                                            </div>
-
-                                            {/* 状态和置信度 */}
-                                            <div className="flex items-center gap-4 mb-3">
-                                                {detailViewStudent.confession.overallStatus && (
-                                                    <div className={clsx(
-                                                        "px-2.5 py-1 rounded-full text-xs font-semibold",
-                                                        detailViewStudent.confession.overallStatus === 'ok'
-                                                            ? "bg-emerald-100 text-emerald-700"
-                                                            : detailViewStudent.confession.overallStatus === 'caution'
-                                                                ? "bg-amber-100 text-amber-700"
-                                                                : "bg-rose-100 text-rose-700"
-                                                    )}>
-                                                        状态: {detailViewStudent.confession.overallStatus === 'ok' ? '✓ 正常'
-                                                            : detailViewStudent.confession.overallStatus === 'caution' ? '⚠ 需注意'
-                                                                : '⚠ 需复核'}
-                                                    </div>
-                                                )}
-                                                {detailViewStudent.confession.overallConfidence !== undefined && (
-                                                    <div className="flex items-center gap-2">
-                                                        <span className="text-xs text-amber-600">置信度:</span>
-                                                        <div className="w-20 h-2 bg-amber-200 rounded-full overflow-hidden">
-                                                            <div
-                                                                className={clsx(
-                                                                    "h-full rounded-full transition-all",
-                                                                    detailViewStudent.confession.overallConfidence >= 0.8 ? "bg-emerald-500"
-                                                                        : detailViewStudent.confession.overallConfidence >= 0.5 ? "bg-amber-500"
-                                                                            : "bg-rose-500"
-                                                                )}
-                                                                style={{ width: `${detailViewStudent.confession.overallConfidence * 100}%` }}
-                                                            />
-                                                        </div>
-                                                        <span className="text-xs font-mono text-amber-700">
-                                                            {(detailViewStudent.confession.overallConfidence * 100).toFixed(0)}%
-                                                        </span>
-                                                    </div>
-                                                )}
-                                            </div>
-
-                                            {/* 高风险题目 */}
-                                            {detailViewStudent.confession.highRiskQuestions && detailViewStudent.confession.highRiskQuestions.length > 0 && (
-                                                <div className="mb-3 p-2.5 bg-rose-50 rounded-lg border border-rose-200">
-                                                    <div className="text-[10px] uppercase tracking-wider text-rose-600 font-semibold mb-2 flex items-center gap-1">
-                                                        <XCircle className="w-3 h-3" />
-                                                        高风险题目 ({detailViewStudent.confession.highRiskQuestions.length})
-                                                    </div>
-                                                    <div className="space-y-1.5">
-                                                        {detailViewStudent.confession.highRiskQuestions.map((item: { questionId?: string; description?: string }, idx: number) => (
-                                                            <div key={idx} className="text-xs text-rose-700 flex items-start gap-2 bg-white/50 rounded px-2 py-1">
-                                                                <span className="font-mono font-semibold text-rose-500 shrink-0">Q{item.questionId}</span>
-                                                                <span className="text-rose-600">{item.description || '需要人工复核'}</span>
-                                                            </div>
-                                                        ))}
-                                                    </div>
-                                                </div>
-                                            )}
-
-                                            {/* 潜在问题 */}
-                                            {detailViewStudent.confession.potentialErrors && detailViewStudent.confession.potentialErrors.length > 0 && (
-                                                <div className="mb-3 p-2.5 bg-orange-50 rounded-lg border border-orange-200">
-                                                    <div className="text-[10px] uppercase tracking-wider text-orange-600 font-semibold mb-2 flex items-center gap-1">
-                                                        <AlertTriangle className="w-3 h-3" />
-                                                        潜在错误 ({detailViewStudent.confession.potentialErrors.length})
-                                                    </div>
-                                                    <div className="space-y-1.5">
-                                                        {detailViewStudent.confession.potentialErrors.map((item: any, idx: number) => (
-                                                            <div key={idx} className="text-xs text-orange-700 flex items-start gap-2 bg-white/50 rounded px-2 py-1">
-                                                                {item.questionId && <span className="font-mono font-semibold text-orange-500 shrink-0">Q{item.questionId}</span>}
-                                                                <span className="text-orange-600">{item.description || item.message}</span>
-                                                            </div>
-                                                        ))}
-                                                    </div>
-                                                </div>
-                                            )}
-
-                                            {/* 问题/警告 */}
-                                            {detailViewStudent.confession.issues && detailViewStudent.confession.issues.length > 0 && (
-                                                <div className="p-2.5 bg-amber-100/50 rounded-lg border border-amber-300">
-                                                    <div className="text-[10px] uppercase tracking-wider text-amber-600 font-semibold mb-2 flex items-center gap-1">
-                                                        <Info className="w-3 h-3" />
-                                                        问题提示 ({detailViewStudent.confession.issues.length})
-                                                    </div>
-                                                    <div className="space-y-1.5">
-                                                        {detailViewStudent.confession.issues.map((item: { questionId?: string; message?: string }, idx: number) => (
-                                                            <div key={idx} className="text-xs text-amber-700 flex items-start gap-2 bg-white/50 rounded px-2 py-1">
-                                                                {item.questionId && <span className="font-mono font-semibold text-amber-500 shrink-0">Q{item.questionId}:</span>}
-                                                                <span>{item.message}</span>
-                                                            </div>
-                                                        ))}
-                                                    </div>
-                                                </div>
-                                            )}
-
-                                            {/* 警告 */}
-                                            {detailViewStudent.confession.warnings && detailViewStudent.confession.warnings.length > 0 && (
-                                                <div className="mt-2 p-2.5 bg-yellow-50 rounded-lg border border-yellow-200">
-                                                    <div className="text-[10px] uppercase tracking-wider text-yellow-600 font-semibold mb-2">
-                                                        警告 ({detailViewStudent.confession.warnings.length})
-                                                    </div>
-                                                    <div className="space-y-1">
-                                                        {detailViewStudent.confession.warnings.map((item: any, idx: number) => (
-                                                            <div key={idx} className="text-xs text-yellow-700">
-                                                                {item.questionId && <span className="font-mono text-yellow-500 mr-1">Q{item.questionId}:</span>}
-                                                                {item.message}
-                                                            </div>
-                                                        ))}
-                                                    </div>
-                                                </div>
-                                            )}
-
-                                            {/* 来源标识 */}
-                                            {detailViewStudent.confession.source && (
-                                                <div className="mt-2 text-[10px] text-amber-400 text-right">
-                                                    来源: {detailViewStudent.confession.source}
-                                                </div>
-                                            )}
-                                        </div>
-                                    )}
-
-                                    {/* 逻辑复核结果 - 增强版 */}
-                                    {detailViewStudent.logicReviewedAt && (
-                                        <div className="bg-emerald-50 rounded-lg p-4 border border-emerald-200">
-                                            <div className="flex items-center justify-between mb-3">
-                                                <div className="text-xs font-semibold text-emerald-700 flex items-center gap-1.5">
-                                                    <CheckCircle className="w-4 h-4" />
-                                                    逻辑复核完成
-                                                </div>
-                                                <div className="text-[10px] text-emerald-500">
-                                                    {new Date(detailViewStudent.logicReviewedAt).toLocaleString('zh-CN')}
-                                                </div>
-                                            </div>
-
-                                            {/* 分数变化对比 */}
-                                            {detailViewStudent.draftTotalScore !== undefined && detailViewStudent.draftTotalScore !== detailViewStudent.score && (
-                                                <div className="flex items-center gap-4 p-3 bg-white rounded-lg border border-emerald-100">
-                                                    <div className="text-center">
-                                                        <div className="text-lg font-bold text-slate-400 line-through">
-                                                            {detailViewStudent.draftTotalScore}
-                                                        </div>
-                                                        <div className="text-[10px] text-slate-400">初次批改</div>
-                                                    </div>
-                                                    <div className="text-emerald-300 text-lg">→</div>
-                                                    <div className="text-center">
-                                                        <div className="text-lg font-bold text-emerald-600">
-                                                            {detailViewStudent.score}
-                                                        </div>
-                                                        <div className="text-[10px] text-emerald-600">复核后</div>
-                                                    </div>
-                                                    <div className={clsx(
-                                                        "ml-auto px-3 py-1.5 rounded-lg text-sm font-bold",
-                                                        detailViewStudent.score > detailViewStudent.draftTotalScore
-                                                            ? "bg-emerald-100 text-emerald-700"
-                                                            : "bg-rose-100 text-rose-700"
-                                                    )}>
-                                                        {detailViewStudent.score > detailViewStudent.draftTotalScore ? '+' : ''}
-                                                        {(detailViewStudent.score - detailViewStudent.draftTotalScore).toFixed(1)} 分
-                                                    </div>
-                                                </div>
-                                            )}
-
-                                            {/* 无变化提示 */}
-                                            {(detailViewStudent.draftTotalScore === undefined || detailViewStudent.draftTotalScore === detailViewStudent.score) && (
-                                                <div className="text-xs text-emerald-600 flex items-center gap-2">
-                                                    <CheckCircle className="w-3.5 h-3.5" />
-                                                    逻辑复核通过，分数无调整
-                                                </div>
-                                            )}
-                                        </div>
-                                    )}
-
-                                    {/* 第一次批改详情（可展开） */}
-                                    {detailViewStudent.draftQuestionDetails && detailViewStudent.draftQuestionDetails.length > 0 && (
-                                        <details className="bg-white rounded-lg border border-slate-200">
-                                            <summary className="px-3 py-2 text-xs font-semibold text-slate-600 cursor-pointer hover:bg-slate-50 flex items-center gap-2">
-                                                <ListOrdered className="w-3.5 h-3.5" />
-                                                查看初次批改详情 ({detailViewStudent.draftQuestionDetails.length} 题)
-                                            </summary>
-                                            <div className="px-3 pb-3 space-y-2 max-h-60 overflow-y-auto">
-                                                {detailViewStudent.draftQuestionDetails.map((dq, idx) => {
-                                                    const finalQ = detailViewStudent.questionResults?.find(q => q.questionId === dq.questionId);
-                                                    const scoreChanged = finalQ && finalQ.score !== dq.score;
-                                                    return (
-                                                        <div key={idx} className={clsx(
-                                                            "text-xs p-2 rounded border",
-                                                            scoreChanged ? "border-amber-200 bg-amber-50/50" : "border-slate-100"
-                                                        )}>
-                                                            <div className="flex items-center justify-between">
-                                                                <span className="font-mono text-slate-500">Q{dq.questionId}</span>
-                                                                <div className="flex items-center gap-2">
-                                                                    <span className={clsx(scoreChanged && "line-through text-slate-400")}>
-                                                                        {dq.score}/{dq.maxScore}
-                                                                    </span>
-                                                                    {scoreChanged && finalQ && (
-                                                                        <>
-                                                                            <span className="text-slate-300">→</span>
-                                                                            <span className="font-semibold text-emerald-600">
-                                                                                {finalQ.score}/{finalQ.maxScore}
-                                                                            </span>
-                                                                        </>
-                                                                    )}
-                                                                </div>
-                                                            </div>
-                                                            {dq.selfCritique && (
-                                                                <div className="mt-1 text-[11px] text-amber-700 italic">
-                                                                    Confession: {dq.selfCritique}
-                                                                </div>
-                                                            )}
-                                                        </div>
-                                                    );
-                                                })}
-                                            </div>
-                                        </details>
-                                    )}
-                                </div>
-                            )}
-
-                            <div className="border-b border-slate-100 pb-4">
-                                <div className="flex items-center justify-between gap-4">
-                                    <div className="text-sm font-semibold text-slate-700">Audit Query</div>
-                                    <button
-                                        type="button"
-                                        onClick={() => setAuditOpen((prev) => !prev)}
-                                        className="text-[11px] font-semibold text-slate-400 hover:text-slate-700 transition-colors"
-                                    >
-                                        {auditOpen ? 'Hide' : 'Open'}
-                                    </button>
-                                </div>
-                                {auditOpen && (
-                                    <div className="mt-3 space-y-3">
-                                        <div className="text-[11px] text-slate-500">
-                                            {auditItems.length > 0 ? `${auditItems.length} audit entries` : 'No audit entries'}
-                                        </div>
-                                        <input
-                                            value={auditQuery}
-                                            onChange={(event) => setAuditQuery(event.target.value)}
-                                            className="w-full border-b border-slate-200 bg-transparent px-0 py-2 text-sm text-slate-700 focus:border-slate-700 focus:outline-none"
-                                            placeholder="Search question id or keywords"
-                                        />
-                                        {(studentAudit?.summary || studentAudit?.honestyNote) && (
-                                            <div className="space-y-1">
-                                                <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">Overall</div>
-                                                <div className="space-y-1">
-                                                    {renderParagraphs(studentAudit.summary || studentAudit.honestyNote || '')}
-                                                </div>
-                                            </div>
-                                        )}
-                                        {auditQueryValue ? (
-                                            filteredAuditItems.length > 0 ? (
-                                                <div className="space-y-4">
-                                                    {filteredAuditItems.map((q, idx) => {
-                                                        const tags = Array.from(new Set([...(q.reviewReasons || []), ...(q.auditFlags || [])]));
-                                                        return (
-                                                            <div key={`${q.questionId || idx}`} className="border-b border-slate-100 pb-3 last:border-b-0">
-                                                                <div className="text-xs font-semibold text-slate-700">Q{q.questionId || idx + 1}</div>
-                                                                {q.selfCritique && (
-                                                                    <div className="mt-2 space-y-1">
-                                                                        <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">Self-critique</div>
-                                                                        <div className="space-y-1">
-                                                                            {renderParagraphs(q.selfCritique)}
-                                                                        </div>
-                                                                    </div>
-                                                                )}
-                                                                {q.reviewSummary && (
-                                                                    <div className="mt-2 space-y-1">
-                                                                        <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">Logic Review</div>
-                                                                        <div className="space-y-1">
-                                                                            {renderParagraphs(q.reviewSummary)}
-                                                                        </div>
-                                                                    </div>
-                                                                )}
-                                                                {q.reviewCorrections && q.reviewCorrections.length > 0 && (
-                                                                    <div className="mt-2 space-y-1 text-xs text-slate-600">
-                                                                        <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">Corrections</div>
-                                                                        <div className="space-y-1">
-                                                                            {q.reviewCorrections.map((c) => (
-                                                                                <div key={`${q.questionId}-${c.pointId || 'point'}`} className="flex items-start gap-2">
-                                                                                    <span className="font-mono text-slate-400">{c.pointId || '-'}</span>
-                                                                                    <span>{c.reviewReason || 'Review adjustment'}</span>
-                                                                                </div>
-                                                                            ))}
-                                                                        </div>
-                                                                    </div>
-                                                                )}
-                                                                {q.honestyNote && (
-                                                                    <div className="mt-2 space-y-1">
-                                                                        <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">Honesty Note</div>
-                                                                        <div className="space-y-1">
-                                                                            {renderParagraphs(q.honestyNote)}
-                                                                        </div>
-                                                                    </div>
-                                                                )}
-                                                                {tags.length > 0 && (
-                                                                    <div className="mt-2 flex flex-wrap gap-2">
-                                                                        {tags.map((tag) => (
-                                                                            <span key={`${q.questionId}-${tag}`} className="text-[10px] text-slate-500 border border-slate-200 px-2 py-1">
-                                                                                {tag}
-                                                                            </span>
-                                                                        ))}
-                                                                    </div>
-                                                                )}
-                                                            </div>
-                                                        );
-                                                    })}
-                                                </div>
-                                            ) : (
-                                                <div className="text-xs text-slate-400">No matches for current query.</div>
-                                            )
-                                        ) : (
-                                            <div className="text-xs text-slate-400">Enter a query to view audit details.</div>
-                                        )}
-                                    </div>
-                                )}
-                            </div>
-
                             {/* Questions */}
                             <div className="space-y-4">
                                 <div className="flex items-center gap-2 mb-2">
@@ -2766,7 +3024,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                                 </div>
                                 {detailViewStudent.questionResults?.map((q, idx) => (
                                     <div key={`question-${q.questionId || 'unknown'}-${detailViewStudent.studentName}-${idx}`} className="border-b border-slate-100 pb-4 last:border-b-0">
-                                        <QuestionDetail question={q} gradingMode={detailViewStudent.gradingMode} defaultExpanded={defaultExpandDetails} />
+                                        <QuestionDetail question={q} gradingMode={detailViewStudent.gradingMode} defaultExpanded={defaultExpandDetails} confession={detailViewStudent.confession} />
                                     </div>
                                 ))}
                             </div>

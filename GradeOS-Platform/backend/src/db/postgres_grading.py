@@ -597,6 +597,81 @@ async def get_student_results(grading_history_id: str) -> List[StudentGradingRes
         return []
 
 
+async def get_student_result(
+    grading_history_id: str,
+    student_key: str,
+) -> Optional[StudentGradingResult]:
+    """Get a single student's grading result."""
+    try:
+        query = """
+            SELECT * FROM student_grading_results
+            WHERE grading_history_id = %s AND student_key = %s
+            LIMIT 1
+        """
+        params = (grading_history_id, student_key)
+        log_sql_operation("SELECT", query, params)
+
+        async with db.connection() as conn:
+            cursor = await conn.execute(query, params)
+            row = await cursor.fetchone()
+
+        if not row:
+            log_sql_operation("SELECT", "student_grading_results", result_count=0)
+            return None
+
+        log_sql_operation("SELECT", "student_grading_results", result_count=1)
+
+        raw_result_data = row["result_data"]
+        if isinstance(raw_result_data, str):
+            result_data = json.loads(raw_result_data) if raw_result_data else None
+        else:
+            result_data = raw_result_data
+
+        imported_at_value = row["imported_at"]
+        if hasattr(imported_at_value, "isoformat"):
+            imported_at_value = imported_at_value.isoformat()
+        elif imported_at_value:
+            imported_at_value = str(imported_at_value)
+        else:
+            imported_at_value = None
+
+        revoked_at_value = row["revoked_at"]
+        if hasattr(revoked_at_value, "isoformat"):
+            revoked_at_value = revoked_at_value.isoformat()
+        elif revoked_at_value:
+            revoked_at_value = str(revoked_at_value)
+        else:
+            revoked_at_value = None
+
+        confession_value = row.get("confession") if hasattr(row, "get") else row["confession"]
+
+        return StudentGradingResult(
+            id=str(row["id"]),
+            grading_history_id=str(row["grading_history_id"]),
+            student_key=row["student_key"],
+            class_id=row["class_id"],
+            student_id=row["student_id"],
+            score=float(row["score"]) if row["score"] else None,
+            max_score=float(row["max_score"]) if row["max_score"] else None,
+            summary=row["summary"],
+            confession=confession_value,
+            result_data=result_data,
+            imported_at=imported_at_value,
+            revoked_at=revoked_at_value,
+        )
+    except Exception as e:
+        logger.error(f"???????(single): {e}")
+        return None
+
+
+async def get_page_images_for_student(
+    grading_history_id: str,
+    student_key: str,
+) -> List[GradingPageImage]:
+    """Get page images for a specific student."""
+    return await get_page_images(grading_history_id, student_key)
+
+
 async def save_page_image(image: GradingPageImage) -> None:
     """保存批改页面图像到 PostgreSQL"""
     if not image.created_at:
@@ -696,3 +771,271 @@ async def get_page_images(
     except Exception as e:
         logger.error(f"获取页面图像失败: {e}")
         return []
+
+
+# ==================== 批注数据持久化 ====================
+
+@dataclass
+class GradingAnnotation:
+    """批改批注记录"""
+    
+    id: str
+    grading_history_id: str
+    student_key: str
+    page_index: int
+    annotation_type: str  # score, error_circle, comment, m_mark, a_mark, etc.
+    bounding_box: Dict[str, float]  # {x_min, y_min, x_max, y_max}
+    text: str = ""
+    color: str = "#FF0000"
+    question_id: str = ""
+    scoring_point_id: str = ""
+    created_by: str = "ai"  # ai 或 teacher
+    created_at: str = ""
+    updated_at: str = ""
+
+
+_ANNOTATIONS_TABLE_READY = False
+
+
+async def ensure_annotations_table() -> None:
+    """确保批注表存在"""
+    global _ANNOTATIONS_TABLE_READY
+    if _ANNOTATIONS_TABLE_READY:
+        return
+    create_query = """
+        CREATE TABLE IF NOT EXISTS grading_annotations (
+            id VARCHAR(64) PRIMARY KEY,
+            grading_history_id VARCHAR(64) NOT NULL,
+            student_key VARCHAR(128) NOT NULL,
+            page_index INTEGER NOT NULL,
+            annotation_type VARCHAR(32) NOT NULL,
+            bounding_box JSONB NOT NULL,
+            text TEXT DEFAULT '',
+            color VARCHAR(16) DEFAULT '#FF0000',
+            question_id VARCHAR(32) DEFAULT '',
+            scoring_point_id VARCHAR(32) DEFAULT '',
+            created_by VARCHAR(16) DEFAULT 'ai',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """
+    index_queries = [
+        "CREATE INDEX IF NOT EXISTS idx_annotations_history ON grading_annotations(grading_history_id)",
+        "CREATE INDEX IF NOT EXISTS idx_annotations_student ON grading_annotations(grading_history_id, student_key)",
+        "CREATE INDEX IF NOT EXISTS idx_annotations_page ON grading_annotations(grading_history_id, student_key, page_index)",
+    ]
+    try:
+        async with db.connection() as conn:
+            await conn.execute(create_query)
+            for statement in index_queries:
+                await conn.execute(statement)
+            await conn.commit()
+        _ANNOTATIONS_TABLE_READY = True
+        logger.info("批注表已创建/确认")
+    except Exception as e:
+        logger.error(f"创建批注表失败: {e}")
+
+
+async def save_annotation(annotation: GradingAnnotation) -> bool:
+    """保存单个批注"""
+    await ensure_annotations_table()
+    
+    query = """
+        INSERT INTO grading_annotations (
+            id, grading_history_id, student_key, page_index,
+            annotation_type, bounding_box, text, color,
+            question_id, scoring_point_id, created_by, created_at, updated_at
+        ) VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (id) DO UPDATE SET
+            bounding_box = EXCLUDED.bounding_box,
+            text = EXCLUDED.text,
+            color = EXCLUDED.color,
+            updated_at = CURRENT_TIMESTAMP
+    """
+    
+    try:
+        now = datetime.now().isoformat()
+        params = (
+            annotation.id,
+            annotation.grading_history_id,
+            annotation.student_key,
+            annotation.page_index,
+            annotation.annotation_type,
+            json.dumps(annotation.bounding_box),
+            annotation.text,
+            annotation.color,
+            annotation.question_id,
+            annotation.scoring_point_id,
+            annotation.created_by,
+            annotation.created_at or now,
+            now,
+        )
+        async with db.connection() as conn:
+            await conn.execute(query, params)
+            await conn.commit()
+        return True
+    except Exception as e:
+        logger.error(f"保存批注失败: {e}")
+        return False
+
+
+async def save_annotations_batch(annotations: List[GradingAnnotation]) -> int:
+    """批量保存批注"""
+    await ensure_annotations_table()
+    
+    if not annotations:
+        return 0
+    
+    saved = 0
+    for ann in annotations:
+        if await save_annotation(ann):
+            saved += 1
+    
+    return saved
+
+
+async def get_annotations(
+    grading_history_id: str,
+    student_key: str,
+    page_index: Optional[int] = None,
+) -> List[GradingAnnotation]:
+    """获取批注列表"""
+    await ensure_annotations_table()
+    
+    if page_index is not None:
+        query = """
+            SELECT * FROM grading_annotations 
+            WHERE grading_history_id = %s 
+              AND student_key = %s 
+              AND page_index = %s
+            ORDER BY created_at
+        """
+        params = (grading_history_id, student_key, page_index)
+    else:
+        query = """
+            SELECT * FROM grading_annotations 
+            WHERE grading_history_id = %s 
+              AND student_key = %s
+            ORDER BY page_index, created_at
+        """
+        params = (grading_history_id, student_key)
+    
+    try:
+        async with db.connection() as conn:
+            cursor = await conn.execute(query, params)
+            rows = await cursor.fetchall()
+        annotations = []
+        for row in rows:
+            bbox = row["bounding_box"]
+            if isinstance(bbox, str):
+                bbox = json.loads(bbox)
+            annotations.append(
+                GradingAnnotation(
+                    id=str(row["id"]),
+                    grading_history_id=str(row["grading_history_id"]),
+                    student_key=row["student_key"],
+                    page_index=row["page_index"],
+                    annotation_type=row["annotation_type"],
+                    bounding_box=bbox,
+                    text=row["text"] or "",
+                    color=row["color"] or "#FF0000",
+                    question_id=row["question_id"] or "",
+                    scoring_point_id=row["scoring_point_id"] or "",
+                    created_by=row["created_by"] or "ai",
+                    created_at=str(row["created_at"]) if row["created_at"] else "",
+                    updated_at=str(row["updated_at"]) if row["updated_at"] else "",
+                )
+            )
+        return annotations
+    except Exception as e:
+        logger.error(f"获取批注失败: {e}")
+        return []
+
+
+async def delete_annotation(annotation_id: str) -> bool:
+    """删除单个批注"""
+    await ensure_annotations_table()
+    
+    query = "DELETE FROM grading_annotations WHERE id = %s"
+    try:
+        async with db.connection() as conn:
+            await conn.execute(query, (annotation_id,))
+            await conn.commit()
+        return True
+    except Exception as e:
+        logger.error(f"删除批注失败: {e}")
+        return False
+
+
+async def delete_annotations_for_student(
+    grading_history_id: str,
+    student_key: str,
+    page_index: Optional[int] = None,
+) -> int:
+    """删除学生的批注"""
+    await ensure_annotations_table()
+    
+    if page_index is not None:
+        query = """
+            DELETE FROM grading_annotations 
+            WHERE grading_history_id = %s 
+              AND student_key = %s 
+              AND page_index = %s
+        """
+        params = (grading_history_id, student_key, page_index)
+    else:
+        query = """
+            DELETE FROM grading_annotations 
+            WHERE grading_history_id = %s 
+              AND student_key = %s
+        """
+        params = (grading_history_id, student_key)
+    
+    try:
+        async with db.connection() as conn:
+            cursor = await conn.execute(query, params)
+            deleted = cursor.rowcount if hasattr(cursor, "rowcount") else 0
+            await conn.commit()
+        return deleted
+    except Exception as e:
+        logger.error(f"删除批注失败: {e}")
+        return 0
+
+
+async def update_annotation(
+    annotation_id: str,
+    updates: Dict[str, Any],
+) -> bool:
+    """更新批注"""
+    await ensure_annotations_table()
+    
+    allowed_fields = {"bounding_box", "text", "color", "annotation_type"}
+    filtered_updates = {k: v for k, v in updates.items() if k in allowed_fields}
+    
+    if not filtered_updates:
+        return False
+
+    set_clauses = []
+    values: List[Any] = []
+
+    for field, value in filtered_updates.items():
+        if field == "bounding_box":
+            set_clauses.append(f"{field} = %s")
+            values.append(json.dumps(value) if isinstance(value, dict) else value)
+        else:
+            set_clauses.append(f"{field} = %s")
+            values.append(value)
+
+    set_clauses.append("updated_at = CURRENT_TIMESTAMP")
+
+    query = f"UPDATE grading_annotations SET {', '.join(set_clauses)} WHERE id = %s"
+    values.append(annotation_id)
+
+    try:
+        async with db.connection() as conn:
+            await conn.execute(query, tuple(values))
+            await conn.commit()
+        return True
+    except Exception as e:
+        logger.error(f"更新批注失败: {e}")
+        return False

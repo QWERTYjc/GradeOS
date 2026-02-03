@@ -718,10 +718,12 @@ export const gradingApi = {
       body: JSON.stringify(data),
     }),
 
-  getGradingHistory: (params?: { class_id?: string; assignment_id?: string; include_stats?: boolean }) => {
+  getGradingHistory: (params?: { class_id?: string; assignment_id?: string; teacher_id?: string; include_stats?: boolean }) => {
+    // 🔧 过滤掉 undefined 值，避免传递 "undefined" 字符串
     const queryParams: Record<string, string> = {};
     if (params?.class_id) queryParams.class_id = params.class_id;
     if (params?.assignment_id) queryParams.assignment_id = params.assignment_id;
+    if (params?.teacher_id) queryParams.teacher_id = params.teacher_id;
     if (params?.include_stats) queryParams.include_stats = 'true';
     const query = new URLSearchParams(queryParams).toString();
     return request<GradingHistoryResponse>(`/grading/history${query ? `?${query}` : ''}`);
