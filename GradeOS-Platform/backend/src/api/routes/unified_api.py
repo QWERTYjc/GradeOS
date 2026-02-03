@@ -2172,6 +2172,13 @@ async def assistant_chat(request: AssistantChatRequest):
     - images: base64 编码的图片列表（用于错题分析）
     - wrong_question_context: 错题上下文（从错题本跳转时传入）
     """
+    # 调试日志
+    logger.info(f"[AssistantChat] 收到请求: student_id={request.student_id}, message={request.message[:50] if request.message else 'empty'}...")
+    logger.info(f"[AssistantChat] session_mode={request.session_mode}, images={len(request.images) if request.images else 0}")
+    logger.info(f"[AssistantChat] wrong_question_context={request.wrong_question_context is not None}")
+    if request.wrong_question_context:
+        logger.info(f"[AssistantChat] 错题上下文: questionId={request.wrong_question_context.get('questionId')}, score={request.wrong_question_context.get('score')}/{request.wrong_question_context.get('maxScore')}")
+    
     context = _build_student_context(request.student_id, request.class_id)
     
     # 如果有错题上下文，增强学生上下文
@@ -2240,14 +2247,14 @@ async def assistant_chat(request: AssistantChatRequest):
             )
         )
 
-    # 调用 agent（目前不支持图片，但消息中包含了图片描述）
-    # TODO: 未来可以升级为多模态 LLM 调用
+    # 调用 agent（支持多模态图片输入）
     result = await agent.ainvoke(
         message=message_content,
         student_context=context,
         session_mode=request.session_mode or "learning",
         concept_topic=request.concept_topic or "general",
         history=prompt_history,
+        images=request.images,  # 传递图片给多模态 agent
     )
 
     assistant_content = result.raw_content

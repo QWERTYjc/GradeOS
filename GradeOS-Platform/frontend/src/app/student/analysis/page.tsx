@@ -356,29 +356,34 @@ export default function StudentWrongBookPage() {
                   // 提取相关图片
                   let questionImages: string[] = [];
                   if (answerImages.length > 0) {
+                    // 辅助函数：格式化图片
+                    const formatImage = (img: unknown): string => {
+                      if (typeof img !== 'string') return '';
+                      const trimmed = img.trim();
+                      if (!trimmed) return '';
+                      if (trimmed.startsWith('data:') || trimmed.startsWith('http')) return trimmed;
+                      return `data:image/jpeg;base64,${trimmed}`;
+                    };
+                    
                     if (pageIndices.length > 0) {
-                      // 使用题目的页面索引
+                      // 使用题目的页面索引（精确匹配）
                       questionImages = pageIndices
-                        .map(pageIdx => answerImages[pageIdx])
-                        .filter(Boolean)
-                        .map(img => {
-                          if (typeof img !== 'string') return '';
-                          const trimmed = img.trim();
-                          if (trimmed.startsWith('data:') || trimmed.startsWith('http')) return trimmed;
-                          return `data:image/jpeg;base64,${trimmed}`;
-                        })
+                        .map(pageIdx => formatImage(answerImages[pageIdx]))
                         .filter(Boolean);
-                    } else if (studentStartPage >= 0 && studentEndPage >= studentStartPage) {
-                      // 使用学生的页面范围
-                      questionImages = answerImages
-                        .slice(studentStartPage, studentEndPage + 1)
-                        .map(img => {
-                          if (typeof img !== 'string') return '';
-                          const trimmed = img.trim();
-                          if (trimmed.startsWith('data:') || trimmed.startsWith('http')) return trimmed;
-                          return `data:image/jpeg;base64,${trimmed}`;
-                        })
-                        .filter(Boolean);
+                    } else {
+                      // 没有精确页面索引时，尝试根据题目序号推断
+                      // 假设每道题对应一页，使用题目在当前学生结果中的索引
+                      const questionIndex = idx; // 题目在 questions 数组中的索引
+                      const estimatedPageIdx = studentStartPage + questionIndex;
+                      
+                      if (estimatedPageIdx >= 0 && estimatedPageIdx < answerImages.length) {
+                        const img = formatImage(answerImages[estimatedPageIdx]);
+                        if (img) questionImages = [img];
+                      } else if (studentStartPage >= 0 && studentStartPage < answerImages.length) {
+                        // 回退：只取学生的第一页
+                        const img = formatImage(answerImages[studentStartPage]);
+                        if (img) questionImages = [img];
+                      }
                     }
                   }
 
@@ -864,8 +869,17 @@ export default function StudentWrongBookPage() {
                         images: activeQuestion.images,
                         timestamp: new Date().toISOString(),
                       };
-                      localStorage.setItem('gradeos.wrong-question-context', JSON.stringify(wrongQuestionContext));
-                      router.push('/student/student_assistant?from=wrongbook');
+                      const contextJson = JSON.stringify(wrongQuestionContext);
+                      localStorage.setItem('gradeos.wrong-question-context', contextJson);
+                      console.log('[Analysis] Saved wrong question context:', {
+                        questionId: wrongQuestionContext.questionId,
+                        contextLength: contextJson.length,
+                        imagesCount: wrongQuestionContext.images?.length || 0
+                      });
+                      // 使用 setTimeout 确保 localStorage 写入完成
+                      setTimeout(() => {
+                        router.push('/student/student_assistant?from=wrongbook');
+                      }, 50);
                     }}
                     className="w-full rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white shadow hover:bg-slate-800"
                   >

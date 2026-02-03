@@ -105,7 +105,7 @@ export default function StatisticsPage() {
   const selectedClassName = classes.find(c => c.class_id === selectedClassId)?.class_name || '';
 
   return (
-    <DashboardLayout role="teacher">
+    <DashboardLayout>
       <div className="p-6 space-y-6">
         {/* 页面标题和操作栏 */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">

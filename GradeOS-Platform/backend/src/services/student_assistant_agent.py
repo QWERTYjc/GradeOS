@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import re
 from dataclasses import dataclass
@@ -11,6 +12,7 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from pydantic import BaseModel, Field
 
 from src.services.chat_model_factory import get_chat_model
+from src.services.llm_client import get_llm_client, LLMMessage
 
 
 class AssistantHistoryMessage(TypedDict):
@@ -85,16 +87,39 @@ Concept topic: {concept_topic}
 
 
 def _extract_json(text: str) -> Optional[Dict[str, Any]]:
+    """从文本中提取 JSON 对象，支持处理 markdown 代码块包裹的情况"""
+    # 首先尝试直接解析
     try:
         return json.loads(text)
     except Exception:
-        match = re.search(r"\{.*\}", text, re.S)
-        if not match:
-            return None
-        try:
-            return json.loads(match.group(0))
-        except Exception:
-            return None
+        pass
+    
+    # 尝试移除 markdown 代码块标记
+    # 处理 ```json ... ``` 或 ``` ... ``` 格式
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        # 移除开头的 ```json 或 ```
+        lines = cleaned.split("\n", 1)
+        if len(lines) > 1:
+            cleaned = lines[1]
+        # 移除结尾的 ```
+        if cleaned.rstrip().endswith("```"):
+            cleaned = cleaned.rstrip()[:-3].rstrip()
+    
+    # 尝试解析清理后的文本
+    try:
+        return json.loads(cleaned)
+    except Exception:
+        pass
+    
+    # 最后尝试用正则提取 JSON 对象
+    match = re.search(r"\{.*\}", cleaned, re.S)
+    if not match:
+        return None
+    try:
+        return json.loads(match.group(0))
+    except Exception:
+        return None
 
 
 class StudentAssistantAgent:
@@ -158,7 +183,20 @@ class StudentAssistantAgent:
         session_mode: str,
         concept_topic: str,
         history: Optional[Sequence[AssistantHistoryItem]] = None,
+        images: Optional[List[str]] = None,  # 新增：base64 编码的图片列表
     ) -> AssistantAgentResult:
+        # 如果有图片，使用多模态调用
+        if images and len(images) > 0:
+            return await self._ainvoke_with_images(
+                message=message,
+                student_context=student_context,
+                session_mode=session_mode,
+                concept_topic=concept_topic,
+                history=history,
+                images=images,
+            )
+        
+        # 无图片时使用原有逻辑
         prompt_value = self._prompt.format_prompt(
             format_instructions=self._parser.get_format_instructions(),
             history=self._convert_history(history),
@@ -177,6 +215,95 @@ class StudentAssistantAgent:
             raw_content=raw_content,
             model=model,
             usage=usage,
+            parsed=parsed,
+        )
+
+    async def _ainvoke_with_images(
+        self,
+        *,
+        message: str,
+        student_context: Dict[str, Any],
+        session_mode: str,
+        concept_topic: str,
+        history: Optional[Sequence[AssistantHistoryItem]] = None,
+        images: List[str],
+    ) -> AssistantAgentResult:
+        """使用多模态 LLM 调用（支持图片）"""
+        llm_client = get_llm_client()
+        
+        # 构建系统提示
+        system_prompt = SYSTEM_PROMPT.format(
+            format_instructions=self._parser.get_format_instructions(),
+            student_context=json.dumps(student_context, ensure_ascii=False),
+            session_mode=session_mode,
+            concept_topic=concept_topic,
+        )
+        
+        # 构建消息内容（包含图片和文本）
+        content_parts: List[Dict[str, Any]] = []
+        
+        # 添加图片
+        for img_data in images:
+            # 处理 base64 图片（可能带有 data:image/xxx;base64, 前缀）
+            if img_data.startswith("data:"):
+                # 提取 base64 部分
+                parts = img_data.split(",", 1)
+                if len(parts) == 2:
+                    img_bytes = base64.b64decode(parts[1])
+                    # 提取 media type
+                    media_type = "image/jpeg"
+                    if "image/png" in parts[0]:
+                        media_type = "image/png"
+                    elif "image/webp" in parts[0]:
+                        media_type = "image/webp"
+                    content_parts.append(llm_client.create_image_content(img_bytes, media_type))
+            else:
+                # 纯 base64
+                try:
+                    img_bytes = base64.b64decode(img_data)
+                    content_parts.append(llm_client.create_image_content(img_bytes))
+                except Exception:
+                    pass
+        
+        # 添加历史消息摘要（如果有）
+        history_summary = ""
+        if history:
+            recent_history = self._convert_history(history)[-4:]  # 只取最近4条
+            if recent_history:
+                history_parts = []
+                for msg in recent_history:
+                    role = "Student" if isinstance(msg, HumanMessage) else "Assistant"
+                    content = getattr(msg, "content", "")
+                    if content and len(content) < 500:  # 避免太长的历史
+                        history_parts.append(f"{role}: {content[:200]}")
+                if history_parts:
+                    history_summary = "\n\n[Recent conversation]\n" + "\n".join(history_parts)
+        
+        # 添加文本消息
+        full_message = message + history_summary
+        content_parts.append(llm_client.create_text_content(full_message))
+        
+        # 构建消息列表
+        messages: List[LLMMessage] = [
+            LLMMessage(role="system", content=system_prompt),
+            LLMMessage(role="user", content=content_parts),
+        ]
+        
+        # 调用多模态 LLM
+        response = await llm_client.invoke(
+            messages=messages,
+            purpose="vision",  # 使用 vision 模型
+            temperature=0.4,
+            max_tokens=2500,
+        )
+        
+        raw_content = response.content
+        parsed = self._parse_response(raw_content)
+        
+        return AssistantAgentResult(
+            raw_content=raw_content,
+            model=response.model,
+            usage=response.usage,
             parsed=parsed,
         )
 
