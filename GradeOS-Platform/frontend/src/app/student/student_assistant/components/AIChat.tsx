@@ -376,7 +376,7 @@ const AIChat: React.FC<Props> = ({ lang }) => {
         { role: 'user' as const, content: userMsgContent, timestamp: new Date() },
       ]
         .filter((msg) => msg.content)
-        .slice(-6)
+        .slice(-16)  // 增加到 16 条历史消息
         .map((msg) => ({ role: msg.role as 'user' | 'assistant', content: msg.content }));
 
       // 构建 API 请求，包含错题上下文和图片

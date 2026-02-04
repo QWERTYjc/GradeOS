@@ -87,21 +87,31 @@ Concept topic: {concept_topic}
 
 
 def _extract_json(text: str) -> Optional[Dict[str, Any]]:
-    """从文本中提取 JSON 对象，支持处理 markdown 代码块包裹的情况"""
+    """从文本中提取 JSON 对象，支持处理 markdown 代码块包裹和各种格式问题"""
+    if not text or not text.strip():
+        return None
+    
     # 首先尝试直接解析
     try:
         return json.loads(text)
     except Exception:
         pass
     
+    # 清理文本
+    cleaned = text.strip()
+    
     # 尝试移除 markdown 代码块标记
     # 处理 ```json ... ``` 或 ``` ... ``` 格式
-    cleaned = text.strip()
     if cleaned.startswith("```"):
         # 移除开头的 ```json 或 ```
         lines = cleaned.split("\n", 1)
         if len(lines) > 1:
             cleaned = lines[1]
+        else:
+            # 只有一行的情况，移除开头的 ```xxx
+            cleaned = cleaned[3:].lstrip()
+            if cleaned.startswith("json"):
+                cleaned = cleaned[4:].lstrip()
         # 移除结尾的 ```
         if cleaned.rstrip().endswith("```"):
             cleaned = cleaned.rstrip()[:-3].rstrip()
@@ -112,14 +122,39 @@ def _extract_json(text: str) -> Optional[Dict[str, Any]]:
     except Exception:
         pass
     
-    # 最后尝试用正则提取 JSON 对象
+    # 尝试用正则提取 JSON 对象（贪婪匹配最外层的 {} ）
+    # 使用非贪婪匹配来找到完整的 JSON 对象
+    brace_count = 0
+    start_idx = -1
+    end_idx = -1
+    
+    for i, char in enumerate(cleaned):
+        if char == '{':
+            if brace_count == 0:
+                start_idx = i
+            brace_count += 1
+        elif char == '}':
+            brace_count -= 1
+            if brace_count == 0 and start_idx != -1:
+                end_idx = i + 1
+                break
+    
+    if start_idx != -1 and end_idx != -1:
+        json_str = cleaned[start_idx:end_idx]
+        try:
+            return json.loads(json_str)
+        except Exception:
+            pass
+    
+    # 最后尝试用正则提取（备选方案）
     match = re.search(r"\{.*\}", cleaned, re.S)
-    if not match:
-        return None
-    try:
-        return json.loads(match.group(0))
-    except Exception:
-        return None
+    if match:
+        try:
+            return json.loads(match.group(0))
+        except Exception:
+            pass
+    
+    return None
 
 
 class StudentAssistantAgent:
@@ -143,11 +178,12 @@ class StudentAssistantAgent:
     def _convert_history(
         self,
         history: Optional[Sequence[AssistantHistoryItem]],
+        max_messages: int = 16,  # 增加到 16 条
     ) -> List[BaseMessage]:
         if not history:
             return []
         messages: List[BaseMessage] = []
-        for item in list(history)[-8:]:
+        for item in list(history)[-max_messages:]:
             if isinstance(item, BaseMessage):
                 messages.append(item)
                 continue
@@ -164,16 +200,46 @@ class StudentAssistantAgent:
         return messages
 
     def _parse_response(self, raw_content: str) -> Optional[AssistantStructuredResponse]:
+        """解析 LLM 响应，支持多种格式和错误恢复"""
+        if not raw_content:
+            return None
+        
+        # 首先尝试直接用 parser 解析
         try:
             return self._parser.parse(raw_content)
         except Exception:
-            payload = _extract_json(raw_content)
-            if payload is None:
-                return None
+            pass
+        
+        # 尝试提取 JSON
+        payload = _extract_json(raw_content)
+        if payload is not None:
             try:
                 return AssistantStructuredResponse.model_validate(payload)
             except Exception:
-                return None
+                pass
+        
+        # 如果都失败了，尝试构建一个基本响应
+        # 清理内容，移除可能的 JSON 残留
+        clean_content = raw_content.strip()
+        
+        # 移除 markdown 代码块
+        if clean_content.startswith("```"):
+            lines = clean_content.split("\n")
+            # 过滤掉代码块标记行
+            filtered_lines = [
+                line for line in lines 
+                if not line.strip().startswith("```")
+            ]
+            clean_content = "\n".join(filtered_lines).strip()
+        
+        # 如果内容看起来像是纯文本回复（不是 JSON），直接使用
+        if clean_content and not clean_content.startswith("{"):
+            return AssistantStructuredResponse(
+                content=clean_content,
+                response_type="chat",
+            )
+        
+        return None
 
     async def ainvoke(
         self,
@@ -265,19 +331,21 @@ class StudentAssistantAgent:
                 except Exception:
                     pass
         
-        # 添加历史消息摘要（如果有）
+        # 添加历史消息摘要（如果有）- 增加到 10 条，每条内容限制 800 字符
         history_summary = ""
         if history:
-            recent_history = self._convert_history(history)[-4:]  # 只取最近4条
+            recent_history = self._convert_history(history, max_messages=10)
             if recent_history:
                 history_parts = []
                 for msg in recent_history:
                     role = "Student" if isinstance(msg, HumanMessage) else "Assistant"
                     content = getattr(msg, "content", "")
-                    if content and len(content) < 500:  # 避免太长的历史
-                        history_parts.append(f"{role}: {content[:200]}")
+                    if content:
+                        # 截取内容，保留更多上下文
+                        truncated = content[:800] if len(content) > 800 else content
+                        history_parts.append(f"{role}: {truncated}")
                 if history_parts:
-                    history_summary = "\n\n[Recent conversation]\n" + "\n".join(history_parts)
+                    history_summary = "\n\n[Recent conversation history]\n" + "\n---\n".join(history_parts)
         
         # 添加文本消息
         full_message = message + history_summary
