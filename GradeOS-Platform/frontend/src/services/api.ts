@@ -559,6 +559,7 @@ export interface ResultsReviewContext {
   batch_id: string;
   status?: string;
   current_stage?: string;
+  parsed_rubric?: Record<string, unknown>;
   student_results: Array<Record<string, unknown>>;
   answer_images: string[];
 }
