@@ -43,6 +43,7 @@ interface AnnotationEditorProps {
 }
 
 type EditMode = 'select' | 'add_score' | 'add_mark' | 'add_comment' | 'add_error';
+type ResizeHandle = 'nw' | 'ne' | 'sw' | 'se';
 
 const ANNOTATION_TOOLS = [
   { mode: 'select' as EditMode, icon: Move, label: '选择/移动', color: 'slate' },
@@ -75,6 +76,55 @@ export default function AnnotationEditor({
   const [newAnnotationText, setNewAnnotationText] = useState('');
   const [showTextInput, setShowTextInput] = useState(false);
   const [pendingPosition, setPendingPosition] = useState<{ x: number; y: number } | null>(null);
+  const [isDrawingCircle, setIsDrawingCircle] = useState(false);
+  const [circleStart, setCircleStart] = useState<{ x: number; y: number } | null>(null);
+  const [draftCircle, setDraftCircle] = useState<{ bounding_box: Annotation['bounding_box']; color: string } | null>(null);
+  const [isResizing, setIsResizing] = useState(false);
+  const [resizeHandle, setResizeHandle] = useState<ResizeHandle | null>(null);
+
+  const MIN_BOX_SIZE = 0.02;
+  const HANDLE_SIZE = 6;
+
+  const clamp01 = (value: number) => Math.max(0, Math.min(1, value));
+
+  const normalizeBox = (bbox: Annotation['bounding_box']) => {
+    let xMin = clamp01(Math.min(bbox.x_min, bbox.x_max));
+    let xMax = clamp01(Math.max(bbox.x_min, bbox.x_max));
+    let yMin = clamp01(Math.min(bbox.y_min, bbox.y_max));
+    let yMax = clamp01(Math.max(bbox.y_min, bbox.y_max));
+
+    const size = Math.max(xMax - xMin, yMax - yMin, MIN_BOX_SIZE);
+    const cx = (xMin + xMax) / 2;
+    const cy = (yMin + yMax) / 2;
+    xMin = cx - size / 2;
+    xMax = cx + size / 2;
+    yMin = cy - size / 2;
+    yMax = cy + size / 2;
+
+    if (xMin < 0) {
+      xMax -= xMin;
+      xMin = 0;
+    }
+    if (xMax > 1) {
+      xMin -= xMax - 1;
+      xMax = 1;
+    }
+    if (yMin < 0) {
+      yMax -= yMin;
+      yMin = 0;
+    }
+    if (yMax > 1) {
+      yMin -= yMax - 1;
+      yMax = 1;
+    }
+
+    xMin = clamp01(xMin);
+    xMax = clamp01(xMax);
+    yMin = clamp01(yMin);
+    yMax = clamp01(yMax);
+
+    return { x_min: xMin, y_min: yMin, x_max: xMax, y_max: yMax };
+  };
 
   // 加载图片
   useEffect(() => {
@@ -100,6 +150,14 @@ export default function AnnotationEditor({
       img.onerror = null;
     };
   }, [imageSrc]);
+
+  useEffect(() => {
+    if (editMode === 'add_error') {
+      setShowTextInput(false);
+      setPendingPosition(null);
+      setNewAnnotationText('');
+    }
+  }, [editMode]);
 
   // 绘制画布
   const draw = useCallback(() => {
@@ -173,7 +231,31 @@ export default function AnnotationEditor({
           }
       }
     });
-  }, [annotations, imageLoaded, imageSize, selectedId]);
+
+    if (draftCircle) {
+      const { x, y, width: w, height: h } = toPixelCoords(
+        draftCircle.bounding_box,
+        canvas.width,
+        canvas.height
+      );
+      ctx.save();
+      ctx.setLineDash([4, 4]);
+      drawEllipse(ctx, x, y, w, h, draftCircle.color);
+      ctx.restore();
+    }
+
+    if (selectedId) {
+      const selected = annotations.find((ann) => ann.id === selectedId);
+      if (selected?.annotation_type === 'error_circle') {
+        const { x, y, width: w, height: h } = toPixelCoords(
+          selected.bounding_box,
+          canvas.width,
+          canvas.height
+        );
+        drawResizeHandles(ctx, x, y, w, h, HANDLE_SIZE);
+      }
+    }
+  }, [annotations, imageLoaded, imageSize, selectedId, draftCircle, HANDLE_SIZE]);
 
   useEffect(() => {
     draw();
@@ -202,6 +284,27 @@ export default function AnnotationEditor({
     return null;
   };
 
+  const getResizeHandleAt = (pos: { x: number; y: number }, ann: Annotation): ResizeHandle | null => {
+    const canvas = canvasRef.current;
+    if (!canvas) return null;
+    const { x, y, width: w, height: h } = toPixelCoords(ann.bounding_box, canvas.width, canvas.height);
+    const px = pos.x * canvas.width;
+    const py = pos.y * canvas.height;
+    const half = HANDLE_SIZE / 2;
+    const handles = [
+      { name: 'nw' as ResizeHandle, x, y },
+      { name: 'ne' as ResizeHandle, x: x + w, y },
+      { name: 'sw' as ResizeHandle, x, y: y + h },
+      { name: 'se' as ResizeHandle, x: x + w, y: y + h },
+    ];
+    for (const handle of handles) {
+      if (Math.abs(px - handle.x) <= half && Math.abs(py - handle.y) <= half) {
+        return handle.name;
+      }
+    }
+    return null;
+  };
+
   // 处理点击
   const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (readOnly) return;
@@ -211,6 +314,8 @@ export default function AnnotationEditor({
     if (editMode === 'select') {
       const clicked = findAnnotationAt(pos.x, pos.y);
       setSelectedId(clicked?.id || null);
+    } else if (editMode === 'add_error') {
+      return;
     } else if (editMode.startsWith('add_')) {
       setPendingPosition(pos);
       setShowTextInput(true);
@@ -219,24 +324,84 @@ export default function AnnotationEditor({
 
   // 处理拖拽
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (readOnly || editMode !== 'select' || !selectedId) return;
-    
+    if (readOnly) return;
+
     const pos = getCanvasPosition(e);
+
+    if (editMode === 'add_error') {
+      setIsDrawingCircle(true);
+      setCircleStart(pos);
+      setDraftCircle({
+        bounding_box: { x_min: pos.x, y_min: pos.y, x_max: pos.x, y_max: pos.y },
+        color: '#FF0000',
+      });
+      return;
+    }
+
+    if (editMode !== 'select') return;
+    if (!selectedId) return;
     const ann = findAnnotationAt(pos.x, pos.y);
-    
+
     if (ann && ann.id === selectedId) {
+      if (ann.annotation_type === 'error_circle') {
+        const handle = getResizeHandleAt(pos, ann);
+        if (handle) {
+          setIsResizing(true);
+          setResizeHandle(handle);
+          return;
+        }
+      }
       setIsDragging(true);
       setDragStart(pos);
     }
   };
 
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!isDragging || !selectedId) return;
-    
     const pos = getCanvasPosition(e);
+
+    if (isDrawingCircle && circleStart) {
+      setDraftCircle({
+        bounding_box: normalizeBox({
+          x_min: circleStart.x,
+          y_min: circleStart.y,
+          x_max: pos.x,
+          y_max: pos.y,
+        }),
+        color: '#FF0000',
+      });
+      return;
+    }
+
+    if (isResizing && selectedId && resizeHandle) {
+      const updatedAnnotations = annotations.map((ann) => {
+        if (ann.id === selectedId) {
+          const next = { ...ann.bounding_box };
+          if (resizeHandle === 'nw') {
+            next.x_min = pos.x;
+            next.y_min = pos.y;
+          } else if (resizeHandle === 'ne') {
+            next.x_max = pos.x;
+            next.y_min = pos.y;
+          } else if (resizeHandle === 'sw') {
+            next.x_min = pos.x;
+            next.y_max = pos.y;
+          } else if (resizeHandle === 'se') {
+            next.x_max = pos.x;
+            next.y_max = pos.y;
+          }
+          return { ...ann, bounding_box: normalizeBox(next) };
+        }
+        return ann;
+      });
+      onAnnotationsChange(updatedAnnotations);
+      return;
+    }
+
+    if (!isDragging || !selectedId) return;
+
     const dx = pos.x - dragStart.x;
     const dy = pos.y - dragStart.y;
-    
+
     const updatedAnnotations = annotations.map((ann) => {
       if (ann.id === selectedId) {
         const newBbox = {
@@ -249,12 +414,47 @@ export default function AnnotationEditor({
       }
       return ann;
     });
-    
+
     setDragStart(pos);
     onAnnotationsChange(updatedAnnotations);
   };
 
-  const handleMouseUp = () => {
+  const handleMouseUp = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (isDrawingCircle && circleStart) {
+      setIsDrawingCircle(false);
+      setDraftCircle(null);
+      const endPos = getCanvasPosition(e);
+      const finalBox = normalizeBox({
+        x_min: circleStart.x,
+        y_min: circleStart.y,
+        x_max: endPos.x,
+        y_max: endPos.y,
+      });
+      setCircleStart(null);
+      if (onAnnotationAdd) {
+        onAnnotationAdd({
+          annotation_type: 'error_circle',
+          bounding_box: finalBox,
+          text: '',
+          color: '#FF0000',
+          question_id: '',
+          scoring_point_id: '',
+        });
+      }
+      setEditMode('select');
+      return;
+    }
+
+    if (isResizing && selectedId) {
+      setIsResizing(false);
+      setResizeHandle(null);
+      const ann = annotations.find((a) => a.id === selectedId);
+      if (ann && onAnnotationUpdate) {
+        onAnnotationUpdate(selectedId, { bounding_box: ann.bounding_box });
+      }
+      return;
+    }
+
     if (isDragging && selectedId) {
       setIsDragging(false);
       const ann = annotations.find((a) => a.id === selectedId);
@@ -507,4 +707,32 @@ function drawComment(ctx: CanvasRenderingContext2D, x: number, y: number, text: 
   ctx.strokeRect(x, y, metrics.width + 8, 20);
   ctx.fillStyle = color;
   ctx.fillText(text, x + 4, y + 14);
+}
+
+function drawResizeHandles(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  size: number
+) {
+  const half = size / 2;
+  const points = [
+    [x, y],
+    [x + w, y],
+    [x, y + h],
+    [x + w, y + h],
+  ];
+  ctx.save();
+  ctx.fillStyle = '#ffffff';
+  ctx.strokeStyle = '#3B82F6';
+  ctx.lineWidth = 1;
+  points.forEach(([px, py]) => {
+    ctx.beginPath();
+    ctx.rect(px - half, py - half, size, size);
+    ctx.fill();
+    ctx.stroke();
+  });
+  ctx.restore();
 }
