@@ -1,13 +1,13 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { useAuthStore } from '@/store/authStore';
 import { Forum, ForumSearchResult } from '@/types';
 import { openboardApi } from '@/services/api';
 
-export default function TeacherSearchPage() {
+function TeacherSearchPageInner() {
   const router = useRouter();
   const { user } = useAuthStore();
   const searchParams = useSearchParams();
@@ -200,5 +200,13 @@ export default function TeacherSearchPage() {
         ) : null}
       </div>
     </DashboardLayout>
+  );
+}
+
+export default function TeacherSearchPage() {
+  return (
+    <Suspense fallback={<div className="py-16 text-center text-slate-400">加载中...</div>}>
+      <TeacherSearchPageInner />
+    </Suspense>
   );
 }
