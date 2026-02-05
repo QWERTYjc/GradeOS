@@ -1,12 +1,12 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Forum, ForumSearchResult } from '@/types';
 import { openboardApi } from '@/services/api';
 
-export default function SearchPage() {
+function SearchPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const initialQuery = searchParams.get('q') || '';
@@ -172,5 +172,13 @@ export default function SearchPage() {
         ) : null}
       </div>
     </DashboardLayout>
+  );
+}
+
+export default function SearchPage() {
+  return (
+    <Suspense fallback={<div className="py-16 text-center text-slate-400">加载中...</div>}>
+      <SearchPageInner />
+    </Suspense>
   );
 }
