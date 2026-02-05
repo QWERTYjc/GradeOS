@@ -3,7 +3,7 @@
 // Prevent SSR prerendering - this page uses pdfjs-dist which requires browser APIs
 export const dynamic = 'force-dynamic';
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, Suspense } from 'react';
 import { Images, ScanLine, Send, ArrowLeft, CheckCircle2, Loader2 } from 'lucide-react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
@@ -16,7 +16,7 @@ import { useAuthStore } from '@/store/authStore';
 
 type ViewTab = 'scan' | 'gallery';
 
-export default function StudentScanPage() {
+function StudentScanPageInner() {
   const searchParams = useSearchParams();
   const homeworkId = searchParams.get('homeworkId');
   const { user } = useAuthStore();
@@ -283,5 +283,13 @@ export default function StudentScanPage() {
         )}
       </div>
     </AppContext.Provider>
+  );
+}
+
+export default function StudentScanPage() {
+  return (
+    <Suspense fallback={<div className="py-16 text-center text-slate-400">加载中...</div>}>
+      <StudentScanPageInner />
+    </Suspense>
   );
 }
