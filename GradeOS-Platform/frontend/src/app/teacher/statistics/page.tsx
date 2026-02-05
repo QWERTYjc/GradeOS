@@ -1,230 +1,217 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+/**
+ * 成绩统计总览页
+ * 
+ * 展示 Excel 风格的成绩矩阵，支持：
+ * - 班级选择
+ * - 学生成绩表格（学生为行，作业为列）
+ * - 单元格点击导航到作业详情
+ * - CSV 导出功能
+ * 
+ * @module app/teacher/statistics/page
+ * Requirements: 1.1-1.4, 2.1-2.6, 3.1, 3.2
+ */
+
+import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { useAuthStore } from '@/store/authStore';
-import { classApi, statisticsApi } from '@/services/api';
-import {
-  ResponsiveContainer,
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  PieChart,
-  Pie,
-  Cell
-} from 'recharts';
+import { classApi, ClassResponse } from '@/services/api';
+import { ScoreMatrix } from '@/components/statistics/ScoreMatrix';
+import { useStatisticsData } from '@/hooks/useStatisticsData';
+import { GlassCard } from '@/components/design-system/GlassCard';
+import { SmoothButton } from '@/components/design-system/SmoothButton';
+import { Select, Spin, Empty, message } from 'antd';
+import { BarChart3, Download, RefreshCw } from 'lucide-react';
 
-interface ClassStats {
-  class_id: string;
-  class_name: string;
-  total_students: number;
-  submitted_count: number;
-  graded_count: number;
-  average_score: number;
-  max_score: number;
-  min_score: number;
-  pass_rate: number;
-  score_distribution: Record<string, number>;
-}
-
-export default function TeacherStatisticsPage() {
-  const [stats, setStats] = useState<ClassStats | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [classes, setClasses] = useState<Array<{ id: string; name: string }>>([]);
-  const [selectedClass, setSelectedClass] = useState<string>('');
+export default function StatisticsPage() {
+  const router = useRouter();
   const { user } = useAuthStore();
+  
+  // 班级列表和选中的班级
+  const [classes, setClasses] = useState<ClassResponse[]>([]);
+  const [selectedClassId, setSelectedClassId] = useState<string | null>(null);
+  const [classesLoading, setClassesLoading] = useState(true);
+  
+  // 使用 useStatisticsData hook 加载成绩数据
+  const { students, homeworks, loading, error, refetch } = useStatisticsData(selectedClassId);
 
+  // 加载班级列表
   useEffect(() => {
-    if (!user?.id) return;
-    let active = true;
-    classApi.getTeacherClasses(user.id)
-      .then((items) => {
-        if (!active) return;
-        const mapped = items.map((cls) => ({ id: cls.class_id, name: cls.class_name }));
-        setClasses(mapped);
-        if (!selectedClass && mapped.length) {
-          setSelectedClass(mapped[0].id);
+    const fetchClasses = async () => {
+      if (!user?.id) return;
+      
+      setClassesLoading(true);
+      try {
+        const data = await classApi.getTeacherClasses(user.id);
+        setClasses(data);
+        
+        // 自动选择第一个班级
+        if (data.length > 0 && !selectedClassId) {
+          setSelectedClassId(data[0].class_id);
         }
-      })
-      .catch((error) => {
-        console.error('Failed to load classes', error);
-        setClasses([]);
-      });
-    return () => {
-      active = false;
+      } catch (err) {
+        console.error('Failed to fetch classes:', err);
+        message.error('加载班级列表失败');
+      } finally {
+        setClassesLoading(false);
+      }
     };
-  }, [user?.id, selectedClass]);
-
-  useEffect(() => {
-    if (!selectedClass) return;
-    let active = true;
     
-    setLoading(true);
-    statisticsApi.getClassStatistics(selectedClass)
-      .then((data) => {
-        if (!active) return;
-        const className = classes.find((c) => c.id === selectedClass)?.name || '';
-        setStats({ ...data, class_name: className });
-      })
-      .catch((error) => {
-        console.error('Failed to load statistics', error);
-        setStats(null);
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, [selectedClass, classes]);
+    fetchClasses();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
 
-  const distributionData = stats ? Object.entries(stats.score_distribution).map(([range, count]) => ({
-    range,
-    count
-  })) : [];
+  // 处理班级切换
+  const handleClassChange = (classId: string) => {
+    setSelectedClassId(classId);
+  };
 
-  const pieData = stats ? [
-    { name: '???', value: stats.submitted_count },
-    { name: '???', value: stats.total_students - stats.submitted_count }
-  ] : [];
+  // 处理单元格点击 - 导航到作业详情
+  const handleCellClick = (studentId: string, homeworkId: string) => {
+    router.push(`/teacher/statistics/${homeworkId}?student=${studentId}`);
+  };
+
+  // 处理列头点击 - 导航到作业详情
+  const handleHeaderClick = (homeworkId: string) => {
+    router.push(`/teacher/statistics/${homeworkId}`);
+  };
+
+  // 处理 CSV 导出
+  const handleExport = async () => {
+    if (!students.length || !homeworks.length) {
+      message.warning('暂无数据可导出');
+      return;
+    }
+
+    try {
+      // 动态导入 CSV 导出函数
+      const { exportScoresToCSV } = await import('@/utils/csvExport');
+      
+      const selectedClass = classes.find(c => c.class_id === selectedClassId);
+      const className = selectedClass?.class_name || '未知班级';
+      
+      exportScoresToCSV(students, homeworks, className);
+      
+      message.success('导出成功');
+    } catch (err) {
+      console.error('Export failed:', err);
+      message.error('导出失败');
+    }
+  };
+
+  // 获取当前选中班级名称
+  const selectedClassName = classes.find(c => c.class_id === selectedClassId)?.class_name || '';
 
   return (
     <DashboardLayout>
-      <div className="space-y-6 max-w-6xl mx-auto">
-        {/* ???? */}
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold text-slate-800">?? ??????</h1>
-            <p className="text-slate-500 text-sm mt-1">???????????????</p>
+      <div className="p-6 space-y-6">
+        {/* 页面标题和操作栏 */}
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-blue-100 rounded-lg">
+              <BarChart3 className="w-6 h-6 text-blue-600" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-semibold text-slate-900">成绩统计</h1>
+              <p className="text-sm text-slate-500">查看班级学生的作业成绩总览</p>
+            </div>
           </div>
-          <div className="flex gap-2">
-            {classes.map(cls => (
-              <button
-                key={cls.id}
-                onClick={() => setSelectedClass(cls.id)}
-                className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                  selectedClass === cls.id
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                }`}
-              >
-                {cls.name}
-              </button>
-            ))}
+          
+          <div className="flex items-center gap-3">
+            {/* 班级选择器 */}
+            <Select
+              value={selectedClassId || undefined}
+              onChange={handleClassChange}
+              placeholder="选择班级"
+              loading={classesLoading}
+              style={{ width: 200 }}
+              options={classes.map(c => ({
+                value: c.class_id,
+                label: c.class_name,
+              }))}
+            />
+            
+            {/* 刷新按钮 */}
+            <SmoothButton
+              variant="secondary"
+              size="sm"
+              onClick={() => refetch()}
+              disabled={loading}
+            >
+              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+            </SmoothButton>
+            
+            {/* 导出按钮 */}
+            <SmoothButton
+              variant="primary"
+              size="sm"
+              onClick={handleExport}
+              disabled={!students.length}
+            >
+              <Download className="w-4 h-4 mr-1" />
+              导出 CSV
+            </SmoothButton>
           </div>
         </div>
 
-        {loading ? (
-          <div className="flex items-center justify-center h-64">
-            <div className="w-8 h-8 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+        {/* 成绩矩阵 */}
+        <GlassCard className="p-0 overflow-hidden">
+          {classesLoading ? (
+            <div className="flex flex-col items-center justify-center h-64 gap-3">
+              <Spin size="large" />
+              <span className="text-gray-500">加载班级列表...</span>
+            </div>
+          ) : classes.length === 0 ? (
+            <div className="flex items-center justify-center h-64">
+              <Empty
+                description="暂无班级"
+                image={Empty.PRESENTED_IMAGE_SIMPLE}
+              />
+            </div>
+          ) : error ? (
+            <div className="flex flex-col items-center justify-center h-64 gap-4">
+              <p className="text-red-500">{error}</p>
+              <SmoothButton variant="secondary" onClick={() => refetch()}>
+                重试
+              </SmoothButton>
+            </div>
+          ) : (
+            <ScoreMatrix
+              students={students}
+              homeworks={homeworks}
+              onCellClick={handleCellClick}
+              onHeaderClick={handleHeaderClick}
+              loading={loading}
+            />
+          )}
+        </GlassCard>
+
+        {/* 统计摘要 */}
+        {!loading && students.length > 0 && (
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            <GlassCard className="p-4 text-center">
+              <p className="text-2xl font-bold text-blue-600">{students.length}</p>
+              <p className="text-sm text-slate-500">学生人数</p>
+            </GlassCard>
+            <GlassCard className="p-4 text-center">
+              <p className="text-2xl font-bold text-green-600">{homeworks.length}</p>
+              <p className="text-sm text-slate-500">作业数量</p>
+            </GlassCard>
+            <GlassCard className="p-4 text-center">
+              <p className="text-2xl font-bold text-purple-600">
+                {students.length > 0 
+                  ? (students.reduce((sum, s) => sum + s.averageScore, 0) / students.length).toFixed(1)
+                  : '-'}
+              </p>
+              <p className="text-sm text-slate-500">班级平均分</p>
+            </GlassCard>
+            <GlassCard className="p-4 text-center">
+              <p className="text-2xl font-bold text-orange-600">{selectedClassName}</p>
+              <p className="text-sm text-slate-500">当前班级</p>
+            </GlassCard>
           </div>
-        ) : stats && (
-          <>
-            {/* KPI ?? */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <div className="bg-white rounded-xl border border-slate-200 p-5">
-                <p className="text-xs font-bold text-slate-400 uppercase mb-1">????</p>
-                <p className="text-2xl font-bold text-slate-800">{stats.total_students}</p>
-              </div>
-              <div className="bg-white rounded-xl border border-slate-200 p-5">
-                <p className="text-xs font-bold text-slate-400 uppercase mb-1">???</p>
-                <p className="text-2xl font-bold text-blue-600">{stats.average_score}</p>
-              </div>
-              <div className="bg-white rounded-xl border border-slate-200 p-5">
-                <p className="text-xs font-bold text-slate-400 uppercase mb-1">???</p>
-                <p className="text-2xl font-bold text-green-500">{(stats.pass_rate * 100).toFixed(1)}%</p>
-              </div>
-              <div className="bg-white rounded-xl border border-slate-200 p-5">
-                <p className="text-xs font-bold text-slate-400 uppercase mb-1">??/??</p>
-                <p className="text-2xl font-bold text-slate-800">{stats.max_score}/{stats.min_score}</p>
-              </div>
-            </div>
-
-            {/* ???? */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {/* ???? */}
-              <div className="bg-white rounded-xl border border-slate-200 p-6">
-                <h3 className="font-bold text-slate-800 mb-6">?? ????</h3>
-                <div className="h-64">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={distributionData}>
-                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                      <XAxis dataKey="range" axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 12 }} />
-                      <YAxis axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 12 }} />
-                      <Tooltip contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }} />
-                      <Bar dataKey="count" fill="#3b82f6" radius={[4, 4, 0, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
-
-              {/* ???? */}
-              <div className="bg-white rounded-xl border border-slate-200 p-6">
-                <h3 className="font-bold text-slate-800 mb-6">?? ????</h3>
-                <div className="h-64 flex items-center justify-center">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie
-                        data={pieData}
-                        cx="50%"
-                        cy="50%"
-                        innerRadius={60}
-                        outerRadius={80}
-                        paddingAngle={5}
-                        dataKey="value"
-                        label={({ name, value }) => `${name}: ${value}`}
-                      >
-                        {pieData.map((_, index) => (
-                          <Cell key={`cell-${index}`} fill={index === 0 ? '#22c55e' : '#e2e8f0'} />
-                        ))}
-                      </Pie>
-                      <Tooltip />
-                    </PieChart>
-                  </ResponsiveContainer>
-                </div>
-                <div className="text-center mt-4">
-                  <p className="text-sm text-slate-500">
-                    ???<span className="font-bold text-green-500">{stats.submitted_count}</span> / {stats.total_students} ?
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {/* ?????? */}
-            <div className="bg-white rounded-xl border border-slate-200 p-6">
-              <h3 className="font-bold text-slate-800 mb-4">?? ????????</h3>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                {(stats.score_distribution ? Object.entries(stats.score_distribution).slice(0, 3) : []).map(([range], index) => (
-                  <div key={range} className="p-4 bg-slate-50 rounded-xl border border-slate-100">
-                    <div className="flex items-center gap-2 mb-2">
-                      <span className="text-slate-500 font-bold">{String(index + 1).padStart(2, '0')}</span>
-                      <span className="font-medium text-slate-800">{range} ??</span>
-                    </div>
-                    <p className="text-sm text-slate-500">????????????</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* ???? */}
-            <div className="bg-slate-900 rounded-xl p-6 text-white">
-              <h3 className="font-bold mb-4 flex items-center gap-2">
-                <span className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-sm">AI</span>
-                ??????
-              </h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="p-4 bg-white/5 rounded-xl border border-white/10">
-                  <p className="text-white/80 text-sm">????????????????????</p>
-                </div>
-                <div className="p-4 bg-white/5 rounded-xl border border-white/10">
-                  <p className="text-white/80 text-sm">?????????????????????</p>
-                </div>
-              </div>
-            </div>
-          </>
         )}
       </div>
     </DashboardLayout>

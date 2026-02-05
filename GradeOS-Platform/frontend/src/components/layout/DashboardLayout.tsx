@@ -38,6 +38,7 @@ export default function DashboardLayout({ children }: Props) {
     { href: '/teacher/grading/history', label: 'Grading History', icon: <History className="h-4 w-4" />, desc: 'Imports and results' },
     { href: '/teacher/performance', label: 'Teaching Cockpit', icon: <TrendingUp className="h-4 w-4" />, desc: 'Performance dashboard' },
     { href: '/teacher/statistics', label: 'Analytics', icon: <BarChart3 className="h-4 w-4" />, desc: 'Class insights' },
+    { href: '/teacher/openboard', label: 'OpenBoard', icon: <Megaphone className="h-4 w-4" />, desc: 'Forum management' },
   ];
 
   const studentNav = [
@@ -46,7 +47,7 @@ export default function DashboardLayout({ children }: Props) {
     { href: '/student/analysis', label: 'Mistake Analysis', icon: <LayoutDashboard className="h-4 w-4" />, desc: 'Targeted review' },
     { href: '/student/performance', label: 'Mindful Score', icon: <TrendingUp className="h-4 w-4" />, desc: 'No-rank performance' },
     { href: '/student/report', label: 'Progress Report', icon: <BarChart3 className="h-4 w-4" />, desc: 'Growth insights' },
-    { href: '/student/crowdboard', label: 'Open Board', icon: <Megaphone className="h-4 w-4" />, desc: 'Shared questions' },
+    { href: '/student/openboard', label: 'OpenBoard', icon: <Megaphone className="h-4 w-4" />, desc: 'Learning community' },
   ];
 
   const navItems = user?.role === Role.Teacher ? teacherNav : studentNav;

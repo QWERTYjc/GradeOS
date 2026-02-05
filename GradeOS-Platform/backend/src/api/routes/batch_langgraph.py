@@ -1411,7 +1411,8 @@ async def stream_langgraph_progress(
                         )
                         self_audit = result.get("selfAudit") or result.get("self_audit") or {}
                         confession_payload = result.get("confession")
-                        student_id_value = student_id if class_id else None
+                        # 修复：即使没有 class_id 也保留 student_id，以便学生端能匹配到结果
+                        student_id_value = student_id or None
                         student_result = StudentGradingResult(
                             id=_make_student_result_id(history_id, student_name, student_id_value),
                             grading_history_id=history_id,
@@ -2813,12 +2814,15 @@ async def get_results_review_context(
 
     async def _load_from_db() -> ResultsReviewContextResponse:
         """从数据库加载批改结果"""
+        logger.warning(f"[results-review] _load_from_db 被调用: batch_id={batch_id}")
         history = await _maybe_await(get_grading_history(batch_id))
         if not history:
             raise HTTPException(status_code=404, detail="批次不存在")
 
+        logger.warning(f"[results-review] history 获取成功: id={history.id}, status={history.status}")
         raw_results: List[Dict[str, Any]] = []
         student_rows = await _maybe_await(get_student_results(history.id))
+        logger.warning(f"[results-review] student_rows 数量: {len(student_rows)}")
         for row in student_rows:
             data = row.result_data
             if isinstance(data, str):
@@ -2864,26 +2868,35 @@ async def get_results_review_context(
 
     try:
         if not orchestrator:
+            logger.info(f"[results-review] orchestrator 不可用，从数据库加载")
             return await _load_from_db()
 
         run_id = f"batch_grading_{batch_id}"
         run_info = await orchestrator.get_run_info(run_id)
         if not run_info:
+            logger.info(f"[results-review] run_info 不存在: {run_id}，从数据库加载")
             return await _load_from_db()
 
+        logger.info(f"[results-review] run_info 获取成功: run_id={run_id}, status={run_info.status}")
         state = run_info.state or {}
+        logger.info(f"[results-review] state keys: {list(state.keys())}")
+        
         student_results = (
             state.get("reviewed_results")
             or state.get("confessed_results")
             or state.get("student_results", [])
         )
+        logger.info(f"[results-review] 从 state 获取 student_results: {len(student_results)} 条")
+        
         if not student_results:
             try:
                 final_output = await orchestrator.get_final_output(run_id)
+                logger.info(f"[results-review] final_output keys: {list(final_output.keys()) if final_output else 'None'}")
                 if final_output:
                     student_results = final_output.get("student_results", [])
+                    logger.info(f"[results-review] 从 final_output 获取 student_results: {len(student_results)} 条")
             except Exception as exc:
-                logger.debug(f"获取最终输出失败: {exc}")
+                logger.warning(f"获取最终输出失败: {exc}")
 
         if not student_results:
             export_students = (state.get("export_data") or {}).get("students", [])
@@ -2934,6 +2947,7 @@ async def get_results_review_context(
                         student["logic_reviewed_at"] = payload.get("reviewed_at")
 
         # If the run completed but confession/logic_review is missing, prefer DB results.
+        # But if DB is empty, keep the original student_results from state/output_data
         if (
             student_results
             and run_info.status
@@ -2941,7 +2955,12 @@ async def get_results_review_context(
             and not _has_post_confession_fields(student_results)
         ):
             try:
-                return await _load_from_db()
+                db_response = await _load_from_db()
+                # Only use DB results if they actually have data
+                if db_response.student_results:
+                    return db_response
+                # Otherwise, continue with the original student_results
+                logger.info(f"[results-review] DB 结果为空，使用原始 student_results: {len(student_results)} 条")
             except HTTPException:
                 pass
 

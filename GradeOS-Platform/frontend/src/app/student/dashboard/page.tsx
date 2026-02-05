@@ -1,23 +1,33 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { useAuthStore } from '@/store/authStore';
 import { Homework, ClassEntity } from '@/types';
-import { classApi, homeworkApi } from '@/services/api';
+import { classApi, homeworkApi, gradingApi, GradingImportRecord, GradingImportItem } from '@/services/api';
+
+type HomeworkWithGrading = Homework & { 
+  status: string; 
+  score?: number; 
+  feedback?: string;
+  gradingImportId?: string;  // 关联的批改记录 ID
+  gradingResult?: GradingImportItem;  // 完整的批改结果
+};
 
 export default function StudentDashboard() {
   const { user, updateUser } = useAuthStore();
+  const router = useRouter();
   const [inviteCode, setInviteCode] = useState('');
   const [joining, setJoining] = useState(false);
   const [myClasses, setMyClasses] = useState<ClassEntity[]>([]);
-  const [homeworks, setHomeworks] = useState<(Homework & { status: string; score?: number; feedback?: string })[]>([]);
+  const [homeworks, setHomeworks] = useState<HomeworkWithGrading[]>([]);
   const [loading, setLoading] = useState(true);
   const [submitModalOpen, setSubmitModalOpen] = useState(false);
   const [activeHw, setActiveHw] = useState<Homework | null>(null);
   const [submissionContent, setSubmissionContent] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [feedbackModal, setFeedbackModal] = useState<{ open: boolean; score?: number; feedback?: string }>({ open: false });
+  const [gradingRecords, setGradingRecords] = useState<GradingImportRecord[]>([]);
 
   useEffect(() => {
     if (!user?.id) {
@@ -41,13 +51,94 @@ export default function StudentDashboard() {
           studentCount: cls.student_count,
         }));
 
+        // 获取作业提交状态
         const submissionsList = await Promise.all(
           homeworkList.map((hw) => homeworkApi.getSubmissions(hw.homework_id).catch(() => []))
         );
 
-        const mappedHomeworks = homeworkList.map((hw, index) => {
+        // 获取批改历史记录（用于关联完整批改结果）
+        let allGradingRecords: GradingImportRecord[] = [];
+        const gradingItemsMap = new Map<string, { importId: string; item: GradingImportItem }>();
+        
+        try {
+          const gradingHistory = await gradingApi.getGradingHistory();
+          allGradingRecords = gradingHistory.records || [];
+          setGradingRecords(allGradingRecords);
+          
+          // 获取每个批改记录的详情，找到当前学生的批改结果
+          const userName = user.name || user.username || '';
+          const normalizedUserName = userName.trim().toLowerCase();
+          
+          await Promise.all(
+            allGradingRecords.map(async (record) => {
+              try {
+                const detail = await gradingApi.getGradingHistoryDetail(record.import_id);
+                
+                // 多种匹配方式查找当前学生的结果
+                const studentItem = detail.items.find(item => {
+                  // 1. 优先匹配 student_id
+                  if (item.student_id && item.student_id === user.id) {
+                    return true;
+                  }
+                  // 2. 匹配学生姓名
+                  if (normalizedUserName && item.student_name) {
+                    const normalizedItemName = item.student_name.trim().toLowerCase();
+                    if (normalizedItemName === normalizedUserName) {
+                      return true;
+                    }
+                  }
+                  // 3. 匹配 result 中的 studentName
+                  if (normalizedUserName && item.result) {
+                    const resultStudentName = (item.result as Record<string, unknown>).studentName || 
+                                              (item.result as Record<string, unknown>).student_name;
+                    if (typeof resultStudentName === 'string') {
+                      const normalizedResultName = resultStudentName.trim().toLowerCase();
+                      if (normalizedResultName === normalizedUserName) {
+                        return true;
+                      }
+                    }
+                  }
+                  return false;
+                });
+                
+                // 如果没找到匹配的，且只有一个学生结果，直接使用（单人批改场景）
+                const finalStudentItem = studentItem || (detail.items.length === 1 ? detail.items[0] : null);
+                
+                if (finalStudentItem) {
+                  // 用 class_id + assignment_id 作为 key 来匹配作业
+                  const key = `${record.class_id}_${record.assignment_id || ''}`;
+                  gradingItemsMap.set(key, { importId: record.import_id, item: finalStudentItem });
+                  // 也用 import_id 作为备用 key
+                  gradingItemsMap.set(record.import_id, { importId: record.import_id, item: finalStudentItem });
+                }
+              } catch (err) {
+                console.warn('Failed to load grading detail:', record.import_id, err);
+              }
+            })
+          );
+        } catch (err) {
+          console.warn('Failed to load grading history:', err);
+        }
+
+        const mappedHomeworks: HomeworkWithGrading[] = homeworkList.map((hw, index) => {
           const submissions = submissionsList[index] || [];
           const submission = submissions.find((item) => item.student_id === user.id);
+          
+          // 尝试匹配批改结果
+          const gradingKey = `${hw.class_id}_${hw.homework_id}`;
+          const gradingData = gradingItemsMap.get(gradingKey);
+          
+          // 从批改结果中提取分数
+          let gradingScore: number | undefined;
+          let gradingFeedback: string | undefined;
+          if (gradingData?.item?.result) {
+            const result = gradingData.item.result as Record<string, unknown>;
+            gradingScore = typeof result.totalScore === 'number' ? result.totalScore : 
+                          typeof result.total_score === 'number' ? result.total_score :
+                          typeof result.score === 'number' ? result.score : undefined;
+            gradingFeedback = typeof result.feedback === 'string' ? result.feedback : undefined;
+          }
+          
           return {
             id: hw.homework_id,
             classId: hw.class_id,
@@ -56,9 +147,11 @@ export default function StudentDashboard() {
             description: hw.description,
             deadline: hw.deadline,
             createdAt: hw.created_at,
-            status: submission ? 'submitted' : 'pending',
-            score: submission?.score,
-            feedback: submission?.feedback,
+            status: submission || gradingData ? 'submitted' : 'pending',
+            score: gradingScore ?? submission?.score,
+            feedback: gradingFeedback ?? submission?.feedback,
+            gradingImportId: gradingData?.importId,
+            gradingResult: gradingData?.item,
           };
         });
 
@@ -211,19 +304,40 @@ export default function StudentDashboard() {
                 <div className="flex justify-between items-center pt-4 border-t border-slate-100">
                   <span className="text-xs text-slate-400">Due: {hw.deadline}</span>
                   {hw.status === 'submitted' ? (
-                    <button
-                      onClick={() => setFeedbackModal({ open: true, score: hw.score, feedback: hw.feedback })}
-                      className="px-4 py-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors text-sm font-medium"
-                    >
-                      🤖 View AI Analysis
-                    </button>
+                    <div className="flex items-center gap-3">
+                      {hw.score !== undefined && (
+                        <span className="text-lg font-bold text-blue-600">
+                          {hw.score}分
+                        </span>
+                      )}
+                      {hw.gradingImportId ? (
+                        <button
+                          onClick={() => router.push(`/student/grading/${hw.gradingImportId}`)}
+                          className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium"
+                        >
+                          🤖 查看完整批改
+                        </button>
+                      ) : (
+                        <span className="px-4 py-2 text-slate-400 text-sm">
+                          等待批改中...
+                        </span>
+                      )}
+                    </div>
                   ) : (
-                    <button
-                      onClick={() => { setActiveHw(hw); setSubmitModalOpen(true); }}
-                      className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium"
-                    >
-                      Start →
-                    </button>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => router.push(`/student/scan?homeworkId=${hw.id}`)}
+                        className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors text-sm font-medium"
+                      >
+                        📸 扫描提交
+                      </button>
+                      <button
+                        onClick={() => { setActiveHw(hw); setSubmitModalOpen(true); }}
+                        className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium"
+                      >
+                        文字提交 →
+                      </button>
+                    </div>
                   )}
                 </div>
               </div>
@@ -266,22 +380,24 @@ export default function StudentDashboard() {
           </div>
         )}
 
-        {/* Feedback Modal */}
-        {feedbackModal.open && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-            <div className="bg-white rounded-xl p-6 w-full max-w-md mx-4 text-center">
-              <div className="text-6xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-cyan-500 mb-4">
-                {feedbackModal.score}
-              </div>
-              <div className="bg-slate-50 p-4 rounded-lg text-left mb-4">
-                <p className="text-sm text-slate-600">{feedbackModal.feedback}</p>
-              </div>
-              <button
-                onClick={() => setFeedbackModal({ open: false })}
-                className="px-6 py-2 text-slate-600 hover:bg-slate-100 rounded-lg"
-              >
-                Close
-              </button>
+        {/* 批改历史快捷入口 */}
+        {gradingRecords.length > 0 && (
+          <div className="bg-white p-6 rounded-xl border border-slate-200">
+            <h2 className="text-lg font-bold text-slate-800 mb-4">📊 我的批改记录</h2>
+            <div className="space-y-2">
+              {gradingRecords.slice(0, 5).map((record) => (
+                <button
+                  key={record.import_id}
+                  onClick={() => router.push(`/student/grading/${record.import_id}`)}
+                  className="w-full flex items-center justify-between p-3 rounded-lg border border-slate-100 hover:border-blue-200 hover:bg-blue-50 transition-all text-left"
+                >
+                  <div>
+                    <div className="font-medium text-slate-700">{record.class_name || '批改记录'}</div>
+                    <div className="text-xs text-slate-400">{record.created_at}</div>
+                  </div>
+                  <span className="text-blue-600 text-sm">查看详情 →</span>
+                </button>
+              ))}
             </div>
           </div>
         )}

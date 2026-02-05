@@ -265,3 +265,81 @@ export interface BatchGradingResult {
   crossPageQuestions: CrossPageQuestion[];
   errors: Array<{ type: string; message: string; pageIndex?: number }>;
 }
+
+
+// ============ OpenBoard Forum Types ============
+export type ForumStatus = 'pending' | 'active' | 'rejected';
+
+export interface Forum {
+  forum_id: string;
+  name: string;
+  description: string;
+  creator_id: string;
+  creator_name?: string;
+  status: ForumStatus;
+  rejection_reason?: string;
+  post_count: number;
+  reply_count: number;
+  last_activity_at?: string;
+  created_at: string;
+}
+
+export interface ForumPost {
+  post_id: string;
+  forum_id: string;
+  forum_name?: string;
+  title: string;
+  content: string;
+  images?: string[];  // 图片列表（base64或URL）
+  author_id: string;
+  author_name?: string;
+  reply_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ForumReply {
+  reply_id: string;
+  post_id: string;
+  content: string;
+  images?: string[];  // 图片列表（base64或URL）
+  author_id: string;
+  author_name?: string;
+  created_at: string;
+}
+
+export interface ForumSearchResult {
+  post_id: string;
+  title: string;
+  content_snippet: string;
+  forum_id: string;
+  forum_name: string;
+  author_name: string;
+  created_at: string;
+}
+
+export interface ForumUserStatus {
+  user_id: string;
+  name: string;
+  is_banned: boolean;
+  banned_at?: string;
+  ban_reason?: string;
+  posts: Array<{
+    post_id: string;
+    title: string;
+    forum_name: string;
+    is_deleted: boolean;
+    created_at: string;
+  }>;
+}
+
+export interface ForumModLog {
+  log_id: string;
+  moderator_id: string;
+  moderator_name?: string;
+  action: string;
+  target_type: string;
+  target_id: string;
+  reason?: string;
+  created_at: string;
+}

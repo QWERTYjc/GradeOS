@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Optional, List, Dict, Any
 
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from redis.exceptions import RedisError
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 
@@ -215,6 +215,10 @@ class AssistantChatRequest(BaseModel):
     # 新增：学习模式
     session_mode: Optional[str] = "learning"  # learning / assessment
     concept_topic: Optional[str] = None  # 当前学习的概念主题
+    # 新增：多模态支持 - 错题图片
+    images: Optional[List[str]] = None  # base64 编码的图片列表
+    # 新增：错题上下文（从错题本跳转时传入）
+    wrong_question_context: Optional[Dict[str, Any]] = None
 
 
 class ConceptNode(BaseModel):
@@ -330,6 +334,52 @@ class DiagnosisReportResponse(BaseModel):
     knowledge_map: List[dict]
     error_patterns: dict
     personalized_insights: List[str]
+
+
+# ============ 错题本手动录入模型 ============
+
+
+class ManualWrongQuestionCreate(BaseModel):
+    """手动录入错题请求"""
+    student_id: str
+    class_id: Optional[str] = None
+    question_id: Optional[str] = None  # 可选，自动生成
+    subject: Optional[str] = None  # 科目
+    topic: Optional[str] = None  # 知识点/主题
+    question_content: Optional[str] = None  # 题目内容（文字）
+    student_answer: Optional[str] = None  # 学生答案
+    correct_answer: Optional[str] = None  # 正确答案
+    score: float = 0  # 得分
+    max_score: float = 0  # 满分
+    feedback: Optional[str] = None  # 反馈/解析
+    images: List[str] = []  # 图片列表（base64）
+    tags: List[str] = []  # 标签
+
+
+class ManualWrongQuestionResponse(BaseModel):
+    """手动录入错题响应"""
+    id: str
+    student_id: str
+    class_id: Optional[str] = None
+    question_id: str
+    subject: Optional[str] = None
+    topic: Optional[str] = None
+    question_content: Optional[str] = None
+    student_answer: Optional[str] = None
+    correct_answer: Optional[str] = None
+    score: float
+    max_score: float
+    feedback: Optional[str] = None
+    images: List[str] = []
+    tags: List[str] = []
+    source: str = "manual"  # manual / grading
+    created_at: str
+
+
+class ManualWrongQuestionListResponse(BaseModel):
+    """错题列表响应"""
+    questions: List[ManualWrongQuestionResponse]
+    total: int
 
 
 # ============ Runtime tasks ============
@@ -1680,6 +1730,38 @@ async def get_grading_history(
     return GradingHistoryResponse(records=[GradingImportRecord(**record) for record in records])
 
 
+async def _get_student_results_from_runs(batch_id: str) -> List[Dict[str, Any]]:
+    """从 runs 表获取学生批改结果（作为 student_grading_results 的备选）
+    
+    runs 表的 run_id 格式为 batch_grading_{batch_id}
+    output_data 包含 student_results 数组
+    """
+    if not db.is_available:
+        return []
+    
+    try:
+        run_id = f"batch_grading_{batch_id}"
+        query = "SELECT output_data FROM runs WHERE run_id = %s"
+        
+        async with db.connection() as conn:
+            cursor = await conn.execute(query, (run_id,))
+            row = await cursor.fetchone()
+        
+        if not row or not row["output_data"]:
+            return []
+        
+        output_data = row["output_data"]
+        if isinstance(output_data, str):
+            output_data = json.loads(output_data)
+        
+        student_results = output_data.get("student_results", [])
+        logger.info(f"从 runs 表获取学生结果: batch_id={batch_id}, count={len(student_results)}")
+        return student_results
+    except Exception as e:
+        logger.warning(f"从 runs 表获取学生结果失败: {e}")
+        return []
+
+
 @router.get(
     "/grading/history/{import_id}",
     response_model=GradingHistoryDetailResponse,
@@ -1729,51 +1811,91 @@ async def get_grading_history_detail(import_id: str):
                 items = []
                 # 使用异步版本获取学生结果
                 pg_results = await get_student_results_async(pg_history.id)
-                for idx, item in enumerate(pg_results):
-                    result = item.result_data or {}
-                    if isinstance(result, str):
-                        try:
-                            result = json.loads(result)
-                        except Exception:
-                            result = {}
-                    student_name = (
-                        result.get("studentName")
-                        or result.get("student_name")
-                        or item.student_key
-                        or item.student_id
-                        or f"Student {idx + 1}"
-                    )
-                    
-                    # 🔥 关键修复：获取学生答题图片
-                    from src.db.postgres_grading import get_page_images_for_student
-                    page_images = await get_page_images_for_student(pg_history.id, item.student_key)
-                    
-                    # 将图片数据附加到 result 中
-                    if page_images:
-                        result["images"] = [
-                            {
-                                "id": img.id,
-                                "url": img.file_url or f"/api/batch/files/{img.file_id}/download",
-                                "page_index": img.page_index,
-                                "content_type": img.content_type or "image/jpeg",
-                            }
-                            for img in sorted(page_images, key=lambda x: x.page_index)
-                        ]
-                    
-                    items.append(
-                        {
-                            "item_id": str(item.id),
-                            "import_id": str(pg_history.id),
-                            "batch_id": pg_history.batch_id,
-                            "class_id": class_id,
-                            "student_id": item.student_id or "",
+                
+                # 如果 student_grading_results 为空，尝试从 runs 表获取
+                if not pg_results and pg_history.batch_id:
+                    runs_results = await _get_student_results_from_runs(pg_history.batch_id)
+                    for idx, student_data in enumerate(runs_results):
+                        student_name = (
+                            student_data.get("student_name")
+                            or student_data.get("studentName")
+                            or student_data.get("student_key")
+                            or f"Student {idx + 1}"
+                        )
+                        # 构建 result 对象，包含分数信息
+                        result = {
+                            "total_score": student_data.get("total_score"),
+                            "max_score": student_data.get("max_total_score") or student_data.get("max_score"),
+                            "percentage": student_data.get("percentage"),
                             "student_name": student_name,
-                            "status": "revoked" if item.revoked_at else "imported",
-                            "created_at": item.imported_at or pg_history.created_at,
-                            "revoked_at": item.revoked_at,
-                            "result": result,
+                            "question_results": student_data.get("question_results", []),
                         }
+                        items.append(
+                            {
+                                "item_id": str(uuid.uuid4()),
+                                "import_id": str(pg_history.id),
+                                "batch_id": pg_history.batch_id,
+                                "class_id": class_id,
+                                "student_id": student_data.get("student_id") or "",
+                                "student_name": student_name,
+                                "status": "imported",
+                                "created_at": pg_history.created_at,
+                                "revoked_at": None,
+                                "result": result,
+                            }
+                        )
+                    logger.info(
+                        f"从 runs 表读取学生结果: batch_id={pg_history.batch_id}, items={len(items)}"
                     )
+                else:
+                    # 使用 student_grading_results 表的数据
+                    for idx, item in enumerate(pg_results):
+                        result = item.result_data or {}
+                        if isinstance(result, str):
+                            try:
+                                result = json.loads(result)
+                            except Exception:
+                                result = {}
+                        student_name = (
+                            result.get("studentName")
+                            or result.get("student_name")
+                            or item.student_key
+                            or item.student_id
+                            or f"Student {idx + 1}"
+                        )
+                        
+                        # 🔥 关键修复：获取学生答题图片
+                        from src.db.postgres_grading import get_page_images_for_student
+                        try:
+                            page_images = await get_page_images_for_student(pg_history.id, item.student_key)
+                            # 将图片数据附加到 result 中
+                            if page_images:
+                                result["images"] = [
+                                    {
+                                        "id": img.id,
+                                        "url": img.file_url or f"/api/batch/files/{img.file_id}/download",
+                                        "page_index": img.page_index,
+                                        "content_type": img.content_type or "image/jpeg",
+                                    }
+                                    for img in sorted(page_images, key=lambda x: x.page_index)
+                                ]
+                        except Exception as e:
+                            logger.warning(f"获取学生图片失败: {e}")
+                        
+                        items.append(
+                            {
+                                "item_id": str(item.id),
+                                "import_id": str(pg_history.id),
+                                "batch_id": pg_history.batch_id,
+                                "class_id": class_id,
+                                "student_id": item.student_id or "",
+                                "student_name": student_name,
+                                "status": "revoked" if item.revoked_at else "imported",
+                                "created_at": item.imported_at or pg_history.created_at,
+                                "revoked_at": item.revoked_at,
+                                "result": result,
+                            }
+                        )
                 logger.info(
                     f"从 PostgreSQL 读取批改详情: import_id={import_id}, items={len(items)}"
                 )
@@ -2042,19 +2164,90 @@ async def revoke_grading_import(import_id: str, request: GradingRevokeRequest):
     raise HTTPException(status_code=404, detail="Record not found")
 
 
+def _build_wrong_question_prompt(context: Dict[str, Any], images: Optional[List[str]] = None) -> str:
+    """构建错题深究的增强提示"""
+    prompt_parts = []
+    
+    prompt_parts.append("学生想要深究一道错题，请帮助分析错误原因并启发学生理解。")
+    prompt_parts.append("")
+    
+    if context.get("questionId"):
+        prompt_parts.append(f"**题目编号**: Q{context['questionId']}")
+    if context.get("score") is not None and context.get("maxScore") is not None:
+        prompt_parts.append(f"**得分**: {context['score']}/{context['maxScore']}")
+    if context.get("subject"):
+        prompt_parts.append(f"**科目**: {context['subject']}")
+    if context.get("topic"):
+        prompt_parts.append(f"**题型/知识点**: {context['topic']}")
+    
+    if context.get("studentAnswer"):
+        prompt_parts.append(f"\n**学生答案**:\n{context['studentAnswer']}")
+    
+    if context.get("feedback"):
+        prompt_parts.append(f"\n**批改反馈**:\n{context['feedback']}")
+    
+    scoring_points = context.get("scoringPointResults") or []
+    if scoring_points:
+        prompt_parts.append("\n**评分点明细**:")
+        for idx, sp in enumerate(scoring_points):
+            awarded = sp.get("awarded", 0)
+            max_points = sp.get("max_points") or sp.get("maxPoints") or 1
+            status = "✓" if awarded >= max_points else ("△" if awarded > 0 else "✗")
+            desc = sp.get("description") or f"得分点{idx + 1}"
+            evidence = sp.get("evidence") or ""
+            prompt_parts.append(f"  {status} {desc}: {awarded}/{max_points} - {evidence}")
+    
+    if images and len(images) > 0:
+        prompt_parts.append(f"\n**附带图片**: {len(images)} 张（包含题目原文和学生作答）")
+        prompt_parts.append("请仔细分析图片中的题目内容和学生的作答过程。")
+    
+    prompt_parts.append("\n请按以下步骤帮助学生：")
+    prompt_parts.append("1. 分析学生的错误原因（是概念理解问题、计算错误、还是审题不清？）")
+    prompt_parts.append("2. 用苏格拉底式提问引导学生思考正确的解题思路")
+    prompt_parts.append("3. 分解相关知识点，帮助学生建立第一性原理的理解")
+    prompt_parts.append("4. 最后给出一道类似的练习题让学生巩固")
+    
+    return "\n".join(prompt_parts)
+
+
 @router.post("/assistant/chat", response_model=AssistantChatResponse, tags=["Student Assistant"])
 async def assistant_chat(request: AssistantChatRequest):
-    """Student assistant chat with Socratic questioning and mastery assessment."""
+    """Student assistant chat with Socratic questioning and mastery assessment.
+    
+    支持多模态输入：
+    - images: base64 编码的图片列表（用于错题分析）
+    - wrong_question_context: 错题上下文（从错题本跳转时传入）
+    """
+    # 调试日志
+    logger.info(f"[AssistantChat] 收到请求: student_id={request.student_id}, message={request.message[:50] if request.message else 'empty'}...")
+    logger.info(f"[AssistantChat] session_mode={request.session_mode}, images={len(request.images) if request.images else 0}")
+    logger.info(f"[AssistantChat] wrong_question_context={request.wrong_question_context is not None}")
+    if request.wrong_question_context:
+        logger.info(f"[AssistantChat] 错题上下文: questionId={request.wrong_question_context.get('questionId')}, score={request.wrong_question_context.get('score')}/{request.wrong_question_context.get('maxScore')}")
+    
     context = _build_student_context(request.student_id, request.class_id)
+    
+    # 如果有错题上下文，增强学生上下文
+    if request.wrong_question_context:
+        context["wrong_question_context"] = request.wrong_question_context
+    
     agent = get_student_assistant_agent()
 
     session_id = build_assistant_session_id(request.student_id, request.class_id)
     memory = AssistantMemory(session_id)
     history_messages: List[BaseMessage] = []
-    try:
-        history_messages = await memory.load()
-    except Exception as exc:
-        logger.debug("Assistant memory load failed: %s", exc)
+    
+    # 如果有错题上下文，清空历史记录开启新会话
+    if request.wrong_question_context:
+        try:
+            await memory.clear()
+        except Exception as exc:
+            logger.debug("Assistant memory clear failed: %s", exc)
+    else:
+        try:
+            history_messages = await memory.load()
+        except Exception as exc:
+            logger.debug("Assistant memory load failed: %s", exc)
 
     if not history_messages:
         seed_messages = _history_from_request(request.history, request.message)
@@ -2067,7 +2260,30 @@ async def assistant_chat(request: AssistantChatRequest):
                 history_messages = seed_messages
 
     prompt_history = list(history_messages)
-    if _is_confused_message(request.message):
+    
+    # 构建消息内容
+    message_content = request.message
+    
+    # 如果有错题上下文，构建增强提示
+    if request.wrong_question_context:
+        enhanced_prompt = _build_wrong_question_prompt(
+            request.wrong_question_context, 
+            request.images
+        )
+        message_content = f"{enhanced_prompt}\n\n学生的问题: {request.message}"
+        
+        # 添加系统提示，指导 AI 进入错题深究模式
+        prompt_history.append(
+            SystemMessage(
+                content=(
+                    "Student is reviewing a wrong question from their error book. "
+                    "Focus on understanding their specific mistake, use Socratic questioning to guide them, "
+                    "and help them build first-principles understanding. "
+                    "Be encouraging but rigorous. Analyze any provided images carefully."
+                ),
+            )
+        )
+    elif _is_confused_message(request.message):
         prompt_history.append(
             SystemMessage(
                 content=(
@@ -2077,12 +2293,14 @@ async def assistant_chat(request: AssistantChatRequest):
             )
         )
 
+    # 调用 agent（支持多模态图片输入）
     result = await agent.ainvoke(
-        message=request.message,
+        message=message_content,
         student_context=context,
         session_mode=request.session_mode or "learning",
         concept_topic=request.concept_topic or "general",
         history=prompt_history,
+        images=request.images,  # 传递图片给多模态 agent
     )
 
     assistant_content = result.raw_content
@@ -2688,3 +2906,256 @@ async def bookscan_generate(request: BookscanGenerateRequest):
 
     svg_base64 = base64.b64encode(svg_text.encode("utf-8")).decode("ascii")
     return {"image": f"data:image/svg+xml;base64,{svg_base64}"}
+
+
+# ============ 错题本手动录入 API ============
+
+# 内存存储（生产环境应使用数据库）
+_MANUAL_WRONG_QUESTIONS: Dict[str, Dict[str, Any]] = {}
+
+
+@router.post("/wrongbook/add", response_model=ManualWrongQuestionResponse, tags=["错题本"])
+async def add_manual_wrong_question(request: ManualWrongQuestionCreate):
+    """手动录入错题（拍照/上传）"""
+    question_id = request.question_id or f"Q{len(_MANUAL_WRONG_QUESTIONS) + 1}"
+    entry_id = str(uuid.uuid4())
+    
+    # 处理图片：保存到存储目录
+    saved_images: List[str] = []
+    for idx, img_data in enumerate(request.images):
+        if not img_data:
+            continue
+        try:
+            # 解析 base64 图片
+            if "," in img_data and img_data.startswith("data:"):
+                img_data = img_data.split(",", 1)[1]
+            img_bytes = base64.b64decode(img_data)
+            
+            # 保存到文件
+            img_dir = UPLOAD_DIR / "wrongbook" / request.student_id
+            img_dir.mkdir(parents=True, exist_ok=True)
+            img_path = img_dir / f"{entry_id}_{idx}.jpg"
+            
+            # 转换为 JPEG
+            jpeg_bytes = to_jpeg_bytes(img_bytes)
+            img_path.write_bytes(jpeg_bytes)
+            
+            # 返回相对路径或 base64
+            saved_images.append(f"data:image/jpeg;base64,{base64.b64encode(jpeg_bytes).decode('ascii')}")
+        except Exception as exc:
+            logger.warning(f"Failed to save image: {exc}")
+            # 保留原始 base64
+            if request.images[idx]:
+                saved_images.append(request.images[idx])
+    
+    entry = {
+        "id": entry_id,
+        "student_id": request.student_id,
+        "class_id": request.class_id,
+        "question_id": question_id,
+        "subject": request.subject,
+        "topic": request.topic,
+        "question_content": request.question_content,
+        "student_answer": request.student_answer,
+        "correct_answer": request.correct_answer,
+        "score": request.score,
+        "max_score": request.max_score,
+        "feedback": request.feedback,
+        "images": saved_images,
+        "tags": request.tags,
+        "source": "manual",
+        "created_at": datetime.utcnow().isoformat(),
+    }
+    
+    _MANUAL_WRONG_QUESTIONS[entry_id] = entry
+    
+    return ManualWrongQuestionResponse(**entry)
+
+
+@router.get("/wrongbook/list", response_model=ManualWrongQuestionListResponse, tags=["错题本"])
+async def list_manual_wrong_questions(
+    student_id: str,
+    class_id: Optional[str] = None,
+    subject: Optional[str] = None,
+    limit: int = 100,
+):
+    """获取手动录入的错题列表"""
+    questions = []
+    
+    for entry in _MANUAL_WRONG_QUESTIONS.values():
+        if entry["student_id"] != student_id:
+            continue
+        if class_id and entry.get("class_id") != class_id:
+            continue
+        if subject and entry.get("subject") != subject:
+            continue
+        questions.append(ManualWrongQuestionResponse(**entry))
+    
+    # 按创建时间倒序
+    questions.sort(key=lambda x: x.created_at, reverse=True)
+    
+    return ManualWrongQuestionListResponse(
+        questions=questions[:limit],
+        total=len(questions),
+    )
+
+
+@router.delete("/wrongbook/{entry_id}", tags=["错题本"])
+async def delete_manual_wrong_question(entry_id: str, student_id: str):
+    """删除手动录入的错题"""
+    entry = _MANUAL_WRONG_QUESTIONS.get(entry_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="错题不存在")
+    if entry["student_id"] != student_id:
+        raise HTTPException(status_code=403, detail="无权删除此错题")
+    
+    del _MANUAL_WRONG_QUESTIONS[entry_id]
+    return {"success": True, "message": "删除成功"}
+
+
+@router.put("/wrongbook/{entry_id}", response_model=ManualWrongQuestionResponse, tags=["错题本"])
+async def update_manual_wrong_question(entry_id: str, request: ManualWrongQuestionCreate):
+    """更新手动录入的错题"""
+    entry = _MANUAL_WRONG_QUESTIONS.get(entry_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="错题不存在")
+    if entry["student_id"] != request.student_id:
+        raise HTTPException(status_code=403, detail="无权修改此错题")
+    
+    # 更新字段
+    entry.update({
+        "class_id": request.class_id,
+        "question_id": request.question_id or entry["question_id"],
+        "subject": request.subject,
+        "topic": request.topic,
+        "question_content": request.question_content,
+        "student_answer": request.student_answer,
+        "correct_answer": request.correct_answer,
+        "score": request.score,
+        "max_score": request.max_score,
+        "feedback": request.feedback,
+        "tags": request.tags,
+    })
+    
+    # 如果有新图片，更新图片
+    if request.images:
+        saved_images: List[str] = []
+        for idx, img_data in enumerate(request.images):
+            if not img_data:
+                continue
+            try:
+                if "," in img_data and img_data.startswith("data:"):
+                    img_data = img_data.split(",", 1)[1]
+                img_bytes = base64.b64decode(img_data)
+                jpeg_bytes = to_jpeg_bytes(img_bytes)
+                saved_images.append(f"data:image/jpeg;base64,{base64.b64encode(jpeg_bytes).decode('ascii')}")
+            except Exception:
+                saved_images.append(request.images[idx])
+        entry["images"] = saved_images
+    
+    return ManualWrongQuestionResponse(**entry)
+
+
+# ============ 常错知识点 AI 总结 ============
+
+class SummarizeMistakesRequest(BaseModel):
+    """常错知识点总结请求"""
+    feedbacks: List[str] = Field(..., description="错题反馈列表")
+    assignment_title: str = Field(default="作业", description="作业标题")
+
+
+class SummarizeMistakesResponse(BaseModel):
+    """常错知识点总结响应"""
+    summary: str = Field(..., description="AI 总结的常错知识点")
+    question_count: int = Field(default=0, description="分析的错题数量")
+
+
+@router.post("/assistant/summarize-mistakes", response_model=SummarizeMistakesResponse, tags=["Student Assistant"])
+async def summarize_common_mistakes(request: SummarizeMistakesRequest):
+    """AI 总结学生常错知识点
+    
+    基于全班错题的 feedback，使用 Gemini Flash 总结常见错误类型和知识点薄弱环节。
+    """
+    import os
+    import httpx
+    
+    feedbacks = request.feedbacks
+    if not feedbacks:
+        return SummarizeMistakesResponse(
+            summary="本次作业没有错题反馈数据，全班表现优秀！",
+            question_count=0
+        )
+    
+    # 去重并限制数量
+    unique_feedbacks = list(set(feedbacks))[:50]
+    
+    # 构建 prompt
+    prompt = f"""你是一位经验丰富的教师，正在分析学生作业的错题反馈。
+
+作业名称：{request.assignment_title}
+错题反馈数量：{len(feedbacks)} 条（去重后 {len(unique_feedbacks)} 条）
+
+以下是学生答错题目的批改反馈：
+{chr(10).join([f"- {fb}" for fb in unique_feedbacks])}
+
+请分析这些错题反馈，总结出：
+1. **常见错误类型**：学生最容易犯的错误有哪些？（列出3-5个主要错误类型）
+2. **知识点薄弱环节**：哪些知识点学生掌握不牢？（列出需要重点复习的知识点）
+
+请用简洁的中文回答，使用 markdown 格式，重点突出，不要给出教学建议。"""
+
+    # 调用 OpenRouter API (Gemini Flash)
+    api_key = os.getenv("LLM_API_KEY")
+    base_url = os.getenv("LLM_BASE_URL", "https://openrouter.ai/api/v1")
+    model = os.getenv("LLM_SUMMARY_MODEL", "google/gemini-2.0-flash-001")
+    
+    if not api_key:
+        # 如果没有 API key，返回简单的本地总结
+        summary = f"本次作业共有 {len(feedbacks)} 条错题反馈。\n\n"
+        summary += "**常见问题类型：**\n"
+        for i, fb in enumerate(unique_feedbacks[:10], 1):
+            summary += f"{i}. {fb[:100]}{'...' if len(fb) > 100 else ''}\n"
+        return SummarizeMistakesResponse(
+            summary=summary,
+            question_count=len(feedbacks)
+        )
+    
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.post(
+                f"{base_url}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": model,
+                    "messages": [
+                        {"role": "user", "content": prompt}
+                    ],
+                    "temperature": 0.3,
+                    "max_tokens": 1500,
+                }
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            summary = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+            if not summary:
+                summary = "AI 分析失败，请稍后重试。"
+            
+            return SummarizeMistakesResponse(
+                summary=summary,
+                question_count=len(feedbacks)
+            )
+    except Exception as e:
+        logger.error(f"AI 总结失败: {e}")
+        # 返回简单的本地总结
+        summary = f"本次作业共有 {len(feedbacks)} 条错题反馈。\n\n"
+        summary += "**常见问题类型：**\n"
+        for i, fb in enumerate(unique_feedbacks[:10], 1):
+            summary += f"{i}. {fb[:100]}{'...' if len(fb) > 100 else ''}\n"
+        return SummarizeMistakesResponse(
+            summary=summary,
+            question_count=len(feedbacks)
+        )

@@ -1,7 +1,7 @@
 'use client';
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { I18N } from '../constants';
 import { ConceptNode, EnhancedChatMessage, Language } from '../types';
 import { assistantApi, AssistantProgressResponse } from '@/services/api';
@@ -33,7 +33,30 @@ type PersistedState = {
   selectedConceptLabel?: string | null;
 };
 
+// 错题上下文类型
+type WrongQuestionContext = {
+  questionId: string;
+  score: number;
+  maxScore: number;
+  feedback?: string;
+  studentAnswer?: string;
+  scoringPointResults?: Array<{
+    point_id?: string;
+    description?: string;
+    awarded: number;
+    max_points?: number;
+    evidence: string;
+  }>;
+  subject?: string;
+  topic?: string;
+  images?: string[];
+  timestamp: string;
+};
+
 const STORAGE_KEY = 'gradeos.student-assistant-ui';
+const WRONG_QUESTION_CONTEXT_KEY = 'gradeos.wrong-question-context';
+const WRONG_QUESTION_PROCESSED_KEY = 'gradeos.wrong-question-processed';
+const WRONG_QUESTION_STATE_KEY = 'gradeos.wrong-question-state'; // 用于 Fast Refresh 恢复
 const MAX_PERSISTED_MESSAGES = 12;
 
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -48,6 +71,7 @@ const AIChat: React.FC<Props> = ({ lang }) => {
   }, [lang]);
 
   const t = I18N[resolvedLang];
+  const searchParams = useSearchParams();
   const [messages, setMessages] = useState<EnhancedChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
@@ -61,10 +85,18 @@ const AIChat: React.FC<Props> = ({ lang }) => {
   const [selectedConceptId, setSelectedConceptId] = useState<string | null>(null);
   const [selectedConceptLabel, setSelectedConceptLabel] = useState<string | null>(null);
   const [hydrated, setHydrated] = useState(false);
+  const [wrongQuestionProcessed, setWrongQuestionProcessed] = useState(false);
   const { user } = useAuthStore();
   const activeClassId = user?.classIds?.[0];
   const router = useRouter();
   const timelineRef = useRef<HTMLDivElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  
+  // 用于存储 handleSendWithContext 函数引用，以便在 effect 中使用
+  const handleSendWithContextRef = useRef<((msg: string, ctx?: WrongQuestionContext | null) => void) | null>(null);
+  
+  // 使用 ref 来同步跟踪错题上下文是否已处理（避免 React Strict Mode 双重执行问题）
+  const wrongQuestionProcessedRef = useRef(false);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -102,6 +134,146 @@ const AIChat: React.FC<Props> = ({ lang }) => {
       ]);
     }
   }, [hydrated, messages.length, resolvedLang, t.chatIntro]);
+
+  // 存储待处理的错题上下文（用于传递给 API）
+  const [activeWrongQuestionContext, setActiveWrongQuestionContext] = useState<WrongQuestionContext | null>(null);
+  // 存储待发送的图片预览
+  const [pendingImages, setPendingImages] = useState<string[]>([]);
+
+  // 处理从错题本跳转过来的深究请求 - 填充到输入框而不是自动发送
+  useEffect(() => {
+    // 确保在客户端运行
+    if (typeof window === 'undefined') {
+      console.log('[AIChat] Not in browser, skipping wrongbook check');
+      return;
+    }
+    
+    if (!hydrated) {
+      console.log('[AIChat] Not hydrated yet, skipping wrongbook check');
+      return;
+    }
+    
+    // 使用 ref 进行同步检查，避免 React Strict Mode 双重执行问题
+    if (wrongQuestionProcessedRef.current) {
+      console.log('[AIChat] Already processed wrongbook context (ref check)');
+      return;
+    }
+    
+    if (wrongQuestionProcessed) {
+      console.log('[AIChat] Already processed wrongbook context (state check)');
+      return;
+    }
+    
+    // 检查 URL 参数 - 使用 window.location 作为备选
+    let fromParam = searchParams?.get('from');
+    if (!fromParam && typeof window !== 'undefined') {
+      const urlParams = new URLSearchParams(window.location.search);
+      fromParam = urlParams.get('from');
+    }
+    
+    console.log('[AIChat] Checking wrongbook context:', {
+      from: fromParam,
+      hydrated,
+      processed: wrongQuestionProcessed,
+      processedRef: wrongQuestionProcessedRef.current,
+      url: typeof window !== 'undefined' ? window.location.href : 'N/A',
+      searchParamsAvailable: !!searchParams
+    });
+    
+    if (fromParam !== 'wrongbook') {
+      console.log('[AIChat] Not from wrongbook, skipping');
+      return;
+    }
+    
+    // 读取错题上下文
+    const contextRaw = window.localStorage.getItem(WRONG_QUESTION_CONTEXT_KEY);
+    console.log('[AIChat] Context raw:', contextRaw ? 'found (' + contextRaw.length + ' chars)' : 'not found');
+    
+    if (!contextRaw) {
+      // 检查是否是 Fast Refresh 导致的重复执行（上下文已被处理但状态被重置）
+      const lastProcessedTime = window.sessionStorage.getItem(WRONG_QUESTION_PROCESSED_KEY);
+      if (lastProcessedTime) {
+        const timeDiff = Date.now() - parseInt(lastProcessedTime, 10);
+        // 如果在 10 秒内处理过，说明是 Fast Refresh，尝试恢复状态
+        if (timeDiff < 10000) {
+          console.log('[AIChat] Fast Refresh detected, timeDiff:', timeDiff);
+          
+          // 尝试从 sessionStorage 恢复状态
+          const savedState = window.sessionStorage.getItem(WRONG_QUESTION_STATE_KEY);
+          if (savedState) {
+            try {
+              const state = JSON.parse(savedState);
+              console.log('[AIChat] Restoring state from sessionStorage:', state);
+              
+              if (state.context) {
+                setActiveWrongQuestionContext(state.context);
+              }
+              if (state.images && state.images.length > 0) {
+                setPendingImages(state.images);
+              }
+              if (state.input) {
+                setInput(state.input);
+              }
+            } catch (e) {
+              console.error('[AIChat] Failed to restore state:', e);
+            }
+          }
+          
+          wrongQuestionProcessedRef.current = true;
+          setWrongQuestionProcessed(true);
+          return;
+        }
+      }
+      console.warn('[AIChat] No wrong question context found in localStorage');
+      setWrongQuestionProcessed(true);
+      return;
+    }
+    
+    // 立即标记为已处理（同步），防止重复执行
+    wrongQuestionProcessedRef.current = true;
+    // 记录处理时间，用于检测 Fast Refresh
+    window.sessionStorage.setItem(WRONG_QUESTION_PROCESSED_KEY, Date.now().toString());
+    
+    try {
+      const context: WrongQuestionContext = JSON.parse(contextRaw);
+      console.log('[AIChat] Parsed wrong question context:', {
+        questionId: context.questionId,
+        score: context.score,
+        maxScore: context.maxScore,
+        imagesCount: context.images?.length || 0
+      });
+      
+      // 清除 localStorage 中的上下文，避免重复处理
+      window.localStorage.removeItem(WRONG_QUESTION_CONTEXT_KEY);
+      
+      // 存储错题上下文
+      setActiveWrongQuestionContext(context);
+      console.log('[AIChat] Set activeWrongQuestionContext');
+      
+      // 设置待发送的图片
+      if (context.images && context.images.length > 0) {
+        setPendingImages(context.images);
+        console.log('[AIChat] Set pendingImages:', context.images.length);
+      }
+      
+      // 构建预填充的消息内容
+      const prefillMessage = `请帮我深究这道错题 Q${context.questionId}，我得了 ${context.score}/${context.maxScore} 分。`;
+      setInput(prefillMessage);
+      console.log('[AIChat] Set input:', prefillMessage);
+      
+      // 保存状态到 sessionStorage，用于 Fast Refresh 恢复
+      window.sessionStorage.setItem(WRONG_QUESTION_STATE_KEY, JSON.stringify({
+        context,
+        images: context.images || [],
+        input: prefillMessage
+      }));
+      
+      setWrongQuestionProcessed(true);
+    } catch (err) {
+      console.error('[AIChat] Failed to parse wrong question context:', err);
+      setWrongQuestionProcessed(true);
+    }
+  }, [hydrated, wrongQuestionProcessed, searchParams]);
 
   useEffect(() => {
     if (!hydrated || typeof window === 'undefined') return;
@@ -162,12 +334,24 @@ const AIChat: React.FC<Props> = ({ lang }) => {
     }
   }, [messages]);
 
-  const handleSend = async (userMsgContent: string) => {
+  // 带错题上下文的发送函数
+  const handleSendWithContext = useCallback(async (
+    userMsgContent: string, 
+    wrongContext?: WrongQuestionContext | null
+  ) => {
+    console.log('[AIChat] handleSendWithContext called:', {
+      message: userMsgContent.substring(0, 50),
+      hasContext: !!wrongContext,
+      contextImages: wrongContext?.images?.length || 0,
+      userId: user?.id,
+      isStreaming
+    });
+    
     if (!userMsgContent.trim() || isStreaming) return;
     if (!user?.id) {
       setMessages((prev) => [
         ...prev,
-        { role: 'assistant', content: t.brainFreeze, timestamp: new Date() },
+        { role: 'assistant', content: '请先登录后再使用学习助手功能。点击左上角返回后登录。', timestamp: new Date() },
       ]);
       return;
     }
@@ -195,12 +379,48 @@ const AIChat: React.FC<Props> = ({ lang }) => {
         .slice(-16)  // 增加到 16 条历史消息以保持更多上下文
         .map((msg) => ({ role: msg.role as 'user' | 'assistant', content: msg.content }));
 
-      const response = await assistantApi.chat({
+      // 构建 API 请求，包含错题上下文和图片
+      const isManualImageUpload = wrongContext?.questionId === 'manual';
+      const chatRequest: Parameters<typeof assistantApi.chat>[0] = {
         student_id: user.id,
         class_id: activeClassId,
         message: userMsgContent,
         history,
-        session_mode: 'learning',
+        session_mode: wrongContext && !isManualImageUpload ? 'wrong_question_review' : 'learning',
+      };
+
+      // 如果有错题上下文（非手动上传），添加到请求中
+      if (wrongContext && !isManualImageUpload) {
+        chatRequest.wrong_question_context = {
+          questionId: wrongContext.questionId,
+          score: wrongContext.score,
+          maxScore: wrongContext.maxScore,
+          feedback: wrongContext.feedback,
+          studentAnswer: wrongContext.studentAnswer,
+          scoringPointResults: wrongContext.scoringPointResults,
+          subject: wrongContext.subject,
+          topic: wrongContext.topic,
+        };
+      }
+      
+      // 如果有图片（无论是错题还是手动上传），都传递给后端
+      if (wrongContext?.images && wrongContext.images.length > 0) {
+        chatRequest.images = wrongContext.images;
+        console.log('[AIChat] Adding images to request:', wrongContext.images.length);
+      }
+
+      console.log('[AIChat] Sending chat request:', {
+        student_id: chatRequest.student_id,
+        session_mode: chatRequest.session_mode,
+        hasWrongContext: !!chatRequest.wrong_question_context,
+        imagesCount: chatRequest.images?.length || 0,
+      });
+
+      const response = await assistantApi.chat(chatRequest);
+      console.log('[AIChat] Received response:', {
+        contentLength: response.content?.length || 0,
+        hasNextQuestion: !!response.next_question,
+        responseType: response.response_type,
       });
 
       setMessages((prev) => {
@@ -231,12 +451,86 @@ const AIChat: React.FC<Props> = ({ lang }) => {
     } finally {
       setIsStreaming(false);
     }
-  };
+  }, [isStreaming, user?.id, t.brainFreeze, messages, activeClassId]);
 
+  // 普通发送函数（不带错题上下文）
+  const handleSend = useCallback((userMsgContent: string) => {
+    handleSendWithContext(userMsgContent, null);
+  }, [handleSendWithContext]);
+
+  // 同步更新 ref（不使用 useEffect 以避免时序问题）
+  handleSendWithContextRef.current = handleSendWithContext;
+
+  // 处理表单提交 - 如果有错题上下文和图片，一起发送
   const handleInputSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    handleSend(input);
+    if (!input.trim()) return;
+    
+    // 如果有错题上下文，使用带上下文的发送
+    if (activeWrongQuestionContext) {
+      // 如果有待发送的图片，添加到上下文中
+      const contextWithImages: WrongQuestionContext = {
+        ...activeWrongQuestionContext,
+        images: pendingImages.length > 0 ? pendingImages : activeWrongQuestionContext.images,
+      };
+      handleSendWithContext(input, contextWithImages);
+      // 清除上下文和图片
+      setActiveWrongQuestionContext(null);
+      setPendingImages([]);
+    } else if (pendingImages.length > 0) {
+      // 手动上传图片的情况（无错题上下文）
+      const manualImageContext: WrongQuestionContext = {
+        questionId: 'manual',
+        score: 0,
+        maxScore: 0,
+        images: pendingImages,
+        timestamp: new Date().toISOString(),
+      };
+      handleSendWithContext(input, manualImageContext);
+      setPendingImages([]);
+    } else {
+      handleSend(input);
+    }
   };
+
+  // 移除待发送的图片
+  const removePendingImage = (index: number) => {
+    setPendingImages(prev => prev.filter((_, i) => i !== index));
+  };
+
+  // 清除错题上下文
+  const clearWrongQuestionContext = () => {
+    setActiveWrongQuestionContext(null);
+    setPendingImages([]);
+    setInput('');
+  };
+
+  // 处理文件上传 - 将图片转换为 base64
+  const handleFileUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    
+    Array.from(files).forEach((file) => {
+      if (!file.type.startsWith('image/')) {
+        console.warn('[AIChat] Skipping non-image file:', file.name);
+        return;
+      }
+      
+      const reader = new FileReader();
+      reader.onload = () => {
+        const base64 = reader.result as string;
+        setPendingImages((prev) => [...prev, base64]);
+        console.log('[AIChat] Added image:', file.name, 'Total:', pendingImages.length + 1);
+      };
+      reader.onerror = () => {
+        console.error('[AIChat] Failed to read file:', file.name);
+      };
+      reader.readAsDataURL(file);
+    });
+    
+    // 清除 input 以便可以重复选择同一文件
+    e.target.value = '';
+  }, [pendingImages.length]);
 
   const latestAssistant = useMemo(() => {
     for (let i = messages.length - 1; i >= 0; i -= 1) {
@@ -833,13 +1127,125 @@ const AIChat: React.FC<Props> = ({ lang }) => {
         </div>
 
         <form onSubmit={handleInputSubmit} className="mt-10 border-t border-black/10 pt-6">
+          {/* Debug 信息 - 开发时显示 */}
+          {process.env.NODE_ENV === 'development' && (
+            <div className="mb-4 p-2 bg-gray-100 rounded text-xs font-mono">
+              <div>hydrated: {String(hydrated)}</div>
+              <div>wrongQuestionProcessed: {String(wrongQuestionProcessed)}</div>
+              <div>activeWrongQuestionContext: {activeWrongQuestionContext ? `Q${activeWrongQuestionContext.questionId}` : 'null'}</div>
+              <div>pendingImages: {pendingImages.length}</div>
+              <div>input: {input.substring(0, 30)}...</div>
+            </div>
+          )}
+          
+          {/* 错题上下文和图片预览 */}
+          {(activeWrongQuestionContext || pendingImages.length > 0) && (
+            <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50/50 p-4">
+              <div className="flex items-center justify-between mb-3">
+                <div className="text-[10px] font-semibold uppercase tracking-[0.3em] text-amber-700">
+                  错题深究模式
+                </div>
+                <button
+                  type="button"
+                  onClick={clearWrongQuestionContext}
+                  className="text-amber-600 hover:text-amber-800 text-xs"
+                >
+                  ✕ 取消
+                </button>
+              </div>
+              
+              {activeWrongQuestionContext && (
+                <div className="mb-3 text-sm text-amber-900">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="font-medium">题目 Q{activeWrongQuestionContext.questionId}</span>
+                    <span className="text-amber-600">
+                      得分: {activeWrongQuestionContext.score}/{activeWrongQuestionContext.maxScore}
+                    </span>
+                  </div>
+                  {activeWrongQuestionContext.feedback && (
+                    <div className="text-xs text-amber-700 mt-1 line-clamp-2">
+                      反馈: {activeWrongQuestionContext.feedback}
+                    </div>
+                  )}
+                </div>
+              )}
+              
+              {/* 图片预览 */}
+              {pendingImages.length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  {pendingImages.map((img, idx) => (
+                    <div key={idx} className="relative group">
+                      <img
+                        src={img}
+                        alt={`错题图片 ${idx + 1}`}
+                        className="h-20 w-20 object-cover rounded-lg border border-amber-200"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => removePendingImage(idx)}
+                        className="absolute -top-2 -right-2 w-5 h-5 bg-amber-500 text-white rounded-full text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              
+              <div className="mt-3 text-[10px] text-amber-600">
+                点击发送按钮，AI 将分析你的错题并提供苏格拉底式引导
+              </div>
+            </div>
+          )}
+          
+          {/* 普通图片上传预览（非错题模式） */}
+          {!activeWrongQuestionContext && pendingImages.length > 0 && (
+            <div className="mb-4 flex flex-wrap gap-2">
+              {pendingImages.map((img, idx) => (
+                <div key={idx} className="relative group">
+                  <img
+                    src={img}
+                    alt={`上传图片 ${idx + 1}`}
+                    className="h-16 w-16 object-cover rounded-lg border border-black/20"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => removePendingImage(idx)}
+                    className="absolute -top-2 -right-2 w-5 h-5 bg-black text-white rounded-full text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                  >
+                    ✕
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          
           <div className="flex flex-col gap-3 md:flex-row md:items-center">
+            {/* 图片上传按钮 */}
+            <input
+              type="file"
+              ref={fileInputRef}
+              onChange={handleFileUpload}
+              accept="image/*"
+              multiple
+              className="hidden"
+            />
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={isStreaming}
+              className="border border-black/20 px-3 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-black/60 transition hover:border-black/40 disabled:opacity-50"
+              title="上传图片"
+            >
+              📷 {pendingImages.length > 0 ? `(${pendingImages.length})` : ''}
+            </button>
+            
             <div className="flex-1 border-b border-black/20 pb-2">
               <input
                 type="text"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                placeholder={t.chatPlaceholder}
+                placeholder={activeWrongQuestionContext ? '输入你对这道题的疑问，或直接点击发送...' : (pendingImages.length > 0 ? '描述图片中的问题...' : t.chatPlaceholder)}
                 className="w-full bg-transparent text-base text-black placeholder:text-black/40 focus:outline-none"
                 disabled={isStreaming}
               />
@@ -853,7 +1259,7 @@ const AIChat: React.FC<Props> = ({ lang }) => {
                   : 'border-black/10 text-black/30'
               }`}
             >
-              {isStreaming ? 'Thinking' : 'Send'}
+              {isStreaming ? 'Thinking' : (activeWrongQuestionContext ? '深究分析' : 'Send')}
             </button>
           </div>
           <div className="mt-3 text-[10px] uppercase tracking-[0.3em] text-black/40">

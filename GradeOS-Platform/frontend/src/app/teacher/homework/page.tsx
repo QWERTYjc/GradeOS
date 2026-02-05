@@ -1,11 +1,18 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
+import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { useAuthStore } from '@/store/authStore';
 import { classApi, homeworkApi, ClassResponse, HomeworkResponse, SubmissionResponse } from '@/services/api';
 import dayjs from 'dayjs';
+import { AppContext, AppContextType } from '@/components/bookscan/AppContext';
+import { Session, ScannedImage } from '@/components/bookscan/types';
+
+// 动态导入 Scanner 和 Gallery 组件
+const Scanner = dynamic(() => import('@/components/bookscan/Scanner'), { ssr: false });
+const Gallery = dynamic(() => import('@/components/bookscan/Gallery'), { ssr: false });
 
 export default function TeacherHomework() {
   const { user } = useAuthStore();
@@ -27,6 +34,111 @@ export default function TeacherHomework() {
   const [description, setDescription] = useState('');
   const [deadline, setDeadline] = useState('');
   const [allowEarlyGrading, setAllowEarlyGrading] = useState(false);
+  
+  // Rubric Scanner state
+  const [rubricSessions, setRubricSessions] = useState<Session[]>([]);
+  const [rubricCurrentSessionId, setRubricCurrentSessionId] = useState<string | null>(null);
+  const [rubricSplitImageIds, setRubricSplitImageIds] = useState<Set<string>>(new Set());
+  const [rubricActiveTab, setRubricActiveTab] = useState<'scan' | 'gallery'>('scan');
+  
+  // 初始化 Rubric 扫描会话
+  useEffect(() => {
+    if (isCreateOpen && rubricSessions.length === 0) {
+      const newSession: Session = {
+        id: crypto.randomUUID(),
+        name: 'Rubric 扫描',
+        createdAt: Date.now(),
+        images: []
+      };
+      setRubricSessions([newSession]);
+      setRubricCurrentSessionId(newSession.id);
+    }
+  }, [isCreateOpen, rubricSessions.length]);
+  
+  // Rubric context functions
+  const createRubricSession = (name?: string) => {
+    const newSession: Session = {
+      id: crypto.randomUUID(),
+      name: name || `Rubric ${new Date().toLocaleTimeString()}`,
+      createdAt: Date.now(),
+      images: []
+    };
+    setRubricSessions(prev => [newSession, ...prev]);
+    setRubricCurrentSessionId(newSession.id);
+  };
+  
+  const addRubricImage = (img: ScannedImage) => {
+    if (!rubricCurrentSessionId) return;
+    setRubricSessions(prev => prev.map(s =>
+      s.id === rubricCurrentSessionId ? { ...s, images: [...s.images, img] } : s
+    ));
+  };
+  
+  const addRubricImages = (imgs: ScannedImage[]) => {
+    if (!rubricCurrentSessionId) return;
+    setRubricSessions(prev => prev.map(s =>
+      s.id === rubricCurrentSessionId ? { ...s, images: [...s.images, ...imgs] } : s
+    ));
+  };
+  
+  const deleteRubricSession = (id: string) => {
+    setRubricSessions(prev => {
+      const filtered = prev.filter(s => s.id !== id);
+      if (rubricCurrentSessionId === id) {
+        setRubricCurrentSessionId(filtered.length > 0 ? filtered[0].id : null);
+      }
+      return filtered;
+    });
+  };
+  
+  const deleteRubricImages = (sessionId: string, imageIds: string[]) => {
+    setRubricSessions(prev => prev.map(s =>
+      s.id === sessionId ? { ...s, images: s.images.filter(img => !imageIds.includes(img.id)) } : s
+    ));
+  };
+  
+  const updateRubricImage = (sessionId: string, imageId: string, newUrl: string, isOptimizing: boolean = false) => {
+    setRubricSessions(prev => prev.map(s =>
+      s.id === sessionId ? {
+        ...s,
+        images: s.images.map(img => img.id === imageId ? { ...img, url: newUrl, isOptimizing } : img)
+      } : s
+    ));
+  };
+  
+  const reorderRubricImages = (sessionId: string, fromIndex: number, toIndex: number) => {
+    setRubricSessions(prev => prev.map(s => {
+      if (s.id === sessionId) {
+        const imgs = [...s.images];
+        const [moved] = imgs.splice(fromIndex, 1);
+        imgs.splice(toIndex, 0, moved);
+        return { ...s, images: imgs };
+      }
+      return s;
+    }));
+  };
+  
+  const markRubricImageAsSplit = (imageId: string) => {
+    setRubricSplitImageIds(prev => new Set(prev).add(imageId));
+  };
+  
+  const rubricContextValue: AppContextType = useMemo(() => ({
+    sessions: rubricSessions,
+    currentSessionId: rubricCurrentSessionId,
+    createNewSession: createRubricSession,
+    addImageToSession: addRubricImage,
+    addImagesToSession: addRubricImages,
+    deleteSession: deleteRubricSession,
+    deleteImages: deleteRubricImages,
+    setCurrentSessionId: setRubricCurrentSessionId,
+    updateImage: updateRubricImage,
+    reorderImages: reorderRubricImages,
+    splitImageIds: rubricSplitImageIds,
+    markImageAsSplit: markRubricImageAsSplit
+  }), [rubricSessions, rubricCurrentSessionId, rubricSplitImageIds]);
+  
+  const currentRubricSession = rubricSessions.find(s => s.id === rubricCurrentSessionId);
+  const rubricImageCount = currentRubricSession?.images.length || 0;
 
   useEffect(() => {
     const teacherId = user?.id || 't-001';
@@ -67,18 +179,25 @@ export default function TeacherHomework() {
     if (!title || !description || !deadline || !selectedClass) return;
     setError('');
     try {
+      // 提取 rubric 图片
+      const rubricImages = currentRubricSession?.images.map(img => img.url) || [];
+      
       const created = await homeworkApi.create({
         class_id: selectedClass,
         title,
         description,
         deadline,
         allow_early_grading: allowEarlyGrading,
+        rubric_images: rubricImages.length > 0 ? rubricImages : undefined,
       });
-      setHomeworks((prev) => [created, ...prev]);
+      setHomeworks((prev: HomeworkResponse[]) => [created, ...prev]);
       setTitle('');
       setDescription('');
       setDeadline('');
       setAllowEarlyGrading(false);
+      // 重置 rubric 扫描会话
+      setRubricSessions([]);
+      setRubricCurrentSessionId(null);
       setIsCreateOpen(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : '创建作业失败');
@@ -208,7 +327,7 @@ export default function TeacherHomework() {
         {/* Create Modal */}
         {isCreateOpen && (
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-            <div className="bg-white rounded-xl p-6 w-full max-w-md mx-4">
+            <div className="bg-white rounded-xl p-6 w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto">
               <h2 className="text-xl font-bold text-slate-800 mb-4">Create Assignment</h2>
               <div className="space-y-4">
                 <input
@@ -245,10 +364,59 @@ export default function TeacherHomework() {
                     </div>
                   </div>
                 </label>
+                
+                {/* Rubric 上传区域 */}
+                <div className="border border-slate-200 rounded-lg p-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="font-medium text-slate-700">评分标准 (Rubric)</h3>
+                    <span className="text-xs text-slate-400">已上传 {rubricImageCount} 张</span>
+                  </div>
+                  
+                  {/* Tab 切换 */}
+                  <div className="flex gap-2 mb-3">
+                    <button
+                      type="button"
+                      onClick={() => setRubricActiveTab('scan')}
+                      className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                        rubricActiveTab === 'scan'
+                          ? 'bg-blue-600 text-white'
+                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                      }`}
+                    >
+                      扫描
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setRubricActiveTab('gallery')}
+                      className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                        rubricActiveTab === 'gallery'
+                          ? 'bg-blue-600 text-white'
+                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                      }`}
+                    >
+                      已上传 ({rubricImageCount})
+                    </button>
+                  </div>
+                  
+                  {/* Scanner/Gallery 组件 */}
+                  <AppContext.Provider value={rubricContextValue}>
+                    <div className="h-64 overflow-hidden rounded-lg border border-slate-100">
+                      {rubricActiveTab === 'scan' ? (
+                        <Scanner key="rubric-scanner" />
+                      ) : (
+                        <Gallery key="rubric-gallery" />
+                      )}
+                    </div>
+                  </AppContext.Provider>
+                </div>
               </div>
               <div className="flex gap-2 mt-6">
                 <button
-                  onClick={() => setIsCreateOpen(false)}
+                  onClick={() => {
+                    setIsCreateOpen(false);
+                    setRubricSessions([]);
+                    setRubricCurrentSessionId(null);
+                  }}
                   className="flex-1 py-2 text-slate-600 hover:bg-slate-100 rounded-lg"
                 >
                   Cancel

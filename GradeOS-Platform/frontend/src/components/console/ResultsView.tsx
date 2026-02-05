@@ -29,6 +29,8 @@ interface ResultsViewProps {
     defaultExpandDetails?: boolean;
     /** 隐藏批改透明度区块 */
     hideGradingTransparency?: boolean;
+    /** 学生模式：只显示单个学生的详情，不显示总览列表 */
+    studentOnlyMode?: boolean;
 }
 
 const LOW_CONFIDENCE_THRESHOLD = 0.7;
@@ -764,7 +766,7 @@ const normalizeConfession = (confession: any) => {
     };
 };
 
-export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails = false, hideGradingTransparency = false }) => {
+export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails = false, hideGradingTransparency = false, studentOnlyMode = false }) => {
     const {
         finalResults,
         workflowNodes,
@@ -783,7 +785,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
     const currentSessionId = bookScanContext?.currentSessionId || null;
     const currentSession = sessions.find((s: any) => s.id === currentSessionId);
 
-    const [detailViewIndex, setDetailViewIndex] = useState<number | null>(null);
+    const [detailViewIndex, setDetailViewIndex] = useState<number | null>(studentOnlyMode ? 0 : null);
     // API 备用方案状态
     const [apiFallbackLoading, setApiFallbackLoading] = useState(false);
     const [apiFallbackError, setApiFallbackError] = useState<string | null>(null);
@@ -2748,9 +2750,11 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                 {/* Navigation Header */}
                 <div className="bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between shrink-0 z-20">
                     <div className="flex items-center gap-4">
-                        <SmoothButton onClick={() => setDetailViewIndex(null)} variant="ghost" size="sm" className="!p-2">
-                            <ArrowLeft className="w-5 h-5 text-slate-500" />
-                        </SmoothButton>
+                        {!studentOnlyMode && (
+                            <SmoothButton onClick={() => setDetailViewIndex(null)} variant="ghost" size="sm" className="!p-2">
+                                <ArrowLeft className="w-5 h-5 text-slate-500" />
+                            </SmoothButton>
+                        )}
                         <div>
                             <h2 className="text-xl font-bold text-slate-800 flex items-center gap-3">
                                 {detailViewStudent.studentName}
@@ -2760,18 +2764,20 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                             </h2>
                         </div>
                     </div>
-                    {/* Student Switcher Controls */}
-                    <div className="flex items-center gap-2">
-                        <SmoothButton onClick={() => handleSelectStudent(Math.max(0, (detailViewIndex ?? 0) - 1))} disabled={detailViewIndex === 0} variant="ghost" size="sm" className="!p-2">
-                            <ChevronDown className="w-4 h-4 rotate-90" />
-                        </SmoothButton>
-                        <span className="text-sm font-bold text-slate-500 tabular-nums">
-                            {(detailViewIndex ?? 0) + 1} / {totalStudents}
-                        </span>
-                        <SmoothButton onClick={() => handleSelectStudent(Math.min(sortedResults.length - 1, (detailViewIndex ?? 0) + 1))} disabled={detailViewIndex === sortedResults.length - 1} variant="ghost" size="sm" className="!p-2">
-                            <ChevronDown className="w-4 h-4 -rotate-90" />
-                        </SmoothButton>
-                    </div>
+                    {/* Student Switcher Controls - 学生模式下隐藏 */}
+                    {!studentOnlyMode && (
+                        <div className="flex items-center gap-2">
+                            <SmoothButton onClick={() => handleSelectStudent(Math.max(0, (detailViewIndex ?? 0) - 1))} disabled={detailViewIndex === 0} variant="ghost" size="sm" className="!p-2">
+                                <ChevronDown className="w-4 h-4 rotate-90" />
+                            </SmoothButton>
+                            <span className="text-sm font-bold text-slate-500 tabular-nums">
+                                {(detailViewIndex ?? 0) + 1} / {totalStudents}
+                            </span>
+                            <SmoothButton onClick={() => handleSelectStudent(Math.min(sortedResults.length - 1, (detailViewIndex ?? 0) + 1))} disabled={detailViewIndex === sortedResults.length - 1} variant="ghost" size="sm" className="!p-2">
+                                <ChevronDown className="w-4 h-4 -rotate-90" />
+                            </SmoothButton>
+                        </div>
+                    )}
                 </div>
 
                 <div className="flex-1 min-h-0 overflow-hidden flex">

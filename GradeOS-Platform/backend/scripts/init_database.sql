@@ -262,6 +262,68 @@ CREATE TABLE IF NOT EXISTS system_logs (
     created_at TIMESTAMP DEFAULT NOW()
 );
 
+-- ============ OpenBoard 论坛模块 ============
+
+-- 论坛表
+CREATE TABLE IF NOT EXISTS forums (
+    forum_id VARCHAR(100) PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    description TEXT,
+    creator_id VARCHAR(50) REFERENCES users(user_id),
+    status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'active', 'rejected')),
+    rejection_reason TEXT,
+    post_count INTEGER DEFAULT 0,
+    last_activity_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+
+-- 帖子表
+CREATE TABLE IF NOT EXISTS forum_posts (
+    post_id VARCHAR(100) PRIMARY KEY,
+    forum_id VARCHAR(100) REFERENCES forums(forum_id) ON DELETE CASCADE,
+    title VARCHAR(200) NOT NULL,
+    content TEXT NOT NULL,
+    images JSONB DEFAULT '[]',  -- 图片数组，存储 base64 或 URL
+    author_id VARCHAR(50) REFERENCES users(user_id),
+    reply_count INTEGER DEFAULT 0,
+    is_deleted BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+
+-- 回复表
+CREATE TABLE IF NOT EXISTS forum_replies (
+    reply_id VARCHAR(100) PRIMARY KEY,
+    post_id VARCHAR(100) REFERENCES forum_posts(post_id) ON DELETE CASCADE,
+    content TEXT NOT NULL,
+    author_id VARCHAR(50) REFERENCES users(user_id),
+    is_deleted BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- 管理日志表
+CREATE TABLE IF NOT EXISTS forum_mod_logs (
+    log_id VARCHAR(100) PRIMARY KEY,
+    moderator_id VARCHAR(50) REFERENCES users(user_id),
+    action VARCHAR(50) NOT NULL,
+    target_type VARCHAR(20) NOT NULL,
+    target_id VARCHAR(100) NOT NULL,
+    reason TEXT,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- 用户论坛状态表（封禁状态）
+CREATE TABLE IF NOT EXISTS forum_user_status (
+    id SERIAL PRIMARY KEY,
+    user_id VARCHAR(50) REFERENCES users(user_id),
+    is_banned BOOLEAN DEFAULT FALSE,
+    banned_at TIMESTAMP,
+    banned_by VARCHAR(50) REFERENCES users(user_id),
+    ban_reason TEXT,
+    UNIQUE(user_id)
+);
+
 -- ============ 索引 ============
 
 CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
@@ -274,6 +336,18 @@ CREATE INDEX IF NOT EXISTS idx_submissions_assignment_student ON assignment_subm
 CREATE INDEX IF NOT EXISTS idx_grading_tasks_status ON grading_tasks(status);
 CREATE INDEX IF NOT EXISTS idx_error_records_student ON error_records(student_id);
 CREATE INDEX IF NOT EXISTS idx_knowledge_points_subject ON knowledge_points(subject);
+
+-- OpenBoard 索引
+CREATE INDEX IF NOT EXISTS idx_forums_status ON forums(status);
+CREATE INDEX IF NOT EXISTS idx_forums_creator ON forums(creator_id);
+CREATE INDEX IF NOT EXISTS idx_forum_posts_forum ON forum_posts(forum_id);
+CREATE INDEX IF NOT EXISTS idx_forum_posts_author ON forum_posts(author_id);
+CREATE INDEX IF NOT EXISTS idx_forum_replies_post ON forum_replies(post_id);
+CREATE INDEX IF NOT EXISTS idx_forum_user_status_user ON forum_user_status(user_id);
+
+-- 全文搜索索引
+CREATE INDEX IF NOT EXISTS idx_forum_posts_title_gin ON forum_posts USING gin(to_tsvector('simple', title));
+CREATE INDEX IF NOT EXISTS idx_forum_posts_content_gin ON forum_posts USING gin(to_tsvector('simple', content));
 
 -- ============ 初始数据 ============
 

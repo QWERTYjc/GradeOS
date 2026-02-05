@@ -417,7 +417,7 @@ export default function RubricReviewPage() {
       noteLines.push(trimmedGlobal);
     }
     if (rubricDraft) {
-      rubricDraft.questions.forEach((q) => {
+      rubricDraft.questions.forEach((q: RubricQuestionDraft) => {
         if (!selectedIds.has(q.questionId)) return;
         const note = q.reviewNote.trim();
         if (note) {
