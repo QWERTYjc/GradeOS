@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { gradingApi } from '@/services/api';
@@ -41,7 +41,7 @@ interface ClassReport {
   }>;
 }
 
-export default function TeachingCockpitPage() {
+function TeachingCockpitPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const batchId = searchParams.get('batchId') || '';
@@ -389,5 +389,13 @@ export default function TeachingCockpitPage() {
         )}
       </div>
     </DashboardLayout>
+  );
+}
+
+export default function TeachingCockpitPage() {
+  return (
+    <Suspense fallback={<div className="py-16 text-center text-slate-400">加载中...</div>}>
+      <TeachingCockpitPageInner />
+    </Suspense>
   );
 }
