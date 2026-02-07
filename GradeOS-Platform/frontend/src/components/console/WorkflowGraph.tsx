@@ -4,7 +4,7 @@ import React, { useMemo, useRef, useState } from 'react';
 import { useConsoleStore, WorkflowNode, GradingAgent } from '@/store/consoleStore';
 import clsx from 'clsx';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Check, Loader2, AlertCircle, Clock, Cpu, GitMerge, Undo2, BookOpen, UserCheck, ShieldCheck, FileText, ZoomIn, ZoomOut, RefreshCw } from 'lucide-react';
+import { Check, Loader2, AlertCircle, Clock, Cpu, GitMerge, Undo2, BookOpen, UserCheck, ShieldCheck, ZoomIn, ZoomOut, RefreshCw } from 'lucide-react';
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 const MIN_ZOOM = 0.6;
@@ -242,7 +242,6 @@ const NodeCard: React.FC<{
         && node.id !== 'rubric_review'
         && node.id !== 'review'
         && node.id !== 'logic_review'
-        && node.id !== 'confession'
     );
     const inferredStatus = shouldAutoComplete ? 'completed' : node.status;
     const effectiveStatus = (node as {isVisualCompleted?: boolean}).isVisualCompleted ? 'completed' : inferredStatus;
@@ -250,16 +249,16 @@ const NodeCard: React.FC<{
     const isRunning = effectiveStatus === 'running';
     const isCrossPageMerge = node.id === 'cross_page_merge';
     const isLogicReview = node.id === 'logic_review';
+    const isRubricSelfReview = node.id === 'rubric_self_review';
     const isRubricReview = node.id === 'rubric_review';
     const isResultsReview = node.id === 'review';
-    const isConfession = node.id === 'confession';
 
     // Custom Icons
     let NodeIcon = styles.icon;
     if (isCrossPageMerge) NodeIcon = <GitMerge className="w-5 h-5" />;
     else if (isLogicReview) NodeIcon = <ShieldCheck className="w-5 h-5" />;
+    else if (isRubricSelfReview) NodeIcon = <ShieldCheck className="w-5 h-5" />;  // 自动复核用 ShieldCheck
     else if (isRubricReview || isResultsReview) NodeIcon = <UserCheck className="w-5 h-5" />;
-    else if (isConfession) NodeIcon = <FileText className="w-5 h-5" />;
 
     return (
         <motion.div
@@ -374,6 +373,7 @@ export const WorkflowGraph: React.FC = () => {
     };
 
     const visibleNodes = useMemo(() => {
+        // rubric_self_review 是自动执行的，不需要在非交互模式下隐藏
         const filteredNodes = interactionEnabled
             ? workflowNodes
             : workflowNodes.filter((node) => node.id !== 'rubric_review' && node.id !== 'review');

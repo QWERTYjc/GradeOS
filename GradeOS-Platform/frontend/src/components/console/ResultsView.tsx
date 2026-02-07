@@ -29,7 +29,6 @@ interface ResultsViewProps {
     defaultExpandDetails?: boolean;
     /** 隐藏批改透明度区块 */
     hideGradingTransparency?: boolean;
-    /** 学生模式：只显示单个学生的详情，不显示总览列表 */
     studentOnlyMode?: boolean;
 }
 
@@ -102,6 +101,21 @@ type RubricAlternativeSolutionDraft = {
     note?: string;
 };
 
+type LLMConfession = {
+    risks?: string[];
+    uncertainties?: string[];
+    blindSpots?: string[];
+    needsReview?: string[];
+    confidence?: number;
+    selfReviewed?: boolean;
+    selfReviewApplied?: boolean;
+};
+
+type QuestionConfession = {
+    risk?: string;
+    uncertainty?: string;
+};
+
 type RubricQuestionDraft = {
     questionId: string;
     maxScore: number;
@@ -109,6 +123,7 @@ type RubricQuestionDraft = {
     standardAnswer: string;
     gradingNotes: string;
     reviewNote: string;
+    confession?: QuestionConfession;
     scoringPoints: RubricScoringPointDraft[];
     alternativeSolutions: RubricAlternativeSolutionDraft[];
     criteria: string[];
@@ -120,6 +135,8 @@ type ParsedRubricDraft = {
     totalScore: number;
     generalNotes: string;
     rubricFormat: string;
+    confession?: LLMConfession;
+    selfReviewChanges?: string[];
     questions: RubricQuestionDraft[];
 };
 
@@ -127,6 +144,11 @@ const normalizeRubricDraft = (raw: any): ParsedRubricDraft => {
     const rawQuestions = raw?.questions || [];
     const questions: RubricQuestionDraft[] = rawQuestions.map((q: any, idx: number) => {
         const questionId = String(q.questionId || q.question_id || q.id || idx + 1);
+        const rawConfession = q?.confession || {};
+        const confession: QuestionConfession = {
+            risk: String(rawConfession.risk || ""),
+            uncertainty: String(rawConfession.uncertainty || ""),
+        };
         const scoringPoints = (q.scoringPoints || q.scoring_points || []).map((sp: any, spIdx: number) => ({
             pointId: String(sp.pointId || sp.point_id || `${questionId}.${spIdx + 1}`),
             description: sp.description || "",
@@ -153,6 +175,7 @@ const normalizeRubricDraft = (raw: any): ParsedRubricDraft => {
             standardAnswer: q.standardAnswer || q.standard_answer || "",
             gradingNotes: q.gradingNotes || q.grading_notes || "",
             reviewNote: q.reviewNote || q.review_note || "",
+            confession,
             scoringPoints,
             alternativeSolutions,
             criteria: q.criteria || [],
@@ -165,11 +188,28 @@ const normalizeRubricDraft = (raw: any): ParsedRubricDraft => {
         raw?.totalScore ?? raw?.total_score ?? questions.reduce((sum, q) => sum + (q.maxScore || 0), 0)
     );
 
+    const rawConfession = raw?.confession || {};
+    const confession: LLMConfession = {
+        risks: Array.isArray(rawConfession.risks) ? rawConfession.risks : [],
+        uncertainties: Array.isArray(rawConfession.uncertainties) ? rawConfession.uncertainties : [],
+        blindSpots: Array.isArray(rawConfession.blindSpots || rawConfession.blind_spots)
+            ? (rawConfession.blindSpots || rawConfession.blind_spots)
+            : [],
+        needsReview: Array.isArray(rawConfession.needsReview || rawConfession.needs_review)
+            ? (rawConfession.needsReview || rawConfession.needs_review)
+            : [],
+        confidence: Number(rawConfession.confidence ?? 1),
+        selfReviewed: Boolean(rawConfession.selfReviewed ?? rawConfession.self_reviewed ?? false),
+        selfReviewApplied: Boolean(rawConfession.selfReviewApplied ?? rawConfession.self_review_applied ?? false),
+    };
+
     return {
         totalQuestions,
         totalScore,
         generalNotes: raw?.generalNotes || raw?.general_notes || "",
         rubricFormat: raw?.rubricFormat || raw?.rubric_format || "standard",
+        confession,
+        selfReviewChanges: Array.isArray(raw?.self_review_changes) ? raw.self_review_changes : [],
         questions,
     };
 };
@@ -223,8 +263,7 @@ const QuestionDetail: React.FC<{
     question: QuestionResult; 
     gradingMode?: string; 
     defaultExpanded?: boolean;
-    confession?: StudentResult['confession'];
-}> = ({ question, gradingMode, defaultExpanded = false, confession }) => {
+}> = ({ question, gradingMode, defaultExpanded = false }) => {
     const percentage = question.maxScore > 0 ? (question.score / question.maxScore) * 100 : 0;
     const questionLabel = question.questionId === 'unknown' ? '未识别' : question.questionId;
     const normalizedType = (question.questionType || '').toLowerCase();
@@ -232,14 +271,15 @@ const QuestionDetail: React.FC<{
     const isAssist = (gradingMode || '').startsWith('assist')
         || (question.maxScore <= 0 && !(question.scoringPointResults?.length || question.scoringPoints?.length));
     const reviewReasons = question.reviewReasons || [];
+    const audit = question.audit;
+    const auditConfidence = audit?.confidence ?? question.confidence;
+    const auditRisks = audit?.riskFlags ?? question.auditFlags ?? [];
+    const auditUncertainties = audit?.uncertainties ?? [];
+    const auditNeedsReview = audit?.needsReview ?? question.needsReview ?? false;
     const isLowConfidence = !isAssist && (
         reviewReasons.includes('low_confidence')
-        || (question.confidence !== undefined && question.confidence < LOW_CONFIDENCE_THRESHOLD)
+        || (auditConfidence !== undefined && auditConfidence < LOW_CONFIDENCE_THRESHOLD)
     );
-    const confessionText = question.selfCritique
-        || question.honestyNote
-        || question.confidenceReason
-        || '证据不足，建议复核。';
     const showScoringDetails = !isAssist && !isChoice;
     const hasDetails = Boolean(question.studentAnswer)
         || (showScoringDetails && ((question.scoringPointResults?.length || 0) > 0 || (question.scoringPoints?.length || 0) > 0));
@@ -257,16 +297,9 @@ const QuestionDetail: React.FC<{
         return { label: normalizedType, className: 'border-slate-200 text-slate-500 bg-slate-50' };
     })();
     
-    // 提取当前题目的 AI 解析信息
-    const questionAnalysis = useMemo(() => {
-        if (!confession) return null;
-        const qid = question.questionId?.toString();
-        const issues = (confession.issues || []).filter(i => i.questionId === qid);
-        const highRisk = (confession.highRiskQuestions || []).filter(h => h.questionId === qid);
-        const errors = (confession.potentialErrors || []).filter(e => e.questionId === qid);
-        if (issues.length === 0 && highRisk.length === 0 && errors.length === 0) return null;
-        return { issues, highRisk, errors };
-    }, [confession, question.questionId]);
+    const hasAuditSignals = auditNeedsReview
+        || auditRisks.length > 0
+        || auditUncertainties.length > 0;
 
     return (
         <div className="p-4 space-y-3">
@@ -317,13 +350,12 @@ const QuestionDetail: React.FC<{
                         Pages: <span className="font-mono text-slate-500">{question.pageIndices.map(p => p + 1).join(', ')}</span>
                     </div>
                 )}
-                {/* 显示置信度 - 优先使用逻辑复核后的置信度 */}
+                {/* 显示置信度 - 优先使用审计置信度 */}
                 {(() => {
-                    // 优先使用逻辑复核置信度 > self_critique_confidence > 原始 confidence
-                    const displayConfidence = (question as any).selfCritiqueConfidence 
-                        ?? (question as any).self_critique_confidence 
-                        ?? question.confidence;
-                    const isReviewed = (question as any).logicReviewed || (question as any).logic_reviewed;
+                    const displayConfidence = auditConfidence;
+                    const isReviewed = (question as any).logicReviewed
+                        || (question as any).logic_reviewed
+                        || Boolean(question.reviewCorrections?.length || question.reviewSummary);
                     
                     if (displayConfidence === undefined) return null;
                     
@@ -510,8 +542,8 @@ const QuestionDetail: React.FC<{
                         </div>
                     )}
                     
-                    {/* AI 解析区块 - 可折叠 */}
-                    {questionAnalysis && (
+                    {/* 审计提示区块 - 可折叠 */}
+                    {hasAuditSignals && (
                         <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50/50 overflow-hidden">
                             <button 
                                 type="button"
@@ -520,38 +552,34 @@ const QuestionDetail: React.FC<{
                             >
                                 <span className="text-[11px] font-semibold text-amber-700 flex items-center gap-1.5">
                                     <BrainCircuit className="w-3.5 h-3.5" />
-                                    AI 解析 ({(questionAnalysis.issues.length + questionAnalysis.highRisk.length + questionAnalysis.errors.length)})
+                                    审计提示 ({auditRisks.length + auditUncertainties.length + (auditNeedsReview ? 1 : 0)})
                                 </span>
                                 <ChevronDown className={clsx("w-4 h-4 text-amber-500 transition-transform", analysisOpen && "rotate-180")} />
                             </button>
                             {analysisOpen && (
                                 <div className="px-3 pb-3 space-y-2">
-                                    {questionAnalysis.highRisk.length > 0 && (
+                                    {auditNeedsReview && (
+                                        <div className="text-[11px] text-rose-700 bg-rose-50 px-2 py-1.5 rounded border border-rose-200 flex items-start gap-1.5">
+                                            <XCircle className="w-3 h-3 mt-0.5 flex-shrink-0" />
+                                            <span>需要人工复核</span>
+                                        </div>
+                                    )}
+                                    {auditRisks.length > 0 && (
                                         <div className="space-y-1">
-                                            {questionAnalysis.highRisk.map((item, i) => (
+                                            {auditRisks.map((item, i) => (
                                                 <div key={i} className="text-[11px] text-rose-700 bg-rose-50 px-2 py-1.5 rounded border border-rose-200 flex items-start gap-1.5">
                                                     <XCircle className="w-3 h-3 mt-0.5 flex-shrink-0" />
-                                                    <span>{item.description || '需要人工复核'}</span>
+                                                    <span>风险标签：{item}</span>
                                                 </div>
                                             ))}
                                         </div>
                                     )}
-                                    {questionAnalysis.errors.length > 0 && (
+                                    {auditUncertainties.length > 0 && (
                                         <div className="space-y-1">
-                                            {questionAnalysis.errors.map((item, i) => (
+                                            {auditUncertainties.map((item, i) => (
                                                 <div key={i} className="text-[11px] text-orange-700 bg-orange-50 px-2 py-1.5 rounded border border-orange-200 flex items-start gap-1.5">
                                                     <AlertTriangle className="w-3 h-3 mt-0.5 flex-shrink-0" />
-                                                    <span>{item.description || '潜在错误'}</span>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    )}
-                                    {questionAnalysis.issues.length > 0 && (
-                                        <div className="space-y-1">
-                                            {questionAnalysis.issues.map((item, i) => (
-                                                <div key={i} className="text-[11px] text-amber-700 bg-amber-100/50 px-2 py-1.5 rounded border border-amber-200 flex items-start gap-1.5">
-                                                    <Info className="w-3 h-3 mt-0.5 flex-shrink-0" />
-                                                    <span>{item.message || '提示信息'}</span>
+                                                    <span>{item}</span>
                                                 </div>
                                             ))}
                                         </div>
@@ -563,11 +591,11 @@ const QuestionDetail: React.FC<{
 
                 </>
             )}
-            {isLowConfidence && (
+            {(isLowConfidence || auditNeedsReview) && (
                 <div className="mt-3 p-3 rounded-md border border-amber-200 bg-amber-50">
-                    <div className="text-[11px] font-semibold text-amber-700 mb-1">Confession Hint</div>
+                    <div className="text-[11px] font-semibold text-amber-700 mb-1">审计提示</div>
                     <p className="text-xs text-amber-800 leading-relaxed">
-                        <MathText text={confessionText} />
+                        <MathText text={auditUncertainties[0] || '该题存在不确定性或风险标签，建议复核。'} />
                     </p>
                 </div>
             )}
@@ -587,6 +615,13 @@ const QuestionDetail: React.FC<{
 const ResultCard: React.FC<ResultCardProps> = ({ result, rank, onExpand }) => {
     const isAssist = (result.gradingMode || '').startsWith('assist') || result.maxScore <= 0;
     const percentage = !isAssist && result.maxScore > 0 ? (result.score / result.maxScore) * 100 : 0;
+    const hasAuditRisk = (result.questionResults || []).some((q) => {
+        const audit = q.audit;
+        const confidence = audit?.confidence ?? q.confidence ?? 1;
+        return Boolean(audit?.needsReview)
+            || (audit?.riskFlags?.length || 0) > 0
+            || confidence < LOW_CONFIDENCE_THRESHOLD;
+    });
 
     let gradeLabel = '未评级';
     if (isAssist) {
@@ -633,9 +668,9 @@ const ResultCard: React.FC<ResultCardProps> = ({ result, rank, onExpand }) => {
                     )}
                     {crossPageCount > 0 && <span>Cross-page {crossPageCount}</span>}
                     {result.needsConfirmation && <span className='text-amber-600 bg-amber-100/50 px-2 py-0.5 rounded-md border border-amber-200/50'>Needs verification</span>}
-                    {result.confession?.overallStatus === 'caution' && (
+                    {hasAuditRisk && (
                         <span className='text-orange-600 bg-orange-100/50 px-2 py-0.5 rounded-md border border-orange-200/50 flex items-center gap-1'>
-                            <AlertTriangle className='w-3 h-3' /> Confession
+                            <AlertTriangle className='w-3 h-3' /> Audit
                         </span>
                     )}
                     {result.logicReviewedAt && (
@@ -710,60 +745,6 @@ const normalizeQuestionResults = (questionResults?: QuestionResult[]) => {
         }
         return aOrder.suffix.localeCompare(bOrder.suffix);
     });
-};
-
-const normalizeConfession = (confession: any) => {
-    if (!confession) return undefined;
-    if (typeof confession === 'string') {
-        try {
-            const parsed = JSON.parse(confession);
-            if (parsed && typeof parsed === 'object') {
-                confession = parsed;
-            } else {
-                return { summary: confession };
-            }
-        } catch {
-            return { summary: confession };
-        }
-    }
-    if (typeof confession !== 'object') return undefined;
-    const normalizeIssue = (item: any) => ({
-        questionId: item.questionId ?? item.question_id,
-        message: item.message ?? item.description ?? item.note ?? '',
-    });
-    const normalizeWarning = (item: any) => {
-        if (typeof item === 'string') {
-            return { message: item };
-        }
-        return {
-            questionId: item.questionId ?? item.question_id,
-            message: item.message ?? item.description ?? '',
-        };
-    };
-    const normalizeRisk = (item: any) => {
-        if (typeof item === 'string') {
-            return { questionId: item, description: '' };
-        }
-        return {
-            questionId: item.questionId ?? item.question_id,
-            description: item.description ?? item.message ?? '',
-        };
-    };
-    return {
-        overallStatus: confession.overallStatus || confession.overall_status,
-        overallConfidence: confession.overallConfidence ?? confession.overall_confidence,
-        summary: confession.summary || '',
-        issues: Array.isArray(confession.issues) ? confession.issues.map(normalizeIssue) : [],
-        warnings: Array.isArray(confession.warnings) ? confession.warnings.map(normalizeWarning) : [],
-        highRiskQuestions: Array.isArray(confession.highRiskQuestions || confession.high_risk_questions)
-            ? (confession.highRiskQuestions || confession.high_risk_questions).map(normalizeRisk)
-            : [],
-        potentialErrors: Array.isArray(confession.potentialErrors || confession.potential_errors)
-            ? (confession.potentialErrors || confession.potential_errors).map(normalizeRisk)
-            : [],
-        generatedAt: confession.generatedAt || confession.generated_at,
-        source: confession.source,
-    };
 };
 
 export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails = false, hideGradingTransparency = false, studentOnlyMode = false }) => {
@@ -884,9 +865,9 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                 pageIndices: (q as any).pageIndices,
                 isCrossPage: (q as any).isCrossPage,
                 mergeSource: (q as any).mergeSource,
-                scoringPointResults: (q as any).scoringPointResults
+                scoringPointResults: (q as any).scoringPointResults,
+                audit: (q as any).audit
             })),
-            confession: (agent.output as any)?.confession,
             startPage: (agent.output as any)?.startPage,
             endPage: (agent.output as any)?.endPage,
         }));
@@ -894,7 +875,6 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
     const normalizedResults = useMemo(() => (
         results.map((result) => ({
             ...result,
-            confession: normalizeConfession(result.confession),
             questionResults: normalizeQuestionResults(result.questionResults)
         }))
     ), [results]);
@@ -993,7 +973,6 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                                 gradingMode: r.gradingMode,
                                 studentSummary: r.studentSummary,
                                 selfAudit: r.selfAudit,
-                                confession: r.confession,
                                 questionResults: (r.questionResults || []).map((q: any) => ({
                                     questionId: q.questionId || '',
                                     score: q.score || 0,
@@ -1008,6 +987,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                                     pageIndices: q.pageIndices,
                                     isCrossPage: q.isCrossPage,
                                     mergeSource: q.mergeSource,
+                                    audit: q.audit,
                                     scoringPointResults: (q.scoringPointResults || []).map((spr: any) => ({
                                         pointId: spr.pointId || spr.scoringPoint?.pointId,
                                         description: spr.description || spr.scoringPoint?.description || '',
@@ -1053,6 +1033,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                                     pageIndices: q.page_indices,
                                     isCrossPage: q.is_cross_page,
                                     mergeSource: q.merge_source,
+                                    audit: q.audit,
                                     scoringPointResults: (q.scoring_point_results || []).map((spr: any) => ({
                                         pointId: spr.point_id || spr.scoring_point?.point_id,
                                         description: spr.description || spr.scoring_point?.description || '',
@@ -2122,7 +2103,6 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                             gradingMode: r.gradingMode,
                             studentSummary: r.studentSummary,
                             selfAudit: r.selfAudit,
-                            confession: r.confession,
                             questionResults: (r.questionResults || []).map((q: any) => ({
                                 questionId: q.questionId || '',
                                 score: q.score || 0,
@@ -2137,6 +2117,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                                 pageIndices: q.pageIndices,
                                 isCrossPage: q.isCrossPage,
                                 mergeSource: q.mergeSource,
+                                audit: q.audit,
                                 scoringPointResults: (q.scoringPointResults || []).map((spr: any) => ({
                                     pointId: spr.pointId || spr.scoringPoint?.pointId,
                                     description: spr.description || spr.scoringPoint?.description || '',
@@ -2181,6 +2162,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                                 pageIndices: q.page_indices,
                                 isCrossPage: q.is_cross_page,
                                 mergeSource: q.merge_source,
+                                audit: q.audit,
                                 scoringPointResults: (q.scoring_point_results || []).map((spr: any) => ({
                                     pointId: spr.point_id || spr.scoring_point?.point_id,
                                     description: spr.description || spr.scoring_point?.description || '',
@@ -2768,7 +2750,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                             </h2>
                         </div>
                     </div>
-                    {/* Student Switcher Controls - 学生模式下隐藏 */}
+                    {/* Student Switcher Controls */}
                     {!studentOnlyMode && (
                         <div className="flex items-center gap-2">
                             <SmoothButton onClick={() => handleSelectStudent(Math.max(0, (detailViewIndex ?? 0) - 1))} disabled={detailViewIndex === 0} variant="ghost" size="sm" className="!p-2">
@@ -3028,7 +3010,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                                 </div>
                                 {detailViewStudent.questionResults?.map((q, idx) => (
                                     <div key={`question-${q.questionId || 'unknown'}-${detailViewStudent.studentName}-${idx}`} className="border-b border-slate-100 pb-4 last:border-b-0">
-                                        <QuestionDetail question={q} gradingMode={detailViewStudent.gradingMode} defaultExpanded={defaultExpandDetails} confession={detailViewStudent.confession} />
+                                        <QuestionDetail question={q} gradingMode={detailViewStudent.gradingMode} defaultExpanded={defaultExpandDetails} />
                                     </div>
                                 ))}
                             </div>

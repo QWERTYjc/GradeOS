@@ -346,16 +346,14 @@ async def list_grading_history(
     try:
         async with db.connection() as conn:
             if class_id:
-                # class_ids 是 TEXT 类型存储的 JSON 数组，使用 LIKE 查询
-                # 同时包含 class_ids 为 NULL 的记录（控制台批改）
+                # 使用 JSONB 包含查询，同时包含 class_ids 为 NULL 的记录（控制台批改）
                 query = """
                     SELECT * FROM grading_history 
-                    WHERE class_ids LIKE %s OR class_ids IS NULL
+                    WHERE class_ids @> %s::jsonb OR class_ids IS NULL
                     ORDER BY created_at DESC 
                     LIMIT %s
                 """
-                # 使用 LIKE 模式匹配 JSON 数组中的 class_id
-                params = (f'%"{class_id}"%', limit)
+                params = (json.dumps([class_id]), limit)
                 log_sql_operation("SELECT", query, params)
                 cursor = await conn.execute(query, params)
             else:

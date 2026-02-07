@@ -68,6 +68,14 @@ export interface ScoringPoint {
     keywords?: string[];
 }
 
+export interface AuditInfo {
+    confidence?: number;
+    uncertainties?: string[];
+    riskFlags?: string[];
+    needsReview?: boolean;
+    updatedAt?: string;
+}
+
 export interface QuestionResult {
     questionId: string;
     score: number;
@@ -126,6 +134,8 @@ export interface QuestionResult {
     isCrossPage?: boolean;
     /** 合并来源（如果是合并结果? 新增 */
     mergeSource?: string[];
+    /** 题目审计信息（由 LLM 生成，复核可更新） */
+    audit?: AuditInfo;
     /** 页面索引 (snake_case) */
     page_index?: number;
     /** 页面索引 (camelCase) */
@@ -369,6 +379,14 @@ export interface ParsedRubric {
     questions?: RubricQuestion[];
     generalNotes?: string;
     rubricFormat?: string;
+    // LLM 直接生成的自白（极短）
+    confession?: {
+        risks?: string[];
+        uncertainties?: string[];
+        blindSpots?: string[];
+        needsReview?: string[];
+        confidence?: number;
+    };
     // 解析自白相关字段
     overallParseConfidence?: number;
     parseConfession?: {  // confession parse report
@@ -576,19 +594,21 @@ const normalizeNodeId = (value: string) => {
  * 工作流节点配�? * 
  * 基于 LangGraph 架构的前端展示流程（隐藏内部 merge 节点）：
  * 1. rubric_parse - 解析评分标准
- * 2. rubric_review - 评分标准人工交互（可选）
- * 3. grade_batch - 按学生批次并行批�? * 4. logic_review - 批改逻辑复核
- * 5. review - 批改结果人工交互（可选）
- * 6. export - 导出结果
+ * 2. rubric_self_review - 评分标准自动复核
+ * 3. rubric_review - 评分标准人工交互（可选）
+ * 4. grade_batch - 按学生批次并行批改
+ * 5. logic_review - 批改逻辑复核
+ * 6. review - 批改结果人工交互（可选）
+ * 7. export - 导出结果
  * 
  * 后端 LangGraph Graph 流程（含内部节点）：
- * index -> rubric_parse -> rubric_review -> grade_batch -> cross_page_merge -> index_merge -> logic_review -> review -> export -> END
+ * intake -> preprocess -> rubric_parse -> rubric_self_review -> rubric_review -> grade_batch -> logic_review -> review -> export -> END
  */
 const initialNodes: WorkflowNode[] = [
     { id: 'rubric_parse', label: 'Rubric Parse', status: 'pending', isParallelContainer: true, children: [] },
+    { id: 'rubric_self_review', label: 'Auto Review', status: 'pending' },
     { id: 'rubric_review', label: 'Rubric Review', status: 'pending' },
     { id: 'grade_batch', label: 'Student Grading', status: 'pending', isParallelContainer: true, children: [] },
-    { id: 'confession', label: 'Confession', status: 'pending', isParallelContainer: true, children: [] },
     { id: 'logic_review', label: 'Logic Review', status: 'pending', isParallelContainer: true, children: [] },
     { id: 'review', label: 'Results Review', status: 'pending' },
     { id: 'export', label: 'Export', status: 'pending' },
@@ -742,15 +762,8 @@ const extractResultsPayload = (payload: any): StudentResult[] | null => {
     return Array.isArray(results) ? results : null;
 };
 
-const hasPostConfessionResults = (results: StudentResult[] | null): boolean => {
-    if (!results || results.length === 0) return false;
-    return results.every((item) =>
-        Boolean(item.confession) && Boolean(item.logicReview || (item as any).logic_review || item.logicReviewedAt || (item as any).logic_reviewed_at)
-    );
-};
-
-const waitForPostConfessionResults = async (batchId: string, initialResults: StudentResult[] | null) => {
-    if (hasPostConfessionResults(initialResults)) {
+const waitForPostReviewResults = async (batchId: string, initialResults: StudentResult[] | null) => {
+    if (initialResults && initialResults.length > 0) {
         return initialResults;
     }
     const pollIntervalMs = 4000;
@@ -762,7 +775,7 @@ const waitForPostConfessionResults = async (batchId: string, initialResults: Stu
             const response = await gradingApi.getBatchResults(batchId);
             fetchedResults = extractResultsPayload(response);
         } catch (error) {
-            console.warn('Polling post-confession results failed:', error);
+            console.warn('Polling results failed:', error);
         }
         if (!fetchedResults) {
             try {
@@ -772,7 +785,7 @@ const waitForPostConfessionResults = async (batchId: string, initialResults: Stu
                 console.warn('Polling results-review fallback failed:', error);
             }
         }
-        if (hasPostConfessionResults(fetchedResults)) {
+        if (fetchedResults && fetchedResults.length > 0) {
             return fetchedResults;
         }
     }
@@ -917,13 +930,11 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
             const isWorker = agentId.startsWith('worker-');
             const isBatch = agentId.startsWith('batch_');
             const isReview = agentId.startsWith('review-worker-') || parentNodeId === 'logic_review';
-            const isConfession = agentId.startsWith('report-worker-') || parentNodeId === 'confession';
             const isRubricReview = agentId.startsWith('rubric-review-batch-') || parentNodeId === 'rubric_review';
             const isRubricBatch = agentId.startsWith('rubric-batch-') || parentNodeId === 'rubric_parse';
             const targetNodeId = parentNodeId || (
                 isWorker || isBatch ? 'grade_batch' :
                     isReview ? 'logic_review' :
-                        isConfession ? 'confession' :
                             isRubricReview ? 'rubric_review' :
                                 isRubricBatch ? 'rubric_parse' :
                                     null
@@ -931,7 +942,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
             if (!targetNodeId) {
                 return {};
             }
-            const shouldAutoCreate = isWorker || isBatch || isReview || isConfession || isRubricReview || isRubricBatch;
+            const shouldAutoCreate = isWorker || isBatch || isReview || isRubricReview || isRubricBatch;
             const parsedIndex = (() => {
                 const parts = agentId.split('-');
                 const last = parts[parts.length - 1];
@@ -944,9 +955,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                     ? `Student ${parsedIndex + 1}`
                     : isReview && parsedIndex !== null
                         ? `Review ${parsedIndex + 1}`
-                        : isConfession && parsedIndex !== null
-                            ? `Confession ${parsedIndex + 1}`
-                            : isRubricReview && parsedIndex !== null
+                        : isRubricReview && parsedIndex !== null
                                 ? `Rubric Review ${parsedIndex + 1}`
                                 : isRubricBatch && parsedIndex !== null
                                     ? `Rubric Page ${parsedIndex + 1}`
@@ -1497,14 +1506,14 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                     contentStr = String(chunk || '');
                 }
 
-                // 使用统一�?LLM 思考追加方�?
+                // 使用统一的 LLM 思考追加方法
                 const displayNodeName = nodeName || (
                     normalizedNodeId === 'rubric_parse' ? 'Rubric Parse' :
-                        normalizedNodeId === 'rubric_review' ? 'Rubric Review' :
-                            normalizedNodeId === 'confession' ? 'Confession' :
-                                normalizedNodeId === 'logic_review' ? 'Logic Review' :
-                                    normalizedNodeId === 'grade_batch' ? `Student Page ${pageIndex !== undefined ? pageIndex + 1 : ''}` :
-                                        normalizedNodeId || 'Node'
+                        normalizedNodeId === 'rubric_self_review' ? 'Auto Review' :
+                            normalizedNodeId === 'rubric_review' ? 'Rubric Review' :
+                                    normalizedNodeId === 'logic_review' ? 'Logic Review' :
+                                        normalizedNodeId === 'grade_batch' ? `Student Page ${pageIndex !== undefined ? pageIndex + 1 : ''}` :
+                                            normalizedNodeId || 'Node'
                 );
                 get().appendLLMThought(normalizedNodeId, displayNodeName, contentStr, pageIndex, streamType, agentId, agentLabel);
                 const nodeForStream = get().workflowNodes.find((n) => n.id === normalizedNodeId);
@@ -1680,7 +1689,6 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                     'rubric_parse',
                     'rubric_review',
                     'grade_batch',
-                    'confession',
                     'logic_review',
                     'review',
                     'export'
@@ -1692,19 +1700,19 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                     data.batch_id ||
                     get().submissionId;
                 if (!batchId) {
-                    get().addLog('Missing batch_id; cannot verify confession/logic review completion.', 'WARNING');
+                    get().addLog('Missing batch_id; cannot verify results completion.', 'WARNING');
                     return;
                 }
 
-                if (!hasPostConfessionResults(initialResults)) {
-                    get().addLog('等待自白与逻辑复核完成后再进入结果页...', 'INFO');
-                    const gatedResults = await waitForPostConfessionResults(batchId, initialResults);
+                if (!initialResults || initialResults.length === 0) {
+                    get().addLog('等待批改结果完成后再进入结果页...', 'INFO');
+                    const gatedResults = await waitForPostReviewResults(batchId, initialResults);
                     if (gatedResults) {
                         get().setFinalResults(gatedResults);
-                        get().addLog('自白与逻辑复核已完成，进入结果页。', 'SUCCESS');
+                        get().addLog('批改结果已完成，进入结果页。', 'SUCCESS');
                         set({ currentTab: 'results' });
                     } else {
-                        get().addLog('自白/逻辑复核仍未完成，已停止自动跳转结果页。', 'WARNING');
+                        get().addLog('批改结果仍未完成，已停止自动跳转结果页。', 'WARNING');
                     }
                     return;
                 }
@@ -1738,12 +1746,14 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                 if (currentStage) {
                     const stageToNode: Record<string, string> = {
                         rubric_parse_completed: 'rubric_parse',
+                        rubric_self_review_completed: 'rubric_self_review',
+                        rubric_self_review_skipped: 'rubric_self_review',
+                        rubric_self_review_failed: 'rubric_self_review',
                         rubric_review_completed: 'rubric_review',
                         rubric_review_skipped: 'rubric_review',
                         grade_batch_completed: 'grade_batch',
                         cross_page_merge_completed: 'grade_batch',
                         index_merge_completed: 'grade_batch',
-                        confession_completed: 'confession',
                         logic_review_completed: 'logic_review',
                         logic_review_skipped: 'logic_review',
                         review_completed: 'review',
@@ -1751,9 +1761,9 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                     };
                     const orderedNodes = [
                         'rubric_parse',
+                        'rubric_self_review',
                         'rubric_review',
                         'grade_batch',
-                        'confession',
                         'logic_review',
                         'review',
                         'export'

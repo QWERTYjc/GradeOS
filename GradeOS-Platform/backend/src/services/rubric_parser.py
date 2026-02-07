@@ -132,6 +132,47 @@ class DeductionRule:
 
 
 @dataclass
+class QuestionConfession:
+    """单题解析自白（极短）"""
+
+    risk: str = ""  # 该题风险（≤10字）
+    uncertainty: str = ""  # 不确定点（≤10字）
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {"risk": self.risk, "uncertainty": self.uncertainty}
+
+
+@dataclass
+class RubricConfession:
+    """评分标准解析自白（LLM 直接生成，极短）"""
+
+    risks: List[str] = field(default_factory=list)  # 风险列表（每条≤15字）
+    uncertainties: List[str] = field(default_factory=list)  # 不确定点列表
+    blind_spots: List[str] = field(default_factory=list)  # 可能遗漏的内容
+    needs_review: List[str] = field(default_factory=list)  # 建议人工复核的项
+    confidence: float = 1.0  # 整体置信度 (0.0-1.0)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "risks": self.risks,
+            "uncertainties": self.uncertainties,
+            "blindSpots": self.blind_spots,
+            "needsReview": self.needs_review,
+            "confidence": self.confidence,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "RubricConfession":
+        return cls(
+            risks=data.get("risks") or [],
+            uncertainties=data.get("uncertainties") or [],
+            blind_spots=data.get("blind_spots") or data.get("blindSpots") or [],
+            needs_review=data.get("needs_review") or data.get("needsReview") or [],
+            confidence=float(data.get("confidence", 1.0) or 1.0),
+        )
+
+
+@dataclass
 class QuestionRubric:
     """单题评分标准"""
 
@@ -143,7 +184,9 @@ class QuestionRubric:
     alternative_solutions: List[AlternativeSolution] = field(default_factory=list)  # 另类解法
     deduction_rules: List[DeductionRule] = field(default_factory=list)  # 扣分规则
     grading_notes: str = ""  # 批改注意事项
-    # 解析自白字段
+    # LLM 直接生成的自白（极短）
+    confession: QuestionConfession = field(default_factory=QuestionConfession)
+    # 解析自白字段（兼容旧版）
     parse_confidence: float = 1.0  # 解析置信度 (0.0-1.0)
     parse_uncertainties: List[str] = field(default_factory=list)  # 不确定性列表
     parse_quality_issues: List[str] = field(default_factory=list)  # 质量问题
@@ -158,7 +201,9 @@ class ParsedRubric:
     questions: List[QuestionRubric]  # 各题评分标准
     general_notes: str = ""  # 通用批改说明
     rubric_format: str = "standard"  # 格式类型: standard/embedded
-    # 解析自白字段
+    # LLM 直接生成的自白（极短）
+    confession: RubricConfession = field(default_factory=RubricConfession)
+    # 解析自白字段（兼容旧版，由规则检查生成）
     overall_parse_confidence: float = 1.0  # 整体解析置信度 (0.0-1.0)
     parse_confession: Dict[str, Any] = field(default_factory=dict)  # 完整自白报告
 
@@ -363,17 +408,23 @@ class RubricParserService:
 {{
   "rubric_format": "standard",
   "general_notes": "通用批改说明（如有）",
-  "overall_parse_confidence": 0.0-1.0之间的数值，表示整体解析的置信度,
-  "parse_uncertainties": ["整体解析的不确定点1", "不确定点2"],
+  "confession": {{
+    "risks": ["极短的风险描述1", "风险2"],
+    "uncertainties": ["极短的不确定点1", "不确定点2"],
+    "blind_spots": ["可能遗漏的内容1"],
+    "needs_review": ["建议人工复核的题目/得分点"],
+    "confidence": 0.85
+  }},
   "questions": [
     {{
       "question_id": "1",
       "max_score": 5,
       "question_text": "题目内容（如有）",
       "standard_answer": "标准答案（完整提取）",
-      "parse_confidence": 0.0-1.0之间的数值，表示该题解析的置信度,
-      "parse_uncertainties": ["该题的不确定点1", "不确定点2"],
-      "parse_quality_issues": ["该题的质量问题（如缺少得分点、分值异常等）"],
+      "confession": {{
+        "risk": "该题解析的风险（10字以内，无则为空）",
+        "uncertainty": "该题的不确定点（10字以内，无则为空）"
+      }},
       "scoring_points": [
         {{"point_id": "1.1", "description": "得分点描述（必须与原文一致）", "score": 1, "is_required": true}}
       ],
@@ -400,10 +451,18 @@ class RubricParserService:
 应该输出：
 ```json
 {{
+  "confession": {{
+    "risks": [],
+    "uncertainties": [],
+    "blind_spots": [],
+    "needs_review": [],
+    "confidence": 0.95
+  }},
   "questions": [
     {{
       "question_id": "7",
       "max_score": 15,
+      "confession": {{"risk": "", "uncertainty": ""}},
       "scoring_points": [
         {{"point_id": "7.1", "description": "计算结果", "score": 5}},
         {{"point_id": "7.2", "description": "写出过程", "score": 5}},
@@ -415,20 +474,27 @@ class RubricParserService:
 ```
 **注意：这是1道题，不是3道题！**
 
-## 置信度和不确定性指南
-- **parse_confidence**: 根据以下因素综合评估
-  - 题目边界是否清晰 (0.9-1.0)
-  - 分值是否明确标注 (0.8-0.9)
-  - 得分点是否完整 (0.7-0.8)
-  - 存在歧义或缺失信息 (0.5-0.7)
-  - 严重不确定或难以解析 (0.0-0.5)
-- **parse_uncertainties**: 列出具体的不确定点
-  - 例如："题号模糊，可能是3或4"
-  - 例如："分值未明确标注，根据得分点推断"
-  - 例如："标准答案不完整"
-- **parse_quality_issues**: 列出质量问题
-  - 例如："缺少得分点详细说明"
-  - 例如："总分与得分点之和不一致"
+## confession（自白）字段指南 ⚠️ 极短！
+自白字段用于标记解析过程中的风险和不确定性，**必须极短精炼**：
+
+**整体 confession**:
+- `risks`: 解析风险（每条≤15字），如：["第3题分值模糊", "答案可能不完整"]
+- `uncertainties`: 不确定点（每条≤15字），如：["题号5/6难以区分"]
+- `blind_spots`: 可能遗漏（每条≤15字），如：["可能有隐藏的扣分规则"]
+- `needs_review`: 建议复核（每条≤15字），如：["Q7得分点需确认"]
+- `confidence`: 0.0-1.0，整体置信度
+
+**题目级 confession**:
+- `risk`: 该题风险（≤10字），无则为空
+- `uncertainty`: 不确定点（≤10字），无则为空
+
+**何时填写**:
+- 图片模糊/字迹不清 → risk
+- 分值未明确标注 → uncertainty
+- 题目边界不清晰 → risk
+- 得分点描述含糊 → uncertainty
+- 标准答案缺失/不完整 → blind_spots
+- 可能有另类解法未识别 → blind_spots
 
 ## 严格规则
 - **必须返回有效的 JSON**（不要 markdown 代码块，不要 ```json）
@@ -439,7 +505,9 @@ class RubricParserService:
 - **不能拆分得分点**：保持评分标准原文的完整性
 - **默认 1 分**：每个得分点默认 1 分，除非明确标注其他分值
 - max_score 必须是数字类型
-- 不要编造不存在的题目"""
+- 不要编造不存在的题目
+- **confession 必须极短**：每条描述不超过15字
+"""
         prompt = prompt_template.format(batch_info=batch_info)
 
         try:
@@ -554,7 +622,7 @@ class RubricParserService:
                 return value
 
             def normalize_question_id(qid: str) -> str:
-                """标准化题目编号，将子题合并到主题"""
+                """标准化题目编号, 将子题合并到主题"""
                 if not qid:
                     return qid
 
@@ -680,6 +748,13 @@ class RubricParserService:
                             )
                         )
 
+                # 提取 LLM 生成的题目级 confession
+                q_confession_raw = q.get("confession") or {}
+                q_confession = QuestionConfession(
+                    risk=ensure_string(q_confession_raw.get("risk", "")),
+                    uncertainty=ensure_string(q_confession_raw.get("uncertainty", "")),
+                )
+
                 raw_questions.append(
                     {
                         "original_id": str(q.get("question_id", "")),
@@ -691,7 +766,9 @@ class RubricParserService:
                         "alternative_solutions": alternative_solutions,
                         "deduction_rules": deduction_rules,
                         "grading_notes": ensure_string(q.get("grading_notes", "")),
-                        # LLM 输出的置信度字段
+                        # LLM 直接生成的自白（极短）
+                        "confession": q_confession,
+                        # LLM 输出的置信度字段（兼容旧版）
                         "parse_confidence": float(q.get("parse_confidence", 1.0) or 1.0),
                         "parse_uncertainties": q.get("parse_uncertainties") or [],
                         "parse_quality_issues": q.get("parse_quality_issues") or [],
@@ -727,6 +804,18 @@ class RubricParserService:
                     )
                     existing["parse_uncertainties"].extend(q.get("parse_uncertainties", []))
                     existing["parse_quality_issues"].extend(q.get("parse_quality_issues", []))
+                    # 合并 confession（合并风险和不确定点）
+                    existing_conf = existing.get("confession", QuestionConfession())
+                    new_conf = q.get("confession", QuestionConfession())
+                    if new_conf.risk and not existing_conf.risk:
+                        existing_conf.risk = new_conf.risk
+                    elif new_conf.risk and existing_conf.risk:
+                        existing_conf.risk = f"{existing_conf.risk}; {new_conf.risk}"
+                    if new_conf.uncertainty and not existing_conf.uncertainty:
+                        existing_conf.uncertainty = new_conf.uncertainty
+                    elif new_conf.uncertainty and existing_conf.uncertainty:
+                        existing_conf.uncertainty = f"{existing_conf.uncertainty}; {new_conf.uncertainty}"
+                    existing["confession"] = existing_conf
                 else:
                     # 新题目
                     merged_questions[norm_id] = q.copy()
@@ -747,15 +836,27 @@ class RubricParserService:
                         alternative_solutions=q["alternative_solutions"],
                         deduction_rules=q["deduction_rules"],
                         grading_notes=q["grading_notes"],
-                        # LLM 解析置信度字段
+                        # LLM 直接生成的自白（极短）
+                        confession=q.get("confession", QuestionConfession()),
+                        # LLM 解析置信度字段（兼容旧版）
                         parse_confidence=q.get("parse_confidence", 1.0),
                         parse_uncertainties=q.get("parse_uncertainties", []),
                         parse_quality_issues=q.get("parse_quality_issues", []),
                     )
                 )
 
+            # 提取 LLM 直接生成的整体 confession
+            confession_raw = data.get("confession") or {}
+            llm_confession = RubricConfession(
+                risks=confession_raw.get("risks") or [],
+                uncertainties=confession_raw.get("uncertainties") or [],
+                blind_spots=confession_raw.get("blind_spots") or confession_raw.get("blindSpots") or [],
+                needs_review=confession_raw.get("needs_review") or confession_raw.get("needsReview") or [],
+                confidence=float(confession_raw.get("confidence", 1.0) or 1.0),
+            )
+
             # 返回批次结果（包含 LLM 输出的整体置信度）
-            llm_overall_confidence = float(data.get("overall_parse_confidence", 1.0) or 1.0)
+            llm_overall_confidence = llm_confession.confidence
             # 如果 LLM 没有输出整体置信度，从各题置信度计算
             if llm_overall_confidence >= 1.0 and questions:
                 question_confidences = [
@@ -770,6 +871,8 @@ class RubricParserService:
                 questions=questions,
                 general_notes=ensure_string(data.get("general_notes", "")),
                 rubric_format=ensure_string(data.get("rubric_format", "standard")),
+                # LLM 直接生成的自白
+                confession=llm_confession,
                 # LLM 解析置信度
                 overall_parse_confidence=llm_overall_confidence,
             )
@@ -868,7 +971,7 @@ class RubricParserService:
         """
         生成评分标准解析的自白报告
 
-        执行多维度质量检查：
+        执行多维度质量检查:
         - 题目数量合理性检查
         - 分值一致性检查
         - 得分点完整性检查
@@ -876,8 +979,8 @@ class RubricParserService:
 
         Args:
             rubric: 解析后的评分标准
-            expected_question_count: 期望的题目数量（如果已知）
-            expected_total_score: 期望的总分（如果已知）
+            expected_question_count: 期望的题目数量(如果已知)
+            expected_total_score: 期望的总分(如果已知)
 
         Returns:
             自白报告字典
