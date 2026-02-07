@@ -163,11 +163,8 @@ def init_db():
         """
         )
 
-        # Ensure teacher_id column exists for older sqlite files
-        try:
-            conn.execute("ALTER TABLE grading_history ADD COLUMN teacher_id TEXT")
-        except Exception:
-            pass
+        # Ensure teacher_id column exists for older schemas without poisoning transaction state
+        conn.execute("ALTER TABLE grading_history ADD COLUMN IF NOT EXISTS teacher_id TEXT")
 
         # Import records (per class)
         conn.execute(
