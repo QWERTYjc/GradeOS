@@ -517,8 +517,18 @@ def list_classes_by_teacher(teacher_id: str) -> List[ClassRecord]:
 
 def list_classes_by_student(student_id: str) -> List[ClassRecord]:
     """List classes for a student."""
-    with get_connection() as conn:
-        rows = conn.execute(
+    queries = [
+        (
+            """
+            SELECT c.class_id, c.class_name, c.teacher_id, c.invite_code, c.created_at
+            FROM classes c
+            JOIN class_students cs ON c.class_id = cs.class_id
+            WHERE cs.student_id = ?
+            ORDER BY c.created_at DESC
+            """,
+            "class_students",
+        ),
+        (
             """
             SELECT c.class_id, c.class_name, c.teacher_id, c.invite_code, c.created_at
             FROM classes c
@@ -526,8 +536,26 @@ def list_classes_by_student(student_id: str) -> List[ClassRecord]:
             WHERE scr.student_id = ?
             ORDER BY c.created_at DESC
             """,
-            (student_id,),
-        ).fetchall()
+            "student_class_relations",
+        ),
+    ]
+
+    rows = []
+    with get_connection() as conn:
+        for query, table_name in queries:
+            try:
+                rows = conn.execute(query, (student_id,)).fetchall()
+                break
+            except Exception as exc:
+                # 兼容历史库结构差异：某些环境只有其中一张关系表
+                if table_name in str(exc):
+                    logger.warning(
+                        "list_classes_by_student fallback: relation %s not available (%s)",
+                        table_name,
+                        exc,
+                    )
+                    continue
+                raise
     return [
         ClassRecord(
             id=row["class_id"],
