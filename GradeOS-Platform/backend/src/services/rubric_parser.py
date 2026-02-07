@@ -507,6 +507,7 @@ class RubricParserService:
 - max_score 必须是数字类型
 - 不要编造不存在的题目
 - **confession 必须极短**：每条描述不超过15字
+"""
         prompt = prompt_template.format(batch_info=batch_info)
 
         try:
@@ -621,7 +622,7 @@ class RubricParserService:
                 return value
 
             def normalize_question_id(qid: str) -> str:
-                """标准化题目编号，将子题合并到主题"""
+                """标准化题目编号, 将子题合并到主题"""
                 if not qid:
                     return qid
 
@@ -970,7 +971,7 @@ class RubricParserService:
         """
         生成评分标准解析的自白报告
 
-        执行多维度质量检查：
+        执行多维度质量检查:
         - 题目数量合理性检查
         - 分值一致性检查
         - 得分点完整性检查
@@ -978,8 +979,8 @@ class RubricParserService:
 
         Args:
             rubric: 解析后的评分标准
-            expected_question_count: 期望的题目数量（如果已知）
-            expected_total_score: 期望的总分（如果已知）
+            expected_question_count: 期望的题目数量(如果已知)
+            expected_total_score: 期望的总分(如果已知)
 
         Returns:
             自白报告字典

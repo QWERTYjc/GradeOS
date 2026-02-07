@@ -181,7 +181,7 @@ export function RubricOverview() {
                   </div>
                   <div className="flex flex-wrap gap-1">
                     {llmConfession.risks.map((risk, idx) => (
-                      <span key={`risk-${idx}`} className="text-[10px] px-2 py-1 bg-rose-100 text-rose-700 rounded-full">
+                      <span key={`llm-risk-${idx}-${risk.substring(0, 10)}`} className="text-[10px] px-2 py-1 bg-rose-100 text-rose-700 rounded-full">
                         {risk}
                       </span>
                     ))}
@@ -197,7 +197,7 @@ export function RubricOverview() {
                   </div>
                   <div className="flex flex-wrap gap-1">
                     {llmConfession.uncertainties.map((u, idx) => (
-                      <span key={`uncertainty-${idx}`} className="text-[10px] px-2 py-1 bg-amber-100 text-amber-700 rounded-full">
+                      <span key={`llm-uncertainty-${idx}-${u.substring(0, 10)}`} className="text-[10px] px-2 py-1 bg-amber-100 text-amber-700 rounded-full">
                         {u}
                       </span>
                     ))}
@@ -213,7 +213,7 @@ export function RubricOverview() {
                   </div>
                   <div className="flex flex-wrap gap-1">
                     {llmConfession.blindSpots.map((b, idx) => (
-                      <span key={`blindspot-${idx}`} className="text-[10px] px-2 py-1 bg-blue-100 text-blue-700 rounded-full">
+                      <span key={`llm-blindspot-${idx}-${b.substring(0, 10)}`} className="text-[10px] px-2 py-1 bg-blue-100 text-blue-700 rounded-full">
                         {b}
                       </span>
                     ))}
@@ -229,7 +229,7 @@ export function RubricOverview() {
                   </div>
                   <div className="flex flex-wrap gap-1">
                     {llmConfession.needsReview.map((n, idx) => (
-                      <span key={`needsreview-${idx}`} className="text-[10px] px-2 py-1 bg-purple-100 text-purple-700 rounded-full">
+                      <span key={`llm-needsreview-${idx}-${n.substring(0, 10)}`} className="text-[10px] px-2 py-1 bg-purple-100 text-purple-700 rounded-full">
                         {n}
                       </span>
                     ))}
@@ -299,7 +299,7 @@ export function RubricOverview() {
                   <div className="space-y-1">
                     {confession.issues.map((issue, idx) => (
                       <div
-                        key={`issue-${issue.questionId || 'general'}-${idx}`}
+                        key={`conf-issue-${issue.questionId || 'general'}-${idx}-${issue.message?.substring(0, 10) || ''}`}
                         className={`text-xs p-2 rounded flex items-start gap-2 ${issue.severity === 'high'
                           ? 'bg-rose-50 text-rose-700 border border-rose-200'
                           : issue.severity === 'medium'
@@ -332,7 +332,7 @@ export function RubricOverview() {
                   </div>
                   <div className="space-y-1">
                     {confession.uncertainties.map((uncertainty, idx) => (
-                      <div key={`uncertainty-${idx}`} className="text-xs text-blue-600 bg-white/50 rounded p-2 pl-4 border-l-2 border-blue-300">
+                      <div key={`conf-uncertainty-${idx}-${uncertainty.substring(0, 10)}`} className="text-xs text-blue-600 bg-white/50 rounded p-2 pl-4 border-l-2 border-blue-300">
                         • {uncertainty}
                       </div>
                     ))}
@@ -347,7 +347,7 @@ export function RubricOverview() {
                   <div className="grid grid-cols-2 gap-2">
                     {confession.qualityChecks.map((check, idx) => (
                       <div
-                        key={`check-${check.check}-${idx}`}
+                        key={`conf-check-${idx}-${check.check?.substring(0, 15) || ''}`}
                         className={`text-xs p-2 rounded flex items-start gap-2 ${check.passed
                           ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                           : 'bg-amber-50 text-amber-700 border border-amber-200'

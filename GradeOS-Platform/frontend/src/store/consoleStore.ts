@@ -379,6 +379,14 @@ export interface ParsedRubric {
     questions?: RubricQuestion[];
     generalNotes?: string;
     rubricFormat?: string;
+    // LLM 直接生成的自白（极短）
+    confession?: {
+        risks?: string[];
+        uncertainties?: string[];
+        blindSpots?: string[];
+        needsReview?: string[];
+        confidence?: number;
+    };
     // 解析自白相关字段
     overallParseConfidence?: number;
     parseConfession?: {  // confession parse report

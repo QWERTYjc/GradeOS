@@ -46,7 +46,27 @@ class UnifiedLLMClient:
             # 增加超时时间以支持大型视觉分析任务
             # 可通过环境变量 LLM_HTTP_TIMEOUT 覆盖
             timeout = self._read_float_env("LLM_HTTP_TIMEOUT", 300.0)
-            self._client = httpx.AsyncClient(timeout=timeout)
+            
+            # 配置连接池和重试策略
+            limits = httpx.Limits(
+                max_keepalive_connections=20,
+                max_connections=100,
+                keepalive_expiry=30.0
+            )
+            
+            # 配置传输层，禁用代理（如果代理不稳定）
+            # 可通过环境变量 LLM_USE_PROXY 控制
+            use_proxy = os.getenv("LLM_USE_PROXY", "true").lower() == "true"
+            transport_kwargs = {}
+            if not use_proxy:
+                transport_kwargs["proxy"] = None
+            
+            self._client = httpx.AsyncClient(
+                timeout=timeout,
+                limits=limits,
+                follow_redirects=True,
+                **transport_kwargs
+            )
         return self._client
 
     async def close(self) -> None:

@@ -10,6 +10,7 @@
 Requirements: 1.1, 1.2, 1.3, 9.1
 """
 
+import asyncio
 import base64
 import json
 import logging
@@ -27,6 +28,7 @@ from typing import (
     Literal,
 )
 
+import httpx
 from langchain_core.messages import HumanMessage
 
 from src.services.chat_model_factory import get_chat_model
@@ -3669,46 +3671,65 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
         Returns:
             包含 annotations 列表的字典
         """
-        try:
-            content = [
-                {"type": "text", "text": prompt},
-                {"type": "image_url", "image_url": f"data:image/jpeg;base64,{image_base64}"},
-            ]
-            
-            message = HumanMessage(content=content)
-            
-            # 调用 LLM
-            response = await self.llm.ainvoke([message])
-            response_text = response.content if hasattr(response, "content") else str(response)
-            
-            # 提取 JSON
-            if isinstance(response_text, str):
-                # 清理响应
-                clean_text = response_text.strip()
-                if "```json" in clean_text:
-                    start = clean_text.find("```json") + 7
-                    end = clean_text.find("```", start)
-                    clean_text = clean_text[start:end].strip()
-                elif "```" in clean_text:
-                    start = clean_text.find("```") + 3
-                    end = clean_text.find("```", start)
-                    clean_text = clean_text[start:end].strip()
+        max_retries = 3
+        retry_delay = 2.0
+        
+        for attempt in range(max_retries):
+            try:
+                content = [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": f"data:image/jpeg;base64,{image_base64}"},
+                ]
                 
-                result = json.loads(clean_text)
-            else:
-                result = response_text
-            
-            # 验证结果格式
-            if not isinstance(result, dict):
-                result = {"annotations": []}
-            if "annotations" not in result:
-                result["annotations"] = []
-            
-            return result
-            
-        except json.JSONDecodeError as e:
-            logger.error(f"[generate_annotations] JSON 解析失败: {e}")
-            return {"annotations": [], "error": f"JSON 解析失败: {e}"}
-        except Exception as e:
-            logger.error(f"[generate_annotations] 生成批注失败: {e}", exc_info=True)
-            return {"annotations": [], "error": str(e)}
+                message = HumanMessage(content=content)
+                
+                # 调用 LLM
+                response = await self.llm.ainvoke([message])
+                response_text = response.content if hasattr(response, "content") else str(response)
+                
+                # 提取 JSON
+                if isinstance(response_text, str):
+                    # 清理响应
+                    clean_text = response_text.strip()
+                    if "```json" in clean_text:
+                        start = clean_text.find("```json") + 7
+                        end = clean_text.find("```", start)
+                        clean_text = clean_text[start:end].strip()
+                    elif "```" in clean_text:
+                        start = clean_text.find("```") + 3
+                        end = clean_text.find("```", start)
+                        clean_text = clean_text[start:end].strip()
+                    
+                    result = json.loads(clean_text)
+                else:
+                    result = response_text
+                
+                # 验证结果格式
+                if not isinstance(result, dict):
+                    result = {"annotations": []}
+                if "annotations" not in result:
+                    result["annotations"] = []
+                
+                # 成功则返回
+                return result
+                
+            except (httpx.RemoteProtocolError, httpx.ConnectError, httpx.ReadTimeout) as e:
+                logger.warning(
+                    f"[generate_annotations] 网络错误 (尝试 {attempt + 1}/{max_retries}): {e}"
+                )
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(retry_delay * (attempt + 1))
+                    continue
+                else:
+                    logger.error(f"[generate_annotations] 重试 {max_retries} 次后仍失败")
+                    raise
+            except json.JSONDecodeError as e:
+                logger.error(f"[generate_annotations] JSON 解析失败: {e}")
+                return {"annotations": [], "error": f"JSON 解析失败: {e}"}
+            except Exception as e:
+                logger.error(f"[generate_annotations] 生成批注失败: {e}", exc_info=True)
+                return {"annotations": [], "error": str(e)}
+        
+        # 如果所有重试都失败（理论上不会到这里，因为最后一次会 raise）
+        return {"annotations": [], "error": "所有重试均失败"}
+

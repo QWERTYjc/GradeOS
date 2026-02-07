@@ -93,7 +93,7 @@ export default function Gallery({
 
   // Notify parent of boundary changes whenever splitImageIds or image order changes
   useEffect(() => {
-    if (!context || !currentSession || isRubricMode) return;
+    if (!context || !currentSession || isRubricMode || !onBoundariesChange) return;
 
     // Always include index 0 implicitly
     const indices = [0];
@@ -104,8 +104,9 @@ export default function Gallery({
       }
     });
 
-    onBoundariesChange?.(indices);
-  }, [context, splitImageIds, currentSession?.images, onBoundariesChange, isRubricMode]);
+    onBoundariesChange(indices);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [context, splitImageIds, currentSession?.images, isRubricMode]);
 
   if (!context) return null;
 

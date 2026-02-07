@@ -814,6 +814,9 @@ async def rubric_parse_node(state: BatchGradingGraphState) -> Dict[str, Any]:
             # 将自白报告添加到 parsed_rubric
             parsed_rubric["overall_parse_confidence"] = parse_confession["overallConfidence"]
             parsed_rubric["parse_confession"] = parse_confession
+            
+            # 🔧 重要：用计算出的置信度覆盖 LLM 返回的置信度
+            parsed_rubric["confession"]["confidence"] = parse_confession["overallConfidence"]
 
             # 同时更新 ParsedRubric 对象（如果需要重新注册）
             result.overall_parse_confidence = parse_confession["overallConfidence"]
@@ -1692,6 +1695,190 @@ def _normalize_question_id(value: Any) -> str:
     return text.strip().rstrip(".:：")
 
 
+def _normalize_logic_review_items(raw_items: Any) -> List[Dict[str, Any]]:
+    """
+    标准化逻辑复核返回的题目列表。
+    
+    处理各种可能的字段名变体（驼峰/下划线）和数据结构。
+    
+    Args:
+        raw_items: 原始的题目复核数据（可能是列表或其他格式）
+    
+    Returns:
+        标准化后的题目字典列表
+    """
+    if not raw_items:
+        return []
+    
+    # 如果不是列表，尝试转换
+    if not isinstance(raw_items, list):
+        if isinstance(raw_items, dict):
+            # 可能是单个题目，包装成列表
+            raw_items = [raw_items]
+        else:
+            return []
+    
+    normalized = []
+    for item in raw_items:
+        if not isinstance(item, dict):
+            continue
+        
+        # 标准化字段名（统一使用下划线命名）
+        normalized_item = {}
+        
+        # question_id / questionId
+        qid = item.get("question_id") or item.get("questionId")
+        if qid:
+            normalized_item["question_id"] = qid
+        
+        # confidence
+        if "confidence" in item:
+            normalized_item["confidence"] = item["confidence"]
+        
+        # confidence_reason / confidenceReason
+        conf_reason = item.get("confidence_reason") or item.get("confidenceReason")
+        if conf_reason:
+            normalized_item["confidence_reason"] = conf_reason
+        
+        # review_summary / reviewSummary
+        review_summary = item.get("review_summary") or item.get("reviewSummary")
+        if review_summary:
+            normalized_item["review_summary"] = review_summary
+        
+        # review_corrections / reviewCorrections
+        corrections = item.get("review_corrections") or item.get("reviewCorrections")
+        if corrections:
+            normalized_item["review_corrections"] = corrections
+        
+        # self_critique / selfCritique
+        self_critique = item.get("self_critique") or item.get("selfCritique")
+        if self_critique:
+            normalized_item["self_critique"] = self_critique
+        
+        # self_critique_confidence / selfCritiqueConfidence
+        self_conf = item.get("self_critique_confidence") or item.get("selfCritiqueConfidence")
+        if self_conf:
+            normalized_item["self_critique_confidence"] = self_conf
+        
+        # 保留其他所有字段
+        for key, value in item.items():
+            if key not in normalized_item:
+                normalized_item[key] = value
+        
+        normalized.append(normalized_item)
+    
+    return normalized
+
+
+def _normalize_logic_review_self_audit(raw_audit: Any) -> Optional[Dict[str, Any]]:
+    """
+    标准化逻辑复核返回的 self_audit 数据。
+    
+    处理各种可能的字段名变体（驼峰/下划线）和数据结构。
+    
+    Args:
+        raw_audit: 原始的 self_audit 数据
+    
+    Returns:
+        标准化后的 self_audit 字典，如果输入无效则返回 None
+    """
+    if not raw_audit or not isinstance(raw_audit, dict):
+        return None
+    
+    normalized = {}
+    
+    # summary
+    summary = raw_audit.get("summary")
+    if summary:
+        normalized["summary"] = summary
+    
+    # confidence
+    confidence = raw_audit.get("confidence")
+    if confidence is not None:
+        normalized["confidence"] = _safe_float(confidence, 0.0)
+    
+    # issues
+    issues = raw_audit.get("issues")
+    if issues and isinstance(issues, list):
+        normalized["issues"] = issues
+    
+    # compliance_analysis / complianceAnalysis
+    compliance = raw_audit.get("compliance_analysis") or raw_audit.get("complianceAnalysis")
+    if compliance and isinstance(compliance, list):
+        normalized["compliance_analysis"] = compliance
+    
+    # uncertainties_and_conflicts / uncertaintiesAndConflicts
+    uncertainties = raw_audit.get("uncertainties_and_conflicts") or raw_audit.get(
+        "uncertaintiesAndConflicts"
+    )
+    if uncertainties and isinstance(uncertainties, list):
+        normalized["uncertainties_and_conflicts"] = uncertainties
+    
+    # overall_compliance_grade / overallComplianceGrade
+    grade = raw_audit.get("overall_compliance_grade") or raw_audit.get("overallComplianceGrade")
+    if grade is not None:
+        normalized["overall_compliance_grade"] = grade
+    
+    # honesty_note / honestyNote
+    honesty = raw_audit.get("honesty_note") or raw_audit.get("honestyNote")
+    if honesty:
+        normalized["honesty_note"] = honesty
+    
+    # 保留其他所有字段
+    for key, value in raw_audit.items():
+        if key not in normalized:
+            normalized[key] = value
+    
+    return normalized if normalized else None
+
+
+def _build_logic_review_summary(question_details: List[Dict[str, Any]]) -> str:
+    """
+    构建逻辑复核摘要。
+    
+    基于题目详情生成一个简短的摘要，说明复核结果。
+    
+    Args:
+        question_details: 题目详情列表
+    
+    Returns:
+        复核摘要字符串
+    """
+    if not question_details:
+        return "No questions to review"
+    
+    total_questions = len(question_details)
+    total_score = sum(_safe_float(q.get("score", 0), 0.0) for q in question_details)
+    max_score = sum(_safe_float(q.get("max_score", 0), 0.0) for q in question_details)
+    
+    # 统计低置信度题目
+    low_confidence_count = sum(
+        1 for q in question_details 
+        if _safe_float(q.get("confidence", 1.0), 1.0) < 0.7
+    )
+    
+    # 统计有修正的题目
+    corrected_count = sum(
+        1 for q in question_details 
+        if q.get("review_corrections") and len(q.get("review_corrections", [])) > 0
+    )
+    
+    # 构建摘要
+    parts = [f"Reviewed {total_questions} question(s)"]
+    
+    if max_score > 0:
+        percentage = (total_score / max_score) * 100
+        parts.append(f"score {total_score:.1f}/{max_score:.1f} ({percentage:.0f}%)")
+    
+    if corrected_count > 0:
+        parts.append(f"{corrected_count} correction(s)")
+    
+    if low_confidence_count > 0:
+        parts.append(f"{low_confidence_count} low confidence")
+    
+    return ", ".join(parts)
+
+
 def _estimate_page_max_score(
     parsed_rubric: Optional[Dict[str, Any]],
     page_context: Optional[Dict[str, Any]],
@@ -2388,9 +2575,23 @@ def _finalize_scoring_result(
 
             description = sp.get("description", "")
             expected_value = sp.get("expected_value") or sp.get("expectedValue") or ""
+            
+            # 🔧 强化 rubric_reference 生成逻辑
+            # 优先使用评分标准中的描述，确保 Logic Review 能获取到完整信息
             rubric_reference = f"[{point_id}] {description}".strip()
             if expected_value:
                 rubric_reference = f"{rubric_reference}（标准值:{expected_value}）"
+            
+            # 如果 description 为空，尝试从 rubric_map 中获取
+            if not description and rubric:
+                for rubric_sp in rubric.get("scoring_points", []):
+                    if rubric_sp.get("point_id") == point_id:
+                        rubric_desc = rubric_sp.get("description", "")
+                        if rubric_desc:
+                            rubric_reference = f"[{point_id}] {rubric_desc}".strip()
+                            if expected_value:
+                                rubric_reference = f"{rubric_reference}（标准值:{expected_value}）"
+                        break
 
             scoring_point_results.append(
                 {
@@ -2409,6 +2610,14 @@ def _finalize_scoring_result(
                     },
                 }
             )
+            
+            # 🔍 诊断日志：检查 rubric_reference 是否为空
+            if not rubric_reference or rubric_reference == f"[{point_id}]":
+                logger.warning(
+                    f"[grading] ⚠️ rubric_reference 为空或不完整: "
+                    f"qid={qid}, point_id={point_id}, description={description}, "
+                    f"rubric_reference={rubric_reference}"
+                )
 
         if not scoring_point_results and raw_scoring:
             for idx, spr in enumerate(raw_scoring, 1):
@@ -2419,9 +2628,21 @@ def _finalize_scoring_result(
                 rubric_reference_source = spr.get("rubric_reference_source") or spr.get(
                     "rubricReferenceSource"
                 )
+                
+                # 🔧 强化 rubric_reference 生成逻辑
                 if not rubric_reference:
                     rubric_reference = f"[{point_id}] {description}".strip()
                     rubric_reference_source = "system"
+                    
+                    # 如果 description 为空，尝试从 rubric_map 中获取
+                    if not description and rubric:
+                        for rubric_sp in rubric.get("scoring_points", []):
+                            if rubric_sp.get("point_id") == point_id:
+                                rubric_desc = rubric_sp.get("description", "")
+                                if rubric_desc:
+                                    rubric_reference = f"[{point_id}] {rubric_desc}".strip()
+                                break
+                
                 max_points = spr.get("max_points", spr.get("maxScore"))
                 if max_points is None:
                     max_points = scoring_point.get("score", 0)
@@ -5051,6 +5272,7 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                         original_score = _safe_float(q.get("score", 0))
                         new_score = _safe_float(merged.get("score", 0))
                         if abs(new_score - original_score) >= 0.5:
+                            logger.info(f"[logic_review] 题目 {qid} 分数修正: {original_score} -> {new_score}")
                     except Exception as mem_exc:
                         logger.debug(f"[logic_review] 分数修正失败: {mem_exc}")
                 else:
@@ -5254,6 +5476,8 @@ async def export_node(state: BatchGradingGraphState) -> Dict[str, Any]:
 
     Requirements: 9.4, 11.4
     """
+    import os
+    
     batch_id = state["batch_id"]
     
     # 🔍 DEBUG: 关键日志 - 记录 export_node 入口
@@ -5501,16 +5725,20 @@ async def export_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                             imported_at=datetime.now().isoformat(),
                         )
                         
+                        logger.info(f"[export] 准备保存学生结果: student_key={student_key}, history_id={history_id}")
                         await save_student_result(student_result)
+                        logger.info(f"[export] 成功保存学生结果: student_key={student_key}")
                         saved_students += 1
                         
                         # 3. 保存该学生的页面图像
                         page_results = student.get("page_results", [])
+                        logger.info(f"[export] 学生 {student_key} 有 {len(page_results)} 个页面结果")
                         
                         for page_result in page_results:
                             page_index = page_result.get("page_index", 0)
 
                             stored_file = file_index_by_page.get(page_index)
+                            logger.debug(f"[export] 页面 {page_index}: stored_file={stored_file is not None}")
                             file_id = ""
                             file_url = None
                             content_type = None

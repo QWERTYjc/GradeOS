@@ -793,17 +793,21 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
 
     // API Base - 直接使用统一的 API_BASE
     const getApiUrl = () => {
+        if (process.env.NEXT_PUBLIC_API_URL) {
+            return process.env.NEXT_PUBLIC_API_URL;
+        }
         if (typeof window === 'undefined') return 'http://localhost:8001/api';
-        const hostname = window.location.hostname;
+        const { hostname, origin } = window.location;
         if (hostname === 'localhost' || hostname === '127.0.0.1') {
             return 'http://localhost:8001/api';
         }
         if (hostname.includes('railway.app')) {
             return 'https://gradeos-production.up.railway.app/api';
         }
-        return '/api';
+        console.warn('API_URL not configured, falling back to relative path /api');
+        return `${origin}/api`;
     };
-    const apiBase = getApiUrl();
+    const apiBase = getApiUrl().replace(/\/+$/, '');
     // 批注渲染状态 - 默认开启
     const [showAnnotations, setShowAnnotations] = useState(true);
     const [annotationLoading, setAnnotationLoading] = useState<Set<number>>(new Set());

@@ -1392,7 +1392,7 @@ class LangGraphOrchestrator(Orchestrator):
                                 run_id,
                                 graph_name,
                                 "pending",
-                                json.dumps(input_data),
+                                json.dumps(input_data, default=self._json_serializer),
                                 datetime.now(),
                                 datetime.now(),
                             ),
