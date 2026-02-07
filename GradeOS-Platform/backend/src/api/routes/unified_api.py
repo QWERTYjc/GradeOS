@@ -2678,20 +2678,49 @@ async def get_class_statistics(class_id: str, homework_id: Optional[str] = None)
     graded_count = len(scores)
 
     if not scores:
-        histories = await list_grading_history(class_id=class_id, limit=200)
-        history_ids = []
-        for history in histories:
-            result_meta = history.result_data or {}
-            assignment_id_value = result_meta.get("homework_id") or result_meta.get("assignment_id")
-            if homework_id and assignment_id_value != homework_id:
-                continue
-            history_ids.append(history.id)
-
         fallback_scores = []
-        for history_id in history_ids:
-            for item in await get_student_results(history_id):
-                if item.score is not None:
-                    fallback_scores.append(item.score)
+        try:
+            with get_connection() as conn:
+                if homework_id:
+                    score_rows = conn.execute(
+                        """
+                        SELECT sgr.score, gh.result_data
+                        FROM student_grading_results sgr
+                        JOIN grading_history gh ON gh.id = sgr.grading_history_id
+                        WHERE sgr.class_id = ? AND sgr.score IS NOT NULL
+                        """,
+                        (class_id,),
+                    ).fetchall()
+                    for row in score_rows:
+                        score_value = row.get("score")
+                        if score_value is None:
+                            continue
+                        raw_meta = row.get("result_data")
+                        result_meta: Dict[str, Any] = {}
+                        if isinstance(raw_meta, dict):
+                            result_meta = raw_meta
+                        elif isinstance(raw_meta, str):
+                            try:
+                                result_meta = json.loads(raw_meta) if raw_meta else {}
+                            except Exception:
+                                result_meta = {}
+                        assignment_id_value = result_meta.get("homework_id") or result_meta.get(
+                            "assignment_id"
+                        )
+                        if assignment_id_value == homework_id:
+                            fallback_scores.append(float(score_value))
+                else:
+                    score_rows = conn.execute(
+                        """
+                        SELECT score
+                        FROM student_grading_results
+                        WHERE class_id = ? AND score IS NOT NULL
+                        """,
+                        (class_id,),
+                    ).fetchall()
+                    fallback_scores = [float(row["score"]) for row in score_rows if row["score"] is not None]
+        except Exception as exc:
+            logger.warning("statistics fallback query failed for class %s: %s", class_id, exc)
 
         if fallback_scores:
             scores = fallback_scores
