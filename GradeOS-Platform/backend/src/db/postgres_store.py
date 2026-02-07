@@ -43,6 +43,52 @@ def _safe_json_load(value: Any) -> Any:
     return None
 
 
+def _is_schema_mismatch_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return any(
+        token in message
+        for token in [
+            "does not exist",
+            "undefined column",
+            "undefined table",
+            "no such column",
+            "no such table",
+        ]
+    )
+
+
+def _pick_row_value(row: Dict[str, Any], *keys: str, default: Any = None) -> Any:
+    for key in keys:
+        if key in row and row[key] is not None:
+            return row[key]
+    return default
+
+
+def _user_from_row(row: Dict[str, Any]) -> "UserRecord":
+    user_id = _pick_row_value(row, "id", "user_id", default="")
+    username = _pick_row_value(row, "username", default="")
+    display_name = _pick_row_value(row, "name", "real_name", default=username)
+    role = _pick_row_value(row, "role", "user_type", default="student")
+    return UserRecord(
+        id=str(user_id),
+        username=str(username),
+        name=str(display_name) if display_name is not None else None,
+        role=str(role) if role is not None else "student",
+        password_hash=str(_pick_row_value(row, "password_hash", default="") or ""),
+        created_at=str(_pick_row_value(row, "created_at", default="") or ""),
+    )
+
+
+def _class_from_row(row: Dict[str, Any]) -> "ClassRecord":
+    return ClassRecord(
+        id=str(_pick_row_value(row, "id", "class_id", default="")),
+        name=str(_pick_row_value(row, "name", "class_name", default="")),
+        teacher_id=str(_pick_row_value(row, "teacher_id", default="")),
+        invite_code=str(_pick_row_value(row, "invite_code", default="")),
+        created_at=str(_pick_row_value(row, "created_at", default="") or ""),
+    )
+
+
 def _get_connection_string() -> str:
     database_url = os.getenv("DATABASE_URL", "").strip()
     if database_url:
@@ -376,20 +422,38 @@ def create_user(user: UserRecord) -> None:
     if not user.created_at:
         user.created_at = datetime.now().isoformat()
     with get_connection() as conn:
-        conn.execute(
-            """
-            INSERT INTO users (id, username, name, role, password_hash, created_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (
-                user.id,
-                user.username,
-                user.name,
-                user.role,
-                user.password_hash,
-                user.created_at,
-            ),
-        )
+        try:
+            conn.execute(
+                """
+                INSERT INTO users (id, username, name, role, password_hash, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    user.id,
+                    user.username,
+                    user.name,
+                    user.role,
+                    user.password_hash,
+                    user.created_at,
+                ),
+            )
+        except Exception as exc:
+            if not _is_schema_mismatch_error(exc):
+                raise
+            conn.execute(
+                """
+                INSERT INTO users (user_id, username, real_name, user_type, password_hash, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    user.id,
+                    user.username,
+                    user.name,
+                    user.role,
+                    user.password_hash,
+                    user.created_at,
+                ),
+            )
 
 
 def get_user_by_username(username: str) -> Optional[UserRecord]:
@@ -401,33 +465,27 @@ def get_user_by_username(username: str) -> Optional[UserRecord]:
         ).fetchone()
     if not row:
         return None
-    return UserRecord(
-        id=row["user_id"],
-        username=row["username"],
-        name=row["real_name"] or row["username"],
-        role=row["user_type"],
-        password_hash=row["password_hash"],
-        created_at=row["created_at"],
-    )
+    return _user_from_row(row)
 
 
 def get_user_by_id(user_id: str) -> Optional[UserRecord]:
     """Get user by id."""
     with get_connection() as conn:
-        row = conn.execute(
+        row = None
+        for query in (
+            "SELECT * FROM users WHERE id = ?",
             "SELECT * FROM users WHERE user_id = ?",
-            (user_id,),
-        ).fetchone()
+        ):
+            try:
+                row = conn.execute(query, (user_id,)).fetchone()
+                break
+            except Exception as exc:
+                if _is_schema_mismatch_error(exc):
+                    continue
+                raise
     if not row:
         return None
-    return UserRecord(
-        id=row["user_id"],
-        username=row["username"],
-        name=row["real_name"] or row["username"],
-        role=row["user_type"],
-        password_hash=row["password_hash"],
-        created_at=row["created_at"],
-    )
+    return _user_from_row(row)
 
 
 def list_user_class_ids(user_id: str) -> List[str]:
@@ -445,37 +503,56 @@ def create_class_record(record: ClassRecord) -> None:
     if not record.created_at:
         record.created_at = datetime.now().isoformat()
     with get_connection() as conn:
-        conn.execute(
-            """
-            INSERT INTO classes (id, name, teacher_id, invite_code, created_at)
-            VALUES (?, ?, ?, ?, ?)
-            """,
-            (
-                record.id,
-                record.name,
-                record.teacher_id,
-                record.invite_code,
-                record.created_at,
-            ),
-        )
+        try:
+            conn.execute(
+                """
+                INSERT INTO classes (id, name, teacher_id, invite_code, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    record.id,
+                    record.name,
+                    record.teacher_id,
+                    record.invite_code,
+                    record.created_at,
+                ),
+            )
+        except Exception as exc:
+            if not _is_schema_mismatch_error(exc):
+                raise
+            conn.execute(
+                """
+                INSERT INTO classes (class_id, class_name, teacher_id, invite_code, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    record.id,
+                    record.name,
+                    record.teacher_id,
+                    record.invite_code,
+                    record.created_at,
+                ),
+            )
 
 
 def get_class_by_id(class_id: str) -> Optional[ClassRecord]:
     """Get class by id."""
     with get_connection() as conn:
-        row = conn.execute(
+        row = None
+        for query in (
+            "SELECT * FROM classes WHERE id = ?",
             "SELECT * FROM classes WHERE class_id = ?",
-            (class_id,),
-        ).fetchone()
+        ):
+            try:
+                row = conn.execute(query, (class_id,)).fetchone()
+                break
+            except Exception as exc:
+                if _is_schema_mismatch_error(exc):
+                    continue
+                raise
     if not row:
         return None
-    return ClassRecord(
-        id=row["class_id"],
-        name=row["class_name"],
-        teacher_id=row["teacher_id"],
-        invite_code=row["invite_code"],
-        created_at=row["created_at"],
-    )
+    return _class_from_row(row)
 
 
 def get_class_by_invite_code(invite_code: str) -> Optional[ClassRecord]:
@@ -487,13 +564,7 @@ def get_class_by_invite_code(invite_code: str) -> Optional[ClassRecord]:
         ).fetchone()
     if not row:
         return None
-    return ClassRecord(
-        id=row["class_id"],
-        name=row["class_name"],
-        teacher_id=row["teacher_id"],
-        invite_code=row["invite_code"],
-        created_at=row["created_at"],
-    )
+    return _class_from_row(row)
 
 
 def list_classes_by_teacher(teacher_id: str) -> List[ClassRecord]:
@@ -503,21 +574,22 @@ def list_classes_by_teacher(teacher_id: str) -> List[ClassRecord]:
             "SELECT * FROM classes WHERE teacher_id = ? ORDER BY created_at DESC",
             (teacher_id,),
         ).fetchall()
-    return [
-        ClassRecord(
-            id=row["class_id"],
-            name=row["class_name"],
-            teacher_id=row["teacher_id"],
-            invite_code=row["invite_code"],
-            created_at=row["created_at"],
-        )
-        for row in rows
-    ]
+    return [_class_from_row(row) for row in rows]
 
 
 def list_classes_by_student(student_id: str) -> List[ClassRecord]:
     """List classes for a student."""
     queries = [
+        (
+            """
+            SELECT c.id, c.name, c.teacher_id, c.invite_code, c.created_at
+            FROM classes c
+            JOIN class_students cs ON c.id = cs.class_id
+            WHERE cs.student_id = ?
+            ORDER BY c.created_at DESC
+            """,
+            "classes.id + class_students",
+        ),
         (
             """
             SELECT c.class_id, c.class_name, c.teacher_id, c.invite_code, c.created_at
@@ -526,7 +598,17 @@ def list_classes_by_student(student_id: str) -> List[ClassRecord]:
             WHERE cs.student_id = ?
             ORDER BY c.created_at DESC
             """,
-            "class_students",
+            "classes.class_id + class_students",
+        ),
+        (
+            """
+            SELECT c.id, c.name, c.teacher_id, c.invite_code, c.created_at
+            FROM classes c
+            JOIN student_class_relations scr ON c.id = scr.class_id
+            WHERE scr.student_id = ?
+            ORDER BY c.created_at DESC
+            """,
+            "classes.id + student_class_relations",
         ),
         (
             """
@@ -536,7 +618,7 @@ def list_classes_by_student(student_id: str) -> List[ClassRecord]:
             WHERE scr.student_id = ?
             ORDER BY c.created_at DESC
             """,
-            "student_class_relations",
+            "classes.class_id + student_class_relations",
         ),
     ]
 
@@ -547,25 +629,16 @@ def list_classes_by_student(student_id: str) -> List[ClassRecord]:
                 rows = conn.execute(query, (student_id,)).fetchall()
                 break
             except Exception as exc:
-                # 兼容历史库结构差异：某些环境只有其中一张关系表
-                if table_name in str(exc):
+                # 兼容历史库结构差异：新旧表结构差异时尝试下一种查询
+                if _is_schema_mismatch_error(exc):
                     logger.warning(
-                        "list_classes_by_student fallback: relation %s not available (%s)",
+                        "list_classes_by_student fallback: query variant %s failed (%s)",
                         table_name,
                         exc,
                     )
                     continue
                 raise
-    return [
-        ClassRecord(
-            id=row["class_id"],
-            name=row["class_name"],
-            teacher_id=row["teacher_id"],
-            invite_code=row["invite_code"],
-            created_at=str(row["created_at"]) if row["created_at"] else "",
-        )
-        for row in rows
-    ]
+    return [_class_from_row(row) for row in rows]
 
 
 def add_student_to_class(class_id: str, student_id: str) -> None:
@@ -593,8 +666,18 @@ def count_class_students(class_id: str) -> int:
 
 def list_class_students(class_id: str) -> List[UserRecord]:
     """List students in class."""
-    with get_connection() as conn:
-        rows = conn.execute(
+    queries = [
+        (
+            """
+            SELECT u.id, u.username, u.name, u.role, u.password_hash, u.created_at
+            FROM class_students cs
+            JOIN users u ON cs.student_id = u.id
+            WHERE cs.class_id = ?
+            ORDER BY u.name
+            """,
+            "users.id + class_students",
+        ),
+        (
             """
             SELECT u.user_id, u.username, u.real_name, u.user_type, u.password_hash, u.created_at
             FROM class_students cs
@@ -602,19 +685,26 @@ def list_class_students(class_id: str) -> List[UserRecord]:
             WHERE cs.class_id = ?
             ORDER BY u.real_name
             """,
-            (class_id,),
-        ).fetchall()
-    return [
-        UserRecord(
-            id=row["user_id"],
-            username=row["username"],
-            name=row["real_name"],
-            role=row["user_type"] or "student",
-            password_hash=row["password_hash"] or "",
-            created_at=str(row["created_at"]) if row["created_at"] else "",
-        )
-        for row in rows
+            "users.user_id + class_students",
+        ),
     ]
+
+    with get_connection() as conn:
+        rows = []
+        for query, query_name in queries:
+            try:
+                rows = conn.execute(query, (class_id,)).fetchall()
+                break
+            except Exception as exc:
+                if _is_schema_mismatch_error(exc):
+                    logger.warning(
+                        "list_class_students fallback: query variant %s failed (%s)",
+                        query_name,
+                        exc,
+                    )
+                    continue
+                raise
+    return [_user_from_row(row) for row in rows]
 
 
 def create_homework_record(record: HomeworkRecord) -> None:
