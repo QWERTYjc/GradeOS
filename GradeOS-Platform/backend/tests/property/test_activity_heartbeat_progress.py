@@ -1,10 +1,10 @@
-"""Activity 心跳进度报告属性测试
+﻿"""Activity 心跳进度报告属性测试
 
 **功能: architecture-deep-integration, 属性 2: Activity 心跳进度报告**
 **验证: 需求 1.2**
 
 属性 2 定义：对于任意 LangGraph 智能体的状态转换，智能体应当通过 Activity Heartbeat 
-向 Temporal 报告进度，心跳间隔不超过配置的超时时间的一半。
+向 编排运行时 报告进度，心跳间隔不超过配置的超时时间的一半。
 """
 
 import pytest
@@ -325,3 +325,4 @@ class TestHeartbeatProgressSequence:
         # 验证进度递增
         for i in range(1, len(put_progress)):
             assert put_progress[i] >= put_progress[i-1], "进度应当递增"
+

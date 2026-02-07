@@ -35,6 +35,7 @@ import os
 import redis.asyncio as redis
 from redis.exceptions import RedisError
 
+from src.config.runtime_controls import get_runtime_controls
 from src.models.enums import SubmissionStatus
 from src.orchestration.base import Orchestrator, RunStatus
 from src.api.dependencies import get_orchestrator
@@ -74,16 +75,20 @@ ws_locks: Dict[int, asyncio.Lock] = {}
 # 缓存图片，避免 images_ready 早于 WebSocket 连接导致前端丢失
 batch_image_cache: Dict[str, Dict[str, dict]] = {}
 _active_stream_tasks: Dict[str, asyncio.Task] = {}
+_RUNTIME_CONTROLS = get_runtime_controls()
 DEBUG_LOG_PATH = os.getenv("GRADEOS_DEBUG_LOG_PATH")
-TEACHER_MAX_ACTIVE_RUNS = int(os.getenv("TEACHER_MAX_ACTIVE_RUNS", "3"))
-RUN_QUEUE_POLL_SECONDS = float(os.getenv("GRADING_RUN_POLL_SECONDS", "2.0"))
+TEACHER_MAX_ACTIVE_RUNS = _RUNTIME_CONTROLS.teacher_max_active_runs
+RUN_QUEUE_POLL_SECONDS = _RUNTIME_CONTROLS.run_queue_poll_seconds
 # 修复：设置默认超时为 60 秒，避免无限等待
-RUN_QUEUE_TIMEOUT_SECONDS = float(os.getenv("GRADING_RUN_WAIT_TIMEOUT_SECONDS", "60"))
+RUN_QUEUE_TIMEOUT_SECONDS = _RUNTIME_CONTROLS.run_queue_timeout_seconds
+RUN_UPLOAD_QUEUE_WATERMARK = _RUNTIME_CONTROLS.upload_queue_watermark
+RUN_UPLOAD_ACTIVE_WATERMARK = _RUNTIME_CONTROLS.upload_active_watermark
 REDIS_PROGRESS_TTL_SECONDS = int(os.getenv("REDIS_PROGRESS_TTL_SECONDS", "86400"))
 REDIS_PROGRESS_KEY_PREFIX = os.getenv("REDIS_PROGRESS_KEY_PREFIX", "batch_progress")
 _REDIS_CACHE_SKIP_TYPES = {"images_ready", "rubric_images_ready", "llm_stream_chunk"}
 _REDIS_CLIENT: Optional[redis.Redis] = None
 _REDIS_CLIENT_CHECKED: bool = False
+_BATCH_IMAGE_CACHE_MAX_BATCHES = _RUNTIME_CONTROLS.batch_image_cache_max_batches
 
 
 def _is_ws_connected(websocket: WebSocket) -> bool:
@@ -91,6 +96,19 @@ def _is_ws_connected(websocket: WebSocket) -> bool:
         websocket.client_state == WebSocketState.CONNECTED
         and websocket.application_state == WebSocketState.CONNECTED
     )
+
+
+def _get_batch_cache_bucket(batch_id: str) -> Dict[str, Any]:
+    """Get/create a bounded in-memory cache bucket for a batch."""
+    if batch_id not in batch_image_cache:
+        if _BATCH_IMAGE_CACHE_MAX_BATCHES > 0:
+            while len(batch_image_cache) >= _BATCH_IMAGE_CACHE_MAX_BATCHES:
+                oldest = next(iter(batch_image_cache), None)
+                if oldest is None:
+                    break
+                batch_image_cache.pop(oldest, None)
+        batch_image_cache[batch_id] = {}
+    return batch_image_cache[batch_id]
 
 
 def _discard_connection(batch_id: str, websocket: WebSocket) -> None:
@@ -236,6 +254,32 @@ def _normalize_teacher_key(teacher_id: Optional[str]) -> str:
     return "anonymous"
 
 
+async def _enforce_submit_backpressure(run_controller, teacher_key: str) -> None:
+    if not run_controller:
+        return
+    capacity = await run_controller.get_teacher_capacity(teacher_key)
+    active_count = int(capacity.get("active_count", 0))
+    queued_count = int(capacity.get("queued_count", 0))
+
+    if RUN_UPLOAD_ACTIVE_WATERMARK > 0 and active_count >= RUN_UPLOAD_ACTIVE_WATERMARK:
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                f"Too many active runs for teacher={teacher_key}. "
+                f"active={active_count}, limit={RUN_UPLOAD_ACTIVE_WATERMARK}"
+            ),
+        )
+
+    if RUN_UPLOAD_QUEUE_WATERMARK > 0 and queued_count >= RUN_UPLOAD_QUEUE_WATERMARK:
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                f"Queue watermark reached for teacher={teacher_key}. "
+                f"queued={queued_count}, limit={RUN_UPLOAD_QUEUE_WATERMARK}"
+            ),
+        )
+
+
 class BatchSubmissionResponse(BaseModel):
     """批量提交响应"""
 
@@ -320,12 +364,12 @@ async def broadcast_progress(batch_id: str, message: dict):
     """向所有连接的 WebSocket 客户端广播进度"""
     msg_type = message.get("type", "unknown")
     if msg_type in ("images_ready", "rubric_images_ready", "review_required"):
-        cached = batch_image_cache.setdefault(batch_id, {})
+        cached = _get_batch_cache_bucket(batch_id)
         cached[msg_type] = message
     if msg_type == "llm_stream_chunk":
         node_id = message.get("nodeId") or ""
         if node_id in ("rubric_parse", "rubric_self_review", "rubric_review"):
-            cached = batch_image_cache.setdefault(batch_id, {})
+            cached = _get_batch_cache_bucket(batch_id)
             stream_cache = cached.setdefault("llm_stream_cache", {})
             cache_key = f"{node_id}:{message.get('agentId') or 'all'}:{message.get('streamType') or 'output'}"
             existing = stream_cache.get(cache_key, {})
@@ -650,6 +694,12 @@ async def submit_batch(
         exam_id = str(uuid.uuid4())
 
     batch_id = str(uuid.uuid4())
+    teacher_key = _normalize_teacher_key(teacher_id)
+    try:
+        run_controller = await get_run_controller()
+    except Exception:
+        run_controller = None
+    await _enforce_submit_backpressure(run_controller, teacher_key)
 
     logger.info(
         f"收到批量提交（LangGraph）: "
@@ -696,8 +746,6 @@ async def submit_batch(
 
         total_pages = len(answer_images)
 
-        teacher_key = _normalize_teacher_key(teacher_id)
-        run_controller = await get_run_controller()
         if run_controller:
             await run_controller.register_run(
                 GradingRunSnapshot(
@@ -721,7 +769,7 @@ async def submit_batch(
                 base64_images = [base64.b64encode(img).decode("utf-8") for img in answer_images]
 
                 # Cache for direct WebSocket connection
-                batch_image_cache.setdefault(batch_id, {})["images_ready"] = {
+                _get_batch_cache_bucket(batch_id)["images_ready"] = {
                     "type": "images_ready",
                     "images": base64_images,
                 }
@@ -761,7 +809,7 @@ async def submit_batch(
                     base64_rubric_images = [
                         base64.b64encode(img).decode("utf-8") for img in rubric_images
                     ]
-                    batch_image_cache.setdefault(batch_id, {})["rubric_images_ready"] = {
+                    _get_batch_cache_bucket(batch_id)["rubric_images_ready"] = {
                         "type": "rubric_images_ready",
                         "images": base64_rubric_images,
                     }
@@ -843,6 +891,8 @@ async def submit_batch(
                 logger.warning(f"[FileStorage] 文件存储失败（不影响批改流程）: {e}")
 
         file_index_by_page: Dict[int, Dict[str, Any]] = {}
+        answer_image_refs: List[Dict[str, Any]] = []
+        rubric_image_refs: List[Dict[str, Any]] = []
         if stored_files:
             public_base = (
                 os.getenv("BACKEND_PUBLIC_URL")
@@ -861,10 +911,36 @@ async def submit_batch(
                 if meta.get("type") == "answer":
                     page_idx = meta.get("page_index")
                     if page_idx is not None:
+                        file_url = _build_file_url(item.file_id)
                         file_index_by_page[int(page_idx)] = {
                             "file_id": item.file_id,
                             "content_type": item.content_type,
+                            "file_url": file_url,
                         }
+                        answer_image_refs.append(
+                            {
+                                "artifact_id": f"answer_page_{int(page_idx)}",
+                                "uri": file_url,
+                                "metadata": {
+                                    "page_index": int(page_idx),
+                                    "content_type": item.content_type,
+                                    "source": "file_storage",
+                                },
+                            }
+                        )
+                elif meta.get("type") == "rubric":
+                    file_url = _build_file_url(item.file_id)
+                    rubric_image_refs.append(
+                        {
+                            "artifact_id": f"rubric_page_{meta.get('page_index', len(rubric_image_refs))}",
+                            "uri": file_url,
+                            "metadata": {
+                                "page_index": meta.get("page_index"),
+                                "content_type": item.content_type,
+                                "source": "file_storage",
+                            },
+                        }
+                    )
 
 
 
@@ -898,6 +974,8 @@ async def submit_batch(
             "temp_dir": str(temp_path),  # 临时目录（用于清理）
             "rubric_images": rubric_images,
             "answer_images": answer_images,
+            "answer_image_refs": answer_image_refs,
+            "rubric_image_refs": rubric_image_refs,
             "file_index_by_page": file_index_by_page,
             "api_key": api_key,
             "teacher_id": teacher_key,

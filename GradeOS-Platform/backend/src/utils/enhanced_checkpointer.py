@@ -1,7 +1,7 @@
 """
 增强型 PostgreSQL 检查点器
 
-提供增量状态存储、数据压缩、历史检查点恢复和 Temporal 心跳集成。
+提供增量状态存储、数据压缩、历史检查点恢复和进度心跳集成。
 
 验证：需求 9.1, 9.2, 9.3, 9.4, 1.2
 """
@@ -56,7 +56,7 @@ class EnhancedPostgresCheckpointer(BaseCheckpointSaver):
     特性：
     - 增量状态存储（仅保存变化的部分）
     - 大数据压缩（>1MB 使用 zlib）
-    - 与 Temporal Activity Heartbeat 集成
+    - 与任务执行心跳回调集成
     - 历史检查点恢复
     - 保存失败重试机制
 
@@ -84,7 +84,7 @@ class EnhancedPostgresCheckpointer(BaseCheckpointSaver):
         Args:
             pool_manager: 统一连接池管理器
             compression_threshold: 压缩阈值（字节），超过此大小的数据将被压缩
-            heartbeat_callback: Temporal Activity 心跳回调函数，签名为 (stage: str, progress: float)
+            heartbeat_callback: 进度心跳回调函数，签名为 (stage: str, progress: float)
             max_retries: 保存失败时的最大重试次数
             serde: 序列化器，默认使用 JsonPlusSerializer
         """

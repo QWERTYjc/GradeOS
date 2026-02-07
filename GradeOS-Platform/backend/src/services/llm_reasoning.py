@@ -2,7 +2,7 @@
 
 本模块实现了批改工作流的核心推理能力，集成了：
 - RubricRegistry: 动态获取评分标准
-- GradingSkills: Agent 技能模块
+- RubricRegistry: 评分标准动态检索
 - 得分点逐一核对逻辑
 - 另类解法支持
 - 指数退避重试机制 (Requirement 9.1)
@@ -86,7 +86,7 @@ class LLMReasoningClient:
     """
     LLM 深度推理客户端，用于批改智能体的各个推理节点
 
-    集成了 RubricRegistry 和 GradingSkills，支持：
+    集成 RubricRegistry，支持：
     - 动态评分标准获取 (Requirement 1.1)
     - 得分点逐一核对 (Requirement 1.2)
     - 另类解法支持 (Requirement 1.3)
@@ -137,7 +137,7 @@ class LLMReasoningClient:
         self.model_name = model_name
         self.temperature = 0.2  # 低温度以保持一致性
 
-        # 集成 RubricRegistry (Requirement 1.1)（已移除 Agent Skill）
+        # 集成 RubricRegistry (Requirement 1.1)
         self._rubric_registry = rubric_registry
 
     @staticmethod
@@ -2653,7 +2653,7 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
         """
         使用动态评分标准批改单页 (Requirements 1.1, 1.2, 1.3)
 
-        集成 RubricRegistry 和 GradingSkills，实现：
+        集成 RubricRegistry，实现：
         1. 识别页面中的题目编号
         2. 为每道题动态获取评分标准
         3. 逐一核对得分点

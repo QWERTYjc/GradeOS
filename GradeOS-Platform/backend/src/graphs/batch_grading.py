@@ -15,6 +15,7 @@ from langgraph.types import Send, interrupt
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langchain_core.runnables import RunnableConfig, RunnableLambda
 
+from src.config.runtime_controls import get_runtime_controls
 from src.graphs.state import BatchGradingGraphState
 from src.utils.llm_thinking import split_thinking_content
 
@@ -72,7 +73,7 @@ class BatchConfig:
     Requirements: 3.1, 10.1
     """
 
-    batch_size: int = 1000  # 每批处理的页面数量 (解除限制)
+    batch_size: int = 50  # 每批处理的页面数量
     max_concurrent_workers: int = 5  # 最大并发 Worker 数量
     max_retries: int = 2  # 批次失败最大重试次数
     retry_delay: float = 1.0  # 重试延迟（秒）
@@ -80,8 +81,9 @@ class BatchConfig:
     @classmethod
     def from_env(cls) -> "BatchConfig":
         """从环境变量加载配置"""
+        runtime_controls = get_runtime_controls()
         return cls(
-            batch_size=int(os.getenv("GRADING_BATCH_SIZE", "1000")),
+            batch_size=runtime_controls.run_batch_chunk_size,
             max_concurrent_workers=int(os.getenv("GRADING_MAX_WORKERS", "5")),
             max_retries=int(os.getenv("GRADING_MAX_RETRIES", "2")),
             retry_delay=float(os.getenv("GRADING_RETRY_DELAY", "1.0")),

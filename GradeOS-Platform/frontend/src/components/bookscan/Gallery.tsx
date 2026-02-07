@@ -4,7 +4,6 @@ import { AppContext } from './AppContext';
 import { Trash2, CheckSquare, Square, Wand2, Images, ArrowLeft, ArrowRight, Move, Loader2, Send, Split } from 'lucide-react';
 import ImageEditor from './ImageEditor';
 import ImageViewer from './ImageViewer';
-import { submitToGradingSystem, SubmissionResponse } from './submissionService';
 import { ScannedImage, Session } from './types';
 
 interface StudentNameMapping {
@@ -125,6 +124,10 @@ export default function Gallery({
   };
 
   const selectAll = () => {
+    if (!onSubmitBatch) {
+      alert('Submission handler is not configured for this page.');
+      return;
+    }
     if (!currentSession) return;
     if (selectedImages.size === currentSession.images.length) {
       setSelectedImages(new Set());
@@ -164,6 +167,10 @@ export default function Gallery({
       return;
     }
     if (!currentSession) return;
+    if (!onSubmitBatch) {
+      alert('Submission handler is not configured for this page.');
+      return;
+    }
 
     const imagesToSend = selectedImages.size > 0
       ? currentSession.images.filter(img => selectedImages.has(img.id))
@@ -176,17 +183,8 @@ export default function Gallery({
 
     setIsSubmitting(true);
     try {
-      if (onSubmitBatch) {
-        console.log('Gallery: Using provided onSubmitBatch');
-        await onSubmitBatch(imagesToSend);
-      } else {
-        console.warn('Gallery: Falling back to submitToGradingSystem (Legacy)');
-        alert("Warning: Using legacy submission path! Check console logs.");
-        const result: SubmissionResponse = await submitToGradingSystem(imagesToSend);
-
-        console.log("API Response:", result);
-        alert(`Uploaded Successfully!\n\nSubmission ID: ${result.submission_id}\nStatus: ${result.status}`);
-      }
+      console.log('Gallery: Using provided onSubmitBatch');
+      await onSubmitBatch(imagesToSend);
 
       setSelectedImages(new Set());
     } catch (e: any) {
@@ -211,8 +209,9 @@ export default function Gallery({
             {/* Submit Button */}
             <button
               onClick={handleDirectSubmit}
-              disabled={isRubricMode || isSubmitting || (currentSession?.images.length === 0)}
+              disabled={isRubricMode || isSubmitting || !onSubmitBatch || (currentSession?.images.length === 0)}
               className="flex items-center gap-1.5 px-3 py-2 text-xs bg-slate-900 text-white rounded shadow-sm hover:bg-slate-800 transition-all whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed font-medium"
+              title={!isRubricMode && !onSubmitBatch ? 'Submission handler is not configured.' : undefined}
             >
               {isSubmitting ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
               {isRubricMode ? 'Rubric Ready' : (isSubmitting ? 'Uploading...' : (submitLabel || 'Submit'))}

@@ -1,9 +1,9 @@
-"""追踪标识传递完整性属性测试
+﻿"""追踪标识传递完整性属性测试
 
 **功能: architecture-deep-integration, 属性 10: 追踪标识传递完整性**
 **验证: 需求 5.1, 5.2, 5.3**
 
-属性 10 定义：对于任意 API 请求，生成的 trace_id 应当传递给 Temporal 工作流、
+属性 10 定义：对于任意 API 请求，生成的 trace_id 应当传递给 编排运行时 工作流、
 所有 Activity 调用和 LangGraph 节点，所有组件的日志应当包含相同的 trace_id。
 """
 
@@ -293,7 +293,7 @@ class TestCrossComponentPropagation:
         **功能: architecture-deep-integration, 属性 10: 追踪标识传递完整性**
         **验证: 需求 5.1, 5.2, 5.3**
         
-        trace_id 应当正确传递给 Temporal 工作流、Activity 和 LangGraph 节点。
+        trace_id 应当正确传递给 编排运行时 工作流、Activity 和 LangGraph 节点。
         """
         service = create_tracing_service()
         
@@ -307,10 +307,10 @@ class TestCrossComponentPropagation:
             name="api_request",
         )
         
-        # 模拟 Temporal 工作流跨度
+        # 模拟 编排运行时 工作流跨度
         workflow_span = service.start_span(
             trace_id=trace_id,
-            kind=SpanKind.TEMPORAL_WORKFLOW,
+            kind=SpanKind.ORCHESTRATION_RUN,
             name=workflow_name,
             parent_span_id=api_span.span_id,
         )
@@ -320,7 +320,7 @@ class TestCrossComponentPropagation:
         for activity_name in activity_names:
             activity_span = service.start_span(
                 trace_id=trace_id,
-                kind=SpanKind.TEMPORAL_ACTIVITY,
+                kind=SpanKind.ORCHESTRATION_TASK,
                 name=activity_name,
                 parent_span_id=workflow_span.span_id,
             )
@@ -435,3 +435,4 @@ class TestTraceSpanSerialization:
         assert recovered_span.attributes == span.attributes
         assert recovered_span.status == span.status
         assert recovered_span.duration_ms == span.duration_ms
+

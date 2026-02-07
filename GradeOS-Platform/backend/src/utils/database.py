@@ -235,7 +235,7 @@ async def get_db_pool() -> AsyncConnectionPool:
     """
     获取数据库连接池
 
-    用于 Temporal Workers 和其他需要直接访问连接池的组件。
+    用于后台 worker 和其他需要直接访问连接池的组件。
 
     Returns:
         AsyncConnectionPool: 数据库连接池实例

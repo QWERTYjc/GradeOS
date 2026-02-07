@@ -17,21 +17,20 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from fastapi import FastAPI, Request, WebSocket, HTTPException, status
+from fastapi import FastAPI, Request, HTTPException, status
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import redis.asyncio as redis
 
 from src.api.routes import unified_api
 from src.api.routes import batch_langgraph
+from src.api.routes import runs
 
-# 暂时注释掉其他路由以避免导入错误
-# from src.api.routes import submissions, rubrics, reviews, batch
 from src.api.middleware.rate_limit import RateLimitMiddleware
 from src.api.dependencies import init_orchestrator, close_orchestrator, get_orchestrator
 from src.utils.database import init_db_pool, close_db_pool, db
 from src.utils.pool_manager import UnifiedPoolManager, PoolConfig
-from src.services.enhanced_api import EnhancedAPIService, QueryParams
+from src.services.enhanced_api import EnhancedAPIService
 from src.services.tracing import TracingService
 from src.config.deployment_mode import get_deployment_mode, DeploymentMode
 
@@ -283,6 +282,7 @@ async def global_exception_handler(request: Request, exc: Exception):
 # 注册路由
 app.include_router(unified_api.router, prefix="/api", tags=["GradeOS统一API"])
 app.include_router(batch_langgraph.router, prefix="/api", tags=["批量批改"])
+app.include_router(runs.router, prefix="/api", tags=["运行观测"])
 logger.info(
     "DEBUG: batch_langgraph router included with prefix=/api (router has internal /batch prefix)"
 )
@@ -330,10 +330,6 @@ try:
 except ImportError as e:
     logger.warning(f"OpenBoard 论坛 API 导入失败: {e}")
 
-# app.include_router(submissions.router)
-# app.include_router(rubrics.router)
-# app.include_router(reviews.router)
-# app.include_router(batch.router)
 
 
 # 健康检查端点
@@ -366,106 +362,6 @@ async def root():
     return {"message": "AI 批改系统 API", "version": "1.0.0", "docs": "/docs", "redoc": "/redoc"}
 
 
-# ==================== WebSocket 端点 ====================
-
-
-@app.websocket("/ws/submissions/{submission_id}")
-async def websocket_endpoint(websocket: WebSocket, submission_id: str):
-    """
-    WebSocket 实时推送端点
-
-    订阅指定提交的状态变更，实时推送更新。
-
-    验证：需求 7.1
-    """
-    if enhanced_api_service:
-        await enhanced_api_service.handle_websocket(websocket, submission_id)
-    else:
-        await websocket.accept()
-        await websocket.send_json({"error": "WebSocket 服务不可用"})
-        await websocket.close()
-
-
-# ==================== 增强查询端点 ====================
-
-
-@app.get("/api/v1/submissions", tags=["submissions"])
-async def list_submissions(
-    page: int = 1,
-    page_size: int = 20,
-    sort_by: Optional[str] = None,
-    sort_order: str = "desc",
-    status: Optional[str] = None,
-    exam_id: Optional[str] = None,
-    student_id: Optional[str] = None,
-):
-    """
-    分页查询提交列表
-
-    支持分页、排序和过滤功能。
-
-    验证：需求 7.2
-    """
-    if not enhanced_api_service:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="增强 API 服务不可用"
-        )
-
-    # 构建查询参数
-    filters = {}
-    if status:
-        filters["status"] = status
-    if exam_id:
-        filters["exam_id"] = exam_id
-    if student_id:
-        filters["student_id"] = student_id
-
-    params = QueryParams(
-        page=page,
-        page_size=page_size,
-        sort_by=sort_by,
-        sort_order=sort_order,
-        filters=filters if filters else None,
-    )
-
-    # 执行查询
-    result = await enhanced_api_service.query_with_pagination(table="submissions", params=params)
-
-    return result
-
-
-@app.get("/api/v1/submissions/{submission_id}/fields", tags=["submissions"])
-async def get_submission_fields(submission_id: str, fields: str):
-    """
-    字段选择查询
-
-    仅返回指定的字段，减少数据传输。
-
-    Args:
-        submission_id: 提交 ID
-        fields: 逗号分隔的字段列表，例如 "submission_id,status,total_score"
-
-    验证：需求 7.3
-    """
-    if not enhanced_api_service:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="增强 API 服务不可用"
-        )
-
-    # 解析字段列表
-    field_set = set(f.strip() for f in fields.split(",") if f.strip())
-
-    if not field_set:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="必须指定至少一个字段")
-
-    # 执行查询
-    result = await enhanced_api_service.query_with_field_selection(
-        table="submissions", record_id=submission_id, fields=field_set, id_field="submission_id"
-    )
-
-    return result
-
-
 @app.get("/api/v1/admin/slow-queries", tags=["admin"])
 async def get_slow_queries(limit: int = 100, min_duration_ms: Optional[int] = None):
     """
@@ -492,16 +388,12 @@ async def get_api_stats():
     """
     获取 API 统计信息
 
-    返回 API 服务的统计信息，包括查询数、慢查询数、WebSocket 连接数等。
+    返回 API 服务统计信息（例如查询数量和慢查询记录）。
     """
     if not enhanced_api_service:
         return {"error": "增强 API 服务不可用"}
 
-    stats = enhanced_api_service.stats
-    stats["active_websocket_connections"] = enhanced_api_service.get_active_connections_count()
-    stats["subscribed_submissions"] = enhanced_api_service.get_subscribed_submissions()
-
-    return stats
+    return enhanced_api_service.stats
 
 
 if __name__ == "__main__":

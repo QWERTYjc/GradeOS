@@ -57,8 +57,8 @@ exports/
 .DS_Store
 Thumbs.db
 
-# Temporal
-temporal-data/
+# Legacy runtime artifacts
+orchestration-data/
 
 # Alembic
 

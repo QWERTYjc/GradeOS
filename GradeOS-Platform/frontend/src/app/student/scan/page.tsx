@@ -270,7 +270,11 @@ function StudentScanPageInner() {
         </div>
 
         <div className="flex-1 overflow-hidden">
-          {activeTab === 'scan' ? <Scanner /> : <Gallery />}
+          {activeTab === 'scan' ? (
+            <Scanner />
+          ) : (
+            <Gallery onSubmitBatch={async () => handleSubmit()} />
+          )}
         </div>
 
         {isSubmitting && (

@@ -35,8 +35,8 @@ class SpanKind(str, Enum):
     """
 
     API = "api"
-    TEMPORAL_WORKFLOW = "temporal_workflow"
-    TEMPORAL_ACTIVITY = "temporal_activity"
+    ORCHESTRATION_RUN = "orchestration_run"
+    ORCHESTRATION_TASK = "orchestration_task"
     LANGGRAPH_NODE = "langgraph_node"
     DATABASE = "database"
     CACHE = "cache"

@@ -2,7 +2,7 @@
 统一连接池管理器
 
 提供 PostgreSQL 和 Redis 的共享连接池，
-供 Temporal Activities、LangGraph Checkpointer 和 Repository 层使用。
+供任务执行器、LangGraph Checkpointer 和服务层使用。
 
 验证：需求 2.1, 8.1, 8.2, 8.3, 8.4, 8.5
 """
@@ -123,7 +123,7 @@ class UnifiedPoolManager:
     统一连接池管理器
 
     提供 PostgreSQL 和 Redis 的共享连接池，
-    供 Temporal Activities、LangGraph Checkpointer 和 Repository 层使用。
+    供任务执行器、LangGraph Checkpointer 和服务层使用。
 
     特性：
     - 单例模式确保全局唯一实例

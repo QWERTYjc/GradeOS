@@ -227,7 +227,7 @@ async def daily_rule_mining_task():
         # TODO: 发送到补丁生成器
         print(f"  可修复模式: {pattern.description}")
 
-# 在 Temporal 工作流中调度
+# 在编排任务中调度
 # 或使用 APScheduler 等定时任务框架
 ```
 

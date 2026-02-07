@@ -1,7 +1,7 @@
 """LangGraph Worker
 
 后台执行 LangGraph Graph 的 Worker 进程。
-替代 Temporal Worker，提供持久化执行能力。
+基于 LangGraph 的持久化执行 worker。
 
 使用方法：
     python -m src.workers.langgraph_worker

@@ -1,70 +1,52 @@
-# GradeOS Backend
+﻿# GradeOS Backend
 
-AI-Powered Grading Engine with FastAPI + LangGraph + Temporal
+AI-powered grading backend built on FastAPI and LangGraph.
 
-## Deployment Modes
-
-GradeOS supports two deployment modes:
-
-### 1. Database Mode (Full Features)
-- Complete functionality with PostgreSQL and Redis
-- Data persistence and history
-- Analytics and WebSocket support
-
-### 2. No-Database Mode (Lightweight)
-- Quick start with minimal dependencies
-- Only requires Gemini API Key
-- Uses in-memory caching
-- Perfect for testing and small-scale use
-
-See [No-Database Mode Guide](docs/NO_DATABASE_MODE.md) for details.
+## Stack
+- FastAPI
+- LangGraph
+- PostgreSQL (optional in no-db mode)
+- Redis (optional in no-db mode)
 
 ## Quick Start
 
-### No-Database Mode (Fastest)
-
+### No-Database Mode
 ```bash
-# Install dependencies
 uv sync
-
-# Set Gemini API Key only
 export LLM_API_KEY="your-api-key"
-
-# Start API server
 uvicorn src.api.main:app --reload --port 8001
 ```
 
-### Database Mode (Full Features)
-
+### Database Mode
 ```bash
-# Install dependencies
 uv sync
-
-# Configure environment
 cp .env.example .env
-# Edit .env with your LLM_API_KEY, DATABASE_URL, REDIS_URL
-
-# Database migration
-alembic upgrade head
-
-# Start API server
+# set LLM_API_KEY, DATABASE_URL, REDIS_URL
+uv run alembic upgrade head
 uvicorn src.api.main:app --reload --port 8001
 ```
 
-## API Endpoints
+## Main Endpoints
+- `GET /health`
+- `POST /api/homework/submit-scan`
+- `POST /api/batch/submit`
+- `GET /api/batch/status/{batch_id}`
+- `GET /api/batch/results/{batch_id}`
+- `WS /api/batch/ws/{batch_id}`
+- `GET /api/runs/{run_id}/metrics`
+- `GET /api/runs/{run_id}/events?after_seq=`
+- `GET /api/runs/{run_id}/artifacts/{artifact_id}`
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/batch/grade-cached` | POST | Batch grading with caching |
-| `/batch/ws/{batch_id}` | WS | Real-time progress |
-| `/api/v1/submissions` | POST | Single submission |
-| `/health` | GET | Health check + deployment mode |
+## Runtime Controls
+- `RUN_MAX_CONCURRENCY`: max concurrent active runs in orchestrator.
+- `TEACHER_MAX_ACTIVE_RUNS`: per-teacher active run slots.
+- `RUN_MAX_PARALLEL_LLM_CALLS`: global max parallel LLM calls for orchestration.
+- `RUN_BATCH_CHUNK_SIZE`: grading batch chunk size (default `50`).
+- `SOFT_BUDGET_USD_PER_RUN`: soft budget warning threshold per run (`0` disables).
+- `BATCH_IMAGE_CACHE_MAX_BATCHES`: in-memory image cache batch cap.
+- `RUN_UPLOAD_QUEUE_WATERMARK`: optional queued-run watermark per teacher (`0` disables).
+- `RUN_UPLOAD_ACTIVE_WATERMARK`: optional active-run watermark per teacher (`0` disables).
 
-## Architecture
-
-- **FastAPI** - API Gateway
-- **LangGraph** - Agent reasoning framework
-- **Temporal** - Workflow orchestration
-- **PostgreSQL** - Primary database (optional in no-database mode)
-- **Redis** - Caching & rate limiting (optional in no-database mode)
-- **Gemini 3.0 Flash** - Vision-native grading
+## Notes
+- Legacy grading route modules were removed.
+- Worker image now runs a single LangGraph worker entrypoint.

@@ -1,6 +1,6 @@
 """Orchestrator 抽象接口
 
-定义编排器的统一接口，隔离业务层对具体编排引擎（Temporal/LangGraph）的依赖。
+定义编排器的统一接口，隔离业务层对具体执行引擎的依赖。
 
 验证：需求 1.1, 1.2, 1.3, 1.4, 1.5, 1.6
 """
@@ -52,7 +52,7 @@ class Orchestrator(ABC):
     """编排器抽象接口
 
     提供统一的工作流编排能力，支持启动、查询、取消、重试等操作。
-    业务层通过此接口调用编排能力，无需关心底层是 Temporal 还是 LangGraph。
+    业务层通过此接口调用编排能力，无需关心底层具体实现。
 
     验证：需求 1.1, 1.2, 1.3, 1.4, 1.5, 1.6
     """
@@ -175,3 +175,17 @@ class Orchestrator(ABC):
         验证：需求 1.6
         """
         pass
+
+    async def get_run_metrics(self, run_id: str) -> Optional[Dict[str, Any]]:
+        """Optional extension: return run-level metrics."""
+        raise NotImplementedError("get_run_metrics is not implemented")
+
+    async def get_run_events(
+        self, run_id: str, after_seq: int = 0, limit: int = 200
+    ) -> List[Dict[str, Any]]:
+        """Optional extension: return incrementally queryable run events."""
+        raise NotImplementedError("get_run_events is not implemented")
+
+    async def get_run_artifact(self, run_id: str, artifact_id: str) -> Optional[Dict[str, Any]]:
+        """Optional extension: resolve artifact reference by run and artifact id."""
+        raise NotImplementedError("get_run_artifact is not implemented")

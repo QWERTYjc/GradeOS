@@ -1,0 +1,24 @@
+﻿# Global cache and build artifacts
+.tmp/
+temp/
+
+# Node/Next artifacts
+**/node_modules/
+**/.next/
+
+# Python cache artifacts
+**/__pycache__/
+**/*.pyc
+
+# Local logs and runtime dumps
+*.log
+*.tmp
+
+# One-off screenshots and reports generated during ad-hoc debugging
+**/railway_*.png
+**/teacher_*.png
+**/student_*.png
+
+# Keep research/test assets requested by product
+!测试文件/
+!调研数据/

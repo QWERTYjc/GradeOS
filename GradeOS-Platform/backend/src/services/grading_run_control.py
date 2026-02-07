@@ -273,6 +273,27 @@ class RedisGradingRunController:
             log_redis_operation("ZREM", queue_key, error=exc)
             logger.debug("Failed to remove grading run from queue: %s", exc)
 
+    async def get_teacher_capacity(self, teacher_key: str) -> Dict[str, int]:
+        """Return active/queued run counts for submission backpressure checks."""
+        active_key = self._active_set_key(teacher_key)
+        queue_key = self._queue_key(teacher_key)
+        now = int(time.time())
+        try:
+            # Prune stale active slots before counting.
+            await self._redis.zremrangebyscore(active_key, "-inf", now - RUN_SLOT_TTL_SECONDS)
+            active_count = int(await self._redis.zcard(active_key))
+            queued_count = int(await self._redis.zcard(queue_key))
+            return {
+                "active_count": active_count,
+                "queued_count": queued_count,
+            }
+        except RedisError as exc:
+            logger.debug("Failed to fetch teacher capacity: %s", exc)
+            return {
+                "active_count": 0,
+                "queued_count": 0,
+            }
+
     async def list_runs(self, teacher_key: str) -> List[GradingRunSnapshot]:
         run_set_key = self._run_set_key(teacher_key)
         try:
