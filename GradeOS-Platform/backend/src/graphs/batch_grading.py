@@ -1559,7 +1559,7 @@ def grading_fanout_router(state: BatchGradingGraphState) -> List[Send]:
             
             if not images_to_use:
                 logger.error(f"[grading_fanout] ❌ 无法恢复图片，跳过批改直接进入 confession")
-                return [Send("confession", state)]
+                return [Send("logic_review", state)]
     
     # 更新变量名以保持后续代码兼容
     processed_images = images_to_use
