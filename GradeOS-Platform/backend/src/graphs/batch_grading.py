@@ -4,6 +4,7 @@ import asyncio
 import json
 import re
 import time
+import copy
 from functools import lru_cache
 from typing import Optional, List, Dict, Any, Literal, Tuple
 from datetime import datetime
