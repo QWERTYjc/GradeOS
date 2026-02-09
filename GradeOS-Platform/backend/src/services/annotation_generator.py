@@ -95,6 +95,17 @@ async def generate_annotations_for_student(
     if not page_image_map:
         logger.warning(f"学生 {student_key} 没有可用的页面图片")
         return annotations
+
+    # Imported grading results often store question.page_indices as 0..N-1 (relative
+    # to the student's answer pages) while page_images.page_index may be absolute
+    # PDF page numbers (e.g. 26, 27). Build a stable mapping so we can match
+    # questions to pages in both cases.
+    sorted_page_indices = sorted(page_image_map.keys())
+    actual_to_relative: Dict[int, int] = {actual: idx for idx, actual in enumerate(sorted_page_indices)}
+    logger.info(
+        f"[Annotation] page_index mapping for {student_key}: actual={sorted_page_indices} "
+        f"-> relative=0..{len(sorted_page_indices) - 1}"
+    )
     
     # 为每个页面生成批注
     for page_idx, page_image in page_image_map.items():
@@ -103,6 +114,7 @@ async def generate_annotations_for_student(
                 grading_history_id=grading_history_id,
                 student_key=student_key,
                 page_index=page_idx,
+                question_page_index=actual_to_relative.get(page_idx, page_idx),
                 page_image=page_image,
                 question_results=question_results,
                 fallback_images=fallback_images or None,
@@ -119,6 +131,7 @@ async def _generate_annotations_for_page(
     grading_history_id: str,
     student_key: str,
     page_index: int,
+    question_page_index: int,
     page_image: GradingPageImage,
     question_results: List[Dict[str, Any]],
     fallback_images: Optional[Dict[int, bytes]] = None,
@@ -131,7 +144,9 @@ async def _generate_annotations_for_page(
     page_questions = []
     for q in question_results:
         q_pages = q.get("page_indices") or q.get("pageIndices") or []
-        if page_index in q_pages or not q_pages:
+        # Prefer matching against the "question page index" (usually 0..N-1),
+        # but keep compatibility with payloads that store absolute page indices.
+        if question_page_index in q_pages or page_index in q_pages or not q_pages:
             page_questions.append(q)
     
     if not page_questions:
