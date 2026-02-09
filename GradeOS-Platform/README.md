@@ -33,30 +33,158 @@ npm run dev
 
 访问 http://localhost:3000 开始使用！
 
-## ⚙️ 配置
+## ⚙️ 环境配置
 
-### 1. 获取 Gemini API Key
+### 方式一：快速体验（无数据库模式）
 
-1. 访问 [Google AI Studio](https://aistudio.google.com/)
-2. 创建 API Key
-3. 复制备用
+**适合场景**：快速测试、演示、单次批改
 
-### 2. 环境变量
+只需配置 Gemini API Key 即可启动：
 
 ```bash
+# 1. 进入后端目录
 cd backend
+
+# 2. 创建环境变量文件
+cp .env.example .env
+
+# 3. 编辑 .env 文件，只需填写 API Key
+# Windows: notepad .env
+# Mac/Linux: nano .env
+```
+
+`.env` 文件内容（最小配置）：
+
+```bash
+# ============ 必填配置 ============
+# Gemini API Key（必须）
+# 注意：我们使用 OpenRouter 提供的 Gemini 模型
+# API Key 由 GradeOS 开发团队提供，用户无需自行申请
+GEMINI_API_KEY=your_gemini_api_key_here
+
+# ============ 可选配置 ============
+# 部署模式：no_database（默认）或 full
+DEPLOYMENT_MODE=no_database
+```
+
+**关于 API Key**：
+- ✅ **已提供**：GradeOS 使用 OpenRouter 平台统一调用 Gemini 模型
+- ✅ **开发者配置**：API Key 由开发团队在部署时配置
+- ✅ **用户无需申请**：普通用户无需自行申请 Google AI Studio 账号
+- 📧 **获取方式**：如需部署，请联系开发团队获取 API Key
+
+### 方式二：完整部署（数据库模式）
+
+**适合场景**：生产环境、多用户、长期使用
+
+需要配置数据库和缓存服务：
+
+```bash
+# 1. 启动数据库服务（使用 Docker）
+cd backend
+docker-compose up -d postgres redis
+
+# 2. 配置环境变量
 cp .env.example .env
 ```
 
-编辑 `.env` 文件：
+`.env` 文件内容（完整配置）：
 
 ```bash
-# 必填：Gemini API Key
-LLM_API_KEY=your_gemini_api_key_here
+# ============ 必填配置 ============
+# Gemini API Key
+# 注意：我们使用 OpenRouter 提供的 Gemini 模型
+# API Key 由 GradeOS 开发团队提供，用户无需自行申请
+GEMINI_API_KEY=your_gemini_api_key_here
 
-# 可选：数据库（不填则使用无数据库模式）
-DATABASE_URL=postgresql://postgres:postgres@localhost:5432/gradeos
-REDIS_URL=redis://localhost:6379
+# 部署模式：full（完整模式）
+DEPLOYMENT_MODE=full
+
+# ============ 数据库配置 ============
+# PostgreSQL 数据库连接
+DATABASE_URL=postgresql://postgres:your_password@localhost:5432/gradeos
+
+# Redis 缓存连接
+REDIS_URL=redis://localhost:6379/0
+
+# ============ 安全配置 ============
+# JWT 密钥（用于用户认证）
+JWT_SECRET=your_random_secret_key_here
+
+# ============ 可选配置 ============
+# API 端口
+API_PORT=8001
+
+# 日志级别：DEBUG, INFO, WARNING, ERROR
+LOG_LEVEL=INFO
+
+# 批改并发数（影响速度）
+MAX_CONCURRENCY=5
+```
+
+**数据库初始化**：
+
+```bash
+# 运行数据库迁移
+cd backend
+alembic upgrade head
+
+# 创建初始数据（可选）
+python scripts/init_database.py
+```
+
+### 配置验证
+
+启动后端服务，验证配置是否正确：
+
+```bash
+cd backend
+uvicorn src.api.main:app --reload --port 8001
+```
+
+访问 http://localhost:8001/health 应该看到：
+
+```json
+{
+  "status": "healthy",
+  "mode": "no_database",  // 或 "full"
+  "gemini_configured": true
+}
+```
+
+### 常见配置问题
+
+**Q: 我需要自己申请 Gemini API Key 吗？**
+```
+答：不需要。GradeOS 使用 OpenRouter 平台统一调用 Gemini 模型，
+API Key 由开发团队提供和管理。如需部署，请联系开发团队获取。
+```
+
+**Q: API Key 无效？**
+```
+错误：Invalid API key
+解决：
+1. 确认使用的是开发团队提供的 OpenRouter API Key
+2. 检查 GEMINI_API_KEY 是否正确复制，注意不要有多余空格
+3. 联系开发团队确认 API Key 是否有效
+```
+
+**Q: 数据库连接失败？**
+```
+错误：could not connect to server
+解决：
+1. 确认 PostgreSQL 已启动：docker ps
+2. 检查 DATABASE_URL 格式是否正确
+3. 确认端口 5432 未被占用
+```
+
+**Q: Redis 连接失败？**
+```
+错误：Error connecting to Redis
+解决：
+1. 确认 Redis 已启动：docker ps
+2. 检查 REDIS_URL 格式是否正确
+3. 尝试：redis-cli ping（应返回 PONG）
 ```
 
 ## 📚 使用指南
