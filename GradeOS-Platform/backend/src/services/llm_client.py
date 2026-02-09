@@ -254,7 +254,18 @@ class UnifiedLLMClient:
                     headers=self._build_headers(api_key_override),
                     json=payload,
                 ) as response:
-                    response.raise_for_status()
+                    if response.status_code >= 400:
+                        # For streaming responses, `raise_for_status()` closes the stream before we can
+                        # read the body in the outer exception handler. Read it here to preserve the
+                        # provider's real error message (e.g. quota exceeded) for logs and UI.
+                        body_text = (await self._safe_read_response_text(response)).strip()
+                        if len(body_text) > 2000:
+                            body_text = f"{body_text[:2000]}..."
+                        raise httpx.HTTPStatusError(
+                            f"LLM stream HTTP {response.status_code}: {body_text}",
+                            request=response.request,
+                            response=response,
+                        )
                     async for line in response.aiter_lines():
                         if not line.startswith("data: "):
                             continue
@@ -275,6 +286,8 @@ class UnifiedLLMClient:
             except httpx.HTTPStatusError as exc:
                 status_code = exc.response.status_code if exc.response else None
                 text = await self._safe_read_response_text(exc.response)
+                if text == "<unreadable response>":
+                    text = str(exc)
                 retry_after = None
                 if exc.response is not None:
                     retry_after_header = exc.response.headers.get("Retry-After")
