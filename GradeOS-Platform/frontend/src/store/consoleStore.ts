@@ -1143,7 +1143,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                 : `${normalizedNodeId}-${agentKey}-${normalizedStreamType}`;
 
             // Keep rubric_parse / rubric_self_review / logic_review streams readable by chunking output.
-            const shouldSegment = (!isThinking) && (normalizedStreamType !== 'thinking') && (
+            const shouldSegment = (!isThinking) && (
                 normalizedNodeId === 'rubric_parse'
                 || normalizedNodeId === 'rubric_self_review'
                 || normalizedNodeId === 'logic_review'
