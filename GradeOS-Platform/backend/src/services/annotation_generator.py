@@ -242,7 +242,21 @@ async def _call_vlm_for_annotations(
             image_base64=image_b64,
             prompt=prompt,
         )
-        return result.get("annotations", [])
+        # LLMReasoningClient.generate_annotations returns {"annotations": [], "error": "..."} on failures
+        # (e.g. OpenRouter 403). Treat that as a hard failure so the caller can fall back to
+        # deterministic estimated annotations.
+        if isinstance(result, dict):
+            err = result.get("error")
+            anns = result.get("annotations") or []
+        else:
+            err = None
+            anns = []
+
+        if err:
+            raise RuntimeError(f"VLM returned error: {err}")
+        if not anns:
+            raise RuntimeError("VLM returned empty annotations")
+        return anns
     except Exception as e:
         logger.error(f"VLM 调用失败: {e}")
         raise
