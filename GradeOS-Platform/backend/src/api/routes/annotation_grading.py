@@ -24,6 +24,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from src.db.postgres_grading import (
+    GradingPageImage,
     GradingAnnotation,
     save_annotation,
     save_annotations_batch,
