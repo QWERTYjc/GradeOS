@@ -11,6 +11,11 @@ const MIN_ZOOM = 0.6;
 const MAX_ZOOM = 1.6;
 const ZOOM_STEP = 0.1;
 
+type VisualWorkflowNode = WorkflowNode & {
+    isVisualCompleted?: boolean;
+    isFuture?: boolean;
+};
+
 const statusStyles = {
     pending: {
         bg: 'bg-white/40',
@@ -129,13 +134,14 @@ const AgentCard: React.FC<{ agent: GradingAgent; onClick: () => void; isSelected
 };
 
 const ParallelContainer: React.FC<{
-    node: WorkflowNode;
+    node: VisualWorkflowNode;
     onAgentClick: (id: string) => void;
     selectedAgentId: string | null;
     onClick: () => void;
     isSelected: boolean;
     streamPreview?: string;
 }> = ({ node, onAgentClick, selectedAgentId, onClick, isSelected }) => {
+    const isFuture = Boolean(node.isFuture);
     const styles = statusStyles[node.status];
     const agents = node.children || [];
     const isRunning = node.status === 'running';
@@ -161,14 +167,20 @@ const ParallelContainer: React.FC<{
             data-no-drag="true"
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
-            onClick={onClick}
+            whileHover={isFuture ? undefined : { scale: 1.02, y: -2 }}
+            whileTap={isFuture ? undefined : { scale: 0.99 }}
+            onClick={() => {
+                if (isFuture) return;
+                onClick();
+            }}
             className={clsx(
                 'relative min-w-[280px] max-w-[340px] rounded-2xl border p-1.5 transition-all duration-500 z-0 cursor-pointer',
                 styles.bg,
                 styles.border,
                 isSelected ? 'ring-2 ring-blue-500 ring-offset-2 shadow-lg' : '',
                 styles.shadow,
-                'backdrop-blur-xl'
+                'backdrop-blur-xl',
+                isFuture && 'opacity-60 cursor-default'
             )}
         >
             {/* Animated Glow Border */}
@@ -231,12 +243,13 @@ const ParallelContainer: React.FC<{
 };
 
 const NodeCard: React.FC<{
-    node: WorkflowNode;
+    node: VisualWorkflowNode;
     onClick: () => void;
     isSelected: boolean;
     streamPreview?: string;
 }> = ({ node, onClick, isSelected }) => {
-    const effectiveStatus = (node as {isVisualCompleted?: boolean}).isVisualCompleted
+    const isFuture = Boolean(node.isFuture);
+    const effectiveStatus = node.isVisualCompleted
         ? 'completed'
         : node.status;
     const styles = statusStyles[effectiveStatus] || statusStyles.pending;
@@ -259,9 +272,12 @@ const NodeCard: React.FC<{
             data-no-drag="true"
             initial={{ opacity: 0, y: 30 }}
             animate={{ opacity: 1, y: 0 }}
-            whileHover={{ scale: 1.05, y: -4 }}
-            whileTap={{ scale: 0.95 }}
-            onClick={onClick}
+            whileHover={isFuture ? undefined : { scale: 1.05, y: -4 }}
+            whileTap={isFuture ? undefined : { scale: 0.95 }}
+            onClick={() => {
+                if (isFuture) return;
+                onClick();
+            }}
             className={clsx(
                 'relative min-w-[190px] rounded-2xl border p-1 cursor-pointer transition-all duration-300',
                 styles.bg,
@@ -269,7 +285,8 @@ const NodeCard: React.FC<{
                 isSelected ? 'ring-2 ring-blue-500 ring-offset-2 shadow-lg' : '',
                 styles.shadow,
                 'backdrop-blur-xl group z-10',
-                isCrossPageMerge && node.status === 'completed' && 'border-purple-400 bg-purple-50/80 shadow-[0_0_15px_rgba(168,85,247,0.2)]'
+                isCrossPageMerge && node.status === 'completed' && 'border-purple-400 bg-purple-50/80 shadow-[0_0_15px_rgba(168,85,247,0.2)]',
+                isFuture && 'opacity-60 cursor-default'
             )}
         >
             <div className="relative bg-white/60 rounded-xl p-5 flex flex-col items-center text-center gap-3 overflow-hidden h-full">
@@ -322,6 +339,7 @@ const NodeCard: React.FC<{
 
 export const WorkflowGraph: React.FC = () => {
     const {
+        status: workflowStatus,
         workflowNodes,
         selectedNodeId,
         selectedAgentId,
@@ -373,13 +391,33 @@ export const WorkflowGraph: React.FC = () => {
             : workflowNodes.filter((node) => node.id !== 'rubric_review' && node.id !== 'review');
         const lastActiveIndex = filteredNodes.findLastIndex((node) => node.status !== 'pending');
         // 渐进式显示：只显示已激活的节点，不显示下一个 pending 节点
-        const showIndex = lastActiveIndex === -1 ? 0 : lastActiveIndex;
+        const hasAnyActive = lastActiveIndex >= 0;
+        const revealIndex = hasAnyActive ? lastActiveIndex + 1 : 1; // show at least intake + preprocess
 
-        return filteredNodes.slice(0, showIndex + 1).map((node, index) => ({
-            ...node,
-            isVisualCompleted: index < lastActiveIndex && node.status === 'pending'
-        }));
-    }, [workflowNodes, interactionEnabled]);
+        // Always render the full graph (prevents "looks stuck" during long uploads),
+        // but dim the far-future nodes until they become relevant.
+        return filteredNodes.map((node, index): VisualWorkflowNode => {
+            const isFuture = index > revealIndex && node.status === 'pending';
+            const isVisualCompleted = index < lastActiveIndex && node.status === 'pending';
+
+            // During file upload, make the first step feel alive even before WS events arrive.
+            if (workflowStatus === 'UPLOADING' && index === 0 && node.status === 'pending') {
+                return {
+                    ...node,
+                    status: 'running',
+                    message: node.message || 'Uploading files...',
+                    isFuture,
+                    isVisualCompleted
+                };
+            }
+
+            return {
+                ...node,
+                isFuture,
+                isVisualCompleted
+            };
+        });
+    }, [workflowNodes, interactionEnabled, workflowStatus]);
 
     const shouldIgnoreDrag = (target: EventTarget | null) => {
         if (!(target instanceof HTMLElement)) return false;
