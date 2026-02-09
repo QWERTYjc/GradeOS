@@ -1462,9 +1462,25 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
             const objUrl = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = objUrl;
-            a.download = `批注版_${detailViewStudent.studentName}.pdf`;
+
+            // Prefer backend-provided filename if present.
+            const disposition = res.headers.get('content-disposition') || '';
+            const filenameStar = disposition.match(/filename\*\s*=\s*UTF-8''([^;]+)/i);
+            const filenamePlain = disposition.match(/filename\s*=\s*"?([^";]+)"?/i);
+            const headerFilename = filenameStar?.[1]
+                ? decodeURIComponent(filenameStar[1])
+                : filenamePlain?.[1];
+
+            const safeStudent = String(detailViewStudent.studentName || 'student')
+                .replace(/[\/:*?"<>|]+/g, '_')
+                .slice(0, 80);
+            a.download = headerFilename || `annotated_${safeStudent}.pdf`;
+
+            // Some browsers require the element to be in DOM; also avoid revoking too early.
+            document.body.appendChild(a);
             a.click();
-            URL.revokeObjectURL(objUrl);
+            a.remove();
+            setTimeout(() => URL.revokeObjectURL(objUrl), 1000);
             setExportStatus({ type: 'success', message: '批注版 PDF 已导出' });
         } catch (error) {
             console.error('[PDF导出] 失败:', error);

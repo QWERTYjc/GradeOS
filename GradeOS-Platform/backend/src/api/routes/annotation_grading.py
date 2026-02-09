@@ -428,6 +428,25 @@ async def export_annotated_pdf(request: ExportPdfRequest):
             if not fallback_images:
                 raise HTTPException(status_code=404, detail="未找到学生答题图片")
         
+
+        
+        # ? page_images ??? batch_images ?????????? GradingPageImage ???
+        # ? pdf_exporter ????????? fallback_images ?????????
+        if (not page_images) and fallback_images:
+            now = datetime.now().isoformat()
+            page_images = [
+                GradingPageImage(
+                    id=str(uuid.uuid4()),
+                    grading_history_id=request.grading_history_id,
+                    student_key=request.student_key,
+                    page_index=page_idx,
+                    file_id="",
+                    file_url=None,
+                    content_type="image/jpeg",
+                    created_at=now,
+                )
+                for page_idx in sorted(fallback_images.keys())
+            ]
         # 3. 获取批注
         annotations = await get_annotations(request.grading_history_id, request.student_key)
         

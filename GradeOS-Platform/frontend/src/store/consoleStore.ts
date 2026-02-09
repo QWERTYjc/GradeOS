@@ -1138,26 +1138,45 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
             const normalizedPageIndex = pageIndex;
 
             const agentKey = normalizedAgentId || 'all';
-            const thoughtId = normalizedPageIndex !== undefined
+            const baseThoughtId = normalizedPageIndex !== undefined
                 ? `${normalizedNodeId}-${agentKey}-${normalizedStreamType}-${normalizedPageIndex}`
                 : `${normalizedNodeId}-${agentKey}-${normalizedStreamType}`;
-            const existingIdx = state.llmThoughts.findIndex(t => t.id === thoughtId && !t.isComplete);
 
-            if (existingIdx >= 0) {
-                // 追加到现有思�?
+            // Keep rubric_parse / rubric_self_review / logic_review streams readable by chunking output.
+            const shouldSegment = (!isThinking) && (normalizedStreamType !== 'thinking') && (
+                normalizedNodeId === 'rubric_parse'
+                || normalizedNodeId === 'rubric_self_review'
+                || normalizedNodeId === 'logic_review'
+            );
+            const segmentMaxChars = 2500;
+
+            if (shouldSegment) {
+                const segmentPrefix = `${baseThoughtId}::seg=`;
+                let activeIdx = -1;
+                let maxSeg = -1;
+
+                for (let i = 0; i < state.llmThoughts.length; i++) {
+                    const t = state.llmThoughts[i];
+                    if (!t.id.startsWith(segmentPrefix)) continue;
+                    const rawSeg = t.id.slice(segmentPrefix.length);
+                    const parsed = Number.parseInt(rawSeg, 10);
+                    if (!Number.isNaN(parsed)) {
+                        maxSeg = Math.max(maxSeg, parsed);
+                    }
+                    if (!t.isComplete) {
+                        activeIdx = i;
+                    }
+                }
+
                 const updated = [...state.llmThoughts];
-                const combined = updated[existingIdx].content + contentStr;
-                updated[existingIdx] = {
-                    ...updated[existingIdx],
-                    content: (maxChars > 0 && combined.length > maxChars) ? combined.slice(-maxChars) : combined
-                };
-                return { llmThoughts: updated };
-            } else {
-                // 创建新思�?
-                const truncated = maxChars > 0 && contentStr.length > maxChars ? contentStr.slice(-maxChars) : contentStr;
-                return {
-                    llmThoughts: [...state.llmThoughts, {
-                        id: thoughtId,
+                const nowTs = Date.now();
+
+                const startNewSegment = () => {
+                    const segId = `${segmentPrefix}${maxSeg + 1}`;
+                    maxSeg = maxSeg + 1;
+                    const truncated = maxChars > 0 && contentStr.length > maxChars ? contentStr.slice(-maxChars) : contentStr;
+                    updated.push({
+                        id: segId,
                         nodeId: normalizedNodeId,
                         nodeName: normalizedNodeName,
                         agentId: normalizedAgentId,
@@ -1165,11 +1184,62 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                         streamType: normalizedStreamType,
                         pageIndex: normalizedPageIndex,
                         content: truncated,
-                        timestamp: Date.now(),
+                        timestamp: nowTs,
                         isComplete: false
-                    }]
+                    });
+                    return { llmThoughts: updated };
                 };
+
+                if (activeIdx < 0) {
+                    return startNewSegment();
+                }
+
+                const active = updated[activeIdx];
+                const combined = (active.content || '') + contentStr;
+
+                if (combined.length > segmentMaxChars) {
+                    updated[activeIdx] = { ...active, isComplete: true };
+                    return startNewSegment();
+                }
+
+                updated[activeIdx] = {
+                    ...active,
+                    content: (maxChars > 0 && combined.length > maxChars) ? combined.slice(-maxChars) : combined
+                };
+
+                return { llmThoughts: updated };
             }
+
+            const existingIdx = state.llmThoughts.findIndex(t => t.id === baseThoughtId && !t.isComplete);
+
+            if (existingIdx >= 0) {
+                // Append to existing thought
+                const updated = [...state.llmThoughts];
+                const combined = updated[existingIdx].content + contentStr;
+                updated[existingIdx] = {
+                    ...updated[existingIdx],
+                    content: (maxChars > 0 && combined.length > maxChars) ? combined.slice(-maxChars) : combined
+                };
+                return { llmThoughts: updated };
+            }
+
+            // Create a new thought
+            const truncated = maxChars > 0 && contentStr.length > maxChars ? contentStr.slice(-maxChars) : contentStr;
+            return {
+                llmThoughts: [...state.llmThoughts, {
+                    id: baseThoughtId,
+                    nodeId: normalizedNodeId,
+                    nodeName: normalizedNodeName,
+                    agentId: normalizedAgentId,
+                    agentLabel,
+                    streamType: normalizedStreamType,
+                    pageIndex: normalizedPageIndex,
+                    content: truncated,
+                    timestamp: Date.now(),
+                    isComplete: false
+                }]
+            };
+
         }),
 
         completeLLMThought: (nodeId, pageIndex, streamType, agentId) => set((state) => {
