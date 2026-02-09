@@ -593,18 +593,22 @@ const normalizeNodeId = (value: string) => {
 /**
  * 工作流节点配�? * 
  * 基于 LangGraph 架构的前端展示流程（隐藏内部 merge 节点）：
- * 1. rubric_parse - 解析评分标准
- * 2. rubric_self_review - 评分标准自动复核
- * 3. rubric_review - 评分标准人工交互（可选）
- * 4. grade_batch - 按学生批次并行批改
- * 5. logic_review - 批改逻辑复核
- * 6. review - 批改结果人工交互（可选）
- * 7. export - 导出结果
+ * 1. intake - 接收文件
+ * 2. preprocess - 预处理（转图、压缩、边界/索引等）
+ * 3. rubric_parse - 解析评分标准
+ * 4. rubric_self_review - 评分标准自动复核
+ * 5. rubric_review - 评分标准人工交互（可选）
+ * 6. grade_batch - 按学生批次并行批改
+ * 7. logic_review - 批改逻辑复核
+ * 8. review - 批改结果人工交互（可选）
+ * 9. export - 导出结果
  * 
  * 后端 LangGraph Graph 流程（含内部节点）：
  * intake -> preprocess -> rubric_parse -> rubric_self_review -> rubric_review -> grade_batch -> logic_review -> review -> export -> END
  */
 const initialNodes: WorkflowNode[] = [
+    { id: 'intake', label: 'Intake', status: 'pending' },
+    { id: 'preprocess', label: 'Preprocess', status: 'pending' },
     { id: 'rubric_parse', label: 'Rubric Parse', status: 'pending', isParallelContainer: true, children: [] },
     { id: 'rubric_self_review', label: 'Auto Review', status: 'pending' },
     { id: 'rubric_review', label: 'Rubric Review', status: 'pending' },
@@ -1254,9 +1258,6 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                 if (!mappedNodeId || !normalizedStatus) {
                     return;
                 }
-                if (mappedNodeId === 'intake' || mappedNodeId === 'preprocess' || mappedNodeId === 'index') {
-                    return;
-                }
                 if (message) {
                     get().updateNodeStatus(mappedNodeId, normalizedStatus, message);
                     get().addLog(message, 'INFO');
@@ -1686,7 +1687,10 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                 get().setReviewFocus(null);
 
                 const orderedNodes = [
+                    'intake',
+                    'preprocess',
                     'rubric_parse',
+                    'rubric_self_review',
                     'rubric_review',
                     'grade_batch',
                     'logic_review',
@@ -1760,6 +1764,8 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                         completed: 'export'
                     };
                     const orderedNodes = [
+                        'intake',
+                        'preprocess',
                         'rubric_parse',
                         'rubric_self_review',
                         'rubric_review',

@@ -236,15 +236,9 @@ const NodeCard: React.FC<{
     isSelected: boolean;
     streamPreview?: string;
 }> = ({ node, onClick, isSelected }) => {
-    const shouldAutoComplete = (
-        node.status === 'pending'
-        && !node.isParallelContainer
-        && node.id !== 'rubric_review'
-        && node.id !== 'review'
-        && node.id !== 'logic_review'
-    );
-    const inferredStatus = shouldAutoComplete ? 'completed' : node.status;
-    const effectiveStatus = (node as {isVisualCompleted?: boolean}).isVisualCompleted ? 'completed' : inferredStatus;
+    const effectiveStatus = (node as {isVisualCompleted?: boolean}).isVisualCompleted
+        ? 'completed'
+        : node.status;
     const styles = statusStyles[effectiveStatus] || statusStyles.pending;
     const isRunning = effectiveStatus === 'running';
     const isCrossPageMerge = node.id === 'cross_page_merge';

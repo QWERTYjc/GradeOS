@@ -155,9 +155,17 @@ export default function RubricReviewPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
-  const [streamText, setStreamText] = useState("");
-  const streamBufferRef = useRef("");
-  const streamFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [streamPanelOpen, setStreamPanelOpen] = useState(false);
+  const [streamTab, setStreamTab] = useState<"parse" | "self_review">("parse");
+  const [lastStreamTab, setLastStreamTab] = useState<"parse" | "self_review">("parse");
+
+  const [parseStreamText, setParseStreamText] = useState("");
+  const parseStreamBufferRef = useRef("");
+  const parseStreamFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const [selfReviewStreamText, setSelfReviewStreamText] = useState("");
+  const selfReviewStreamBufferRef = useRef("");
+  const selfReviewStreamFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -240,28 +248,50 @@ export default function RubricReviewPage() {
     if (batchId === "last") {
       return;
     }
-    streamBufferRef.current = "";
-    setStreamText("");
-    if (streamFlushTimerRef.current) {
-      clearTimeout(streamFlushTimerRef.current);
-      streamFlushTimerRef.current = null;
+    parseStreamBufferRef.current = "";
+    selfReviewStreamBufferRef.current = "";
+    setParseStreamText("");
+    setSelfReviewStreamText("");
+    setLastStreamTab("parse");
+
+    if (parseStreamFlushTimerRef.current) {
+      clearTimeout(parseStreamFlushTimerRef.current);
+      parseStreamFlushTimerRef.current = null;
+    }
+    if (selfReviewStreamFlushTimerRef.current) {
+      clearTimeout(selfReviewStreamFlushTimerRef.current);
+      selfReviewStreamFlushTimerRef.current = null;
     }
     const socket = new WebSocket(buildWsUrl(`/api/batch/ws/${batchId}`));
-    const flushStream = () => {
-      streamFlushTimerRef.current = null;
-      setStreamText(streamBufferRef.current);
+    const flushParseStream = () => {
+      parseStreamFlushTimerRef.current = null;
+      setParseStreamText(parseStreamBufferRef.current);
+    };
+    const flushSelfReviewStream = () => {
+      selfReviewStreamFlushTimerRef.current = null;
+      setSelfReviewStreamText(selfReviewStreamBufferRef.current);
     };
 
     socket.onmessage = (event) => {
       try {
         const message = JSON.parse(event.data);
-        if (message.type === "llm_stream_chunk" && message.nodeId === "rubric_parse") {
+        if (message.type === "llm_stream_chunk" && (message.nodeId === "rubric_parse" || message.nodeId === "rubric_self_review")) {
           const chunk = message.chunk || "";
           if (!chunk) return;
-          const combined = streamBufferRef.current + chunk;
-          streamBufferRef.current = combined.length > 12000 ? combined.slice(-12000) : combined;
-          if (!streamFlushTimerRef.current) {
-            streamFlushTimerRef.current = setTimeout(flushStream, 200);
+          const tab = message.nodeId === "rubric_self_review" ? "self_review" : "parse";
+          setLastStreamTab(tab);
+          if (tab === "parse") {
+            const combined = parseStreamBufferRef.current + chunk;
+            parseStreamBufferRef.current = combined.length > 12000 ? combined.slice(-12000) : combined;
+            if (!parseStreamFlushTimerRef.current) {
+              parseStreamFlushTimerRef.current = setTimeout(flushParseStream, 200);
+            }
+          } else {
+            const combined = selfReviewStreamBufferRef.current + chunk;
+            selfReviewStreamBufferRef.current = combined.length > 12000 ? combined.slice(-12000) : combined;
+            if (!selfReviewStreamFlushTimerRef.current) {
+              selfReviewStreamFlushTimerRef.current = setTimeout(flushSelfReviewStream, 200);
+            }
           }
         }
       } catch (err) {
@@ -271,9 +301,13 @@ export default function RubricReviewPage() {
 
     return () => {
       socket.close();
-      if (streamFlushTimerRef.current) {
-        clearTimeout(streamFlushTimerRef.current);
-        streamFlushTimerRef.current = null;
+      if (parseStreamFlushTimerRef.current) {
+        clearTimeout(parseStreamFlushTimerRef.current);
+        parseStreamFlushTimerRef.current = null;
+      }
+      if (selfReviewStreamFlushTimerRef.current) {
+        clearTimeout(selfReviewStreamFlushTimerRef.current);
+        selfReviewStreamFlushTimerRef.current = null;
       }
     };
   }, [batchId]);
@@ -847,13 +881,23 @@ export default function RubricReviewPage() {
             </div>
           </div>
           {/* Stream Log Indicator */}
-          <div className="h-8 max-w-[400px] overflow-hidden rounded-lg bg-slate-50 px-3 py-2 text-[10px] text-slate-400">
-            {streamText ? (
-              <span className="animate-pulse text-emerald-600">AI: {streamText.slice(-60)}</span>
-            ) : (
-              "Waiting for activity..."
-            )}
-          </div>
+          <button
+            type="button"
+            onClick={() => setStreamPanelOpen((prev) => !prev)}
+            className="h-8 max-w-[460px] overflow-hidden rounded-lg bg-slate-50 px-3 py-2 text-left text-[10px] text-slate-400 hover:bg-slate-100 transition"
+            title="Toggle AI stream panel"
+          >
+            {(() => {
+              const indicatorText = lastStreamTab === "self_review" ? selfReviewStreamText : parseStreamText;
+              const indicatorLabel = lastStreamTab === "self_review" ? "Auto Review" : "Parse";
+              if (!indicatorText) return "Waiting for activity...";
+              return (
+                <span className="animate-pulse text-emerald-600">
+                  AI({indicatorLabel}): {indicatorText.slice(-60)}
+                </span>
+              );
+            })()}
+          </button>
         </div>
 
         <div className="flex gap-3">
@@ -879,6 +923,59 @@ export default function RubricReviewPage() {
           </button>
         </div>
       </header>
+
+      {streamPanelOpen && (
+        <section className="flex-none border-b border-slate-200 bg-white">
+          <div className="flex items-center justify-between px-6 py-3">
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setStreamTab("parse")}
+                className={clsx(
+                  "rounded-full px-3 py-1 text-[11px] font-semibold transition",
+                  streamTab === "parse"
+                    ? "bg-slate-900 text-white"
+                    : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                )}
+              >
+                Rubric Parse
+              </button>
+              <button
+                type="button"
+                onClick={() => setStreamTab("self_review")}
+                className={clsx(
+                  "rounded-full px-3 py-1 text-[11px] font-semibold transition",
+                  streamTab === "self_review"
+                    ? "bg-slate-900 text-white"
+                    : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                )}
+              >
+                Auto Review
+              </button>
+              <span className="text-[11px] text-slate-400">
+                {streamTab === "self_review"
+                  ? "用于查看评分标准解析的自动复核流式输出"
+                  : "用于查看评分标准解析流式输出"}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setStreamPanelOpen(false)}
+              className="rounded-full bg-slate-100 px-3 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-200 transition"
+            >
+              Close
+            </button>
+          </div>
+
+          <div className="px-6 pb-4">
+            <div className="max-h-44 overflow-y-auto rounded-xl border border-slate-200 bg-slate-50 p-3 text-[12px] leading-relaxed text-slate-700 whitespace-pre-wrap">
+              {streamTab === "self_review"
+                ? (selfReviewStreamText || "Waiting for Auto Review stream...")
+                : (parseStreamText || "Waiting for Parse stream...")}
+            </div>
+          </div>
+        </section>
+      )}
 
       {/* Main Content Split View */}
       <div className="flex flex-1 overflow-hidden">

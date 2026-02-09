@@ -2504,10 +2504,41 @@ def _finalize_scoring_result(
     question_ids = [qid for qid in question_ids if qid and not (qid in seen or seen.add(qid))]
 
     question_details = []
+    # Strict by default: any awarded > 0 must have verifiable evidence.
+    strict_evidence = os.getenv("GRADING_STRICT_EVIDENCE", "true").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    review_conf_threshold = float(os.getenv("LOGIC_REVIEW_CONFIDENCE_THRESHOLD", "0.7"))
     for qid in question_ids:
         rubric = rubric_map.get(qid, {})
         expected_points = rubric.get("scoring_points", [])
         raw_question = raw_by_id.get(qid, {})
+        # Preserve per-question page indices from the grader if available (cross-page answers).
+        raw_pages = (
+            raw_question.get("source_pages")
+            or raw_question.get("sourcePages")
+            or raw_question.get("page_indices")
+            or raw_question.get("pageIndices")
+            or []
+        )
+        resolved_pages: List[int] = []
+        if isinstance(raw_pages, (list, tuple)):
+            for p in raw_pages:
+                try:
+                    pv = int(p)
+                except (TypeError, ValueError):
+                    continue
+                if pv < 0:
+                    continue
+                resolved_pages.append(pv)
+        if not resolved_pages:
+            resolved_pages = [page_index]
+        resolved_pages = sorted(set(resolved_pages))
+
+        raw_steps = raw_question.get("steps") or []
+        steps: List[Dict[str, Any]] = raw_steps if isinstance(raw_steps, list) else []
         question_type = rubric.get("question_type") or (
             _infer_question_type(rubric) if rubric else ""
         )
@@ -2538,6 +2569,7 @@ def _finalize_scoring_result(
             point_id = _normalize_question_id(sp.get("point_id")) or f"{qid}.{idx + 1}"
             existing = raw_scoring_by_id.get(point_id, {})
             awarded = existing.get("awarded", existing.get("score", 0))
+            original_awarded = awarded
             max_points = sp.get("score", existing.get("max_points", 0))
             if awarded is None:
                 awarded = 0
@@ -2561,12 +2593,21 @@ def _finalize_scoring_result(
                 awarded = 0
 
             evidence_text = existing.get("evidence")
-            if _is_placeholder_evidence(evidence_text):
+            evidence_placeholder = _is_placeholder_evidence(evidence_text)
+            if evidence_placeholder:
                 missing_evidence += 1
                 if fallback_snippet:
                     evidence_text = f"【原文引用】{fallback_snippet}"
                 elif not evidence_text:
                     evidence_text = "【原文引用】未找到"
+            if strict_evidence and evidence_placeholder and awarded > 0:
+                review_corrections.append(
+                    {
+                        "point_id": point_id,
+                        "review_reason": "Evidence missing; strict mode set awarded=0.",
+                    }
+                )
+                awarded = 0
             if not existing:
                 missing_points += 1
                 review_corrections.append(
@@ -2576,8 +2617,23 @@ def _finalize_scoring_result(
                     }
                 )
 
-            description = sp.get("description", "")
+            description = sp.get("description", "") or existing.get("description", "")
             expected_value = sp.get("expected_value") or sp.get("expectedValue") or ""
+            mark_type = existing.get("mark_type") or existing.get("markType") or "M"
+            step_id = existing.get("step_id") or existing.get("stepId") or ""
+            step_excerpt = (
+                existing.get("step_excerpt")
+                or existing.get("stepExcerpt")
+                or existing.get("step_content")
+                or existing.get("stepContent")
+                or ""
+            )
+            step_region = existing.get("step_region") or existing.get("stepRegion")
+            evidence_region = existing.get("evidence_region") or existing.get("evidenceRegion")
+            error_region = existing.get("error_region") or existing.get("errorRegion")
+            reason_text = existing.get("reason", "")
+            if strict_evidence and evidence_placeholder and original_awarded and (original_awarded > 0):
+                reason_text = reason_text or "证据不足（严格模式给0分）"
             
             # 🔧 强化 rubric_reference 生成逻辑
             # 优先使用评分标准中的描述，确保 Logic Review 能获取到完整信息
@@ -2599,13 +2655,20 @@ def _finalize_scoring_result(
             scoring_point_results.append(
                 {
                     "point_id": point_id,
+                    "description": description,
                     "rubric_reference": rubric_reference,
                     "rubric_reference_source": "system",
                     "decision": "得分" if awarded > 0 else "未得分",
+                    "mark_type": mark_type,
                     "awarded": awarded,
                     "max_points": max_points,
                     "evidence": evidence_text,
-                    "reason": existing.get("reason", ""),
+                    "reason": reason_text,
+                    "step_id": step_id,
+                    "step_excerpt": _trim_text(step_excerpt, 80) if step_excerpt else "",
+                    "step_region": step_region,
+                    "evidence_region": evidence_region,
+                    "error_region": error_region,
                     "scoring_point": {
                         "description": sp.get("description", ""),
                         "score": max_points,
@@ -2649,16 +2712,44 @@ def _finalize_scoring_result(
                 max_points = spr.get("max_points", spr.get("maxScore"))
                 if max_points is None:
                     max_points = scoring_point.get("score", 0)
+                evidence_text = spr.get("evidence", "")
+                evidence_placeholder = _is_placeholder_evidence(evidence_text)
+                awarded = spr.get("awarded", spr.get("score", 0))
+                if strict_evidence and evidence_placeholder and _safe_float(awarded) > 0:
+                    review_corrections.append(
+                        {
+                            "point_id": point_id,
+                            "review_reason": "Evidence missing; strict mode set awarded=0.",
+                        }
+                    )
+                    awarded = 0
+                reason_text = spr.get("reason", "")
+                if strict_evidence and evidence_placeholder and _safe_float(awarded) <= 0 and _safe_float(spr.get("awarded", spr.get("score", 0))) > 0:
+                    reason_text = reason_text or "证据不足（严格模式给0分）"
                 scoring_point_results.append(
                     {
                         "point_id": point_id,
+                        "description": description,
                         "rubric_reference": rubric_reference,
                         "rubric_reference_source": rubric_reference_source,
                         "decision": spr.get("decision") or spr.get("result") or "",
-                        "awarded": spr.get("awarded", spr.get("score", 0)),
+                        "mark_type": spr.get("mark_type") or spr.get("markType") or "M",
+                        "awarded": awarded,
                         "max_points": max_points or 0,
-                        "evidence": spr.get("evidence", ""),
-                        "reason": spr.get("reason", ""),
+                        "evidence": evidence_text,
+                        "reason": reason_text,
+                        "step_id": spr.get("step_id") or spr.get("stepId") or "",
+                        "step_excerpt": _trim_text(
+                            spr.get("step_excerpt")
+                            or spr.get("stepExcerpt")
+                            or spr.get("step_content")
+                            or spr.get("stepContent")
+                            or "",
+                            80,
+                        ),
+                        "step_region": spr.get("step_region") or spr.get("stepRegion"),
+                        "evidence_region": spr.get("evidence_region") or spr.get("evidenceRegion"),
+                        "error_region": spr.get("error_region") or spr.get("errorRegion"),
                         "scoring_point": scoring_point if scoring_point else None,
                     }
                 )
@@ -2766,6 +2857,55 @@ def _finalize_scoring_result(
             feedback = ""
             self_critique = ""
 
+        # If the grader didn't provide step segmentation, fall back to a point-aligned pseudo-step list.
+        if not steps and scoring_point_results:
+            fallback_steps: List[Dict[str, Any]] = []
+            for spr in scoring_point_results:
+                sid = spr.get("step_id") or spr.get("point_id") or ""
+                excerpt = spr.get("step_excerpt") or spr.get("evidence") or spr.get("description") or ""
+                fallback_steps.append(
+                    {
+                        "step_id": sid,
+                        "step_content": _trim_text(excerpt, 160),
+                        "step_region": spr.get("step_region") or spr.get("error_region"),
+                        "is_correct": _safe_float(spr.get("awarded", 0)) > 0,
+                        "mark_type": spr.get("mark_type") or "M",
+                        "mark_value": _safe_float(spr.get("awarded", 0)),
+                        "feedback": spr.get("reason", "") or "",
+                    }
+                )
+            steps = fallback_steps
+
+        # Build audit signals for downstream logic review selection (LLM review has final authority).
+        risk_flags: List[str] = []
+        if max_score > 0 and score >= max_score:
+            risk_flags.append("full_marks")
+        if max_score > 0 and score == 0:
+            risk_flags.append("zero_marks")
+        if missing_evidence:
+            risk_flags.append("evidence_gap")
+        if confidence < review_conf_threshold:
+            risk_flags.append("low_confidence")
+        if missing_points:
+            risk_flags.append("missing_scoring_points")
+        if score_adjusted:
+            risk_flags.append("score_adjusted")
+
+        uncertainties: List[str] = []
+        if missing_evidence:
+            uncertainties.append("部分得分点缺少可核验原文证据")
+        if missing_points:
+            uncertainties.append("部分得分点缺失/被补齐为0分")
+        if score_adjusted:
+            uncertainties.append("得分点汇总与总分不一致，已按得分点重算")
+
+        needs_review = bool(
+            missing_points
+            or missing_evidence
+            or score_adjusted
+            or confidence < review_conf_threshold
+        )
+
         question_details.append(
             {
                 "question_id": qid,
@@ -2787,10 +2927,20 @@ def _finalize_scoring_result(
                     if spr.get("rubric_reference")
                 ],
                 "scoring_point_results": scoring_point_results,
+                "steps": steps,
                 "review_summary": review_summary,
                 "review_corrections": review_corrections,
+                "audit": {
+                    "confidence": confidence,
+                    "uncertainties": uncertainties[:3],
+                    "risk_flags": risk_flags,
+                    "needs_review": needs_review,
+                    "updated_at": datetime.now().isoformat(),
+                },
+                "needs_review": needs_review,
+                "review_reasons": risk_flags,
                 "audit_flags": audit_flags,
-                "page_indices": [page_index],
+                "page_indices": resolved_pages,
                 "is_correct": max_score > 0 and score >= max_score,
                 "question_type": question_type,
                 "used_alternative_solution": used_alt,
@@ -3164,9 +3314,26 @@ async def _grade_batch_node_impl(state: Dict[str, Any]) -> Dict[str, Any]:
 
             # Convert to legacy page result format
             if student_result.get("status") == "completed":
-                total_score = student_result.get("total_score", 0)
-                max_score = student_result.get("max_score", 0)
-                question_details = student_result.get("question_details", [])
+                # Post-process LLM output to strictly align with parsed rubric:
+                # - ensure all scoring points exist
+                # - enforce evidence requirement (strict mode)
+                # - compute audit signals for logic review
+                finalized = _finalize_scoring_result(
+                    raw_result=student_result,
+                    evidence={},
+                    rubric_map=rubric_map,
+                    page_index=page_indices[0] if page_indices else 0,
+                )
+                total_score = finalized.get("score", student_result.get("total_score", 0))
+                max_score = finalized.get("max_score", student_result.get("max_score", 0))
+                question_details = finalized.get(
+                    "question_details",
+                    student_result.get("question_details", []),
+                )
+                page_confidence = finalized.get(
+                    "page_confidence",
+                    student_result.get("confidence", 0.0),
+                )
 
                 page_results.append(
                     {
@@ -3175,7 +3342,7 @@ async def _grade_batch_node_impl(state: Dict[str, Any]) -> Dict[str, Any]:
                         "status": "completed",
                         "score": total_score,
                         "max_score": max_score,
-                        "confidence": student_result.get("confidence", 0.8),
+                        "confidence": page_confidence,
                         "feedback": student_result.get("overall_feedback", ""),
                         "question_details": question_details,
                         "student_key": batch_student_key,
@@ -4592,6 +4759,12 @@ def _extract_logic_review_questions(student: Dict[str, Any]) -> List[Dict[str, A
 
     flagged_question_ids: set = set()
     confidence_threshold = float(os.getenv("LOGIC_REVIEW_CONFIDENCE_THRESHOLD", "0.7"))
+    force_all = os.getenv("LOGIC_REVIEW_FORCE_ALL", "true").lower() in ("1", "true", "yes")
+    max_questions = int(os.getenv("LOGIC_REVIEW_MAX_QUESTIONS", "0"))
+
+    # Strict mode: always review all questions (optionally capped).
+    if force_all:
+        return details[:max_questions] if max_questions > 0 else details
 
     # 基于 audit 信息筛选需要复核的题目
     for q in details:
@@ -4625,34 +4798,10 @@ def _extract_logic_review_questions(student: Dict[str, Any]) -> List[Dict[str, A
         if isinstance(uncertainties, list) and len(uncertainties) > 0:
             flagged_question_ids.add(qid)
 
-    # 如果没有标记任何题目，使用启发式规则
+    # 如果没有标记任何题目，跳过 logic review（非 strict 模式）。
     if not flagged_question_ids:
-        force_all = os.getenv("LOGIC_REVIEW_FORCE_ALL", "true").lower() in ("1", "true", "yes")
-        if not force_all:
-            logger.debug("[_extract_logic_review_questions] no flagged questions, skipping logic review")
-            return []
-        
-        # 强制全部复核模式：基于启发式规则选择高风险题目
-        for q in details:
-            qid = _normalize_question_id(q.get("question_id") or q.get("questionId") or "")
-            score = q.get("score", 0)
-            max_score = q.get("max_score", 0)
-            confidence = q.get("confidence", 1.0)
-            
-            # 满分或零分
-            if max_score > 0 and (score >= max_score or score == 0):
-                flagged_question_ids.add(qid)
-            # 低置信度
-            elif confidence < confidence_threshold:
-                flagged_question_ids.add(qid)
-
-    max_questions = int(os.getenv("LOGIC_REVIEW_MAX_QUESTIONS", "0"))
-    
-    # 如果仍然没有标记任何题目，返回空列表或全部题目
-    if not flagged_question_ids:
-        if max_questions > 0:
-            return details[:max_questions]
-        return details if force_all else []
+        logger.debug("[_extract_logic_review_questions] no flagged questions, skipping logic review")
+        return []
 
     # 收集被标记的题目
     review_questions: List[Dict[str, Any]] = []
@@ -4777,6 +4926,7 @@ def _build_logic_review_prompt(
         "1. **只修正明显的、无可争议的错误**",
         "   - 证据明确说正确但给了 0 分",
         "   - 证据明确说错误但给了分",
+        "   - evidence 为空/占位（如“未找到/无法辨认”）但 awarded > 0",
         "   - 分数超出满分或为负数",
         "   - 得分点分数累加错误",
         "",
@@ -4818,6 +4968,8 @@ def _build_logic_review_prompt(
         "    → 修正为得分",
         "elif 证据【明确且无歧义地】说错误 and awarded > 0:",
         "    → 修正为扣分",
+        "elif evidence 为空/占位 and awarded > 0:",
+        "    → 修正为扣分（awarded=0）",
         "elif 得分超出满分 or 得分为负:",
         "    → 修正为合理边界值",
         "elif 分数累加明显错误:",
@@ -5091,7 +5243,7 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
         "max_answer_chars": int(os.getenv("LOGIC_REVIEW_MAX_ANSWER_CHARS", "4000")),
         "max_feedback_chars": int(os.getenv("LOGIC_REVIEW_MAX_FEEDBACK_CHARS", "200")),
         "max_rubric_chars": int(os.getenv("LOGIC_REVIEW_MAX_RUBRIC_CHARS", "240")),
-        "max_scoring_points": int(os.getenv("LOGIC_REVIEW_MAX_SCORING_POINTS", "4")),
+        "max_scoring_points": int(os.getenv("LOGIC_REVIEW_MAX_SCORING_POINTS", "12")),
         "max_evidence_chars": int(os.getenv("LOGIC_REVIEW_MAX_EVIDENCE_CHARS", "120")),
     }
 
@@ -5154,13 +5306,14 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                 },
             )
 
-            question_details = _extract_logic_review_questions(student)
-            if not question_details:
+            all_question_details = _collect_question_details(student)
+            review_targets = _extract_logic_review_questions(student)
+            if not review_targets:
                 updated_student = dict(student)
                 _recompute_student_totals(updated_student)
                 updated_student["self_audit"] = _build_self_audit(updated_student)
                 updated_student["logic_reviewed_at"] = datetime.now().isoformat()
-                review_summary = _build_logic_review_summary(question_details)
+                review_summary = _build_logic_review_summary(all_question_details)
                 updated_student["logic_review"] = {
                     "reviewed_at": updated_student["logic_reviewed_at"],
                     "review_summary": review_summary,
@@ -5186,7 +5339,7 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                 return {"index": index, "result": updated_student, "review": None}
             prompt = _build_logic_review_prompt(
                 student,
-                question_details,
+                review_targets,
                 rubric_map,
                 limits,
             )
@@ -5256,15 +5409,15 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
             updated_student = dict(student)
             import copy
 
-            updated_student["draft_question_details"] = copy.deepcopy(question_details)
+            updated_student["draft_question_details"] = copy.deepcopy(all_question_details)
             updated_student["draft_total_score"] = sum(
-                _safe_float(q.get("score", 0)) for q in question_details
+                _safe_float(q.get("score", 0)) for q in all_question_details
             )
             updated_student["draft_max_score"] = sum(
-                _safe_float(q.get("max_score", 0)) for q in question_details
+                _safe_float(q.get("max_score", 0)) for q in all_question_details
             )
             updated_details = []
-            for q in question_details:
+            for q in all_question_details:
                 qid = _normalize_question_id(q.get("question_id") or q.get("questionId"))
                 if qid and qid in review_map:
                     merged = _merge_logic_review_fields(q, review_map[qid])

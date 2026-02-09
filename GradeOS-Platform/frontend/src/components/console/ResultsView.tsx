@@ -356,7 +356,9 @@ const QuestionDetail: React.FC<{
                     const isReviewed = (question as any).logicReviewed
                         || (question as any).logic_reviewed
                         || Boolean(question.reviewCorrections?.length || question.reviewSummary);
-                    
+
+                    // 用户体验：批改阶段的置信度容易造成误导，只在逻辑复核后展示最终置信度。
+                    if (!isReviewed) return null;
                     if (displayConfidence === undefined) return null;
                     
                     return (
@@ -372,7 +374,7 @@ const QuestionDetail: React.FC<{
                                 <AlertTriangle className="w-3 h-3" />
                             )}
                             置信度: <span className="font-mono font-semibold">{(displayConfidence * 100).toFixed(0)}%</span>
-                            {isReviewed && <span className="text-[9px] text-slate-400">(复核)</span>}
+                            <span className="text-[9px] text-slate-400">(复核)</span>
                         </div>
                     );
                 })()}
@@ -395,6 +397,170 @@ const QuestionDetail: React.FC<{
                             </div>
                         </div>
                     )}
+
+                    {(() => {
+                        const steps = (question.steps || []) as any[];
+                        const pointResults = (question.scoringPointResults || []) as any[];
+                        if (steps.length === 0 || pointResults.length === 0) return null;
+
+                        const normalizeStepId = (step: any, index: number) =>
+                            String(step.step_id || step.stepId || step.id || `S${index + 1}`);
+                        const normalizeStepContent = (step: any) =>
+                            String(step.step_content || step.stepContent || step.step_content || '');
+                        const normalizeSprStepId = (spr: any) =>
+                            String(spr.step_id || spr.stepId || '');
+                        const normalizePointId = (spr: any, idx: number) =>
+                            String(
+                                spr.pointId
+                                || spr.point_id
+                                || spr.scoringPoint?.pointId
+                                || spr.scoring_point?.point_id
+                                || (spr.point_id ? spr.point_id : idx + 1)
+                            );
+                        const normalizeAwarded = (spr: any) => Number(spr.awarded ?? spr.score ?? 0);
+                        const normalizeMax = (spr: any) => Number(
+                            spr.maxPoints
+                            ?? spr.max_points
+                            ?? spr.maxScore
+                            ?? spr.max_score
+                            ?? spr.scoringPoint?.score
+                            ?? spr.scoring_point?.score
+                            ?? 0
+                        );
+
+                        const byStepId = new Map<string, any[]>();
+                        const unmapped: any[] = [];
+                        pointResults.forEach((spr, idx) => {
+                            const sid = normalizeSprStepId(spr);
+                            if (!sid) {
+                                unmapped.push({ spr, idx });
+                                return;
+                            }
+                            const list = byStepId.get(sid) || [];
+                            list.push({ spr, idx });
+                            byStepId.set(sid, list);
+                        });
+
+                        // 只有当至少存在一步能对齐到得分点时才展示（避免噪音）
+                        if (byStepId.size === 0 && unmapped.length === 0) return null;
+
+                        const renderPointChip = ({ spr, idx }: { spr: any; idx: number }) => {
+                            const pointId = normalizePointId(spr, idx);
+                            const awarded = normalizeAwarded(spr);
+                            const maxPoints = normalizeMax(spr);
+                            const isReviewAdjusted = spr.reviewAdjusted || spr.review_adjusted;
+                            const desc = spr.scoringPoint?.description || spr.scoring_point?.description || spr.description || '';
+                            const evidence = spr.evidence || '';
+                            const rubricRef = spr.rubricReference || spr.rubric_reference || spr.rubric_reference;
+
+                            return (
+                                <Popover
+                                    key={`${pointId}-${idx}`}
+                                    content={
+                                        <div className="max-w-xs text-xs space-y-2">
+                                            <div className="font-semibold text-slate-900">
+                                                [{pointId}] {desc || '评分点'}
+                                            </div>
+                                            {rubricRef && (
+                                                <div className="text-slate-600">
+                                                    <span className="font-semibold">标准:</span> {rubricRef}
+                                                </div>
+                                            )}
+                                            {evidence && (
+                                                <div className="text-slate-600">
+                                                    <span className="font-semibold">证据:</span> {evidence}
+                                                </div>
+                                            )}
+                                            {isReviewAdjusted && (
+                                                <div className="text-amber-700 font-semibold">已被逻辑复核修正</div>
+                                            )}
+                                        </div>
+                                    }
+                                    trigger="hover"
+                                    placement="top"
+                                >
+                                    <span className={clsx(
+                                        "inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[10px] font-mono cursor-help transition",
+                                        awarded > 0 ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-slate-200 bg-slate-50 text-slate-500",
+                                        isReviewAdjusted ? "border-amber-200 bg-amber-50 text-amber-700" : ""
+                                    )}>
+                                        <span className="font-bold">{pointId}</span>
+                                        <span className="opacity-70">{awarded}/{maxPoints || 1}</span>
+                                        {isReviewAdjusted && <Shield className="w-3 h-3" />}
+                                    </span>
+                                </Popover>
+                            );
+                        };
+
+                        const renderStepCard = (step: any, index: number) => {
+                            const sid = normalizeStepId(step, index);
+                            const content = normalizeStepContent(step);
+                            const related = byStepId.get(sid) || [];
+                            const stepScore = related.reduce((sum, item) => sum + normalizeAwarded(item.spr), 0);
+                            const hasRelated = related.length > 0;
+
+                            return (
+                                <div
+                                    key={`${sid}-${index}`}
+                                    className={clsx(
+                                        "rounded-lg border p-3 bg-white",
+                                        hasRelated ? "border-slate-200" : "border-slate-100"
+                                    )}
+                                >
+                                    <div className="flex items-start justify-between gap-3">
+                                        <div className="flex-1 min-w-0">
+                                            <div className="flex items-center gap-2 flex-wrap">
+                                                <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-slate-900 text-white">
+                                                    {sid}
+                                                </span>
+                                                {hasRelated && (
+                                                    <span className="text-[10px] font-mono px-2 py-0.5 rounded border border-emerald-200 bg-emerald-50 text-emerald-700">
+                                                        +{stepScore}
+                                                    </span>
+                                                )}
+                                            </div>
+                                            {content && (
+                                                <div className="mt-2 text-xs text-slate-700 leading-relaxed space-y-2">
+                                                    {renderParagraphs(content)}
+                                                </div>
+                                            )}
+                                            {hasRelated ? (
+                                                <div className="mt-2 flex flex-wrap gap-1.5">
+                                                    {related.map(renderPointChip)}
+                                                </div>
+                                            ) : (
+                                                <div className="mt-2 text-[11px] text-slate-400 italic">
+                                                    未对齐到任何评分点（可能是无关步骤或模型未标注）。
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
+                            );
+                        };
+
+                        return (
+                            <div className="mt-3 space-y-2">
+                                <div className="text-xs font-semibold text-slate-500 flex items-center gap-2">
+                                    <ListOrdered className="w-3.5 h-3.5" />
+                                    步骤 × 评分点对照
+                                </div>
+                                <div className="space-y-2">
+                                    {steps.map(renderStepCard)}
+                                    {unmapped.length > 0 && (
+                                        <div className="rounded-lg border border-slate-200 bg-slate-50/30 p-3">
+                                            <div className="text-[11px] font-semibold text-slate-600 mb-2">
+                                                未标注步骤的评分点
+                                            </div>
+                                            <div className="flex flex-wrap gap-1.5">
+                                                {unmapped.map(renderPointChip)}
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        );
+                    })()}
 
                     {showScoringDetails ? (
                         question.scoringPointResults && question.scoringPointResults.length > 0 ? (
