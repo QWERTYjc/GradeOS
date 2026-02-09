@@ -30,6 +30,8 @@ interface ResultsViewProps {
     /** 隐藏批改透明度区块 */
     hideGradingTransparency?: boolean;
     studentOnlyMode?: boolean;
+    /** ????????? grading_history_id????? submissionId=batch_id? */
+    annotationHistoryId?: string;
 }
 
 const LOW_CONFIDENCE_THRESHOLD = 0.7;
@@ -913,7 +915,7 @@ const normalizeQuestionResults = (questionResults?: QuestionResult[]) => {
     });
 };
 
-export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails = false, hideGradingTransparency = false, studentOnlyMode = false }) => {
+export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails = false, hideGradingTransparency = false, studentOnlyMode = false, annotationHistoryId }) => {
     const {
         finalResults,
         workflowNodes,
@@ -927,6 +929,8 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
         setFinalResults,
         status
     } = useConsoleStore();
+    const annotationGradingHistoryId = annotationHistoryId || submissionId;
+
     const bookScanContext = useContext(AppContext) as AppContextType | null;
     const sessions = bookScanContext?.sessions || [];
     const currentSessionId = bookScanContext?.currentSessionId || null;
@@ -1373,7 +1377,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
     }, [apiBase]);
 
     const handleGenerateAnnotations = useCallback(async () => {
-        if (!submissionId || !detailViewStudent?.studentName) {
+        if (!annotationGradingHistoryId || !detailViewStudent?.studentName) {
             console.error('[批注生成] 缺少必要参数:', { submissionId, studentName: detailViewStudent?.studentName });
             setAnnotationStatus({ type: 'error', message: '缺少批改历史ID或学生姓名' });
             return;
@@ -1384,7 +1388,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
         
         const url = `${apiBase}/annotations/generate`;
         const payload = {
-            grading_history_id: submissionId,
+            grading_history_id: annotationGradingHistoryId,
             student_key: studentKey,
             overwrite: false,
         };
@@ -1407,8 +1411,8 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                 throw new Error(resPayload?.detail || resPayload?.message || `HTTP ${res.status}: ${res.statusText}`);
             }
             setShowAnnotations(true);
-            apiAnnotationsLoadedRef.current.delete(`${submissionId}-${studentKey}`);
-            const count = await fetchAnnotationsForStudent(submissionId, studentKey, { silent: true });
+            apiAnnotationsLoadedRef.current.delete(`${annotationGradingHistoryId}-${studentKey}`);
+            const count = await fetchAnnotationsForStudent(annotationGradingHistoryId, studentKey, { silent: true });
             setAnnotationStatus({
                 type: 'success',
                 message: resPayload?.message || (count > 0 ? `已加载 ${count} 个批注` : '批注生成完成'),
@@ -1425,7 +1429,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
     }, [submissionId, detailViewStudent, apiBase, fetchAnnotationsForStudent]);
 
     const handleExportAnnotatedPdf = useCallback(async () => {
-        if (!submissionId || !detailViewStudent?.studentName) {
+        if (!annotationGradingHistoryId || !detailViewStudent?.studentName) {
             console.error('[PDF导出] 缺少必要参数:', { submissionId, studentName: detailViewStudent?.studentName });
             setExportStatus({ type: 'error', message: '缺少批改历史ID或学生姓名' });
             return;
@@ -1435,7 +1439,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
         
         const url = `${apiBase}/annotations/export/pdf`;
         const payload = {
-            grading_history_id: submissionId,
+            grading_history_id: annotationGradingHistoryId,
             student_key: detailViewStudent.studentName,
             include_summary: true,
         };
@@ -1503,14 +1507,14 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
     }, []);
 
     const handleAnnotationAdd = useCallback(async (pageIdx: number, annotation: Omit<PageAnnotation, 'id' | 'page_index'>) => {
-        if (!submissionId || !detailViewStudent?.studentName) return;
+        if (!annotationGradingHistoryId || !detailViewStudent?.studentName) return;
         setAnnotationStatus({ type: 'loading', message: '保存批注中...' });
         try {
             const res = await fetch(`${apiBase}/annotations`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    grading_history_id: submissionId,
+                    grading_history_id: annotationGradingHistoryId,
                     student_key: detailViewStudent.studentName,
                     page_index: pageIdx,
                     annotation: {
@@ -1775,15 +1779,15 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
 
         // 获取学生唯一标识
         const studentKey = detailViewStudent.studentName || `student-${detailViewIndex}`;
-        const loadKey = submissionId ? `${submissionId}-${studentKey}` : '';
+        const loadKey = annotationGradingHistoryId ? `${annotationGradingHistoryId}-${studentKey}` : '';
         // 保存当前学生数据的引用，避免闭包问题
         const currentStudent = detailViewStudent;
         let cancelled = false;
 
         const loadAnnotations = async () => {
             let usedApiAnnotations = false;
-            if (submissionId && loadKey && !apiAnnotationsLoadedRef.current.has(loadKey)) {
-                const count = await fetchAnnotationsForStudent(submissionId, studentKey, { silent: true });
+            if (annotationGradingHistoryId && loadKey && !apiAnnotationsLoadedRef.current.has(loadKey)) {
+                const count = await fetchAnnotationsForStudent(annotationGradingHistoryId, studentKey, { silent: true });
                 if (count > 0) {
                     apiAnnotationsLoadedRef.current.add(loadKey);
                     usedApiAnnotations = true;

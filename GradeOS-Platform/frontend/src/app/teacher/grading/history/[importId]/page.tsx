@@ -115,7 +115,7 @@ export default function GradingHistoryDetailPage() {
           ) : error ? (
             <div className="h-full flex items-center justify-center text-sm text-rose-500">{error}</div>
           ) : (
-            <ResultsView defaultExpandDetails={true} />
+            <ResultsView defaultExpandDetails={true} annotationHistoryId={importId} />
           )}
         </div>
       </div>
