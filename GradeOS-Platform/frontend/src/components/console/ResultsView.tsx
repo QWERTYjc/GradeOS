@@ -263,9 +263,17 @@ const formatStudentText = (text: string) => {
         normalized = normalized.replace(/(^|[.;])\s*(\d{1,2})\)\s*/g, (_m, sep, num) => (
             sep ? `${sep}\n\n${num}) ` : `${num}) `
         ));
-        normalized = normalized.replace(/(^|[.;])\s*(\d{1,2})\.\s*/g, (_m, sep, num) => (
-            sep ? `${sep}\n\n${num}. ` : `${num}. `
-        ));
+        normalized = normalized.replace(
+            /(^|[.;])(\s*)(\d{1,2})\.\s*/g,
+            (m, sep, ws, num, offset, str) => {
+                // Avoid treating decimals like `53.13` as numbered steps (`13.`).
+                if (sep === '.' && ws === '' && typeof offset === 'number' && offset > 0) {
+                    const prev = String(str)[offset - 1];
+                    if (prev >= '0' && prev <= '9') return m;
+                }
+                return sep ? `${sep}\n\n${num}. ` : `${num}. `;
+            }
+        );
 
         // Soft line breaks for readability.
         normalized = normalized.replace(/;\s+/g, ';\n');
@@ -1431,6 +1439,23 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
 
     // 获取存储的评分标准
     const parsedRubric = useConsoleStore((state) => state.parsedRubric);
+    const rubricTotalQuestions = useMemo(() => {
+        if (!parsedRubric) return null;
+        const anyRubric: any = parsedRubric as any;
+        const v = anyRubric.totalQuestions ?? anyRubric.total_questions;
+        if (v !== undefined && v !== null && v !== '') return Number(v);
+        const qs = Array.isArray(anyRubric.questions) ? anyRubric.questions : [];
+        return qs.length;
+    }, [parsedRubric]);
+    const rubricTotalScore = useMemo(() => {
+        if (!parsedRubric) return null;
+        const anyRubric: any = parsedRubric as any;
+        const v = anyRubric.totalScore ?? anyRubric.total_score;
+        if (v !== undefined && v !== null && v !== '') return Number(v);
+        const qs = Array.isArray(anyRubric.questions) ? anyRubric.questions : [];
+        const sum = qs.reduce((acc: number, q: any) => acc + Number(q.maxScore ?? q.max_score ?? 0), 0);
+        return Number.isFinite(sum) ? sum : null;
+    }, [parsedRubric]);
 
     const fetchAnnotationsForStudent = useCallback(async (
         gradingHistoryId: string,
@@ -3528,7 +3553,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                         <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">来源</div>
                         <div>
                             {parsedRubric
-                                ? `解析评分标准 · ${parsedRubric.totalQuestions} 题 / ${parsedRubric.totalScore} 分`
+                                ? `解析评分标准 · ${rubricTotalQuestions ?? '--'} 题 / ${rubricTotalScore ?? '--'} 分`
                                 : '未解析评分标准'}
                         </div>
                     </div>

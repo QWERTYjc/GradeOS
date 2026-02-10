@@ -111,10 +111,22 @@ export function RubricOverview() {
     );
   }
 
+  const anyRubric: any = parsedRubric as any;
+  const totalQuestions = Number(
+    anyRubric.totalQuestions ?? anyRubric.total_questions ?? (Array.isArray(anyRubric.questions) ? anyRubric.questions.length : 0)
+  );
+  const totalScore = Number(
+    anyRubric.totalScore
+      ?? anyRubric.total_score
+      ?? (Array.isArray(anyRubric.questions)
+        ? anyRubric.questions.reduce((sum: number, q: any) => sum + Number(q.maxScore ?? q.max_score ?? 0), 0)
+        : 0)
+  );
+
   // LLM 直接生成的自白（极短）
   const llmConfession: LLMConfession = parsedRubric.confession || {};
-  const hasLLMConfession = (llmConfession.risks?.length || 0) > 0 || 
-    (llmConfession.uncertainties?.length || 0) > 0 || 
+  const hasLLMConfession = (llmConfession.risks?.length || 0) > 0 ||
+    (llmConfession.uncertainties?.length || 0) > 0 ||
     (llmConfession.blindSpots?.length || 0) > 0 ||
     (llmConfession.needsReview?.length || 0) > 0;
   
@@ -132,7 +144,7 @@ export function RubricOverview() {
           Rubric Overview
         </div>
         <div className="text-xs font-semibold text-slate-500">
-          {parsedRubric.totalQuestions} questions · {parsedRubric.totalScore} points
+          {totalQuestions} questions · {totalScore} points
         </div>
       </div>
 
