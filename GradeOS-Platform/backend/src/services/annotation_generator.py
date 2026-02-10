@@ -40,6 +40,15 @@ def _coerce_float(value: Any) -> Optional[float]:
         return None
 
 
+def _coerce_int(value: Any) -> Optional[int]:
+    try:
+        if value is None:
+            return None
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _normalize_bbox(raw_bbox: Any, *, min_size: float = 0.002) -> Optional[Dict[str, float]]:
     if not isinstance(raw_bbox, dict):
         return None
@@ -169,7 +178,32 @@ async def generate_annotations_for_student(
             logger.warning(f"[Annotation] 兜底加载 batch_images 失败: {e}")
 
     if not page_image_map and fallback_images:
-        for idx in fallback_images.keys():
+        # When we only have batch-level images, restrict the pages to this student's range.
+        start_page = _coerce_int(result_data.get("start_page") or result_data.get("startPage"))
+        end_page = _coerce_int(result_data.get("end_page") or result_data.get("endPage"))
+        page_keys = sorted(fallback_images.keys())
+        if start_page is not None and end_page is not None and page_keys:
+            start = max(0, min(start_page, end_page))
+            end = max(start, end_page)
+            last_idx = page_keys[-1]
+            if end > last_idx:
+                end = last_idx
+            if start > end:
+                start = max(0, min(start, last_idx))
+            selected_keys = [idx for idx in page_keys if start <= idx <= end]
+            logger.info(
+                f"[Annotation] using fallback page range for {student_key}: {start}-{end} "
+                f"(selected={len(selected_keys)}/{len(page_keys)})"
+            )
+        else:
+            selected_keys = page_keys
+            if page_keys:
+                logger.warning(
+                    f"[Annotation] missing start/end page range for {student_key}; using all fallback pages "
+                    f"(count={len(page_keys)})"
+                )
+
+        for idx in selected_keys:
             if page_indices is not None and idx not in page_indices:
                 continue
             page_image_map[idx] = GradingPageImage(

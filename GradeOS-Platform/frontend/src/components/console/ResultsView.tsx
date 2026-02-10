@@ -1037,6 +1037,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
         workflowNodes,
         crossPageQuestions,
         uploadedImages,
+        setUploadedImages,
         setCurrentTab,
         classReport,
         submissionId,
@@ -1207,15 +1208,19 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
     // 🔥 API 备用方案：当 WebSocket 失败时，主动调用 API 获取结果
     useEffect(() => {
         // 调试日志
+        const needsResults = finalResults.length === 0;
+        const needsImages = uploadedImages.length === 0;
+
         console.log('[API Fallback Check]', {
             submissionId,
             finalResultsLength: finalResults.length,
+            uploadedImagesLength: uploadedImages.length,
             status,
             alreadyAttempted: submissionId ? apiFallbackAttemptedRef.current.has(submissionId) : false
         });
 
-        // 条件：有 submissionId，没有结果，状态为 COMPLETED，且未尝试过
-        if (!submissionId || finalResults.length > 0 || status !== 'COMPLETED') {
+        // 条件：有 submissionId，状态为 COMPLETED，且（缺结果或缺图片），且未尝试过
+        if (!submissionId || status !== 'COMPLETED' || (!needsResults && !needsImages)) {
             console.log('[API Fallback] Skipping - conditions not met');
             return;
         }
@@ -1230,14 +1235,46 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
             setApiFallbackError(null);
 
             try {
-                console.log('[API Fallback] Fetching results for batch:', submissionId);
-                const response = await gradingApi.getBatchResults(submissionId);
+                console.log('[API Fallback] Fetching results/images for batch:', submissionId);
+
+                // Prefer results-review context because it includes answer_images.
+                let response: any;
+                try {
+                    response = await gradingApi.getResultsReviewContext(submissionId);
+                } catch (error) {
+                    console.warn('[API Fallback] results-review endpoint failed; falling back to full-results:', error);
+                    response = await gradingApi.getBatchResults(submissionId);
+                }
+
+                if (needsImages) {
+                    const rawImages = response?.answer_images || response?.answerImages || [];
+                    if (Array.isArray(rawImages) && rawImages.length > 0) {
+                        const normalizedImages = rawImages.map((img: any) => {
+                            if (!img) return img;
+                            const trimmed = String(img).trim();
+                            if (
+                                trimmed.startsWith('data:') ||
+                                trimmed.startsWith('http://') ||
+                                trimmed.startsWith('https://') ||
+                                trimmed.startsWith('blob:') ||
+                                trimmed.startsWith('/')
+                            ) {
+                                return trimmed;
+                            }
+                            return `data:image/jpeg;base64,${trimmed}`;
+                        });
+                        setUploadedImages(normalizedImages);
+                        console.log('[API Fallback] Loaded', normalizedImages.length, 'answer images');
+                    } else {
+                        console.log('[API Fallback] No answer_images found in API response');
+                    }
+                }
 
                 // 后端可能返回 results（camelCase）或 student_results（snake_case）
                 const rawResults = (response as any).results || response.student_results || [];
                 console.log('[API Fallback] Raw results:', rawResults.length, 'items');
 
-                if (rawResults.length > 0) {
+                if (needsResults && rawResults.length > 0) {
                     // 检测数据格式（camelCase 或 snake_case）
                     const firstResult = rawResults[0];
                     const isCamelCase = 'studentName' in firstResult;
@@ -1346,7 +1383,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
 
                     console.log('[API Fallback] Successfully fetched', formattedResults.length, 'results');
                     setFinalResults(formattedResults);
-                } else {
+                } else if (needsResults) {
                     console.log('[API Fallback] No results found in API response');
                     setApiFallbackError('API 返回空结果');
                 }
@@ -1361,7 +1398,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
         // 延迟执行，给 WebSocket 一些时间
         const timer = setTimeout(fetchResultsFromApi, 2000);
         return () => clearTimeout(timer);
-    }, [submissionId, finalResults.length, status, setFinalResults]);
+    }, [submissionId, finalResults.length, uploadedImages.length, status, setFinalResults, setUploadedImages]);
 
     const totalStudents = sortedResults.length;
     const scoredResults = sortedResults.filter(r => !(r.gradingMode || '').startsWith('assist') && r.maxScore > 0);
