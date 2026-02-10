@@ -217,6 +217,45 @@ class RedisGradingRunController:
             logger.debug("Failed to acquire grading slot: %s", exc)
             return True
 
+    async def prune_active_slots(self, teacher_key: str) -> int:
+        """Remove active slots that no longer have a live run record.
+
+        This addresses a common failure mode: deployments/restarts may leave
+        stale entries in the active slot ZSET, blocking new runs for hours
+        (until RUN_SLOT_TTL_SECONDS prunes them). We only prune when the run
+        record hash is missing or clearly terminal.
+        """
+
+        active_key = self._active_set_key(teacher_key)
+        now = int(time.time())
+        removed = 0
+        try:
+            # Always prune by age first.
+            await self._redis.zremrangebyscore(active_key, "-inf", now - RUN_SLOT_TTL_SECONDS)
+
+            run_ids = await self._redis.zrange(active_key, 0, -1)
+            for rid in run_ids:
+                batch_id = rid.decode("utf-8") if isinstance(rid, (bytes, bytearray)) else str(rid)
+                if not batch_id:
+                    continue
+                run_key = self._run_key(batch_id)
+                status = await self._redis.hget(run_key, "status")
+                if status is None:
+                    await self._redis.zrem(active_key, batch_id)
+                    removed += 1
+                    continue
+                status_s = status.decode("utf-8", errors="ignore") if isinstance(status, (bytes, bytearray)) else str(status)
+                if status_s in ("completed", "failed", "cancelled"):
+                    await self._redis.zrem(active_key, batch_id)
+                    removed += 1
+
+            if removed > 0:
+                await self._redis.expire(active_key, RUN_SLOT_TTL_SECONDS)
+        except RedisError as exc:
+            logger.debug("Failed to prune active slots: %s", exc)
+            return 0
+        return removed
+
     async def wait_for_slot(
         self,
         teacher_key: str,

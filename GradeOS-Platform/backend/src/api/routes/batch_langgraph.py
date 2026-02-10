@@ -514,6 +514,24 @@ async def _start_run_with_teacher_limit(
         except Exception as e:
             logger.error(f"[_start_run_with_teacher_limit] try_acquire_slot异常: {e}")
             acquired = False
+
+        if not acquired:
+            # Proactively prune stale slots to avoid "stuck queued" when a previous
+            # deployment crashed after acquiring the slot (active ZSET survives but
+            # the run record may not).
+            try:
+                pruned = await run_controller.prune_active_slots(teacher_key)
+                if pruned:
+                    logger.info(
+                        f"[_start_run_with_teacher_limit] pruned {pruned} stale active slots for teacher={teacher_key}"
+                    )
+                    acquired = await run_controller.try_acquire_slot(
+                        teacher_key,
+                        batch_id,
+                        TEACHER_MAX_ACTIVE_RUNS,
+                    )
+            except Exception as e:
+                logger.debug(f"[_start_run_with_teacher_limit] prune_active_slots failed: {e}")
         
         if not acquired:
             await broadcast_progress(
@@ -2408,24 +2426,71 @@ async def websocket_endpoint(websocket: WebSocket, batch_id: str):
     
     # 如果批次不存在活跃的运行，静默关闭连接
     # 这是正常情况（前端可能连接到已完成的批次），不需要记录错误
+    # NOTE: run may not exist in orchestrator yet (queued waiting for teacher slot, or race after submit).
+    # If we close WS here, the frontend will miss queued/running progress pushes.
     if not run_exists:
+        snapshot = None
         try:
-            async with ws_locks[ws_id]:
-                await websocket.send_json({
-                    "type": "batch_not_found",
-                    "message": f"Batch {batch_id} has no active run. It may have completed or does not exist.",
-                    "batchId": batch_id,
-                })
+            run_controller = await get_run_controller()
+            if run_controller:
+                snapshot = await run_controller.get_run(batch_id)
         except Exception:
-            pass  # 静默处理 - 连接可能已关闭，这是预期的
-        # 清理连接
-        _discard_connection(batch_id, websocket)
-        ws_locks.pop(ws_id, None)
-        try:
-            await websocket.close(code=1000, reason="Batch not found")
-        except Exception:
-            pass
-        return  # 直接返回，不进入 while 循环
+            snapshot = None
+
+        if snapshot is None:
+            # Grace window: allow background task to register/start the run.
+            for _ in range(10):
+                await asyncio.sleep(1)
+                try:
+                    orchestrator_check = await get_orchestrator()
+                    if orchestrator_check:
+                        run_info = await orchestrator_check.get_run_info(f"batch_grading_{batch_id}")
+                        run_exists = run_info is not None
+                except Exception:
+                    pass
+                if run_exists:
+                    break
+                try:
+                    run_controller = await get_run_controller()
+                    if run_controller:
+                        snapshot = await run_controller.get_run(batch_id)
+                        if snapshot is not None:
+                            break
+                except Exception:
+                    pass
+
+        if not run_exists and snapshot is None:
+            # No active run and no Redis snapshot: likely invalid or historical batch.
+            try:
+                async with ws_locks[ws_id]:
+                    await websocket.send_json({
+                        "type": "batch_not_found",
+                        "message": f"Batch {batch_id} has no active run. It may have completed or does not exist.",
+                        "batchId": batch_id,
+                    })
+            except Exception:
+                pass
+            # ????
+            _discard_connection(batch_id, websocket)
+            ws_locks.pop(ws_id, None)
+            try:
+                await websocket.close(code=1000, reason="Batch not found")
+            except Exception:
+                pass
+            return
+
+        # Snapshot exists: send a lightweight queued hint (ok if duplicated).
+        if snapshot is not None and getattr(snapshot, "status", None) == "queued":
+            try:
+                async with ws_locks[ws_id]:
+                    await websocket.send_json({
+                        "type": "workflow_update",
+                        "nodeId": (getattr(snapshot, "current_stage", None) or "rubric_parse"),
+                        "status": "pending",
+                        "message": "Queued: waiting for grading slot",
+                    })
+            except Exception:
+                pass
 
     # 连接建立后尝试发送当前状态快照，避免前端错过早期事件导致卡住
     try:
@@ -2642,7 +2707,23 @@ async def get_batch_status(batch_id: str, orchestrator: Orchestrator = Depends(g
         run_info = await orchestrator.get_run_info(run_id)
 
         if not run_info:
-            raise HTTPException(status_code=404, detail="批次不存在")
+            # Fallback: queued/running may exist in Redis even before start_run().
+            run_controller = await get_run_controller()
+            if run_controller:
+                snapshot = await run_controller.get_run(batch_id)
+                if snapshot:
+                    return BatchStatusResponse(
+                        batch_id=batch_id,
+                        exam_id="",
+                        status=snapshot.status,
+                        current_stage=snapshot.current_stage,
+                        error=None,
+                        total_students=0,
+                        completed_students=0,
+                        unidentified_pages=0,
+                        results=None,
+                    )
+            raise HTTPException(status_code=404, detail="?????")
 
         state = run_info.state or {}
 
