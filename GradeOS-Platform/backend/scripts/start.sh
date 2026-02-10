@@ -18,4 +18,6 @@ fi
 
 echo "Starting API server..."
 # --ws wsproto: avoid websockets keepalive ping race with app-level sends.
-exec uvicorn src.api.main:app --host 0.0.0.0 --port "${PORT:-8001}" --ws wsproto
+PORT_TO_USE="${PORT:-${API_PORT:-8001}}"
+echo "Listening on port: ${PORT_TO_USE}"
+exec uvicorn src.api.main:app --host 0.0.0.0 --port "${PORT_TO_USE}" --ws wsproto
