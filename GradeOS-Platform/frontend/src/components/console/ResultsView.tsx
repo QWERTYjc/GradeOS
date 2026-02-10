@@ -1546,13 +1546,19 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
         }
     }, [apiBase]);
 
-    const handleGenerateAnnotations = useCallback(async () => {
+    const handleGenerateAnnotations = useCallback(async (options?: { overwrite?: boolean }) => {
+        const overwrite = Boolean(options?.overwrite);
         if (!annotationGradingHistoryId || !detailViewStudent?.studentName) {
             console.error('[批注生成] 缺少必要参数:', { submissionId, studentName: detailViewStudent?.studentName });
             setAnnotationStatus({ type: 'error', message: '缺少批改历史ID或学生姓名' });
             return;
         }
         const studentKey = detailViewStudent.studentName;
+        if (overwrite) {
+            // Avoid showing stale boxes while the backend deletes + regenerates.
+            setPageAnnotationsData(new Map());
+            renderedPagesRef.current.clear();
+        }
         setAnnotationGenerating(true);
         setAnnotationStatus({ type: 'loading', message: 'AI 批注生成中...' });
         
@@ -1560,7 +1566,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
         const payload = {
             grading_history_id: annotationGradingHistoryId,
             student_key: studentKey,
-            overwrite: false,
+            overwrite,
         };
         
         console.log('[批注生成] 开始请求:', { url, payload });
@@ -1596,7 +1602,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
         } finally {
             setAnnotationGenerating(false);
         }
-    }, [submissionId, detailViewStudent, apiBase, fetchAnnotationsForStudent]);
+    }, [annotationGradingHistoryId, submissionId, detailViewStudent, apiBase, fetchAnnotationsForStudent]);
 
     const handleExportAnnotatedPdf = useCallback(async () => {
         if (!annotationGradingHistoryId || !detailViewStudent?.studentName) {
@@ -3134,7 +3140,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                             <div className="flex items-center gap-3">
                                 {/* 生成批注按钮 */}
                                 <button
-                                    onClick={handleGenerateAnnotations}
+                                    onClick={() => void handleGenerateAnnotations()}
                                     disabled={annotationGenerating || annotationFetchLoading}
                                     className="text-[11px] text-blue-600 hover:text-blue-700 font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
                                 >
@@ -3142,6 +3148,20 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                                     {annotationGenerating ? '生成中...' : '生成批注'}
                                 </button>
                                 {/* 导出 PDF 按钮 */}
+                                <button
+                                    onClick={() => {
+                                        if (annotationGenerating || annotationFetchLoading) return;
+                                        const ok = window.confirm('将删除该学生现有批注并覆盖重生成，确定继续？');
+                                        if (!ok) return;
+                                        void handleGenerateAnnotations({ overwrite: true });
+                                    }}
+                                    disabled={annotationGenerating || annotationFetchLoading}
+                                    className="text-[11px] text-rose-600 hover:text-rose-700 font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                                    title="覆盖重生成该学生的批注"
+                                >
+                                    {annotationGenerating && <Loader2 className="w-3 h-3 animate-spin" />}
+                                    {annotationGenerating ? '重生成中...' : '覆盖重生成'}
+                                </button>
                                 <button
                                     onClick={handleExportAnnotatedPdf}
                                     disabled={exportPdfLoading}
