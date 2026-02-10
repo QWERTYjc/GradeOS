@@ -3435,6 +3435,14 @@ async def submit_rubric_review(
         if not success:
             raise HTTPException(status_code=409, detail="批次未处于可复核状态")
 
+        # After resuming a paused graph, restart the stream forwarder so the frontend
+        # continues to receive subsequent workflow updates.
+        await _ensure_stream_task(
+            batch_id=request.batch_id,
+            run_id=run_id,
+            orchestrator=orchestrator,
+        )
+
         cached = batch_image_cache.get(request.batch_id)
         if cached and "review_required" in cached:
             cached.pop("review_required", None)
@@ -3478,6 +3486,13 @@ async def submit_results_review(
         success = await orchestrator.send_event(run_id, "review_signal", payload)
         if not success and not request.results:
             raise HTTPException(status_code=409, detail="批次未处于可复核状态")
+
+        # Restart stream forwarder after resume so the frontend can see subsequent nodes.
+        await _ensure_stream_task(
+            batch_id=request.batch_id,
+            run_id=run_id,
+            orchestrator=orchestrator,
+        )
 
         cached = batch_image_cache.get(request.batch_id)
         if cached and "review_required" in cached:

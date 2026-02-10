@@ -138,7 +138,14 @@ class LangGraphOrchestrator(Orchestrator):
                     if isinstance(output, dict) and "__interrupt__" in output:
                         paused = True
                         await self._update_run_status(run_id, "paused")
-                        await self._push_event(run_id, {"kind": "paused", "name": None, "data": {"state": output}})
+                        await self._push_event(
+                            run_id,
+                            {
+                                "kind": "paused",
+                                "name": name or None,
+                                "data": {"interrupt_value": output.get("__interrupt__")},
+                            },
+                        )
                         return
                     if isinstance(output, dict):
                         for key, value in output.items():
@@ -146,6 +153,36 @@ class LangGraphOrchestrator(Orchestrator):
                                 accumulated_state[key].extend(value)
                             else:
                                 accumulated_state[key] = value
+
+            # LangGraph v1+ implements pause via `interrupt()` but does NOT emit the interrupt marker
+            # inside astream_events outputs. The canonical pause signal is stored in the persisted
+            # state snapshot (pending tasks + interrupts). If we detect that, mark the run paused.
+            try:
+                if hasattr(compiled_graph, "aget_state"):
+                    snapshot = await compiled_graph.aget_state(config)
+                    tasks = getattr(snapshot, "tasks", None) or ()
+                    interrupt_value = None
+                    interrupt_node = None
+                    for task in tasks:
+                        interrupts = getattr(task, "interrupts", None) or ()
+                        if interrupts:
+                            interrupt_value = getattr(interrupts[0], "value", None)
+                            interrupt_node = getattr(task, "name", None)
+                            break
+                    if interrupt_value is not None:
+                        paused = True
+                        await self._update_run_status(run_id, "paused")
+                        await self._push_event(
+                            run_id,
+                            {
+                                "kind": "paused",
+                                "name": interrupt_node,
+                                "data": {"interrupt_value": interrupt_value},
+                            },
+                        )
+                        return
+            except Exception as exc:
+                logger.warning("Failed to detect interrupt state: run_id=%s error=%s", run_id, exc)
 
             await self._update_run_status(run_id, "completed", output_data=accumulated_state)
             await self._push_event(run_id, {"kind": "completed", "name": None, "data": {"state": accumulated_state}})
@@ -182,7 +219,14 @@ class LangGraphOrchestrator(Orchestrator):
                     if isinstance(output, dict) and "__interrupt__" in output:
                         paused = True
                         await self._update_run_status(run_id, "paused")
-                        await self._push_event(run_id, {"kind": "paused", "name": None, "data": {"state": output}})
+                        await self._push_event(
+                            run_id,
+                            {
+                                "kind": "paused",
+                                "name": name or None,
+                                "data": {"interrupt_value": output.get("__interrupt__")},
+                            },
+                        )
                         return
                     if isinstance(output, dict):
                         for key, value in output.items():
@@ -190,6 +234,34 @@ class LangGraphOrchestrator(Orchestrator):
                                 accumulated_state[key].extend(value)
                             else:
                                 accumulated_state[key] = value
+
+            # Same pause detection as initial run (see comment above).
+            try:
+                if hasattr(compiled_graph, "aget_state"):
+                    snapshot = await compiled_graph.aget_state(config)
+                    tasks = getattr(snapshot, "tasks", None) or ()
+                    interrupt_value = None
+                    interrupt_node = None
+                    for task in tasks:
+                        interrupts = getattr(task, "interrupts", None) or ()
+                        if interrupts:
+                            interrupt_value = getattr(interrupts[0], "value", None)
+                            interrupt_node = getattr(task, "name", None)
+                            break
+                    if interrupt_value is not None:
+                        paused = True
+                        await self._update_run_status(run_id, "paused")
+                        await self._push_event(
+                            run_id,
+                            {
+                                "kind": "paused",
+                                "name": interrupt_node,
+                                "data": {"interrupt_value": interrupt_value},
+                            },
+                        )
+                        return
+            except Exception as exc:
+                logger.warning("Failed to detect interrupt state (resume): run_id=%s error=%s", run_id, exc)
 
             await self._update_run_status(run_id, "completed", output_data=accumulated_state)
             await self._push_event(run_id, {"kind": "completed", "name": None, "data": {"state": accumulated_state}})
