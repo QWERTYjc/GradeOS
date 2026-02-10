@@ -1322,6 +1322,33 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                     status?: unknown;
                     message?: string;
                 };
+
+                // Fallback: some backend pause paths emit `workflow_update` with `status="paused"` (no interrupt payload).
+                // If we ignore it, the UI looks like it "ended" after rubric parsing. Convert it into a review overlay.
+                if (status === 'paused') {
+                    const existing = get().pendingReview;
+                    if (!existing) {
+                        const nodes = get().workflowNodes;
+                        const gradeNode = nodes.find((n) => n.id === 'grade_batch');
+                        const isBeforeGrading = !gradeNode || gradeNode.status === 'pending';
+                        const reviewType = isBeforeGrading ? 'rubric_review_required' : 'results_review_required';
+                        const warningMessage = message || 'Workflow paused (awaiting input)';
+
+                        get().setPendingReview({
+                            reviewType,
+                            batchId: get().submissionId || undefined,
+                            message: warningMessage,
+                            requestedAt: new Date().toISOString(),
+                            payload: data && typeof data === 'object' ? data : { raw: data },
+                        });
+                        get().setStatus('REVIEWING');
+                        const reviewNodeId = reviewType.includes('rubric') ? 'rubric_review' : 'review';
+                        get().updateNodeStatus(reviewNodeId, 'running', 'Waiting for interaction');
+                        get().setReviewFocus(reviewType.includes('rubric') ? 'rubric' : 'results');
+                        get().addLog(warningMessage, 'WARNING');
+                    }
+                    return;
+                }
                 // 后端节点 ID 映射到前端（兼容旧名称）
                 const mappedNodeId = nodeId === 'grading' ? 'grade_batch' : nodeId;
                 const normalizedStatus = isNodeStatus(status) ? status : undefined;
