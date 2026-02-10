@@ -19,7 +19,7 @@ import { api, classApi } from '@/services/api';
 // Dynamic imports - Scanner and Gallery use pdfjs-dist which requires browser APIs
 const Scanner = dynamic(() => import('@/components/bookscan/Scanner'), { ssr: false });
 const Gallery = dynamic(() => import('@/components/bookscan/Gallery'), { ssr: false });
-const WorkflowGraph = dynamic(() => import('@/components/console/WorkflowGraph'), { ssr: false });
+const WorkflowSteps = dynamic(() => import('@/components/console/WorkflowSteps'), { ssr: false });
 const ResultsView = dynamic(() => import('@/components/console/ResultsView'), { ssr: false });
 const LLMThoughtsPanel = dynamic(() => import('@/components/console/LLMThoughtsPanel'), { ssr: false });
 const ReviewOverlay = dynamic(() => import('@/components/console/ReviewOverlay'), { ssr: false });
@@ -965,7 +965,7 @@ export default function ConsolePage() {
                                 exit={{ opacity: 0 }}
                                 className="w-full h-full flex items-center justify-center"
                             >
-                                <WorkflowGraph />
+                                <WorkflowSteps />
                             </motion.div>
                         )}
                     </AnimatePresence>

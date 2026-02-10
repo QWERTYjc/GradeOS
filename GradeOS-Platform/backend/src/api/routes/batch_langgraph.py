@@ -1124,11 +1124,20 @@ async def stream_langgraph_progress(
                             {
                                 "type": "review_required",
                                 "reviewType": review_type,
+                                "message": (
+                                    interrupt_payload.get("message")
+                                    if isinstance(interrupt_payload, dict)
+                                    else None
+                                ),
                                 "payload": interrupt_payload,
                                 "nodeId": (
-                                    _map_node_to_frontend("rubric_review")
-                                    if "rubric" in review_type
-                                    else _map_node_to_frontend("review")
+                                    _map_node_to_frontend("grade_batch")
+                                    if "grading_retry" in str(review_type)
+                                    else (
+                                        _map_node_to_frontend("rubric_review")
+                                        if "rubric" in str(review_type)
+                                        else _map_node_to_frontend("review")
+                                    )
                                 ),
                             },
                         )
@@ -1284,11 +1293,20 @@ async def stream_langgraph_progress(
                         {
                             "type": "review_required",
                             "reviewType": review_type,
+                            "message": (
+                                interrupt_value.get("message")
+                                if isinstance(interrupt_value, dict)
+                                else None
+                            ),
                             "payload": interrupt_value,
                             "nodeId": (
-                                _map_node_to_frontend("rubric_review")
-                                if "rubric" in review_type
-                                else _map_node_to_frontend("review")
+                                _map_node_to_frontend("grade_batch")
+                                if "grading_retry" in str(review_type)
+                                else (
+                                    _map_node_to_frontend("rubric_review")
+                                    if "rubric" in str(review_type)
+                                    else _map_node_to_frontend("review")
+                                )
                             ),
                         },
                     )
@@ -3352,6 +3370,14 @@ class ResultsReviewRequest(BaseModel):
     notes: Optional[str] = Field(None, description="补充说明")
 
 
+class GradingRetryRequest(BaseModel):
+    """批改断点重试请求（用于恢复被暂停的 grade_batch 节点）。"""
+
+    batch_id: str = Field(..., description="批次 ID")
+    action: str = Field(..., description="retry/abort")
+    notes: Optional[str] = Field(None, description="补充说明")
+
+
 @router.post("/review/rubric")
 async def submit_rubric_review(
     request: RubricReviewRequest, orchestrator: Orchestrator = Depends(get_orchestrator)
@@ -3623,6 +3649,50 @@ async def submit_results_review(
         raise
     except Exception as e:
         logger.error(f"提交批改复核失败: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"提交失败: {str(e)}")
+
+
+@router.post("/review/grading")
+async def submit_grading_retry(
+    request: GradingRetryRequest, orchestrator: Orchestrator = Depends(get_orchestrator)
+):
+    """提交批改断点重试/终止信号，恢复被暂停的 workflow。"""
+    try:
+        if not orchestrator:
+            raise HTTPException(status_code=503, detail="编排器未初始化")
+
+        action = request.action.lower().strip()
+        if action not in ("retry", "abort"):
+            raise HTTPException(status_code=400, detail="无效的 action")
+
+        run_id = f"batch_grading_{request.batch_id}"
+        run_info = await orchestrator.get_run_info(run_id)
+        if not run_info:
+            raise HTTPException(status_code=404, detail="批次不存在")
+
+        payload: Dict[str, Any] = {"action": action}
+        if request.notes:
+            payload["notes"] = request.notes
+
+        success = await orchestrator.send_event(run_id, "review_signal", payload)
+        if not success:
+            raise HTTPException(status_code=409, detail="批次未处于可继续状态")
+
+        await _ensure_stream_task(
+            batch_id=request.batch_id,
+            run_id=run_id,
+            orchestrator=orchestrator,
+        )
+
+        cached = batch_image_cache.get(request.batch_id)
+        if cached and "review_required" in cached:
+            cached.pop("review_required", None)
+
+        return {"success": True, "message": "Grading retry signal submitted"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"提交批改断点重试失败: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"提交失败: {str(e)}")
 
 

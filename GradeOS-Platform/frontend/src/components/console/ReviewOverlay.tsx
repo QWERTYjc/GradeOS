@@ -17,11 +17,18 @@ const RESULTS_REVIEW_TYPES = new Set([
   'results_review',
 ]);
 
+const GRADING_RETRY_TYPES = new Set([
+  'grading_retry_required',
+  'grading_retry',
+]);
+
 const REVIEW_LABELS: Record<string, string> = {
   rubric_review_required: '批改标准交互',
   rubric_review: '批改标准交互',
   results_review_required: '批改结果交互',
   results_review: '批改结果交互',
+  grading_retry_required: '批改断点重试',
+  grading_retry: '批改断点重试',
 };
 
 export default function ReviewOverlay() {
@@ -33,6 +40,7 @@ export default function ReviewOverlay() {
   const reviewType = pendingReview?.reviewType || '';
   const isRubricReview = RUBRIC_REVIEW_TYPES.has(reviewType);
   const isResultsReview = RESULTS_REVIEW_TYPES.has(reviewType);
+  const isGradingRetry = GRADING_RETRY_TYPES.has(reviewType);
   const reviewLabel = REVIEW_LABELS[reviewType] || '人工交互';
   const reviewMessage = pendingReview?.message || '需要人工介入确认。';
 
@@ -61,13 +69,13 @@ export default function ReviewOverlay() {
         await gradingApi.submitRubricReview({ batch_id: submissionId, action: 'approve' });
       } else if (isResultsReview) {
         await gradingApi.submitResultsReview({ batch_id: submissionId, action: 'approve' });
+      } else if (isGradingRetry) {
+        await gradingApi.submitGradingRetry({ batch_id: submissionId, action: 'retry' });
       }
       setPendingReview(null);
       setStatus('RUNNING');
-      if (isRubricReview) {
-        setCurrentTab('process');
-        setReviewFocus(null);
-      }
+      setCurrentTab('process');
+      setReviewFocus(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : '提交失败');
     } finally {
@@ -97,6 +105,7 @@ export default function ReviewOverlay() {
         <button
           type="button"
           onClick={handleNavigate}
+          disabled={isGradingRetry}
           className="flex-1 rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600 transition hover:border-slate-300"
         >
           打开结果页
@@ -111,7 +120,7 @@ export default function ReviewOverlay() {
             isSubmitting ? 'bg-slate-300' : 'bg-slate-900 hover:bg-slate-800'
           )}
         >
-          {isSubmitting ? '处理中...' : '继续流程'}
+          {isSubmitting ? '处理中...' : isGradingRetry ? '立刻重试' : '继续流程'}
           <CheckCircle2 className="ml-2 inline h-3.5 w-3.5" />
         </button>
       </div>

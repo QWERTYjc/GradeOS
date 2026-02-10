@@ -614,23 +614,28 @@ const normalizeNodeId = (value: string) => {
  * 1. intake - 接收文件
  * 2. preprocess - 预处理（转图、压缩、边界/索引等）
  * 3. rubric_parse - 解析评分标准
- * 4. rubric_self_review - 评分标准自动复核
- * 5. rubric_review - 评分标准人工交互（可选）
- * 6. grade_batch - 按学生批次并行批改
- * 7. logic_review - 批改逻辑复核
- * 8. review - 批改结果人工交互（可选）
- * 9. export - 导出结果
+ * 4. rubric_confession_report - Rubric confession (independent honesty report)
+ * 5. rubric_self_review - 评分标准自动复核
+ * 6. rubric_review - 评分标准人工交互（可选）
+ * 7. grade_batch - 按学生批次并行批改
+ * 8. grading_confession_report - Grading confession (independent honesty report)
+ * 9. logic_review - 批改逻辑复核（可选，confession 触发）
+ * 10. review - 批改结果人工交互（可选）
+ * 11. export - 导出结果
  * 
  * 后端 LangGraph Graph 流程（含内部节点）：
- * intake -> preprocess -> rubric_parse -> rubric_self_review -> rubric_review -> grade_batch -> logic_review -> review -> export -> END
+ * intake -> preprocess -> rubric_parse -> rubric_confession_report -> rubric_self_review -> rubric_review
+ * -> grade_batch -> grading_confession_report -> logic_review -> review -> export -> END
  */
 const initialNodes: WorkflowNode[] = [
     { id: 'intake', label: 'Intake', status: 'pending' },
     { id: 'preprocess', label: 'Preprocess', status: 'pending' },
     { id: 'rubric_parse', label: 'Rubric Parse', status: 'pending', isParallelContainer: true, children: [] },
+    { id: 'rubric_confession_report', label: 'Rubric Confession', status: 'pending' },
     { id: 'rubric_self_review', label: 'Auto Review', status: 'pending' },
     { id: 'rubric_review', label: 'Rubric Review', status: 'pending' },
     { id: 'grade_batch', label: 'Student Grading', status: 'pending', isParallelContainer: true, children: [] },
+    { id: 'grading_confession_report', label: 'Grading Confession', status: 'pending' },
     { id: 'logic_review', label: 'Logic Review', status: 'pending', isParallelContainer: true, children: [] },
     { id: 'review', label: 'Results Review', status: 'pending' },
     { id: 'export', label: 'Export', status: 'pending' },
@@ -1743,22 +1748,33 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                     // 如果是结果审核，可能需�?studentResults
                     studentResults: data.payload?.student_results || data.studentResults,
                 };
+                const reviewType = (reviewData.type || '').toString();
+                const isRubric = reviewType.includes('rubric_review');
+                const isResults = reviewType.includes('results_review');
+                const isGradingRetry = reviewType.includes('grading_retry');
+                const rawPayload = (data.payload && typeof data.payload === 'object') ? data.payload : {};
+                const normalizedPayload = {
+                    ...rawPayload,
+                    parsed_rubric: reviewData.parsedRubric ?? rawPayload.parsed_rubric,
+                    student_results: reviewData.studentResults ?? rawPayload.student_results,
+                };
                 get().setPendingReview({
                     reviewType: reviewData.type,
                     batchId: reviewData.batchId,
                     message: reviewData.message,
                     requestedAt: reviewData.requestedAt,
-                    payload: {
-                        parsed_rubric: reviewData.parsedRubric,
-                        student_results: reviewData.studentResults
-                    }
+                    payload: normalizedPayload
                 });
                 // 同时更新状态提�?
                 get().setStatus('REVIEWING');
-                const reviewNodeId = (reviewData.type || '').includes('rubric') ? 'rubric_review' : 'review';
-                get().updateNodeStatus(reviewNodeId, 'running', 'Waiting for interaction');
-                get().setReviewFocus((reviewData.type || '').includes('rubric') ? 'rubric' : 'results');
-                get().addLog(`Review required: ${reviewData.type}`, 'WARNING');
+                const reviewNodeId = isRubric ? 'rubric_review' : isResults ? 'review' : 'grade_batch';
+                get().updateNodeStatus(
+                    reviewNodeId,
+                    'running',
+                    isGradingRetry ? 'Waiting for retry' : 'Waiting for interaction'
+                );
+                get().setReviewFocus(isRubric ? 'rubric' : isResults ? 'results' : null);
+                get().addLog(`Review required: ${reviewType}`, 'WARNING');
             });
 
             // 处理跨页题目检测事�?
@@ -1805,9 +1821,11 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                     'intake',
                     'preprocess',
                     'rubric_parse',
+                    'rubric_confession_report',
                     'rubric_self_review',
                     'rubric_review',
                     'grade_batch',
+                    'grading_confession_report',
                     'logic_review',
                     'review',
                     'export'
@@ -1828,17 +1846,13 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                     const gatedResults = await waitForPostReviewResults(batchId, initialResults);
                     if (gatedResults) {
                         get().setFinalResults(gatedResults);
-                        get().addLog('批改结果已完成，进入结果页。', 'SUCCESS');
-                        set({ currentTab: 'results' });
+                        get().addLog('批改结果已完成，可在右下角打开结果。', 'SUCCESS');
                     } else {
                         get().addLog('批改结果仍未完成，已停止自动跳转结果页。', 'WARNING');
                     }
                     return;
                 }
-
-                setTimeout(() => {
-                    set({ currentTab: 'results' });
-                }, 800);
+                // 不自动切到结果页：避免在批改过程中突然跳转，改为逐步显现流程 + 由用户主动打开结果。
             });
 
             wsClient.on('page_graded', (data: any) => {
@@ -1865,6 +1879,8 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                 if (currentStage) {
                     const stageToNode: Record<string, string> = {
                         rubric_parse_completed: 'rubric_parse',
+                        rubric_confession_report_completed: 'rubric_confession_report',
+                        rubric_confession_report_skipped: 'rubric_confession_report',
                         rubric_self_review_completed: 'rubric_self_review',
                         rubric_self_review_skipped: 'rubric_self_review',
                         rubric_self_review_failed: 'rubric_self_review',
@@ -1873,6 +1889,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                         grade_batch_completed: 'grade_batch',
                         cross_page_merge_completed: 'grade_batch',
                         index_merge_completed: 'grade_batch',
+                        grading_confession_report_completed: 'grading_confession_report',
                         logic_review_completed: 'logic_review',
                         logic_review_skipped: 'logic_review',
                         review_completed: 'review',
@@ -1882,9 +1899,11 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                         'intake',
                         'preprocess',
                         'rubric_parse',
+                        'rubric_confession_report',
                         'rubric_self_review',
                         'rubric_review',
                         'grade_batch',
+                        'grading_confession_report',
                         'logic_review',
                         'review',
                         'export'

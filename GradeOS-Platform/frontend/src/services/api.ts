@@ -483,6 +483,12 @@ export interface ResultsReviewRequest {
   notes?: string;
 }
 
+export interface GradingRetryRequest {
+  batch_id: string;
+  action: 'retry' | 'abort';
+  notes?: string;
+}
+
 export interface GradingImportTarget {
   class_id: string;
   student_ids: string[];
@@ -709,6 +715,12 @@ export const gradingApi = {
 
   submitResultsReview: (data: ResultsReviewRequest) =>
     request<{ success: boolean; message: string }>('/batch/review/results', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  submitGradingRetry: (data: GradingRetryRequest) =>
+    request<{ success: boolean; message: string }>('/batch/review/grading', {
       method: 'POST',
       body: JSON.stringify(data),
     }),

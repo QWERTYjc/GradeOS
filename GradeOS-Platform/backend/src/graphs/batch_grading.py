@@ -3323,115 +3323,169 @@ async def _grade_batch_node_impl(state: Dict[str, Any]) -> Dict[str, Any]:
             },
         )
 
-        try:
-            logger.info(f"[grade_batch] grade_student for {batch_student_key} pages={len(images)}")
+        from src.services.grading_checkpoint import save_student_checkpoint
 
-            # grade_student - 一次性批改整个学生
-            student_result = await reasoning_client.grade_student(
-                images=images,
-                student_key=batch_student_key,
-                parsed_rubric=local_parsed_rubric,
-                page_indices=page_indices,
-                page_contexts=page_index_contexts,
-                stream_callback=stream_callback,
+        student_max_retries = int(
+            os.getenv("GRADING_STUDENT_MAX_RETRIES", str(max_retries))
+        )
+        student_retry_delay = float(
+            os.getenv("GRADING_STUDENT_RETRY_DELAY", os.getenv("GRADING_RETRY_DELAY", "1.0"))
+        )
+        student_retry_backoff = float(os.getenv("GRADING_STUDENT_RETRY_BACKOFF_MULTIPLIER", "1.5"))
+        student_retry_max_delay = float(os.getenv("GRADING_STUDENT_RETRY_MAX_DELAY", "12.0"))
+
+        attempt = 0
+        delay = max(0.0, student_retry_delay)
+        last_error: str = ""
+        student_result: Dict[str, Any] = {}
+
+        while True:
+            attempt += 1
+            await save_student_checkpoint(
+                batch_id=batch_id,
+                student_key=batch_student_key or batch_agent_label,
+                field="grading_attempt",
+                payload={
+                    "attempt": attempt,
+                    "max_retries": student_max_retries,
+                    "batch_index": batch_index,
+                    "page_indices": page_indices,
+                    "ts": datetime.now().isoformat(),
+                },
             )
 
-            # Convert to legacy page result format
-            if student_result.get("status") == "completed":
-                # Post-process LLM output to strictly align with parsed rubric:
-                # - ensure all scoring points exist
-                # - enforce evidence requirement (strict mode)
-                # - compute audit signals for logic review
-                finalized = _finalize_scoring_result(
-                    raw_result=student_result,
-                    evidence={},
-                    rubric_map=rubric_map,
-                    page_index=page_indices[0] if page_indices else 0,
-                )
-                total_score = finalized.get("score", student_result.get("total_score", 0))
-                max_score = finalized.get("max_score", student_result.get("max_score", 0))
-                question_details = finalized.get(
-                    "question_details",
-                    student_result.get("question_details", []),
-                )
-                page_confidence = finalized.get(
-                    "page_confidence",
-                    student_result.get("confidence", 0.0),
-                )
-
-                page_results.append(
-                    {
-                        "page_index": page_indices[0] if page_indices else 0,
-                        "page_indices": page_indices,
-                        "status": "completed",
-                        "score": total_score,
-                        "max_score": max_score,
-                        "confidence": page_confidence,
-                        "feedback": student_result.get("overall_feedback", ""),
-                        "question_details": question_details,
-                        "student_key": batch_student_key,
-                        "student_name": batch_student_name,
-                        "student_id": batch_student_id,
-                        "batch_index": batch_index,
-                    }
-                )
-                
-                await emit_agent_update(
-                    "completed",
-                    f"Grading completed: {total_score}/{max_score}",
-                    progress=100,
-                )
-            else:
-                error_msg = student_result.get("error", "Unknown error")
-                logger.error(
-                    f"[grade_batch] grade_student failed for {batch_student_key}: {error_msg}"
-                )
-                
-                await emit_agent_update(
-                    "failed",
-                    f"Grading failed: {error_msg}",
-                    progress=0,
-                )
-                
-                page_results.append(
-                    {
-                        "page_index": page_indices[0] if page_indices else 0,
-                        "page_indices": page_indices,
-                        "status": "failed",
-                        "error": error_msg,
-                        "student_key": batch_student_key,
-                        "student_name": batch_student_name,
-                        "student_id": batch_student_id,
-                        "batch_index": batch_index,
-                    }
-                )
-
-        except Exception as exc:
-            logger.error(
-                f"[grade_batch] Unexpected exception for {batch_student_key}: {exc}",
-                exc_info=True
+            logger.info(
+                f"[grade_batch] grade_student attempt={attempt}/{student_max_retries} "
+                f"student={batch_student_key} pages={len(images)}"
             )
-            
+
+            try:
+                student_result = await reasoning_client.grade_student(
+                    images=images,
+                    student_key=batch_student_key,
+                    parsed_rubric=local_parsed_rubric,
+                    page_indices=page_indices,
+                    page_contexts=page_index_contexts,
+                    stream_callback=stream_callback,
+                )
+            except Exception as exc:
+                last_error = f"{type(exc).__name__}: {exc}"
+                student_result = {"status": "failed", "error": last_error}
+
+            if isinstance(student_result, dict) and student_result.get("status") == "completed":
+                break
+
+            last_error = (
+                str(student_result.get("error"))
+                if isinstance(student_result, dict) and student_result.get("error")
+                else "Unknown error"
+            )
+            logger.warning(
+                f"[grade_batch] grade_student failed attempt={attempt}/{student_max_retries} "
+                f"student={batch_student_key} err={last_error}"
+            )
+
+            if attempt <= student_max_retries:
+                await emit_agent_update(
+                    "running",
+                    f"Retry {attempt}/{student_max_retries} after error: {last_error[:160]}",
+                    progress=10,
+                )
+                if delay > 0:
+                    await asyncio.sleep(min(delay, student_retry_max_delay))
+                delay = min(max(0.0, delay) * max(1.0, student_retry_backoff), student_retry_max_delay)
+                continue
+
+            # Breakpoint: pause the whole workflow until the user retries or aborts.
             await emit_agent_update(
                 "failed",
-                f"System error: {str(exc)[:100]}",
+                f"Paused for retry: {last_error[:180]}",
                 progress=0,
             )
-            
-            page_results.append(
+            resume_value = interrupt(
                 {
-                    "page_index": page_indices[0] if page_indices else 0,
-                    "page_indices": page_indices,
-                    "status": "failed",
-                    "error": f"System exception: {str(exc)}",
+                    "type": "grading_retry_required",
+                    "message": f"Student grading failed for {batch_student_key}. Retry to continue.",
+                    "batch_id": batch_id,
+                    "batch_index": batch_index,
                     "student_key": batch_student_key,
                     "student_name": batch_student_name,
                     "student_id": batch_student_id,
-                    "batch_index": batch_index,
+                    "page_indices": page_indices,
+                    "attempts": attempt,
+                    "max_retries": student_max_retries,
+                    "last_error": last_error,
                 }
             )
+            action = (
+                resume_value.get("action")
+                if isinstance(resume_value, dict)
+                else None
+            )
+            action = (str(action).strip().lower() if action is not None else "")
+            if action in ("abort", "stop", "cancel"):
+                raise RuntimeError(f"Grading aborted by user: {batch_id}")
+
+            # Default: retry from scratch.
+            attempt = 0
+            delay = max(0.0, student_retry_delay)
+
+        # Convert to legacy page result format
+        finalized = _finalize_scoring_result(
+            raw_result=student_result,
+            evidence={},
+            rubric_map=rubric_map,
+            page_index=page_indices[0] if page_indices else 0,
+        )
+        total_score = finalized.get("score", student_result.get("total_score", 0))
+        max_score = finalized.get("max_score", student_result.get("max_score", 0))
+        question_details = finalized.get(
+            "question_details",
+            student_result.get("question_details", []),
+        )
+        page_confidence = finalized.get(
+            "page_confidence",
+            student_result.get("confidence", 0.0),
+        )
+
+        page_result = {
+            "page_index": page_indices[0] if page_indices else 0,
+            "page_indices": page_indices,
+            "status": "completed",
+            "score": total_score,
+            "max_score": max_score,
+            "confidence": page_confidence,
+            "feedback": student_result.get("overall_feedback", ""),
+            "question_details": question_details,
+            "student_key": batch_student_key,
+            "student_name": batch_student_name,
+            "student_id": batch_student_id,
+            "batch_index": batch_index,
+        }
+        page_results.append(page_result)
+
+        await save_student_checkpoint(
+            batch_id=batch_id,
+            student_key=batch_student_key or batch_agent_label,
+            field="grading_result",
+            payload={
+                "status": "completed",
+                "attempts": attempt,
+                "page_result": page_result,
+                "ts": datetime.now().isoformat(),
+            },
+        )
+
+        await emit_agent_update(
+            "completed",
+            f"Grading completed: {total_score}/{max_score}",
+            progress=100,
+        )
 
     except Exception as e:
+        # User-initiated abort should stop the workflow immediately (no auto-retry).
+        if "Grading aborted by user" in str(e):
+            raise
         batch_error = str(e)
         logger.error(f"[grade_batch] 批次 {batch_index} 批改失败: {e}", exc_info=True)
         try:
@@ -5095,6 +5149,7 @@ async def grading_confession_report_node(state: BatchGradingGraphState) -> Dict[
     if not api_key:
         logger.info(f"[grading_confession_report] rule-based (no api_key): batch_id={batch_id}")
         from src.services.confession_auditor import _default_rule_based_report
+        from src.services.grading_checkpoint import save_student_checkpoint
 
         max_items = int(os.getenv("CONFESSION_GRADING_MAX_ITEMS", "25"))
         final_results: List[Dict[str, Any]] = []
@@ -5114,6 +5169,15 @@ async def grading_confession_report_node(state: BatchGradingGraphState) -> Dict[
                 student=updated,
                 max_items=max_items,
             )
+            await save_student_checkpoint(
+                batch_id=batch_id,
+                student_key=str(student_key),
+                field="confession_report",
+                payload={
+                    "generated_at": datetime.now().isoformat(),
+                    "confession": updated.get("confession"),
+                },
+            )
             final_results.append(updated)
 
         return {
@@ -5127,6 +5191,7 @@ async def grading_confession_report_node(state: BatchGradingGraphState) -> Dict[
         }
 
     from src.services.confession_auditor import ConfessionAuditorClient
+    from src.services.grading_checkpoint import save_student_checkpoint
 
     client = ConfessionAuditorClient(api_key=api_key, purpose="analysis", temperature=0.1)
     max_workers = int(os.getenv("CONFESSION_MAX_WORKERS", "3"))
@@ -5168,6 +5233,15 @@ async def grading_confession_report_node(state: BatchGradingGraphState) -> Dict[
             updated = dict(student)
             updated["confession"] = report
             updated["confession_reported_at"] = datetime.now().isoformat()
+            await save_student_checkpoint(
+                batch_id=batch_id,
+                student_key=str(student_key),
+                field="confession_report",
+                payload={
+                    "generated_at": updated["confession_reported_at"],
+                    "confession": report,
+                },
+            )
 
             await _broadcast_progress(
                 batch_id,
