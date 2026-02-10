@@ -3,6 +3,7 @@
 import os
 import sys
 import asyncio
+from datetime import datetime, timezone
 
 # Windows 事件循环修复 - 必须在所有其他导入之前
 if sys.platform == "win32":
@@ -102,139 +103,217 @@ enhanced_api_service: Optional[EnhancedAPIService] = None
 tracing_service: Optional[TracingService] = None
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """
-    应用生命周期管理
+def _now_iso_utc() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
-    支持两种部署模式：
-    1. 数据库模式：完整功能
-    2. 无数据库模式：轻量级部署
 
-    验证：需求 11.1, 11.6, 11.7, 11.8
+async def _bootstrap_init(app: FastAPI) -> None:
+    """Initialize expensive dependencies in the background.
+
+    This keeps startup fast so Railway healthchecks can pass, while still
+    bringing the DB/Redis/LangGraph stack online for real traffic.
     """
+
     global redis_client, pool_manager, enhanced_api_service, tracing_service
 
-    # 启动时初始化
-    logger.info("初始化应用...")
+    st = getattr(app.state, "bootstrap", None)
+    if st is None:
+        st = {}
+        app.state.bootstrap = st
 
-    # 检测部署模式
-    deployment_config = get_deployment_mode()
-    logger.info(f"部署模式: {deployment_config.mode.value}")
+    st.update(
+        {
+            "status": "starting",
+            "started_at": st.get("started_at") or _now_iso_utc(),
+            "finished_at": None,
+            "errors": [],
+            "components": {},
+        }
+    )
 
-    # 显示功能可用性
-    features = deployment_config.get_feature_availability()
-    logger.info(f"功能可用性: {features}")
+    def _set_component(name: str, status: str, detail: Optional[str] = None) -> None:
+        comp = st.setdefault("components", {})
+        comp[name] = {"status": status, "detail": detail, "at": _now_iso_utc()}
 
-    # 根据部署模式初始化
-    if deployment_config.is_database_mode:
-        # 数据库模式：初始化完整功能
+    async def _step(name: str, coro, timeout_s: float) -> bool:
+        _set_component(name, "starting")
         try:
-            pool_manager = await UnifiedPoolManager.get_instance()
-            await pool_manager.initialize()
-            logger.debug("统一连接池已初始化")
+            await asyncio.wait_for(coro, timeout=timeout_s)
+            _set_component(name, "ok")
+            return True
+        except Exception as exc:
+            msg = f"{name} failed: {exc}"
+            st.setdefault("errors", []).append(msg)
+            _set_component(name, "error", str(exc))
+            logger.warning(msg)
+            return False
 
-            # 获取 Redis 客户端 (可能为空)
+    try:
+        logger.info("Bootstrap: initializing dependencies in background...")
+
+        deployment_config = get_deployment_mode()
+        st["deployment_mode"] = deployment_config.mode.value
+        st["features"] = deployment_config.get_feature_availability()
+
+        if deployment_config.is_database_mode:
             try:
-                redis_client = pool_manager.get_redis_client()
-            except Exception:
+                _set_component("pool_manager", "starting")
+                pool_manager = await UnifiedPoolManager.get_instance()
+                await asyncio.wait_for(pool_manager.initialize(), timeout=25)
+                _set_component("pool_manager", "ok")
+
+                try:
+                    redis_client = pool_manager.get_redis_client()
+                    _set_component("redis_client", "ok")
+                except Exception as exc:
+                    redis_client = None
+                    _set_component("redis_client", "error", str(exc))
+            except Exception as exc:
+                pool_manager = None
                 redis_client = None
+                _set_component("pool_manager", "error", str(exc))
+                st.setdefault("errors", []).append(f"pool_manager failed: {exc}")
 
-            # 初始化全局数据库实例
-            await init_db_pool(use_unified_pool=True)
-
-            logger.info("全局服务初始化完成")
-        except Exception as e:
-            logger.error(f"初始化部分服务失败 (但这可能不影响本地运行): {e}")
+            await _step("db_pool", init_db_pool(use_unified_pool=True), timeout_s=25)
+        else:
+            logger.info("Bootstrap: OFFLINE/NO-DB mode detected.")
             redis_client = None
             pool_manager = None
-    else:
-        # 无数据库模式：仅初始化必要组件
-        logger.info("无数据库模式：跳过数据库和 Redis 初始化")
-        logger.info("系统将使用内存缓存和 LLM API 运行")
-        redis_client = None
-        pool_manager = None
-        # 强制设置 OFFLINE_MODE 环境变量，防止后续组件自动尝试连接
-        os.environ["OFFLINE_MODE"] = "true"
+            os.environ["OFFLINE_MODE"] = "true"
+            _set_component("offline_mode", "ok")
 
-    # 初始化追踪服务（仅在数据库模式下）
-    if pool_manager and not db.is_degraded:
-        tracing_service = TracingService(pool_manager=pool_manager)
-        logger.info("追踪服务已初始化")
+        if pool_manager and not db.is_degraded:
+            try:
+                tracing_service = TracingService(pool_manager=pool_manager)
+                _set_component("tracing_service", "ok")
+            except Exception as exc:
+                tracing_service = None
+                _set_component("tracing_service", "error", str(exc))
 
-    # 初始化增强 API 服务（仅在数据库模式下）
-    if pool_manager and not db.is_degraded:
-        enhanced_api_service = EnhancedAPIService(
-            pool_manager=pool_manager, tracing_service=tracing_service
-        )
-        await enhanced_api_service.start()
-        logger.info("增强 API 服务已启动")
+            try:
+                enhanced_api_service = EnhancedAPIService(
+                    pool_manager=pool_manager, tracing_service=tracing_service
+                )
+                await asyncio.wait_for(enhanced_api_service.start(), timeout=25)
+                _set_component("enhanced_api_service", "ok")
+            except Exception as exc:
+                enhanced_api_service = None
+                _set_component("enhanced_api_service", "error", str(exc))
+                st.setdefault("errors", []).append(f"enhanced_api_service failed: {exc}")
 
-    # 初始化批改记忆系统（支持 Redis + PostgreSQL 后端）
+        try:
+            from src.services.grading_memory import init_memory_service_with_db
+
+            await asyncio.wait_for(
+                init_memory_service_with_db(pool_manager=pool_manager, redis_client=redis_client),
+                timeout=25,
+            )
+            _set_component("grading_memory", "ok")
+        except Exception as exc:
+            _set_component("grading_memory", "error", str(exc))
+            logger.warning("grading_memory init failed (will fall back): %s", exc)
+
+        await _step("orchestrator", init_orchestrator(), timeout_s=40)
+        try:
+            orch = await get_orchestrator()
+            if orch is not None:
+                await batch_langgraph.resume_orphaned_streams(orch)
+                _set_component("orchestrator_resume", "ok")
+        except Exception as exc:
+            _set_component("orchestrator_resume", "error", str(exc))
+
+        try:
+            from src.services.redis_task_queue import init_task_queue
+
+            await asyncio.wait_for(init_task_queue(), timeout=20)
+            _set_component("task_queue", "ok")
+        except Exception as exc:
+            _set_component("task_queue", "error", str(exc))
+            logger.warning("task_queue init failed (will fall back): %s", exc)
+
+        st["status"] = "ready" if not st.get("errors") else "degraded"
+        logger.info("Bootstrap: %s", st["status"])
+
+    except asyncio.CancelledError:
+        st["status"] = "cancelled"
+        raise
+    except Exception as exc:
+        st["status"] = "degraded"
+        st.setdefault("errors", []).append(f"bootstrap crashed: {exc}")
+        logger.error("Bootstrap crashed: %s", exc, exc_info=True)
+    finally:
+        st["finished_at"] = _now_iso_utc()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application lifespan manager. Non-blocking startup for Railway healthchecks."""
+    global redis_client, pool_manager, enhanced_api_service, tracing_service
+
+    app.state.bootstrap = {
+        "status": "starting",
+        "started_at": _now_iso_utc(),
+        "finished_at": None,
+        "errors": [],
+        "components": {},
+    }
+    app.state.bootstrap_task = asyncio.create_task(_bootstrap_init(app))
+    logger.info("Startup: bootstrap task scheduled (non-blocking).")
+
     try:
-        from src.services.grading_memory import init_memory_service_with_db
+        yield
+    finally:
+        logger.info("Shutting down app...")
 
-        await init_memory_service_with_db(pool_manager=pool_manager, redis_client=redis_client)
-        logger.info("批改记忆服务已初始化")
-    except Exception as e:
-        logger.warning(f"批改记忆服务初始化失败（将使用文件存储）: {e}")
+        # Stop bootstrap first to avoid racing initializers during shutdown.
+        bootstrap_task = getattr(app.state, "bootstrap_task", None)
+        if bootstrap_task is not None:
+            bootstrap_task.cancel()
+            try:
+                await bootstrap_task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                logger.warning("Bootstrap task did not shut down cleanly.", exc_info=True)
 
-    # 初始化编排器（两种模式都需要）
-    try:
-        await init_orchestrator()
-        logger.info("LangGraph 编排器已初始化")
-        await batch_langgraph.resume_orphaned_streams(await get_orchestrator())
-    except Exception as e:
-        logger.warning(f"编排器初始化失败: {e}")
+        # Shutdown Redis task queue.
+        try:
+            from src.services.redis_task_queue import shutdown_task_queue
 
-    # 初始化 Redis 任务队列（用于高并发批改）
-    try:
-        from src.services.redis_task_queue import init_task_queue
+            await shutdown_task_queue()
+            logger.info("Redis task queue shut down.")
+        except Exception as e:
+            logger.warning(f"Redis task queue shutdown failed: {e}")
 
-        await init_task_queue()
-        logger.info("Redis 任务队列已初始化")
-    except Exception as e:
-        logger.warning(f"Redis 任务队列初始化失败（将使用本地模式）: {e}")
+        # Close orchestrator.
+        try:
+            await close_orchestrator()
+            logger.info("Orchestrator closed.")
+        except Exception as e:
+            logger.warning(f"Orchestrator close failed: {e}")
 
-    logger.info("应用启动完成")
+        # Stop enhanced API service.
+        try:
+            if enhanced_api_service:
+                await enhanced_api_service.stop()
+                logger.info("Enhanced API service stopped.")
+        except Exception as e:
+            logger.warning(f"Enhanced API service stop failed: {e}")
 
-    yield
+        # Close pools.
+        try:
+            if pool_manager:
+                await pool_manager.shutdown()
+                logger.info("Unified pool manager shut down.")
+            else:
+                await close_db_pool()
+                logger.info("DB pool closed.")
 
-    # 关闭时清理
-    logger.info("关闭应用...")
-
-    # 关闭 Redis 任务队列
-    try:
-        from src.services.redis_task_queue import shutdown_task_queue
-
-        await shutdown_task_queue()
-        logger.info("Redis 任务队列已关闭")
-    except Exception as e:
-        logger.warning(f"Redis 任务队列关闭失败: {e}")
-
-    # 关闭编排器
-    await close_orchestrator()
-    logger.info("编排器已关闭")
-
-    # 停止增强 API 服务
-    if enhanced_api_service:
-        await enhanced_api_service.stop()
-        logger.info("增强 API 服务已停止")
-
-    # 关闭统一连接池
-    if pool_manager:
-        await pool_manager.shutdown()
-        logger.info("统一连接池已关闭")
-    else:
-        # 传统方式关闭
-        await close_db_pool()
-        logger.info("数据库连接池已关闭")
-
-        if redis_client:
-            await redis_client.close()
-            logger.info("Redis 连接已关闭")
-
-
+                if redis_client:
+                    await redis_client.close()
+                    logger.info("Redis client closed.")
+        except Exception as e:
+            logger.warning(f"Pool shutdown failed: {e}")
 # 创建 FastAPI 应用
 app = FastAPI(
     title="AI 批改系统 API",
@@ -353,7 +432,26 @@ async def health_check():
         "database_available": db.is_available if hasattr(db, "is_available") else False,
         "degraded_mode": db.is_degraded if hasattr(db, "is_degraded") else False,
         "features": features,
+        # Liveness endpoint: always 200. Readiness is exposed via /ready.
+        "bootstrap": getattr(app.state, "bootstrap", {"status": "unknown"}),
     }
+
+
+@app.get("/ready", tags=["health"])
+@app.get("/api/ready", tags=["health"])
+async def readiness_check():
+    """Readiness endpoint: returns 200 only after background bootstrap finishes."""
+    st = getattr(app.state, "bootstrap", None)
+    if not st:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail={"status": "starting"}
+        )
+
+    if st.get("status") in ("ready", "degraded"):
+        return {"status": "ready", "bootstrap": st}
+
+    raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=st)
+
 
 
 @app.get("/", tags=["root"])

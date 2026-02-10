@@ -2,16 +2,20 @@
 set -e
 
 if [ "${OFFLINE_MODE:-}" = "true" ]; then
-  echo "Skipping migrations (OFFLINE_MODE=true)."
+  echo "OFFLINE_MODE=true: skipping DB migrations."
 elif [ -n "${DATABASE_URL:-}" ] || [ -n "${DB_HOST:-}" ]; then
-  echo "Running database migrations."
-  # 允许迁移失败（表可能已存在），不阻塞应用启动
-  alembic upgrade head || echo "⚠️ Migration warning (may be safe to ignore if tables exist)"
+  echo "DB configured: running Alembic migrations in background (non-blocking)."
+  # Do not block app start; Railway healthchecks are time-bounded.
+  # Keep a hard timeout to avoid hanging forever on DB networking issues.
+  (
+    timeout 180s alembic upgrade head \
+      && echo "Alembic migrations completed." \
+      || echo "WARNING: Alembic migrations failed or timed out (service will still start)."
+  ) &
 else
-  echo "Skipping migrations (no database configured)."
+  echo "No DB configured: skipping migrations."
 fi
 
-# 禁用 websockets 的 keepalive ping 以避免并发写入冲突
-# websockets 库的内部 ping 与应用层的 send_json 冲突会导致 AssertionError
-# --ws wsproto: 使用 wsproto 替代 websockets（没有 keepalive ping 竞态问题）
+echo "Starting API server..."
+# --ws wsproto: avoid websockets keepalive ping race with app-level sends.
 exec uvicorn src.api.main:app --host 0.0.0.0 --port "${PORT:-8001}" --ws wsproto
