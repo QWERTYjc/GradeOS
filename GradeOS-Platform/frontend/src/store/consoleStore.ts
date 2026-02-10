@@ -1388,6 +1388,15 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                 } else {
                     get().updateNodeStatus(mappedNodeId, normalizedStatus);
                 }
+
+                // When the backend replays cached progress, it intentionally skips `workflow_completed`
+                // (to avoid auto-jumping to the results view). In that case, we still want the console
+                // to show "completed" once the final export stage is done.
+                if (mappedNodeId === 'export' && normalizedStatus === 'completed') {
+                    get().setStatus('COMPLETED');
+                    get().setPendingReview(null);
+                    get().setReviewFocus(null);
+                }
             });
 
             // 处理并行 Agent 创建
@@ -1957,7 +1966,10 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                 if (summary) {
                     get().addLog(`Review completed: ${summary.total_students} students, ${summary.low_confidence_count} low-confidence results`, 'INFO');
                 }
-                get().setStatus('RUNNING');
+                // Only move out of REVIEWING; never regress a completed run back to RUNNING.
+                if (get().status === 'REVIEWING') {
+                    get().setStatus('RUNNING');
+                }
                 get().setPendingReview(null);
                 get().setReviewFocus(null);
             });
