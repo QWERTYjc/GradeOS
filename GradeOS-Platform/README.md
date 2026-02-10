@@ -12,26 +12,97 @@
 
 ## 🚀 快速开始
 
-### 5 分钟启动（无数据库模式）
+### 完整部署步骤
+
+#### 1. 克隆项目
 
 ```bash
-# 1. 克隆项目
 git clone https://github.com/your-org/GradeOS-Platform.git
 cd GradeOS-Platform
+```
 
-# 2. 后端启动
+#### 2. 启动数据库服务
+
+使用 Docker 启动 PostgreSQL 和 Redis：
+
+```bash
 cd backend
-pip install -r requirements.txt
-export LLM_API_KEY="your-gemini-api-key"
-uvicorn src.api.main:app --reload --port 8001
+docker-compose up -d postgres redis
 
-# 3. 前端启动（新终端）
-cd ../frontend
+# 验证服务启动
+docker ps  # 应该看到 postgres 和 redis 容器运行中
+```
+
+#### 3. 配置环境变量
+
+```bash
+# 复制环境变量模板
+cp .env.example .env
+
+# 编辑 .env 文件
+# Windows: notepad .env
+# Mac/Linux: nano .env
+```
+
+必填配置项：
+
+```bash
+# Gemini API Key（由开发团队提供）
+GEMINI_API_KEY=your_api_key_here
+
+# 部署模式
+DEPLOYMENT_MODE=full
+
+# 数据库连接
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/gradeos
+REDIS_URL=redis://localhost:6379/0
+
+# JWT 密钥（用于用户认证，随机生成）
+JWT_SECRET=your_random_secret_key_here
+```
+
+#### 4. 初始化数据库
+
+```bash
+# 安装 Python 依赖
+pip install -r requirements.txt
+
+# 运行数据库迁移
+alembic upgrade head
+
+# （可选）创建初始数据
+python scripts/init_database.py
+```
+
+#### 5. 启动后端服务
+
+```bash
+uvicorn src.api.main:app --reload --port 8001
+```
+
+验证后端启动成功：访问 http://localhost:8001/health
+
+#### 6. 启动前端服务
+
+打开新终端：
+
+```bash
+cd GradeOS-Platform/frontend
+
+# 安装依赖
 npm install
+
+# 启动开发服务器
 npm run dev
 ```
 
-访问 http://localhost:3000 开始使用！
+#### 7. 访问应用
+
+- 前端地址：http://localhost:3000
+- 后端 API：http://localhost:8001
+- API 文档：http://localhost:8001/docs
+
+🎉 部署完成！现在可以开始使用 GradeOS 平台了。
 
 ## ⚙️ 环境配置
 
