@@ -3386,11 +3386,11 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
             "confidence": 置信度,
             "source_pages": [页码列表],
             "steps": [
-                {
+                {{
                     "step_id": "S1",
                     "step_content": "步骤原文/公式（学生作答中的内容）",
-                    "step_region": {"x_min":0.0,"y_min":0.0,"x_max":0.0,"y_max":0.0,"page_index":0}
-                }
+                    "step_region": {{"x_min":0.0,"y_min":0.0,"x_max":0.0,"y_max":0.0,"page_index":0}}
+                }}
             ],
             "scoring_point_results": [
                 // ⚠️ 重要：必须包含评分标准中的所有得分点，不能合并或省略
