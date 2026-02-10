@@ -19,6 +19,10 @@ temp/
 **/teacher_*.png
 **/student_*.png
 
+# Local ad-hoc smoke-test artifacts
+tmp_smoke/
+tmp_dummy.txt
+
 # Keep research/test assets requested by product
 !测试文件/
 !调研数据/

@@ -43,6 +43,29 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/annotations", tags=["批注管理"])
 
 
+# ==================== Helpers ====================
+
+
+async def _resolve_history_id_or_none(grading_history_id_or_batch_id: str) -> Optional[str]:
+    """Resolve either grading_history.id or grading_history.batch_id to grading_history.id.
+
+    Returns None when the history record doesn't exist.
+    """
+    history = await get_grading_history(grading_history_id_or_batch_id)
+    return history.id if history else None
+
+
+async def _resolve_history_id_or_404(grading_history_id_or_batch_id: str) -> str:
+    """Resolve either grading_history.id or grading_history.batch_id to grading_history.id.
+
+    Raises 404 when the history record doesn't exist.
+    """
+    resolved = await _resolve_history_id_or_none(grading_history_id_or_batch_id)
+    if not resolved:
+        raise HTTPException(status_code=404, detail="批改历史不存在")
+    return resolved
+
+
 # ==================== 请求/响应模型 ====================
 
 
@@ -142,7 +165,9 @@ async def list_annotations(
 ):
     """获取指定学生的批注列表"""
     try:
-        annotations = await get_annotations(grading_history_id, student_key, page_index)
+        resolved_history_id = await _resolve_history_id_or_none(grading_history_id)
+        target_history_id = resolved_history_id or grading_history_id
+        annotations = await get_annotations(target_history_id, student_key, page_index)
         return AnnotationsListResponse(
             success=True,
             annotations=[
@@ -178,12 +203,13 @@ async def list_annotations(
 async def create_annotation(request: CreateAnnotationRequest):
     """教师手动添加批注"""
     try:
+        resolved_history_id = await _resolve_history_id_or_404(request.grading_history_id)
         annotation_id = str(uuid.uuid4())
         now = datetime.now().isoformat()
         
         annotation = GradingAnnotation(
             id=annotation_id,
-            grading_history_id=request.grading_history_id,
+            grading_history_id=resolved_history_id,
             student_key=request.student_key,
             page_index=request.page_index,
             annotation_type=request.annotation.annotation_type,
@@ -290,7 +316,9 @@ async def delete_student_annotations(
 ):
     """删除学生的所有批注（可指定页码）"""
     try:
-        count = await delete_annotations_for_student(grading_history_id, student_key, page_index)
+        resolved_history_id = await _resolve_history_id_or_none(grading_history_id)
+        target_history_id = resolved_history_id or grading_history_id
+        count = await delete_annotations_for_student(target_history_id, student_key, page_index)
         return {"success": True, "deleted_count": count}
     except Exception as e:
         logger.error(f"删除批注失败: {e}")
@@ -313,8 +341,10 @@ async def generate_annotations(request: GenerateAnnotationsRequest):
         history = await get_grading_history(request.grading_history_id)
         if not history:
             raise HTTPException(status_code=404, detail="批改历史不存在")
+
+        resolved_history_id = history.id
         
-        student_result = await get_student_result(request.grading_history_id, request.student_key)
+        student_result = await get_student_result(resolved_history_id, request.student_key)
         if not student_result:
             raise HTTPException(status_code=404, detail="学生批改结果不存在")
 
@@ -332,13 +362,13 @@ async def generate_annotations(request: GenerateAnnotationsRequest):
             )
 
         # 2. 获取页面图片
-        page_images = await get_page_images_for_student(request.grading_history_id, request.student_key)
+        page_images = await get_page_images_for_student(resolved_history_id, request.student_key)
         if not page_images:
             logger.warning("未找到学生答题图片，尝试使用 batch_images 兜底")
         
         # 3. 如果不覆盖，先检查是否已有批注
         if not request.overwrite:
-            existing = await get_annotations(request.grading_history_id, request.student_key)
+            existing = await get_annotations(resolved_history_id, request.student_key)
             if existing:
                 return GenerateAnnotationsResponse(
                     success=True,
@@ -365,13 +395,13 @@ async def generate_annotations(request: GenerateAnnotationsRequest):
                 )
         else:
             # 覆盖模式：先删除已有批注
-            await delete_annotations_for_student(request.grading_history_id, request.student_key)
+            await delete_annotations_for_student(resolved_history_id, request.student_key)
         
         # 4. 调用 VLM 生成批注坐标
         from src.services.annotation_generator import generate_annotations_for_student
         
         generated = await generate_annotations_for_student(
-            grading_history_id=request.grading_history_id,
+            grading_history_id=resolved_history_id,
             student_key=request.student_key,
             student_result=student_result,
             page_images=page_images,
@@ -428,15 +458,16 @@ async def export_annotated_pdf(request: ExportPdfRequest):
     将批注渲染到答题图片上，生成 PDF 文件
     """
     try:
+        history = await get_grading_history(request.grading_history_id)
+        resolved_history_id = history.id if history else request.grading_history_id
+
         # 1. 获取批改结果
-        student_result = await get_student_result(request.grading_history_id, request.student_key)
+        student_result = await get_student_result(resolved_history_id, request.student_key)
         if not student_result:
             raise HTTPException(status_code=404, detail="学生批改结果不存在")
-
-        history = await get_grading_history(request.grading_history_id)
         
         # 2. 获取页面图片
-        page_images = await get_page_images_for_student(request.grading_history_id, request.student_key)
+        page_images = await get_page_images_for_student(resolved_history_id, request.student_key)
         fallback_images = None
         if not page_images:
             if history:
@@ -456,7 +487,7 @@ async def export_annotated_pdf(request: ExportPdfRequest):
             page_images = [
                 GradingPageImage(
                     id=str(uuid.uuid4()),
-                    grading_history_id=request.grading_history_id,
+                    grading_history_id=resolved_history_id,
                     student_key=request.student_key,
                     page_index=page_idx,
                     file_id="",
@@ -467,7 +498,7 @@ async def export_annotated_pdf(request: ExportPdfRequest):
                 for page_idx in sorted(fallback_images.keys())
             ]
         # 3. 获取批注
-        annotations = await get_annotations(request.grading_history_id, request.student_key)
+        annotations = await get_annotations(resolved_history_id, request.student_key)
         
         # 4. 生成带批注的 PDF
         from src.services.pdf_exporter import export_annotated_pdf as generate_pdf
@@ -481,9 +512,9 @@ async def export_annotated_pdf(request: ExportPdfRequest):
         )
         
         # 5. 返回 PDF 文件
-        raw_filename = f"grading_{request.student_key}_{request.grading_history_id[:8]}.pdf"
+        raw_filename = f"grading_{request.student_key}_{resolved_history_id[:8]}.pdf"
         safe_student = re.sub(r"[^A-Za-z0-9._-]+", "_", request.student_key) or "student"
-        safe_filename = f"grading_{safe_student}_{request.grading_history_id[:8]}.pdf"
+        safe_filename = f"grading_{safe_student}_{resolved_history_id[:8]}.pdf"
         encoded_filename = quote(raw_filename)
         
         return Response(
