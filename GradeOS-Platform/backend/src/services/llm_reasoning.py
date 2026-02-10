@@ -320,9 +320,6 @@ class LLMReasoningClient:
             "confidence": confidence,
             "source_pages": source_pages,
             "scoring_point_results": scoring_point_results,
-            "self_critique": detail.get("self_critique") or detail.get("selfCritique"),
-            "self_critique_confidence": detail.get("self_critique_confidence")
-            or detail.get("selfCritiqueConfidence"),
             "rubric_refs": detail.get("rubric_refs") or detail.get("rubricRefs"),
             "question_type": detail.get("question_type") or detail.get("questionType"),
             "annotations": annotations,
@@ -982,60 +979,18 @@ class LLMReasoningClient:
           "evidence": "【原文引用】学生写了...",
           "evidence_region": {{"x_min": 0.1, "y_min": 0.2, "x_max": 0.4, "y_max": 0.25}}
         }}
-      ],
-      "audit": {{
-        "confidence": 0.85,
-        "uncertainties": ["符号可能识别不清"],
-        "risk_flags": ["formula_ambiguity"],
-        "needs_review": false
-      }}
+      ]
     }}
   ],
   "page_summary": "简要总结",
   "student_info": {{"name": "", "student_id": ""}}
 }}
 ```
-
-## ⚠️ 审计信息要求（audit字段）
-每道题的 question_details 必须包含 audit 字段，用于后续风险评估和人工复核：
-
-- **confidence** (float, 0-1): 本题批改的置信度
-  - 0.9-1.0: 非常确定
-  - 0.7-0.9: 比较确定
-  - 0.5-0.7: 有些不确定
-  - <0.5: 很不确定，建议复核
-
-- **uncertainties** (list[str]): 不确定点列表（每条不超过50字）
-  - 例如: ["字迹模糊，数字可能识别错误", "公式第二步不太清楚"]
-  - 没有不确定点则为空列表 []
-
-- **risk_flags** (list[str]): 风险标签列表（从以下选项中选择）
-  - full_marks: 满分风险（需要确认是否真的完全正确）
-  - zero_marks: 零分风险（需要确认是否真的完全错误）
-  - boundary_score: 边界分数（刚好及格/不及格等临界情况）
-  - low_confidence: 低置信度（confidence < 0.6）
-  - evidence_gap: 证据不足（缺少明确的原文引用）
-  - formula_ambiguity: 公式识别模糊
-  - alternative_solution: 可能是另类解法
-  - 没有风险则为空列表 []
-
-- **needs_review** (bool): 是否需要人工复核
-  - true: 建议人工复核
-  - false: 不需要复核
-
-### 审计信息填写规则
-1. **诚实评估**：置信度要真实反映你的确定程度，不要高估
-2. **具体明确**：uncertainties 要具体指出哪里不确定，不要泛泛而谈
-3. **严格标记**：满足以下任一条件必须标记 needs_review=true：
-   - confidence < 0.6
-   - 满分或零分
-   - risk_flags 包含 evidence_gap
-   - 学生使用了非标准解法
-4. **风险优先**：宁可多标记风险，也不要遗漏潜在问题"""
+"""
 
     def _parse_grading_response(self, response_text: str, max_score: float) -> Dict[str, Any]:
         """
-        解析评分响应，并确保 evidence 和 audit 字段被正确填充
+        解析评分响应，并确保 scoring_point_results.evidence 字段被正确填充
 
         Args:
             response_text: LLM 响应文本
@@ -1051,69 +1006,17 @@ class LLMReasoningClient:
         
         result = json.loads(json_text)
 
-        # 确保所有 question_details 都有 evidence 和 audit 字段
+        # 确保所有 scoring_point_results 都有可解析的 evidence 字段（缺失时用占位符，不要臆造证据）
         for q in result.get("question_details", []):
             # 处理 scoring_point_results 中的 evidence 字段
             for spr in q.get("scoring_point_results", []):
                 # 检查 evidence 是否为空或无效
                 evidence = spr.get("evidence", "")
                 if not evidence or evidence.strip() in ["", "无", "N/A", "null", "None"]:
-                    # 自动补充默认 evidence
-                    awarded = spr.get("awarded", 0)
-                    max_sp_score = spr.get("max_score", 0)
-                    description = spr.get("description", "该评分点")
-
-                    if awarded == max_sp_score:
-                        spr["evidence"] = f"学生正确完成了{description}，获得满分"
-                    elif awarded == 0:
-                        spr["evidence"] = f"学生未作答或未正确完成{description}"
-                    else:
-                        spr["evidence"] = (
-                            f"学生部分完成了{description}，获得{awarded}/{max_sp_score}分"
-                        )
-
-                    logger.warning(f"evidence 字段为空，已自动补充: {spr['evidence']}")
-            
-            # 确保每道题都有 audit 字段
-            if "audit" not in q or not q["audit"]:
-                # 自动生成 audit 字段
-                score = q.get("score", 0)
-                max_q_score = q.get("max_score", 0)
-                confidence = q.get("confidence", 0.7)
-                
-                # 根据评分情况自动生成审计信息
-                audit = {
-                    "confidence": confidence,
-                    "uncertainties": [],
-                    "risk_flags": [],
-                    "needs_review": False
-                }
-                
-                # 自动标记风险
-                if max_q_score > 0:
-                    if score >= max_q_score:
-                        audit["risk_flags"].append("full_marks")
-                    elif score == 0:
-                        audit["risk_flags"].append("zero_marks")
-                
-                if confidence < 0.6:
-                    audit["risk_flags"].append("low_confidence")
-                    audit["needs_review"] = True
-                
-                # 检查是否有空证据
-                has_empty_evidence = False
-                for spr in q.get("scoring_point_results", []):
-                    evidence = spr.get("evidence", "").strip()
-                    if not evidence or evidence in ["无", "N/A", "null", "None"]:
-                        has_empty_evidence = True
-                        break
-                
-                if has_empty_evidence:
-                    audit["risk_flags"].append("evidence_gap")
-                    audit["needs_review"] = True
-                
-                q["audit"] = audit
-                logger.debug(f"audit 字段缺失，已自动生成: {audit}")
+                    spr["evidence"] = "【原文引用】未找到"
+                    # 避免日志噪音：这里只在 debug 下输出
+                    if logger.isEnabledFor(logging.DEBUG):
+                        logger.debug("evidence 字段为空，已补充占位符")
 
         return result
 
@@ -1233,13 +1136,7 @@ class LLMReasoningClient:
                     "awarded": 5,
                     "evidence": "【必填】学生在结论处写'因此答案为5'，但正确答案应为4，扣2分"
                 }}
-            ],
-            "audit": {{
-                "confidence": 0.8,
-                "uncertainties": ["第2步逻辑推理过程不太清晰"],
-                "risk_flags": [],
-                "needs_review": false
-            }}
+            ]
         }}
     ],
     "page_summary": "本页包含第1-3题，学生整体表现良好，主要在计算方面有失误",
@@ -1249,13 +1146,6 @@ class LLMReasoningClient:
     }}
 }}
 ```
-
-## ⚠️ 审计信息（audit字段）- 必填
-每道题必须包含 audit 字段，用于风险评估：
-- **confidence** (0-1): 本题批改置信度
-- **uncertainties** (list): 不确定点（简短，每条≤50字）
-- **risk_flags** (list): 风险标签（full_marks/zero_marks/boundary_score/low_confidence/evidence_gap/formula_ambiguity/alternative_solution）
-- **needs_review** (bool): 是否需要人工复核（满分/零分/低置信度/证据不足时应为true）
 
 ## 重要评分原则
 1. **严格遵循评分标准**：每个得分点必须有明确依据
@@ -1745,7 +1635,7 @@ class LLMReasoningClient:
         )
         question_type_rules = (
             "Question type rules:\n"
-            "- choice: no analysis; feedback/self_critique must be empty; keep output minimal.\n"
+            "- choice: no analysis; feedback must be empty; keep output minimal.\n"
             "- objective: strictly follow rubric/scoring_points/deduction_rules; no speculation.\n"
             "- subjective: allow partial credit; if using alternative_solutions, set "
             "used_alternative_solution=true and fill alternative_solution_ref; lower confidence.\n"
@@ -1984,8 +1874,6 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
                     "is_correct": False,
                     "feedback": "No answer detected.",
                     "confidence": 0.0,
-                    "self_critique": "Insufficient evidence to grade; manual review recommended.",
-                    "self_critique_confidence": 0.0,
                     "scoring_point_results": [],
                     "page_indices": [],
                     "question_type": rubric.get("question_type") or rubric.get("questionType"),
@@ -2017,11 +1905,10 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
             "Return JSON only with this structure:\n"
             '{"question_details": [{"question_id": "1", "score": 0, "max_score": 0, '
             '"student_answer": "", "is_correct": false, "feedback": "", '
-            '"confidence": 0.0, "self_critique": "", '
-            '"self_critique_confidence": 0.0, "scoring_point_results": []}]}\n'
+            '"confidence": 0.0, "scoring_point_results": []}]}\n'
             "Rules:\n"
             "- Only include the specified questions.\n"
-            "- If an answer is missing or unclear, score 0 and explain in self_critique.\n"
+            "- If an answer is missing or unclear, score 0 and explain briefly in feedback.\n"
             "- Return valid JSON only.\n"
         )
         content = [{"type": "text", "text": prompt}]
@@ -2240,17 +2127,13 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
  3. 每个评分点必须输出对应的 rubric_reference（包含 point_id、描述，以及若已提供则包含标准值）以及**具体评分依据**（引用图片中的原文证据）
  4. **严格依据评分标准**：评分标准是核心依据，但允许等价表达与合理变形；不要要求一字不差，只要证据充分且逻辑等价即可给分
  5. **判定与得分一致**：若判定“得分/正确”，awarded 必须 > 0；若判定“不得分/错误”，awarded 必须 = 0
- 6. **反幻觉约束**：只能基于图片中明确可见的内容引用证据；不得臆测或替学生“补写”。若证据不足，awarded=0，evidence=【原文引用】未找到，并在 self_critique 标注不确定
+ 6. **反幻觉约束**：只能基于图片中明确可见的内容引用证据；不得臆测或替学生“补写”。若证据不足，awarded=0，evidence=【原文引用】未找到，并在 feedback 中简要说明证据不足/不确定
  7. **证据冲突直接扣分**：若证据与评分点要求冲突（如写 AAA 却被判 AAS/ASA），直接判 0 分并说明冲突点
  8. **证明/理由类不得“碰运气”**：需要理由/证明的评分点，若只给结论或仅写“disagree/unchanged”等无论证表述，必须判 0 分
  9. **多条件评分点**：若评分点描述包含“同时/并且/以及/both/and/含…与…”，必须逐项满足；缺任一项直接判 0 分
  10. 不得根据最终答案“倒推”过程正确；过程/理由错误即扣分，除非评分标准明确允许“仅答案正确”
- 11. **另类方法**：如学生使用不同但有效的推理方法，可给分；但需在 self_critique 中说明其与标准的差异，并降低 confidence
- 12. 每道题必须输出 self_critique，并提供自评置信度 self_critique_confidence（0-1）
- 13. 自白需对自己的批改进行评判：主动指出不确定与遗漏
-    - **奖励诚实**：坦诚指出证据不足/不确定之处，可维持或略升 self_critique_confidence
-    - **惩罚不诚实**：若结论缺乏证据或存在夸大，自白必须降低 self_critique_confidence 并说明
- 14. 若无法匹配评分标准的 point_id，仍可给分，但需在 self_critique 中说明，并显著降低 confidence
+ 11. **另类方法**：如学生使用不同但有效的推理方法，可给分；但需在 feedback 中说明其与标准的差异，并降低 confidence
+ 12. 若无法匹配评分标准的 point_id，仍可给分，但需在 feedback 中说明，并显著降低 confidence
  15. **一致性自检**：输出前逐条核对 awarded / decision / reason / evidence / summary 是否一致；若冲突，以证据与评分标准为准进行修正
 
 ## 输出格式
@@ -2265,15 +2148,13 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
     "question_numbers": ["1", "2"],
     "question_details": [
         {{
-            "question_id": "1",
-            "score": 8,
-            "confidence": 0.82,
-            "student_answer": "学生的解答内容摘要...",
-            "feedback": "整体评价：xxx。扣分原因：xxx。",
-            "self_critique": "证据只覆盖关键一步，仍可能遗漏中间推导，建议复核。",
-            "self_critique_confidence": 0.62,
-            "rubric_refs": ["1.1", "1.2"],
-            "scoring_results": [
+             "question_id": "1",
+             "score": 8,
+             "confidence": 0.82,
+             "student_answer": "学生的解答内容摘要...",
+             "feedback": "整体评价：xxx。扣分原因：xxx。",
+             "rubric_refs": ["1.1", "1.2"],
+             "scoring_results": [
                 {{
                     "point_id": "1.1",
                     "rubric_reference": "[1.1] 正确列出方程",
@@ -2309,12 +2190,12 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
 2. **提供证据**：`evidence` 必须引用学生答卷中的原文，用【原文引用】开头
 3. **引用标准值**：若评分标准提供 expected_value，rubric_reference 中必须包含该标准值
 4. **按顺序批改**：图片顺序对应页面顺序（图片1=页面1，图片2=页面2...）
-5. **空白页处理**：如果是空白页，设置 is_blank_page=true, score=0
-6. **详细反馈**：feedback 中说明整体评价和具体扣分原因
-7. **自白与置信度**：每道题必须有 self_critique 与 self_critique_confidence
-8. **判定一致性**：decision 与 awarded 必须一致，避免“判定得分但 awarded=0”的输出
-9. **总结一致性**：summary/feedback 必须与评分点一致；若任一评分点为 0，不得写“完全正确”
-10. **逐条输出**：不要只输出 summary；评分点条目必须完整覆盖该题全部 rubric 评分点
+ 5. **空白页处理**：如果是空白页，设置 is_blank_page=true, score=0
+ 6. **详细反馈**：feedback 中说明整体评价和具体扣分原因
+ 7. **逐题置信度**：每道题必须输出 confidence（0-1），真实反映确定程度，不要高估
+ 8. **判定一致性**：decision 与 awarded 必须一致，避免“判定得分但 awarded=0”的输出
+ 9. **总结一致性**：summary/feedback 必须与评分点一致；若任一评分点为 0，不得写“完全正确”
+ 10. **逐条输出**：不要只输出 summary；评分点条目必须完整覆盖该题全部 rubric 评分点
 
 现在请开始批改。"""
 
@@ -3473,12 +3354,10 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
    - scoring_point_results 中每个得分点必须给出 `step_id` 指向其证据所在步骤（找不到则留空字符串）
    - `step_excerpt` 必须是学生作答中的原文摘录（≤80字），用于快速核验
 6. **跨页处理**：如果一道题跨越多页，需要综合所有页面的内容评分
-7. **另类解法**：如果学生使用了有效的另类解法，同样给分（前提：满足评分标准）
-8. **详细反馈**：为每道题提供具体的评分说明
-9. **完整记录学生作答**：student_answer 字段必须完整记录学生的原始作答内容，不要省略
-10. **自白与置信度**：每道题必须输出 self_critique（自我反思）和 self_critique_confidence（置信度）
-   - 自白需诚实指出不确定之处、证据不足的地方
-   - 如果对某道题的评分不确定，必须在 self_critique 中说明
+ 7. **另类解法**：如果学生使用了有效的另类解法，同样给分（前提：满足评分标准）
+ 8. **详细反馈**：为每道题提供具体的评分说明
+ 9. **完整记录学生作答**：student_answer 字段必须完整记录学生的原始作答内容，不要省略
+10. **逐题置信度**：每道题必须输出 confidence（0-1），真实反映确定程度，不要高估；不确定时在 feedback 中简要说明原因
 11. **区分 A mark 和 M mark**：
    - **A mark（Answer mark）**：答案分，只看最终答案是否正确
    - **M mark（Method mark）**：方法分，看解题步骤/方法是否正确
@@ -3505,8 +3384,6 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
             "is_correct": true/false,
             "feedback": "评分说明",
             "confidence": 置信度,
-            "self_critique": "【必须填写】自我反思：对本题评分的不确定之处、可能的遗漏、证据是否充分等",
-            "self_critique_confidence": 自评置信度（0.0-1.0，越低表示越不确定）,
             "source_pages": [页码列表],
             "steps": [
                 {
@@ -3537,12 +3414,11 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
 ```
 
 ## 重要提醒
-- 必须批改全部 {questions_count} 道题
-- 每道题的 score 必须等于各得分点 awarded 之和
-- total_score 必须等于各题 score 之和
-- student_answer 必须完整记录学生的原始作答，不要用"..."省略
-- self_critique 必须诚实反映评分的不确定性
-- 如果无法识别某道题的答案，confidence 和 self_critique_confidence 设为较低值并在 self_critique 中说明原因
+ - 必须批改全部 {questions_count} 道题
+ - 每道题的 score 必须等于各得分点 awarded 之和
+ - total_score 必须等于各题 score 之和
+ - student_answer 必须完整记录学生的原始作答，不要用"..."省略
+ - 如果无法识别某道题的答案，confidence 设为较低值并在 feedback 中说明原因
 """
 
         try:

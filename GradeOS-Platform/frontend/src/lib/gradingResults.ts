@@ -71,6 +71,22 @@ const normalizeConfessionPayload = (confession: unknown): unknown => {
     }
     return { summary: confession };
   }
+  if (typeof confession === 'object') {
+    const obj = confession as RawObject;
+    if (obj.version === 'confession_report_v1') {
+      const items = Array.isArray(obj.items) ? obj.items : [];
+      const errorCount = items.filter((i: any) => i && typeof i === 'object' && String(i.severity).toLowerCase() === 'error').length;
+      const warningCount = items.filter((i: any) => i && typeof i === 'object' && String(i.severity).toLowerCase() === 'warning').length;
+      const riskScore = Number(obj.riskScore ?? obj.risk_score ?? 0);
+      const overallStatus = errorCount > 0 || riskScore >= 0.6 ? 'needs_review' : (warningCount >= 3 || riskScore >= 0.3 ? 'caution' : 'ok');
+      return {
+        ...obj,
+        overallStatus: (obj.overallStatus as string) || overallStatus,
+        overallConfidence: obj.overallConfidence ?? obj.overall_confidence,
+        riskScore: obj.riskScore ?? obj.risk_score,
+      };
+    }
+  }
   return confession;
 };
 
@@ -178,6 +194,11 @@ export const normalizeStudentResults = (raw: RawObject[]): StudentResult[] => {
             const rawReasons = (q.reviewReasons || q.review_reasons) as unknown;
             if (!Array.isArray(rawReasons)) return [];
             return (rawReasons as unknown[]).map((v) => String(v));
+          })(),
+          confessionItems: (() => {
+            const rawItems = (q.confessionItems || (q as any).confession_items) as unknown;
+            if (!Array.isArray(rawItems)) return [];
+            return rawItems as any[];
           })(),
           auditFlags: (() => {
             if (audit?.riskFlags && audit.riskFlags.length > 0) {

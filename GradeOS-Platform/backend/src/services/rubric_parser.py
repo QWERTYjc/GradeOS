@@ -408,23 +408,12 @@ class RubricParserService:
 {{
   "rubric_format": "standard",
   "general_notes": "通用批改说明（如有）",
-  "confession": {{
-    "risks": ["极短的风险描述1", "风险2"],
-    "uncertainties": ["极短的不确定点1", "不确定点2"],
-    "blind_spots": ["可能遗漏的内容1"],
-    "needs_review": ["建议人工复核的题目/得分点"],
-    "confidence": 0.85
-  }},
   "questions": [
     {{
       "question_id": "1",
       "max_score": 5,
       "question_text": "题目内容（如有）",
       "standard_answer": "标准答案（完整提取）",
-      "confession": {{
-        "risk": "该题解析的风险（10字以内，无则为空）",
-        "uncertainty": "该题的不确定点（10字以内，无则为空）"
-      }},
       "scoring_points": [
         {{"point_id": "1.1", "description": "得分点描述（必须与原文一致）", "score": 1, "is_required": true}}
       ],
@@ -451,18 +440,10 @@ class RubricParserService:
 应该输出：
 ```json
 {{
-  "confession": {{
-    "risks": [],
-    "uncertainties": [],
-    "blind_spots": [],
-    "needs_review": [],
-    "confidence": 0.95
-  }},
   "questions": [
     {{
       "question_id": "7",
       "max_score": 15,
-      "confession": {{"risk": "", "uncertainty": ""}},
       "scoring_points": [
         {{"point_id": "7.1", "description": "计算结果", "score": 5}},
         {{"point_id": "7.2", "description": "写出过程", "score": 5}},
@@ -474,28 +455,6 @@ class RubricParserService:
 ```
 **注意：这是1道题，不是3道题！**
 
-## confession（自白）字段指南 ⚠️ 极短！
-自白字段用于标记解析过程中的风险和不确定性，**必须极短精炼**：
-
-**整体 confession**:
-- `risks`: 解析风险（每条≤15字），如：["第3题分值模糊", "答案可能不完整"]
-- `uncertainties`: 不确定点（每条≤15字），如：["题号5/6难以区分"]
-- `blind_spots`: 可能遗漏（每条≤15字），如：["可能有隐藏的扣分规则"]
-- `needs_review`: 建议复核（每条≤15字），如：["Q7得分点需确认"]
-- `confidence`: 0.0-1.0，整体置信度
-
-**题目级 confession**:
-- `risk`: 该题风险（≤10字），无则为空
-- `uncertainty`: 不确定点（≤10字），无则为空
-
-**何时填写**:
-- 图片模糊/字迹不清 → risk
-- 分值未明确标注 → uncertainty
-- 题目边界不清晰 → risk
-- 得分点描述含糊 → uncertainty
-- 标准答案缺失/不完整 → blind_spots
-- 可能有另类解法未识别 → blind_spots
-
 ## 严格规则
 - **必须返回有效的 JSON**（不要 markdown 代码块，不要 ```json）
 - **只计数主题号**，不要把子题当作独立题目
@@ -506,7 +465,6 @@ class RubricParserService:
 - **默认 1 分**：每个得分点默认 1 分，除非明确标注其他分值
 - max_score 必须是数字类型
 - 不要编造不存在的题目
-- **confession 必须极短**：每条描述不超过15字
 """
         prompt = prompt_template.format(batch_info=batch_info)
 

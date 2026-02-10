@@ -1048,7 +1048,18 @@ class StudentGradingResult:
 
 def save_student_result(result: StudentGradingResult) -> None:
     """保存学生批改结果"""
-    result_data_json = json.dumps(result.result_data) if result.result_data else None
+    # Keep confession column JSON-serializable (confession report v1 is a dict).
+    confession_value = result.confession
+    if confession_value is not None and not isinstance(confession_value, str):
+        try:
+            confession_value = json.dumps(confession_value, ensure_ascii=False)
+        except Exception as exc:
+            logger.error(f"Failed to serialize confession payload: {exc}")
+            confession_value = None
+
+    result_data_json = (
+        json.dumps(result.result_data, ensure_ascii=False) if result.result_data else None
+    )
 
     with get_connection() as conn:
         conn.execute(
@@ -1076,7 +1087,7 @@ def save_student_result(result: StudentGradingResult) -> None:
                 result.score,
                 result.max_score,
                 result.summary,
-                result.confession,
+                confession_value,
                 result_data_json,
                 result.imported_at,
                 result.revoked_at,

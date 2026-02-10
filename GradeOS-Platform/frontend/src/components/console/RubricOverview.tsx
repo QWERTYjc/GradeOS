@@ -120,6 +120,9 @@ export function RubricOverview() {
   
   // 规则检查生成的报告（兼容旧版）
   const confession = parsedRubric.parseConfession;
+  const confessionReport = (parsedRubric as any).confession_report || (parsedRubric as any).confessionReport;
+  const confessionReportItems = Array.isArray(confessionReport?.items) ? confessionReport.items : [];
+  const hasConfessionReport = confessionReport?.version === 'confession_report_v1' && confessionReportItems.length > 0;
 
   return (
     <div className="border-t border-slate-100 pt-6">
@@ -238,6 +241,41 @@ export function RubricOverview() {
               )}
             </div>
           )}
+        </div>
+      )}
+
+      {/* 独立自白报告（一次独立 LLM call） */}
+      {hasConfessionReport && (
+        <div className="mb-4 border border-slate-200 bg-white rounded-lg overflow-hidden">
+          <div className="flex items-center justify-between p-3 border-b border-slate-100">
+            <div className="flex items-center gap-2">
+              <ShieldAlert className="w-4 h-4 text-slate-700" />
+              <span className="text-sm font-semibold text-slate-800">独立自白报告</span>
+              {confessionReport?.honesty?.grade && (
+                <span className="ml-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-slate-100 text-slate-700 border border-slate-200">
+                  诚实度 {String(confessionReport.honesty.grade)}
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-3 text-xs text-slate-500">
+              {confessionReport?.riskScore !== undefined || confessionReport?.risk_score !== undefined ? (
+                <span>risk {Number(confessionReport.riskScore ?? confessionReport.risk_score).toFixed(2)}</span>
+              ) : null}
+              {confessionReport?.overallConfidence !== undefined || confessionReport?.overall_confidence !== undefined ? (
+                <span>conf {Number(confessionReport.overallConfidence ?? confessionReport.overall_confidence).toFixed(2)}</span>
+              ) : null}
+            </div>
+          </div>
+          <div className="p-3 space-y-2">
+            {confessionReportItems.slice(0, 8).map((item: any, idx: number) => (
+              <div key={idx} className="text-xs text-slate-700 bg-slate-50 border border-slate-200 rounded-md px-2.5 py-2">
+                <div className="font-semibold text-slate-800">
+                  [{String(item?.severity || 'warning').toUpperCase()}] {String(item?.issue_type || item?.issueType || 'issue')}
+                </div>
+                {item?.action && <div className="mt-1 text-slate-600">{String(item.action)}</div>}
+              </div>
+            ))}
+          </div>
         </div>
       )}
 

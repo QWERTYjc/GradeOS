@@ -273,6 +273,7 @@ const QuestionDetail: React.FC<{
     const isAssist = (gradingMode || '').startsWith('assist')
         || (question.maxScore <= 0 && !(question.scoringPointResults?.length || question.scoringPoints?.length));
     const reviewReasons = question.reviewReasons || [];
+    const confessionItems = (question as any).confessionItems || [];
     const audit = question.audit;
     const auditConfidence = audit?.confidence ?? question.confidence;
     const auditRisks = audit?.riskFlags ?? question.auditFlags ?? [];
@@ -300,6 +301,8 @@ const QuestionDetail: React.FC<{
     })();
     
     const hasAuditSignals = auditNeedsReview
+        || reviewReasons.length > 0
+        || confessionItems.length > 0
         || auditRisks.length > 0
         || auditUncertainties.length > 0;
 
@@ -710,7 +713,7 @@ const QuestionDetail: React.FC<{
                         </div>
                     )}
                     
-                    {/* 审计提示区块 - 可折叠 */}
+                    {/* 自白报告区块 - 可折叠 */}
                     {hasAuditSignals && (
                         <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50/50 overflow-hidden">
                             <button 
@@ -720,7 +723,7 @@ const QuestionDetail: React.FC<{
                             >
                                 <span className="text-[11px] font-semibold text-amber-700 flex items-center gap-1.5">
                                     <BrainCircuit className="w-3.5 h-3.5" />
-                                    审计提示 ({auditRisks.length + auditUncertainties.length + (auditNeedsReview ? 1 : 0)})
+                                    自白报告 ({confessionItems.length + reviewReasons.length + auditRisks.length + auditUncertainties.length + (auditNeedsReview ? 1 : 0)})
                                 </span>
                                 <ChevronDown className={clsx("w-4 h-4 text-amber-500 transition-transform", analysisOpen && "rotate-180")} />
                             </button>
@@ -730,6 +733,28 @@ const QuestionDetail: React.FC<{
                                         <div className="text-[11px] text-rose-700 bg-rose-50 px-2 py-1.5 rounded border border-rose-200 flex items-start gap-1.5">
                                             <XCircle className="w-3 h-3 mt-0.5 flex-shrink-0" />
                                             <span>需要人工复核</span>
+                                        </div>
+                                    )}
+                                    {reviewReasons.length > 0 && (
+                                        <div className="space-y-1">
+                                            {reviewReasons.map((item, i) => (
+                                                <div key={`rr-${i}`} className="text-[11px] text-slate-700 bg-white/70 px-2 py-1.5 rounded border border-amber-100 flex items-start gap-1.5">
+                                                    <AlertTriangle className="w-3 h-3 mt-0.5 flex-shrink-0 opacity-70" />
+                                                    <span>复核原因：{item}</span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                    {confessionItems.length > 0 && (
+                                        <div className="space-y-1">
+                                            {confessionItems.slice(0, 6).map((it: any, i: number) => (
+                                                <div key={`ci-${i}`} className="text-[11px] text-amber-800 bg-amber-50 px-2 py-1.5 rounded border border-amber-200 flex items-start gap-1.5">
+                                                    <AlertTriangle className="w-3 h-3 mt-0.5 flex-shrink-0 opacity-70" />
+                                                    <span>
+                                                        [{String(it?.severity || 'warning').toUpperCase()}] {String(it?.issue_type || it?.issueType || 'issue')}：{String(it?.action || '')}
+                                                    </span>
+                                                </div>
+                                            ))}
                                         </div>
                                     )}
                                     {auditRisks.length > 0 && (
@@ -761,7 +786,7 @@ const QuestionDetail: React.FC<{
             )}
             {(isLowConfidence || auditNeedsReview) && (
                 <div className="mt-3 p-3 rounded-md border border-amber-200 bg-amber-50">
-                    <div className="text-[11px] font-semibold text-amber-700 mb-1">审计提示</div>
+                    <div className="text-[11px] font-semibold text-amber-700 mb-1">自白提示</div>
                     <p className="text-xs text-amber-800 leading-relaxed">
                         <MathText text={auditUncertainties[0] || '该题存在不确定性或风险标签，建议复核。'} />
                     </p>
@@ -788,6 +813,8 @@ const ResultCard: React.FC<ResultCardProps> = ({ result, rank, onExpand }) => {
         const confidence = audit?.confidence ?? q.confidence ?? 1;
         return Boolean(audit?.needsReview)
             || (audit?.riskFlags?.length || 0) > 0
+            || ((q as any).confessionItems && (q as any).confessionItems.length > 0)
+            || (q.reviewReasons && q.reviewReasons.length > 0)
             || confidence < LOW_CONFIDENCE_THRESHOLD;
     });
 
@@ -2893,6 +2920,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
             Boolean(q.selfCritique)
             || Boolean(q.reviewSummary)
             || Boolean(q.honestyNote)
+            || Boolean((q as any).confessionItems && (q as any).confessionItems.length > 0)
             || (q.reviewCorrections && q.reviewCorrections.length > 0)
             || (q.reviewReasons && q.reviewReasons.length > 0)
             || (q.auditFlags && q.auditFlags.length > 0)
@@ -2905,6 +2933,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                     q.selfCritique,
                     q.reviewSummary,
                     q.honestyNote,
+                    ...(((q as any).confessionItems || []) as any[]).map((it: any) => `${it?.severity || ''} ${it?.issue_type || it?.issueType || ''} ${it?.action || ''}`),
                     ...(q.reviewReasons || []),
                     ...(q.auditFlags || []),
                     ...(q.reviewCorrections || []).map((c) => `${c.pointId || ''} ${c.reviewReason || ''}`),
@@ -2915,7 +2944,6 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                 return haystack.includes(auditQueryValue);
             })
             : [];
-        const studentAudit = detailViewStudent.selfAudit;
 
         return (
             <div className="h-full min-h-0 flex flex-col bg-white">

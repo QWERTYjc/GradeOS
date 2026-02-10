@@ -97,6 +97,8 @@ export interface QuestionResult {
     reviewReasons?: string[];
     auditFlags?: string[];
     honestyNote?: string;
+    /** Per-question confession items (from ConfessionReport v1) */
+    confessionItems?: any[];
     typoNotes?: string[];
     scoringPoints?: ScoringPoint[];
     /** 得分点明细列表（新格式） */
@@ -217,13 +219,29 @@ export interface StudentResult {
     /** 是否需要人工确认 */
     needsConfirmation?: boolean;
     /** 自白报告 */
-    confession?: {  // confession report
+    confession?: {
+        // ConfessionReport v1 (preferred)
+        version?: string;
+        scope?: string;
+        subject_id?: string;
+        overall_confidence?: number;
+        risk_score?: number;
+        objectives?: any[];
+        items?: any[];
+        honesty?: any;
+        budget?: any;
+        generated_at?: string;
+
+        // Frontend convenience aliases (may be added by backend/normalizer)
         overallStatus?: string;
+        overallConfidence?: number;
+        riskScore?: number;
+
+        // Legacy keys (older runs)
         issues?: Array<{ questionId?: string; message?: string }>;
         warnings?: Array<{ questionId?: string; message?: string }>;
         highRiskQuestions?: Array<{ questionId?: string; description?: string }>;
         potentialErrors?: Array<{ questionId?: string; description?: string }>;
-        overallConfidence?: number;
         generatedAt?: string;
         source?: string;
     };

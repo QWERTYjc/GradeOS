@@ -1487,7 +1487,6 @@ async def stream_langgraph_progress(
                         student_summary = (
                             result.get("studentSummary") or result.get("student_summary") or {}
                         )
-                        self_audit = result.get("selfAudit") or result.get("self_audit") or {}
                         confession_payload = result.get("confession")
                         # Keep student_id whenever available so student-side pages can match records
                         student_id_value = student_id or None
@@ -1788,10 +1787,6 @@ def _resolve_question_confidence(
         raw_confidence = question.get("confidence_score")
         if raw_confidence is None:
             raw_confidence = question.get("confidenceScore")
-        if raw_confidence is None:
-            raw_confidence = question.get("self_critique_confidence")
-        if raw_confidence is None:
-            raw_confidence = question.get("selfCritiqueConfidence")
     confidence = _safe_float(raw_confidence, default=0.0)
     has_signal = bool(
         scoring_results
@@ -1817,6 +1812,33 @@ def _resolve_question_confidence(
     if confidence <= 0 and has_signal:
         confidence = 0.6 if score > 0 else 0.35
     return max(0.0, min(1.0, confidence))
+
+
+def _derive_confession_overall_status(confession: Dict[str, Any]) -> str:
+    """Derive ok/caution/needs_review for ConfessionReport v1 (frontend convenience)."""
+    try:
+        items = confession.get("items") or []
+        if not isinstance(items, list):
+            items = []
+        error_count = sum(
+            1 for i in items if isinstance(i, dict) and str(i.get("severity", "")).lower() == "error"
+        )
+        warning_count = sum(
+            1
+            for i in items
+            if isinstance(i, dict) and str(i.get("severity", "")).lower() == "warning"
+        )
+        risk = confession.get("risk_score")
+        if risk is None:
+            risk = confession.get("riskScore")
+        risk_v = _safe_float(risk, default=0.0)
+        if error_count > 0 or risk_v >= 0.6:
+            return "needs_review"
+        if warning_count >= 3 or risk_v >= 0.3:
+            return "caution"
+        return "ok"
+    except Exception:
+        return "caution"
 
 
 def _build_student_results_from_grading_results(
@@ -1905,7 +1927,6 @@ def _dedupe_formatted_results(results: List[Dict[str, Any]]) -> List[Dict[str, A
             "confession",
             "logicReview",
             "logicReviewedAt",
-            "selfAudit",
             "draftQuestionDetails",
             "draftTotalScore",
             "draftMaxScore",
@@ -1976,9 +1997,6 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
                         "confidence": confidence,
                         "confidence_reason": q.get("confidence_reason")
                         or q.get("confidenceReason"),
-                        "self_critique": q.get("self_critique") or q.get("selfCritique"),
-                        "self_critique_confidence": q.get("self_critique_confidence")
-                        or q.get("selfCritiqueConfidence"),
                         "rubric_refs": q.get("rubric_refs") or q.get("rubricRefs"),
                         "review_summary": q.get("review_summary") or q.get("reviewSummary"),
                         "review_corrections": q.get("review_corrections")
@@ -1993,12 +2011,9 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
                             if q.get("review_reasons") is not None
                             else q.get("reviewReasons") or []
                         ),
-                        "auditFlags": (
-                            q.get("audit_flags")
-                            if q.get("audit_flags") is not None
-                            else q.get("auditFlags") or []
-                        ),
-                        "honesty_note": q.get("honesty_note") or q.get("honestyNote"),
+                        "confessionItems": q.get("confession_items")
+                        or q.get("confessionItems")
+                        or [],
                         "typo_notes": q.get("typo_notes") or q.get("typoNotes"),
                         "studentAnswer": q.get("student_answer", ""),
                         "question_type": q.get("question_type") or q.get("questionType"),
@@ -2035,9 +2050,6 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
                         "confidence": confidence,
                         "confidence_reason": q.get("confidence_reason")
                         or q.get("confidenceReason"),
-                        "self_critique": q.get("self_critique") or q.get("selfCritique"),
-                        "self_critique_confidence": q.get("self_critique_confidence")
-                        or q.get("selfCritiqueConfidence"),
                         "rubric_refs": q.get("rubric_refs") or q.get("rubricRefs"),
                         "review_summary": q.get("review_summary") or q.get("reviewSummary"),
                         "review_corrections": q.get("review_corrections")
@@ -2052,12 +2064,9 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
                             if q.get("review_reasons") is not None
                             else q.get("reviewReasons") or []
                         ),
-                        "auditFlags": (
-                            q.get("audit_flags")
-                            if q.get("audit_flags") is not None
-                            else q.get("auditFlags") or []
-                        ),
-                        "honesty_note": q.get("honesty_note") or q.get("honestyNote"),
+                        "confessionItems": q.get("confession_items")
+                        or q.get("confessionItems")
+                        or [],
                         "typo_notes": q.get("typo_notes") or q.get("typoNotes"),
                         "studentAnswer": q.get("student_answer", ""),
                         "question_type": q.get("question_type") or q.get("questionType"),
@@ -2099,9 +2108,6 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
                         "confidence": confidence,
                         "confidence_reason": q.get("confidence_reason")
                         or q.get("confidenceReason"),
-                        "self_critique": q.get("self_critique") or q.get("selfCritique"),
-                        "self_critique_confidence": q.get("self_critique_confidence")
-                        or q.get("selfCritiqueConfidence"),
                         "rubric_refs": q.get("rubric_refs") or q.get("rubricRefs"),
                         "review_summary": q.get("review_summary") or q.get("reviewSummary"),
                         "review_corrections": q.get("review_corrections")
@@ -2116,12 +2122,9 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
                             if q.get("review_reasons") is not None
                             else q.get("reviewReasons") or []
                         ),
-                        "auditFlags": (
-                            q.get("audit_flags")
-                            if q.get("audit_flags") is not None
-                            else q.get("auditFlags") or []
-                        ),
-                        "honesty_note": q.get("honesty_note") or q.get("honestyNote"),
+                        "confessionItems": q.get("confession_items")
+                        or q.get("confessionItems")
+                        or [],
                         "typo_notes": q.get("typo_notes") or q.get("typoNotes"),
                         "studentAnswer": q.get("student_answer") or q.get("studentAnswer") or "",
                         "question_type": q.get("question_type") or q.get("questionType"),
@@ -2163,9 +2166,6 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
                                 "confidence": confidence,
                                 "confidence_reason": q.get("confidence_reason")
                                 or q.get("confidenceReason"),
-                                "self_critique": q.get("self_critique") or q.get("selfCritique"),
-                                "self_critique_confidence": q.get("self_critique_confidence")
-                                or q.get("selfCritiqueConfidence"),
                                 "rubric_refs": q.get("rubric_refs") or q.get("rubricRefs"),
                                 "review_summary": q.get("review_summary") or q.get("reviewSummary"),
                                 "review_corrections": q.get("review_corrections")
@@ -2180,12 +2180,9 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
                                     if q.get("review_reasons") is not None
                                     else q.get("reviewReasons") or []
                                 ),
-                                "auditFlags": (
-                                    q.get("audit_flags")
-                                    if q.get("audit_flags") is not None
-                                    else q.get("auditFlags") or []
-                                ),
-                                "honesty_note": q.get("honesty_note") or q.get("honestyNote"),
+                                "confessionItems": q.get("confession_items")
+                                or q.get("confessionItems")
+                                or [],
                                 "typo_notes": q.get("typo_notes") or q.get("typoNotes"),
                                 "studentAnswer": q.get("student_answer", ""),
                                 "question_type": q.get("question_type") or q.get("questionType"),
@@ -2209,17 +2206,12 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
         final_max = raw_max if raw_max > 0 or computed_max <= 0 else computed_max
 
         student_summary = r.get("student_summary") or r.get("studentSummary")
-        self_audit = r.get("self_audit") or r.get("selfAudit")
         confession_raw = r.get("confession")
         if isinstance(confession_raw, str):
             try:
                 confession_raw = json.loads(confession_raw)
             except Exception:
-                confession_raw = {
-                    "overall_status": "ok",
-                    "summary": confession_raw,
-                    "generated_at": datetime.now().isoformat(),
-                }
+                confession_raw = None
 
         logic_review_raw = r.get("logic_review") or r.get("logicReview")
         if isinstance(logic_review_raw, str):
@@ -2234,53 +2226,14 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
             confession = {}
             # 复制所有原始字段
             confession.update(confession_raw)
-            # 确保 overallStatus 存在
-            if "overallStatus" not in confession and "overall_status" in confession_raw:
-                confession["overallStatus"] = confession_raw["overall_status"]
-            elif "overallStatus" not in confession and "overall_confidence" in confession_raw:
-                conf = confession_raw.get("overall_confidence", 0)
-                if conf >= 0.8:
-                    confession["overallStatus"] = "ok"
-                elif conf >= 0.5:
-                    confession["overallStatus"] = "caution"
-                else:
-                    confession["overallStatus"] = "needs_review"
-            # 确保 overallConfidence 存在
-            if "overallConfidence" not in confession and "overall_confidence" in confession_raw:
-                confession["overallConfidence"] = confession_raw["overall_confidence"]
-            # 确保 highRiskQuestions 格式正确
-            hrq = confession_raw.get("highRiskQuestions") or confession_raw.get(
-                "high_risk_questions"
-            )
-            if hrq:
-                if isinstance(hrq, list) and hrq and isinstance(hrq[0], str):
-                    confession["highRiskQuestions"] = [
-                        {"questionId": q, "description": ""} for q in hrq
-                    ]
-                else:
-                    confession["highRiskQuestions"] = hrq
-            # 确保 issues 存在
-            if "issues" not in confession:
-                # 从 potential_errors 或 uncertainties 构建 issues
-                issues = []
-                for err in confession_raw.get("potential_errors", []):
-                    if isinstance(err, dict):
-                        issues.append(
-                            {
-                                "questionId": err.get("question_id", ""),
-                                "message": err.get("description", ""),
-                            }
-                        )
-                for unc in confession_raw.get("uncertainties", []):
-                    if isinstance(unc, dict):
-                        issues.append(
-                            {
-                                "questionId": unc.get("question_id", ""),
-                                "message": unc.get("uncertainty", ""),
-                            }
-                        )
-                if issues:
-                    confession["issues"] = issues
+            # ConfessionReport v1: add frontend convenience fields.
+            if confession_raw.get("version") == "confession_report_v1":
+                if "overallStatus" not in confession:
+                    confession["overallStatus"] = _derive_confession_overall_status(confession_raw)
+                if "overallConfidence" not in confession and "overall_confidence" in confession_raw:
+                    confession["overallConfidence"] = confession_raw.get("overall_confidence")
+                if "riskScore" not in confession and "risk_score" in confession_raw:
+                    confession["riskScore"] = confession_raw.get("risk_score")
 
         # 🔥 第一次批改记录（逻辑复核前的原始结果）
         draft_question_details = r.get("draft_question_details") or r.get("draftQuestionDetails")
@@ -2308,9 +2261,6 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
                         "maxScore": draft_max_score_value,
                         "feedback": dq.get("feedback", ""),
                         "confidence": draft_confidence,
-                        "self_critique": dq.get("self_critique") or dq.get("selfCritique"),
-                        "self_critique_confidence": dq.get("self_critique_confidence")
-                        or dq.get("selfCritiqueConfidence"),
                         "studentAnswer": dq.get("student_answer", ""),
                         "question_type": dq.get("question_type") or dq.get("questionType"),
                         "scoring_point_results": draft_scoring_results,
@@ -2349,7 +2299,6 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
                 "needsConfirmation": r.get("needs_confirmation", False),
                 "gradingMode": r.get("grading_mode") or r.get("gradingMode"),
                 "studentSummary": student_summary,
-                "selfAudit": self_audit,
                 # 🔥 新增：批改透明度字段
                 "confession": confession,
                 "logicReview": logic_review_raw,
@@ -4003,33 +3952,37 @@ async def get_batch_confession(
 
         for student in student_results:
             confession = student.get("confession") or {}
-            self_audit = student.get("self_audit") or student.get("selfAudit") or {}
+            if isinstance(confession, str):
+                try:
+                    confession = json.loads(confession)
+                except Exception:
+                    confession = {}
+            if not isinstance(confession, dict):
+                confession = {}
 
-            issues = confession.get("issues", [])
-            if issues:
+            items = confession.get("items") or []
+            if isinstance(items, list):
                 student_key = student.get("student_key") or student.get("studentKey") or "Unknown"
-                for issue in issues:
-                    issue_copy = dict(issue)
+                for item in items:
+                    if not isinstance(item, dict):
+                        continue
+                    issue_copy = dict(item)
                     issue_copy["student_key"] = student_key
                     all_issues.append(issue_copy)
 
-            warnings = confession.get("warnings", [])
-            all_warnings.extend(warnings)
-
-            conf = (
-                confession.get("overall_confidence")
-                or confession.get("overallConfidence")
-                or self_audit.get("overall_confidence")
-                or self_audit.get("overallConfidence")
-            )
-            if conf:
+            conf = confession.get("overall_confidence") or confession.get("overallConfidence")
+            if conf is not None:
                 total_confidence += float(conf)
                 student_count += 1
 
         avg_confidence = total_confidence / student_count if student_count > 0 else 0.5
 
-        error_count = sum(1 for i in all_issues if i.get("severity") == "error")
-        warning_count = sum(1 for i in all_issues if i.get("severity") == "warning")
+        error_count = sum(
+            1 for i in all_issues if str(i.get("severity") or "").lower() == "error"
+        )
+        warning_count = sum(
+            1 for i in all_issues if str(i.get("severity") or "").lower() == "warning"
+        )
 
         if error_count > 0:
             overall_status = "needs_review"

@@ -738,14 +738,6 @@ async def rubric_parse_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                 "total_score": result.total_score,
                 "rubric_format": result.rubric_format,
                 "general_notes": result.general_notes,
-                # LLM 直接生成的自白（极短）
-                "confession": result.confession.to_dict() if hasattr(result.confession, 'to_dict') else {
-                    "risks": getattr(result.confession, 'risks', []),
-                    "uncertainties": getattr(result.confession, 'uncertainties', []),
-                    "blindSpots": getattr(result.confession, 'blind_spots', []),
-                    "needsReview": getattr(result.confession, 'needs_review', []),
-                    "confidence": getattr(result.confession, 'confidence', 1.0),
-                },
                 "questions": [
                     {
                         "id": q.question_id,
@@ -755,11 +747,6 @@ async def rubric_parse_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                         "standard_answer": q.standard_answer,
                         "source_pages": getattr(q, "source_pages", []),
                         "criteria": [sp.description for sp in q.scoring_points],
-                        # LLM 直接生成的题目级自白（极短）
-                        "confession": q.confession.to_dict() if hasattr(q.confession, 'to_dict') else {
-                            "risk": getattr(q.confession, 'risk', ''),
-                            "uncertainty": getattr(q.confession, 'uncertainty', ''),
-                        },
                         "scoring_points": [
                             {
                                 "point_id": sp.point_id or f"{q.question_id}.{idx + 1}",
@@ -817,9 +804,6 @@ async def rubric_parse_node(state: BatchGradingGraphState) -> Dict[str, Any]:
             # 将自白报告添加到 parsed_rubric
             parsed_rubric["overall_parse_confidence"] = parse_confession["overallConfidence"]
             parsed_rubric["parse_confession"] = parse_confession
-            
-            # 🔧 重要：用计算出的置信度覆盖 LLM 返回的置信度
-            parsed_rubric["confession"]["confidence"] = parse_confession["overallConfidence"]
 
             # 同时更新 ParsedRubric 对象（如果需要重新注册）
             result.overall_parse_confidence = parse_confession["overallConfidence"]
@@ -995,6 +979,118 @@ def _preserve_images_in_result(state: BatchGradingGraphState, result: Dict[str, 
     return result
 
 
+async def rubric_confession_report_node(state: BatchGradingGraphState) -> Dict[str, Any]:
+    """
+    Rubric Confession Report (text-only; independent LLM call).
+
+    Design goals:
+    - Independent from rubric_parse output (never changes the parsed rubric structure/score).
+    - Rewards honesty: can output unsure/needs_review without penalty.
+    - Low-noise: only actionable, verifiable checklist items with refs.
+    """
+    batch_id = state["batch_id"]
+    parsed_rubric = state.get("parsed_rubric") or {}
+    api_key = state.get("api_key") or os.getenv("LLM_API_KEY") or os.getenv("OPENROUTER_API_KEY")
+
+    if not isinstance(parsed_rubric, dict) or not parsed_rubric:
+        logger.info(f"[rubric_confession_report] skip (no parsed_rubric): batch_id={batch_id}")
+        return _preserve_images_in_result(
+            state,
+            {
+                "current_stage": "rubric_confession_report_skipped",
+                "percentage": 15.5,
+                "timestamps": {
+                    **state.get("timestamps", {}),
+                    "rubric_confession_report_at": datetime.now().isoformat(),
+                },
+            },
+        )
+
+    if not api_key:
+        logger.info(f"[rubric_confession_report] rule-based (no api_key): batch_id={batch_id}")
+        from src.services.confession_auditor import _default_rule_based_report
+
+        max_items = int(os.getenv("CONFESSION_RUBRIC_MAX_ITEMS", "12"))
+        report = _default_rule_based_report(
+            scope="rubric",
+            subject_id=str(batch_id),
+            parsed_rubric=parsed_rubric,
+            max_items=max_items,
+        )
+        updated_rubric = dict(parsed_rubric)
+        updated_rubric["confession_report"] = report
+        updated_rubric["confession_reported_at"] = datetime.now().isoformat()
+        return _preserve_images_in_result(
+            state,
+            {
+                "parsed_rubric": updated_rubric,
+                "current_stage": "rubric_confession_report_completed",
+                "percentage": 15.5,
+                "timestamps": {
+                    **state.get("timestamps", {}),
+                    "rubric_confession_report_at": datetime.now().isoformat(),
+                },
+            },
+        )
+
+    await _broadcast_progress(
+        batch_id,
+        {
+            "type": "agent_update",
+            "agentId": "rubric-confession",
+            "agentName": "Rubric Confession",
+            "agentLabel": "Rubric Confession",
+            "parentNodeId": "rubric_confession_report",
+            "status": "running",
+            "progress": 0,
+            "message": "Generating rubric confession report...",
+        },
+    )
+
+    from src.services.confession_auditor import ConfessionAuditorClient
+
+    client = ConfessionAuditorClient(api_key=api_key, purpose="analysis", temperature=0.1)
+    report = await client.rubric_confession_report(
+        parsed_rubric=parsed_rubric,
+        subject_id=str(batch_id),
+    )
+
+    updated_rubric = dict(parsed_rubric)
+    updated_rubric["confession_report"] = report
+    updated_rubric["confession_reported_at"] = datetime.now().isoformat()
+
+    await _broadcast_progress(
+        batch_id,
+        {
+            "type": "agent_update",
+            "agentId": "rubric-confession",
+            "agentName": "Rubric Confession",
+            "agentLabel": "Rubric Confession",
+            "parentNodeId": "rubric_confession_report",
+            "status": "completed",
+            "progress": 100,
+            "message": "Rubric confession report completed",
+            "output": {
+                "riskScore": report.get("risk_score"),
+                "emittedItems": (report.get("budget") or {}).get("emitted_items"),
+            },
+        },
+    )
+
+    return _preserve_images_in_result(
+        state,
+        {
+            "parsed_rubric": updated_rubric,
+            "current_stage": "rubric_confession_report_completed",
+            "percentage": 15.5,
+            "timestamps": {
+                **state.get("timestamps", {}),
+                "rubric_confession_report_at": datetime.now().isoformat(),
+            },
+        },
+    )
+
+
 async def rubric_self_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     """
     评分标准自动复核节点（基于自白的 LLM 复核）
@@ -1012,24 +1108,42 @@ async def rubric_self_review_node(state: BatchGradingGraphState) -> Dict[str, An
     rubric_images = state.get("rubric_images", [])
     api_key = state.get("api_key") or os.getenv("LLM_API_KEY") or os.getenv("OPENROUTER_API_KEY")
     
-    # 获取 confession
-    confession = parsed_rubric.get("confession", {})
-    overall_confidence = confession.get("confidence", 1.0)
-    needs_review = confession.get("needsReview") or confession.get("needs_review") or []
-    risks = confession.get("risks", [])
-    uncertainties = confession.get("uncertainties", [])
-    blind_spots = confession.get("blindSpots") or confession.get("blind_spots") or []
+    # Legacy confession fields were removed; keep an empty dict for backward-safe prompt builder.
+    confession: Dict[str, Any] = {}
+    overall_confidence = 1.0
+    needs_review: List[Any] = []
+    risks: List[Any] = []
+    uncertainties: List[Any] = []
+    blind_spots: List[Any] = []
+
+    # Prefer the independent confession_report (if present) for triggering rubric self-review.
+    confession_report = parsed_rubric.get("confession_report")
+    report_items: List[Dict[str, Any]] = []
+    report_confidence: Optional[float] = None
+    if isinstance(confession_report, dict):
+        items_raw = confession_report.get("items")
+        if isinstance(items_raw, list):
+            report_items = [i for i in items_raw if isinstance(i, dict)]
+        raw_conf = confession_report.get("overall_confidence") or confession_report.get(
+            "overallConfidence"
+        )
+        try:
+            report_confidence = float(raw_conf) if raw_conf is not None else None
+        except (TypeError, ValueError):
+            report_confidence = None
     
     # 判断是否需要自动复核
-    should_self_review = (
-        needs_review or 
-        (risks and len(risks) > 0) or 
-        (uncertainties and len(uncertainties) > 0) or
-        overall_confidence < 0.9
+    should_self_review_report = bool(report_items) or (
+        report_confidence is not None and report_confidence < 0.9
     )
+    should_self_review = should_self_review_report
+    confidence_before = report_confidence if report_confidence is not None else overall_confidence
     
     if not should_self_review:
-        logger.info(f"[rubric_self_review] skip (no issues): batch_id={batch_id}, confidence={overall_confidence}")
+        logger.info(
+            f"[rubric_self_review] skip (no issues): batch_id={batch_id}, "
+            f"legacy_confidence={overall_confidence}, report_items={len(report_items)}"
+        )
         return _preserve_images_in_result(state, {
             "current_stage": "rubric_self_review_skipped",
             "percentage": 16.0,
@@ -1053,7 +1167,8 @@ async def rubric_self_review_node(state: BatchGradingGraphState) -> Dict[str, An
     logger.info(
         f"[rubric_self_review] 开始自动复核: batch_id={batch_id}, "
         f"risks={len(risks)}, uncertainties={len(uncertainties)}, "
-        f"needs_review={len(needs_review)}, confidence={overall_confidence}"
+        f"needs_review={len(needs_review)}, confidence={confidence_before}, "
+        f"confession_report_items={len(report_items)}"
     )
     
     # 广播进度
@@ -1077,7 +1192,11 @@ async def rubric_self_review_node(state: BatchGradingGraphState) -> Dict[str, An
         client = LLMReasoningClient(api_key=api_key)
         
         # 构建复核提示词
-        review_prompt = _build_self_review_prompt(parsed_rubric, confession)
+        review_prompt = _build_self_review_prompt(
+            parsed_rubric,
+            confession,
+            confession_report=confession_report if isinstance(confession_report, dict) else None,
+        )
         
         # 流式回调
         async def stream_callback(stream_type: str, chunk: str) -> None:
@@ -1106,9 +1225,9 @@ async def rubric_self_review_node(state: BatchGradingGraphState) -> Dict[str, An
         updated_rubric = _parse_self_review_result(result_text, parsed_rubric)
         
         # 更新 confession 状态
-        if updated_rubric.get("confession"):
-            updated_rubric["confession"]["self_reviewed"] = True
-            updated_rubric["confession"]["self_review_applied"] = True
+        if isinstance(updated_rubric.get("confession_report"), dict):
+            updated_rubric["confession_report"]["self_reviewed"] = True
+            updated_rubric["confession_report"]["self_review_applied"] = True
         
         logger.info(f"[rubric_self_review] 自动复核完成: batch_id={batch_id}")
         
@@ -1133,8 +1252,12 @@ async def rubric_self_review_node(state: BatchGradingGraphState) -> Dict[str, An
                 "type": "rubric_self_reviewed",
                 "batch_id": batch_id,
                 "changes_made": updated_rubric.get("self_review_changes", []),
-                "confidence_before": overall_confidence,
-                "confidence_after": updated_rubric.get("confession", {}).get("confidence", overall_confidence),
+                "confidence_before": confidence_before,
+                "confidence_after": (
+                    (updated_rubric.get("confession_report") or {}).get("overall_confidence")
+                    if isinstance(updated_rubric.get("confession_report"), dict)
+                    else overall_confidence
+                ),
             },
         )
         
@@ -1174,30 +1297,43 @@ async def rubric_self_review_node(state: BatchGradingGraphState) -> Dict[str, An
         })
 
 
-def _build_self_review_prompt(parsed_rubric: Dict[str, Any], confession: Dict[str, Any]) -> str:
+def _build_self_review_prompt(
+    parsed_rubric: Dict[str, Any],
+    confession: Dict[str, Any],
+    *,
+    confession_report: Optional[Dict[str, Any]] = None,
+) -> str:
     """构建自动复核的提示词"""
     risks = confession.get("risks", [])
     uncertainties = confession.get("uncertainties", [])
     blind_spots = confession.get("blindSpots") or confession.get("blind_spots") or []
     needs_review = confession.get("needsReview") or confession.get("needs_review") or []
+
+    report_items: List[Dict[str, Any]] = []
+    report_risk_score = None
+    report_confidence = None
+    if isinstance(confession_report, dict) and confession_report:
+        report_risk_score = confession_report.get("risk_score") or confession_report.get(
+            "riskScore"
+        )
+        report_confidence = confession_report.get("overall_confidence") or confession_report.get(
+            "overallConfidence"
+        )
+        items_raw = confession_report.get("items")
+        if isinstance(items_raw, list):
+            report_items = [i for i in items_raw if isinstance(i, dict)]
     
-    # 收集题目级别的风险
-    question_issues = []
-    for q in parsed_rubric.get("questions", []):
-        q_conf = q.get("confession", {})
-        if q_conf.get("risk") or q_conf.get("uncertainty"):
-            question_issues.append({
-                "question_id": q.get("question_id"),
-                "risk": q_conf.get("risk", ""),
-                "uncertainty": q_conf.get("uncertainty", ""),
-            })
+    # Legacy per-question confession fields were removed.
+    question_issues: List[Dict[str, Any]] = []
     
     prompt = f"""你是一位专业的评分标准复核专家。请根据以下自白（confession）信息，重新审视原图并修正解析结果。
 
 ## 当前解析结果摘要
 - 总题数: {parsed_rubric.get('total_questions', 0)}
 - 总分: {parsed_rubric.get('total_score', 0)}
-- 置信度: {confession.get('confidence', 1.0):.2f}
+- 置信度(legacy): {confession.get('confidence', 1.0):.2f}
+{f"- confession_report.risk_score: {report_risk_score}" if report_risk_score is not None else ""}
+{f"- confession_report.overall_confidence: {report_confidence}" if report_confidence is not None else ""}
 
 ## 自白信息（需要复核的问题）
 """
@@ -1221,16 +1357,23 @@ def _build_self_review_prompt(parsed_rubric: Dict[str, Any], confession: Dict[st
         prompt += f"\n### 建议复核\n"
         for n in needs_review:
             prompt += f"- {n}\n"
+
+    if report_items:
+        prompt += f"\n### 独立自白报告 (confession_report)\n"
+        for item in report_items[:8]:
+            severity = item.get("severity")
+            issue_type = item.get("issue_type")
+            qid = item.get("question_id") or ""
+            pid = item.get("point_id") or ""
+            action = item.get("action") or ""
+            location = ""
+            if qid and pid:
+                location = f" Q{qid}:{pid}"
+            elif qid:
+                location = f" Q{qid}"
+            prompt += f"- ({severity}) {issue_type}{location}: {action}\n"
     
-    if question_issues:
-        prompt += f"\n### 题目级问题\n"
-        for qi in question_issues:
-            prompt += f"- Q{qi['question_id']}: "
-            if qi['risk']:
-                prompt += f"风险={qi['risk']} "
-            if qi['uncertainty']:
-                prompt += f"不确定={qi['uncertainty']}"
-            prompt += "\n"
+    # (legacy question_issues removed)
     
     prompt += """
 ## 当前解析的题目结构
@@ -1339,9 +1482,13 @@ def _parse_self_review_result(result_text: str, original_rubric: Dict[str, Any])
             
             # 更新置信度
             if "updated_confidence" in data:
-                if "confession" not in updated_rubric:
-                    updated_rubric["confession"] = {}
-                updated_rubric["confession"]["confidence"] = float(data["updated_confidence"])
+                if "confession_report" not in updated_rubric or not isinstance(
+                    updated_rubric.get("confession_report"), dict
+                ):
+                    updated_rubric["confession_report"] = {}
+                updated_rubric["confession_report"]["overall_confidence"] = float(
+                    data["updated_confidence"]
+                )
             
             # 重新计算总分
             updated_rubric["total_score"] = sum(
@@ -1353,9 +1500,13 @@ def _parse_self_review_result(result_text: str, original_rubric: Dict[str, Any])
             # 无修正，但可能更新置信度
             updated_rubric["self_review_changes"] = []
             if "updated_confidence" in data:
-                if "confession" not in updated_rubric:
-                    updated_rubric["confession"] = {}
-                updated_rubric["confession"]["confidence"] = float(data["updated_confidence"])
+                if "confession_report" not in updated_rubric or not isinstance(
+                    updated_rubric.get("confession_report"), dict
+                ):
+                    updated_rubric["confession_report"] = {}
+                updated_rubric["confession_report"]["overall_confidence"] = float(
+                    data["updated_confidence"]
+                )
             logger.info("[rubric_self_review] 确认解析正确，无需修正")
             
     except json.JSONDecodeError as e:
@@ -1728,6 +1879,12 @@ def _normalize_logic_review_items(raw_items: Any) -> List[Dict[str, Any]]:
         
         # 标准化字段名（统一使用下划线命名）
         normalized_item = {}
+        excluded_keys = {
+            "self_critique",
+            "selfCritique",
+            "self_critique_confidence",
+            "selfCritiqueConfidence",
+        }
         
         # question_id / questionId
         qid = item.get("question_id") or item.get("questionId")
@@ -1753,86 +1910,16 @@ def _normalize_logic_review_items(raw_items: Any) -> List[Dict[str, Any]]:
         if corrections:
             normalized_item["review_corrections"] = corrections
         
-        # self_critique / selfCritique
-        self_critique = item.get("self_critique") or item.get("selfCritique")
-        if self_critique:
-            normalized_item["self_critique"] = self_critique
-        
-        # self_critique_confidence / selfCritiqueConfidence
-        self_conf = item.get("self_critique_confidence") or item.get("selfCritiqueConfidence")
-        if self_conf:
-            normalized_item["self_critique_confidence"] = self_conf
-        
         # 保留其他所有字段
         for key, value in item.items():
+            if key in excluded_keys:
+                continue
             if key not in normalized_item:
                 normalized_item[key] = value
         
         normalized.append(normalized_item)
     
     return normalized
-
-
-def _normalize_logic_review_self_audit(raw_audit: Any) -> Optional[Dict[str, Any]]:
-    """
-    标准化逻辑复核返回的 self_audit 数据。
-    
-    处理各种可能的字段名变体（驼峰/下划线）和数据结构。
-    
-    Args:
-        raw_audit: 原始的 self_audit 数据
-    
-    Returns:
-        标准化后的 self_audit 字典，如果输入无效则返回 None
-    """
-    if not raw_audit or not isinstance(raw_audit, dict):
-        return None
-    
-    normalized = {}
-    
-    # summary
-    summary = raw_audit.get("summary")
-    if summary:
-        normalized["summary"] = summary
-    
-    # confidence
-    confidence = raw_audit.get("confidence")
-    if confidence is not None:
-        normalized["confidence"] = _safe_float(confidence, 0.0)
-    
-    # issues
-    issues = raw_audit.get("issues")
-    if issues and isinstance(issues, list):
-        normalized["issues"] = issues
-    
-    # compliance_analysis / complianceAnalysis
-    compliance = raw_audit.get("compliance_analysis") or raw_audit.get("complianceAnalysis")
-    if compliance and isinstance(compliance, list):
-        normalized["compliance_analysis"] = compliance
-    
-    # uncertainties_and_conflicts / uncertaintiesAndConflicts
-    uncertainties = raw_audit.get("uncertainties_and_conflicts") or raw_audit.get(
-        "uncertaintiesAndConflicts"
-    )
-    if uncertainties and isinstance(uncertainties, list):
-        normalized["uncertainties_and_conflicts"] = uncertainties
-    
-    # overall_compliance_grade / overallComplianceGrade
-    grade = raw_audit.get("overall_compliance_grade") or raw_audit.get("overallComplianceGrade")
-    if grade is not None:
-        normalized["overall_compliance_grade"] = grade
-    
-    # honesty_note / honestyNote
-    honesty = raw_audit.get("honesty_note") or raw_audit.get("honestyNote")
-    if honesty:
-        normalized["honesty_note"] = honesty
-    
-    # 保留其他所有字段
-    for key, value in raw_audit.items():
-        if key not in normalized:
-            normalized[key] = value
-    
-    return normalized if normalized else None
 
 
 def _build_logic_review_summary(question_details: List[Dict[str, Any]]) -> str:
@@ -2828,18 +2915,6 @@ def _finalize_scoring_result(
         if missing_point_id:
             issues.append("Missing point_id for some points")
 
-        audit_flags = []
-        if missing_points:
-            audit_flags.append("missing_scoring_points")
-        if missing_evidence:
-            audit_flags.append("missing_evidence")
-        if score_adjusted:
-            audit_flags.append("score_adjusted")
-        if missing_rubric_ref:
-            audit_flags.append("missing_rubric_reference")
-        if missing_point_id:
-            audit_flags.append("missing_point_id")
-
         review_summary = "; ".join(issues) if issues else "Logic consistent; no obvious issues"
 
         confidence_reason = (
@@ -2852,10 +2927,8 @@ def _finalize_scoring_result(
         confidence_reason = f"{confidence_reason}, rubric_refs={rubric_ref_coverage:.2f}"
 
         feedback = raw_question.get("feedback", "")
-        self_critique = raw_question.get("self_critique") or review_summary
         if is_choice:
             feedback = ""
-            self_critique = ""
 
         # If the grader didn't provide step segmentation, fall back to a point-aligned pseudo-step list.
         if not steps and scoring_point_results:
@@ -2876,36 +2949,6 @@ def _finalize_scoring_result(
                 )
             steps = fallback_steps
 
-        # Build audit signals for downstream logic review selection (LLM review has final authority).
-        risk_flags: List[str] = []
-        if max_score > 0 and score >= max_score:
-            risk_flags.append("full_marks")
-        if max_score > 0 and score == 0:
-            risk_flags.append("zero_marks")
-        if missing_evidence:
-            risk_flags.append("evidence_gap")
-        if confidence < review_conf_threshold:
-            risk_flags.append("low_confidence")
-        if missing_points:
-            risk_flags.append("missing_scoring_points")
-        if score_adjusted:
-            risk_flags.append("score_adjusted")
-
-        uncertainties: List[str] = []
-        if missing_evidence:
-            uncertainties.append("部分得分点缺少可核验原文证据")
-        if missing_points:
-            uncertainties.append("部分得分点缺失/被补齐为0分")
-        if score_adjusted:
-            uncertainties.append("得分点汇总与总分不一致，已按得分点重算")
-
-        needs_review = bool(
-            missing_points
-            or missing_evidence
-            or score_adjusted
-            or confidence < review_conf_threshold
-        )
-
         question_details.append(
             {
                 "question_id": qid,
@@ -2916,10 +2959,6 @@ def _finalize_scoring_result(
                 "feedback": feedback,
                 "student_answer": raw_question.get("student_answer")
                 or answer_map.get(qid, {}).get("answer_text", ""),
-                "self_critique": self_critique,
-                "self_critique_confidence": raw_question.get(
-                    "self_critique_confidence", confidence
-                ),
                 "typo_notes": typo_notes,
                 "rubric_refs": [
                     spr.get("rubric_reference")
@@ -2930,16 +2969,6 @@ def _finalize_scoring_result(
                 "steps": steps,
                 "review_summary": review_summary,
                 "review_corrections": review_corrections,
-                "audit": {
-                    "confidence": confidence,
-                    "uncertainties": uncertainties[:3],
-                    "risk_flags": risk_flags,
-                    "needs_review": needs_review,
-                    "updated_at": datetime.now().isoformat(),
-                },
-                "needs_review": needs_review,
-                "review_reasons": risk_flags,
-                "audit_flags": audit_flags,
                 "page_indices": resolved_pages,
                 "is_correct": max_score > 0 and score >= max_score,
                 "question_type": question_type,
@@ -3019,16 +3048,11 @@ def _finalize_assist_result(
                 "feedback": feedback,
                 "student_answer": raw_question.get("student_answer")
                 or answer_info.get("answer_text", ""),
-                "self_critique": raw_question.get("self_critique") or "",
-                "self_critique_confidence": raw_question.get(
-                    "self_critique_confidence", confidence
-                ),
                 "typo_notes": raw_question.get("typo_notes") or raw_question.get("typoNotes") or [],
                 "rubric_refs": [],
                 "scoring_point_results": [],
                 "review_summary": "",
                 "review_corrections": [],
-                "audit_flags": ["assist_mode", grading_mode],
                 "page_indices": [page_index],
                 "is_correct": False,
                 "question_type": question_type,
@@ -3726,33 +3750,18 @@ def _merge_logic_review_fields(
     if "confidence" in review_item:
         new_confidence = _safe_float(review_item["confidence"])
         merged["confidence"] = new_confidence
-        audit = merged.get("audit") if isinstance(merged.get("audit"), dict) else {}
-        audit = dict(audit)
-        audit["confidence"] = new_confidence
-        audit["updated_at"] = datetime.now().isoformat()
-        merged["audit"] = audit
     if "confidence_reason" in review_item:
         merged["confidence_reason"] = review_item["confidence_reason"]
     if "confidenceReason" in review_item:
         merged["confidence_reason"] = review_item["confidenceReason"]
     
-    # 2. 更新自我反思相关字段
-    if "self_critique" in review_item:
-        merged["self_critique"] = review_item["self_critique"]
-    if "selfCritique" in review_item:
-        merged["self_critique"] = review_item["selfCritique"]
-    if "self_critique_confidence" in review_item:
-        merged["self_critique_confidence"] = review_item["self_critique_confidence"]
-    if "selfCritiqueConfidence" in review_item:
-        merged["self_critique_confidence"] = review_item["selfCritiqueConfidence"]
-    
-    # 3. 更新复核摘要
+    # 2. 更新复核摘要
     if "review_summary" in review_item:
         merged["review_summary"] = review_item["review_summary"]
     if "reviewSummary" in review_item:
         merged["review_summary"] = review_item["reviewSummary"]
     
-    # 4. 处理分数修正
+    # 3. 处理分数修正
     review_corrections = review_item.get("review_corrections") or review_item.get("reviewCorrections") or []
     if review_corrections:
         merged["review_corrections"] = review_corrections
@@ -3805,13 +3814,13 @@ def _merge_logic_review_fields(
                 original_score = _safe_float(merged.get("score", 0))
                 merged["score"] = max(0, original_score + total_score_delta)
     
-    # 5. 更新 honesty_note
+    # 4. 更新 honesty_note
     if "honesty_note" in review_item:
         merged["honesty_note"] = review_item["honesty_note"]
     if "honestyNote" in review_item:
         merged["honesty_note"] = review_item["honestyNote"]
     
-    # 6. 标记已复核
+    # 5. 标记已复核
     merged["logic_reviewed"] = True
     
     return merged
@@ -4281,190 +4290,19 @@ def _build_student_summary(student: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _build_self_audit(student: Dict[str, Any]) -> Dict[str, Any]:
-    question_details = student.get("question_details") or []
-    issues: List[Dict[str, Any]] = []
-    confidence_values: List[float] = []
-
-    for question in question_details:
-        qid = _normalize_question_id(question.get("question_id") or question.get("questionId"))
-        confidence = _safe_float(question.get("confidence", 0), 0.0)
-        if confidence:
-            confidence_values.append(confidence)
-
-        if confidence and confidence < 0.7:
-            issues.append(
-                {
-                    "issue_type": "low_confidence",
-                    "message": f"题目 {qid} 评分置信度较低",
-                    "question_id": qid,
-                }
-            )
-
-        review_corrections = question.get("review_corrections") or []
-        if review_corrections:
-            issues.append(
-                {
-                    "issue_type": "logic_review_adjusted",
-                    "message": f"题目 {qid} 存在逻辑复核修正记录",
-                    "question_id": qid,
-                }
-            )
-
-        if not question.get("self_critique"):
-            issues.append(
-                {
-                    "issue_type": "missing_self_critique",
-                    "message": f"题目 {qid} 缺少自白说明",
-                    "question_id": qid,
-                }
-            )
-
-        scoring_points = (
-            question.get("scoring_point_results") or question.get("scoring_results") or []
-        )
-        if not scoring_points:
-            issues.append(
-                {
-                    "issue_type": "missing_scoring_points",
-                    "message": f"题目 {qid} 缺少评分点明细",
-                    "question_id": qid,
-                }
-            )
-        else:
-            missing_evidence = False
-            missing_rubric_ref = False
-            for spr in scoring_points:
-                if not isinstance(spr, dict):
-                    continue
-                evidence = spr.get("evidence")
-                if _is_placeholder_evidence(evidence):
-                    missing_evidence = True
-                rubric_ref = spr.get("rubric_reference") or spr.get("rubricReference")
-                if not rubric_ref:
-                    missing_rubric_ref = True
-            if missing_evidence:
-                issues.append(
-                    {
-                        "issue_type": "missing_evidence",
-                        "message": f"题目 {qid} 部分评分点证据不足",
-                        "question_id": qid,
-                    }
-                )
-            if missing_rubric_ref and not question.get("rubric_refs"):
-                issues.append(
-                    {
-                        "issue_type": "missing_rubric_ref",
-                        "message": f"题目 {qid} 部分评分点缺少标准引用",
-                        "question_id": qid,
-                    }
-                )
-
-        typo_notes = question.get("typo_notes") or question.get("typoNotes") or []
-        if typo_notes:
-            issues.append(
-                {
-                    "issue_type": "typo_detected",
-                    "message": f"题目 {qid} 发现错别字标注",
-                    "question_id": qid,
-                }
-            )
-
-    issue_types = {issue.get("issue_type") for issue in issues}
-    low_confidence_questions = [
-        issue.get("question_id")
-        for issue in issues
-        if issue.get("issue_type") == "low_confidence" and issue.get("question_id")
-    ]
-
-    compliance_analysis = [
-        {
-            "goal": "严格按评分标准给分",
-            "tag": (
-                "unsure_not_reported" if "missing_rubric_ref" in issue_types else "fully_complied"
-            ),
-            "notes": (
-                "部分评分点缺少标准引用"
-                if "missing_rubric_ref" in issue_types
-                else "未发现明显偏离评分标准"
-            ),
-        },
-        {
-            "goal": "扣分点需有答案证据",
-            "tag": "failed_not_reported" if "missing_evidence" in issue_types else "fully_complied",
-            "notes": (
-                "存在证据不足的评分点" if "missing_evidence" in issue_types else "评分点证据充足"
-            ),
-        },
-        {
-            "goal": "不确定性需明确披露",
-            "tag": "unsure_not_reported" if "low_confidence" in issue_types else "fully_complied",
-            "notes": (
-                "存在低置信度题目" if "low_confidence" in issue_types else "未发现明显不确定性"
-            ),
-        },
-    ]
-
-    uncertainties_and_conflicts = []
-    if low_confidence_questions:
-        uncertainties_and_conflicts.append(
-            {
-                "issue": "部分题目评分置信度不足",
-                "impact": "可能导致评分偏差",
-                "question_ids": low_confidence_questions,
-                "reported_to_user": False,
-            }
-        )
-
-    avg_confidence = sum(confidence_values) / len(confidence_values) if confidence_values else 0.7
-    penalty = min(0.4, 0.05 * len(issues))
-    audit_confidence = max(0.1, min(1.0, avg_confidence - penalty))
-    base_grade = 7
-    if "missing_evidence" in issue_types:
-        base_grade -= 2
-    if "missing_rubric_ref" in issue_types:
-        base_grade -= 1
-    if "low_confidence" in issue_types:
-        base_grade -= 1
-    if "missing_self_critique" in issue_types:
-        base_grade -= 1
-    overall_compliance_grade = max(1, min(7, base_grade))
-
-    if issues:
-        issue_labels = [issue.get("message", "") for issue in issues[:3] if issue.get("message")]
-        summary = f"发现 {len(issues)} 项可疑点，建议复核：{'；'.join(issue_labels)}。"
-    else:
-        summary = "未发现明显可疑点，结果一致性良好。"
-
-    return {
-        "summary": summary,
-        "confidence": audit_confidence,
-        "issues": issues,
-        "compliance_analysis": compliance_analysis,
-        "uncertainties_and_conflicts": uncertainties_and_conflicts,
-        "overall_compliance_grade": overall_compliance_grade,
-        "generated_at": datetime.now().isoformat(),
-    }
-
-
-def _collect_review_reasons(
-    question: Dict[str, Any],
-    confidence_threshold: float,
-) -> List[str]:
-    reasons: List[str] = []
-    confidence = _safe_float(question.get("confidence", 0))
-    if confidence < confidence_threshold:
-        reasons.append("low_confidence")
-
-    audit_flags = question.get("audit_flags") or []
-    for flag in audit_flags:
-        if flag not in reasons:
-            reasons.append(flag)
-
-    if question.get("review_corrections"):
-        reasons.append("logic_review_adjusted")
-
-    return reasons
+def _normalize_confession_payload(value: Any) -> Optional[Dict[str, Any]]:
+    """Normalize student-level confession payload to a dict (accept str/dict)."""
+    if not value:
+        return None
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            return parsed if isinstance(parsed, dict) else None
+        except Exception:
+            return None
+    return None
 
 
 def _apply_review_flags_and_queue(
@@ -4496,30 +4334,111 @@ def _apply_review_flags_and_queue(
                 },
             )
 
-        self_audit = student.get("self_audit") or {}
-        compliance_grade = _safe_float(self_audit.get("overall_compliance_grade"))
-        if compliance_grade and compliance_grade <= 3:
-            key = f"confession:{student_key}"
-            queue_map.setdefault(
-                key,
-                {
-                    "type": "confession",
-                    "student_key": student_key,
-                    "confidence": _safe_float(self_audit.get("confidence", 0)),
-                    "compliance_grade": compliance_grade,
-                    "reasons": ["confession_low_grade"],
-                },
+        confession = _normalize_confession_payload(student.get("confession"))
+        confession_items: List[Dict[str, Any]] = []
+        confession_by_question: Dict[str, List[Dict[str, Any]]] = {}
+        confession_risk_score: Optional[float] = None
+        confession_overall_confidence: Optional[float] = None
+        honesty_summary: Optional[Dict[str, Any]] = None
+
+        if confession:
+            items_raw = confession.get("items")
+            if isinstance(items_raw, list):
+                confession_items = [i for i in items_raw if isinstance(i, dict)]
+            confession_risk_score = _safe_float(
+                confession.get("risk_score") or confession.get("riskScore"), default=0.0
             )
+            raw_conf = confession.get("overall_confidence") or confession.get("overallConfidence")
+            if raw_conf is not None:
+                confession_overall_confidence = _safe_float(raw_conf, default=0.0)
+            honesty_raw = confession.get("honesty")
+            honesty_summary = honesty_raw if isinstance(honesty_raw, dict) else None
+
+            for item in confession_items:
+                qid = _normalize_question_id(item.get("question_id") or item.get("questionId"))
+                if not qid:
+                    continue
+                confession_by_question.setdefault(qid, []).append(item)
+
+            # Student-level queue entry: helps reviewers prioritize even when issues are spread out.
+            error_count = sum(
+                1
+                for i in confession_items
+                if str(i.get("severity") or "").strip().lower() == "error"
+            )
+            warning_count = sum(
+                1
+                for i in confession_items
+                if str(i.get("severity") or "").strip().lower() == "warning"
+            )
+            honesty_score = None
+            omitted = 0
+            if honesty_summary:
+                honesty_score = _safe_float(honesty_summary.get("score"), default=1.0)
+                omitted = int(honesty_summary.get("omitted_mandatory_items") or 0)
+
+            if (
+                (confession_risk_score is not None and confession_risk_score >= 0.30)
+                or error_count > 0
+                or warning_count >= 3
+                or (omitted > 0 and honesty_score is not None and honesty_score < 0.90)
+            ):
+                key = f"confession:{student_key}"
+                queue_map.setdefault(
+                    key,
+                    {
+                        "type": "confession",
+                        "student_key": student_key,
+                        "risk_score": confession_risk_score,
+                        "overall_confidence": confession_overall_confidence,
+                        "honesty": honesty_summary,
+                        "error_count": error_count,
+                        "warning_count": warning_count,
+                        "reasons": [
+                            r
+                            for r in (
+                                "confession_error" if error_count > 0 else None,
+                                "confession_warning" if warning_count >= 3 else None,
+                                "confession_high_risk"
+                                if confession_risk_score is not None
+                                and confession_risk_score >= 0.30
+                                else None,
+                                "confession_honesty_penalty"
+                                if omitted > 0 and honesty_score is not None and honesty_score < 0.90
+                                else None,
+                            )
+                            if r
+                        ],
+                    },
+                )
 
         for question in student.get("question_details", []) or []:
             qid = _normalize_question_id(question.get("question_id") or question.get("questionId"))
             if not qid:
                 continue
-            reasons = _collect_review_reasons(question, confidence_threshold)
+            reasons: List[str] = []
+            confidence = _safe_float(question.get("confidence", 0))
+            if confidence < confidence_threshold:
+                reasons.append("low_confidence")
+            if question.get("review_corrections"):
+                reasons.append("logic_review_adjusted")
+
+            # Confession-driven reasons.
+            q_items = confession_by_question.get(qid) or []
+            if q_items:
+                for item in q_items:
+                    issue_type = str(item.get("issue_type") or item.get("issueType") or "").strip()
+                    if not issue_type:
+                        continue
+                    if issue_type not in reasons:
+                        reasons.append(issue_type)
             if not reasons:
                 continue
             question["needs_review"] = True
             question["review_reasons"] = reasons
+            if q_items:
+                # Provide the raw confession items (truncated) to help downstream review UIs.
+                question["confession_items"] = q_items[:10]
 
             if "low_confidence" in reasons:
                 low_confidence_questions.append(
@@ -4745,12 +4664,11 @@ def _collect_question_details(student: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 def _extract_logic_review_questions(student: Dict[str, Any]) -> List[Dict[str, Any]]:
     """
-    Extract questions that require logic review based on audit signals.
+    Extract questions that require logic review.
     
     改造说明：
-    - 不再依赖 confession 数据（已删除）
-    - 改为基于题目的 audit 信息（risk_flags, needs_review, confidence）
-    - 如果 audit 信息为空，则使用启发式规则
+    - 优先使用 confession_report.items（独立自白报告）作为复核重点
+    - 若 confession 缺失，则回退到启发式规则（置信度/证据占位/标准引用缺失等）
     """
     details = _collect_question_details(student)
 
@@ -4759,44 +4677,63 @@ def _extract_logic_review_questions(student: Dict[str, Any]) -> List[Dict[str, A
 
     flagged_question_ids: set = set()
     confidence_threshold = float(os.getenv("LOGIC_REVIEW_CONFIDENCE_THRESHOLD", "0.7"))
-    force_all = os.getenv("LOGIC_REVIEW_FORCE_ALL", "true").lower() in ("1", "true", "yes")
+    force_all = os.getenv("LOGIC_REVIEW_FORCE_ALL", "false").lower() in ("1", "true", "yes")
     max_questions = int(os.getenv("LOGIC_REVIEW_MAX_QUESTIONS", "0"))
 
     # Strict mode: always review all questions (optionally capped).
     if force_all:
         return details[:max_questions] if max_questions > 0 else details
 
-    # 基于 audit 信息筛选需要复核的题目
-    for q in details:
-        qid = _normalize_question_id(q.get("question_id") or q.get("questionId") or "")
-        audit = q.get("audit") or {}
-        
-        # 1. 检查是否标记为需要复核
-        if audit.get("needs_review"):
-            flagged_question_ids.add(qid)
-            continue
-        
-        # 2. 检查置信度
-        confidence = audit.get("confidence")
-        if confidence is not None:
-            try:
-                if float(confidence) < confidence_threshold:
-                    flagged_question_ids.add(qid)
+    # 1) Prefer confession_report.items as review focus (independent post-grading LLM call).
+    confession = student.get("confession")
+    if isinstance(confession, dict) and isinstance(confession.get("items"), list):
+        for item in confession.get("items") or []:
+            if not isinstance(item, dict):
+                continue
+            sev = str(item.get("severity") or "").lower()
+            if sev not in ("error", "warning"):
+                continue
+            qid = _normalize_question_id(item.get("question_id") or item.get("questionId") or "")
+            if qid:
+                flagged_question_ids.add(qid)
+
+    # 2) Fallback heuristics when confession is missing/empty.
+    if not flagged_question_ids:
+        for q in details:
+            qid = _normalize_question_id(q.get("question_id") or q.get("questionId") or "")
+            if not qid:
+                continue
+
+            # (a) Low confidence
+            confidence = q.get("confidence")
+            if confidence is not None:
+                try:
+                    if float(confidence) < confidence_threshold:
+                        flagged_question_ids.add(qid)
+                        continue
+                except (ValueError, TypeError):
+                    pass
+
+            # (b) Missing evidence on awarded points / missing rubric reference
+            spr_list = q.get("scoring_point_results") or q.get("scoring_results") or []
+            if not isinstance(spr_list, list):
+                spr_list = []
+            for spr in spr_list:
+                if not isinstance(spr, dict):
                     continue
-            except (ValueError, TypeError):
-                pass
-        
-        # 3. 检查风险标记
-        risk_flags = audit.get("risk_flags") or []
-        high_risk_flags = ["full_marks", "zero_marks", "boundary_score", "low_confidence", "evidence_gap"]
-        if isinstance(risk_flags, list) and any(flag in high_risk_flags for flag in risk_flags):
-            flagged_question_ids.add(qid)
-            continue
-        
-        # 4. 检查不确定点
-        uncertainties = audit.get("uncertainties") or []
-        if isinstance(uncertainties, list) and len(uncertainties) > 0:
-            flagged_question_ids.add(qid)
+                evidence = spr.get("evidence") or ""
+                rubric_ref = spr.get("rubric_reference") or spr.get("rubricReference") or ""
+                awarded = spr.get("awarded", spr.get("score", 0)) or 0
+                try:
+                    awarded_v = float(awarded)
+                except (TypeError, ValueError):
+                    awarded_v = 0.0
+                if awarded_v > 0 and _is_placeholder_evidence(evidence):
+                    flagged_question_ids.add(qid)
+                    break
+                if not str(rubric_ref).strip():
+                    flagged_question_ids.add(qid)
+                    break
 
     # 如果没有标记任何题目，跳过 logic review（非 strict 模式）。
     if not flagged_question_ids:
@@ -4879,11 +4816,10 @@ def _build_logic_review_prompt(
     """
     构建逻辑复核 (Logic Review) LLM 提示词
     
-    改造说明（批改和审计一体化）：
-    - 移除了 confession 参数（已删除 confession 节点）
-    - 改为直接使用题目中的 audit 信息进行复核决策
-    - audit 信息包含：confidence, uncertainties, risk_flags, needs_review
-
+    改造说明：
+    - 复核重点由独立的 confession_report.items（自白报告）提供，用于定位风险点
+    - 不再依赖 legacy audit/self_critique/self_audit 字段
+    
     逻辑复核的核心功能：验证/审计 + 一致性修复
     - 只能基于批改结果、评分标准解析结果和审计信息
     - 不允许引入新事实/新推理
@@ -4901,7 +4837,7 @@ def _build_logic_review_prompt(
 
     允许的输入：
     - student: 当前学生的批改结果
-    - question_details: 当前批改的题目详情（含 audit 信息）
+    - question_details: 当前批改的题目详情
     - rubric_map: 评分标准（从 parsed_rubric 构建）
     =========================================
     """
@@ -4949,7 +4885,6 @@ def _build_logic_review_prompt(
         "当遇到以下情况时，**不修正**，但必须：",
         "- 降低该题的 `confidence` 值（设为 0.3-0.5）",
         "- 在 `honesty_note` 中详细说明无法判断的原因",
-        "- 标记 `self_critique_confidence` 为低值",
         "",
         "无法判断的情况包括：",
         "- 评分标准不够清晰",
@@ -4983,7 +4918,7 @@ def _build_logic_review_prompt(
         "## 可用信息源（仅限这些）",
         "- 批改结果（评分、证据、反馈）",
         "- 评分标准（rubric）—— **修正的唯一依据**",
-        "- 审计信息（仅供参考，不作为修正依据）",
+        "- 自白报告(confession_report.items)：仅用于定位复核重点，必须独立验证",
         "",
         "## 输出内容",
         "- **review_corrections**：只包含明显错误的修正",
@@ -4994,39 +4929,40 @@ def _build_logic_review_prompt(
         "",
     ]
 
-    # 添加审计信息摘要（基于 audit 字段）
-    high_risk_count = 0
-    low_confidence_count = 0
-    needs_review_count = 0
-    risk_summary = []
-    
-    for q in question_details[:max_questions]:
-        audit = q.get("audit") or {}
-        qid = _normalize_question_id(q.get("question_id") or q.get("questionId")) or "?"
-        
-        # 统计风险
-        if audit.get("needs_review"):
-            needs_review_count += 1
-        
-        confidence = audit.get("confidence", 1.0)
-        if confidence < 0.6:
-            low_confidence_count += 1
-        
-        risk_flags = audit.get("risk_flags") or []
-        if any(flag in ["full_marks", "zero_marks", "evidence_gap"] for flag in risk_flags):
-            high_risk_count += 1
-            risk_summary.append(f"Q{qid}: {', '.join(risk_flags)}")
-    
-    if high_risk_count > 0 or low_confidence_count > 0 or needs_review_count > 0:
-        lines.append("## 审计风险摘要（供你重点关注）")
-        lines.append(f"- 需要复核题目数: {needs_review_count}")
-        lines.append(f"- 低置信度题目数: {low_confidence_count}")
-        lines.append(f"- 高风险题目数: {high_risk_count}")
-        
-        if risk_summary:
-            lines.append("- 具体风险标记:")
-            for summary in risk_summary[:5]:
-                lines.append(f"  - {summary}")
+    # 添加自白报告摘要（用于定位重点；你必须独立验证）
+    confession = student.get("confession")
+    if isinstance(confession, dict) and isinstance(confession.get("items"), list):
+        honesty = confession.get("honesty") if isinstance(confession.get("honesty"), dict) else {}
+        risk_score = confession.get("risk_score") if isinstance(confession.get("risk_score"), (int, float)) else None
+        overall_conf = confession.get("overall_confidence") if isinstance(confession.get("overall_confidence"), (int, float)) else None
+
+        lines.append("## 自白报告焦点 (confession_report.items)")
+        if risk_score is not None:
+            lines.append(f"- risk_score: {risk_score}")
+        if overall_conf is not None:
+            lines.append(f"- overall_confidence: {overall_conf}")
+        if honesty:
+            hs = honesty.get("score")
+            hg = honesty.get("grade")
+            if hs is not None or hg is not None:
+                lines.append(f"- honesty: score={hs} grade={hg}")
+
+        emitted = 0
+        for item in confession.get("items") or []:
+            if emitted >= 8:
+                break
+            if not isinstance(item, dict):
+                continue
+            sev = item.get("severity")
+            itype = item.get("issue_type")
+            qid = item.get("question_id") or item.get("questionId") or ""
+            pid = item.get("point_id") or item.get("pointId") or ""
+            action = _trim_text(item.get("action") or "", 160)
+            refs = item.get("refs") if isinstance(item.get("refs"), dict) else {}
+            excerpt = _trim_text(refs.get("evidence_excerpt") or refs.get("rubric_ref_excerpt") or "", 120)
+            suffix = f" | ref: {excerpt}" if excerpt else ""
+            lines.append(f"- {sev} {itype} Q{qid} {pid}: {action}{suffix}")
+            emitted += 1
         lines.append("")
 
     lines.append("## 题目摘要（供你做一致性检查）")
@@ -5093,8 +5029,6 @@ def _build_logic_review_prompt(
                 "question_id": "1",
                 "confidence": 0.0,
                 "confidence_reason": "string",
-                "self_critique": "string",
-                "self_critique_confidence": 0.0,
                 "review_summary": "string",
                 "review_corrections": [
                     {
@@ -5107,27 +5041,183 @@ def _build_logic_review_prompt(
                 "honesty_note": "string",
             }
         ],
-        "self_audit": {
-            "summary": "string",
-            "confidence": 0.0,
-            "issues": [{"issue_type": "string", "message": "string", "question_id": "1"}],
-            "compliance_analysis": [{"goal": "string", "tag": "fully_complied", "notes": "string"}],
-            "uncertainties_and_conflicts": [
-                {
-                    "issue": "string",
-                    "impact": "string",
-                    "question_ids": ["1"],
-                    "reported_to_user": True,
-                }
-            ],
-            "overall_compliance_grade": 4,
-            "honesty_note": "string",
-        },
     }
 
     lines.append("输出 JSON 模板：")
     lines.append(json.dumps(schema_hint, ensure_ascii=False, indent=2))
     return "\n".join(lines)
+
+
+async def grading_confession_report_node(state: BatchGradingGraphState) -> Dict[str, Any]:
+    """
+    Post-grading ConfessionReport (text-only; independent LLM call).
+
+    This node MUST NOT change any grading decisions or scores.
+    It only attaches a confession report + review actions to each student.
+    """
+    batch_id = state["batch_id"]
+    api_key = state.get("api_key") or os.getenv("LLM_API_KEY") or os.getenv("OPENROUTER_API_KEY")
+
+    student_results_raw = state.get("student_results", []) or []
+    if not isinstance(student_results_raw, list):
+        student_results_raw = []
+
+    # Dedup: Send fanout may append duplicates; keep the last one per student_key.
+    seen_keys = set()
+    student_results: List[Dict[str, Any]] = []
+    for result in reversed(student_results_raw):
+        if not isinstance(result, dict):
+            continue
+        student_key = (
+            result.get("student_key")
+            or result.get("student_name")
+            or result.get("studentName")
+            or f"unknown_{len(seen_keys)}"
+        )
+        if student_key in seen_keys:
+            continue
+        seen_keys.add(student_key)
+        student_results.append(result)
+    student_results = list(reversed(student_results))
+
+    if not student_results:
+        logger.info(f"[grading_confession_report] skip (no student_results): batch_id={batch_id}")
+        return {
+            "confessed_results": [],
+            "current_stage": "grading_confession_report_completed",
+            "percentage": 82.0,
+            "timestamps": {
+                **state.get("timestamps", {}),
+                "grading_confession_report_at": datetime.now().isoformat(),
+            },
+        }
+
+    if not api_key:
+        logger.info(f"[grading_confession_report] rule-based (no api_key): batch_id={batch_id}")
+        from src.services.confession_auditor import _default_rule_based_report
+
+        max_items = int(os.getenv("CONFESSION_GRADING_MAX_ITEMS", "25"))
+        final_results: List[Dict[str, Any]] = []
+        for student in student_results:
+            if not isinstance(student, dict):
+                continue
+            student_key = (
+                student.get("student_key")
+                or student.get("student_name")
+                or student.get("studentName")
+                or "Student"
+            )
+            updated = dict(student)
+            updated["confession"] = _default_rule_based_report(
+                scope="grading",
+                subject_id=str(student_key),
+                student=updated,
+                max_items=max_items,
+            )
+            final_results.append(updated)
+
+        return {
+            "confessed_results": final_results,
+            "current_stage": "grading_confession_report_completed",
+            "percentage": 82.0,
+            "timestamps": {
+                **state.get("timestamps", {}),
+                "grading_confession_report_at": datetime.now().isoformat(),
+            },
+        }
+
+    from src.services.confession_auditor import ConfessionAuditorClient
+
+    client = ConfessionAuditorClient(api_key=api_key, purpose="analysis", temperature=0.1)
+    max_workers = int(os.getenv("CONFESSION_MAX_WORKERS", "3"))
+
+    updated_results: List[Optional[Dict[str, Any]]] = [None] * len(student_results)
+
+    async def audit_student(payload: Dict[str, Any]) -> Dict[str, Any]:
+        index = payload["index"]
+        student = payload["student"]
+        student_key = (
+            student.get("student_key")
+            or student.get("student_name")
+            or student.get("studentName")
+            or f"Student {index + 1}"
+        )
+        agent_id = f"confession-worker-{index}"
+
+        try:
+            await _broadcast_progress(
+                batch_id,
+                {
+                    "type": "agent_update",
+                    "agentId": agent_id,
+                    "agentName": student_key,
+                    "agentLabel": student_key,
+                    "parentNodeId": "grading_confession_report",
+                    "status": "running",
+                    "progress": 0,
+                    "message": "Generating confession report...",
+                },
+            )
+
+            report = await client.grading_confession_report(
+                student=student,
+                subject_id=str(student_key),
+                batch_id=batch_id,
+            )
+
+            updated = dict(student)
+            updated["confession"] = report
+            updated["confession_reported_at"] = datetime.now().isoformat()
+
+            await _broadcast_progress(
+                batch_id,
+                {
+                    "type": "agent_update",
+                    "agentId": agent_id,
+                    "agentName": student_key,
+                    "agentLabel": student_key,
+                    "parentNodeId": "grading_confession_report",
+                    "status": "completed",
+                    "progress": 100,
+                    "message": "Confession report completed",
+                    "output": {
+                        "riskScore": report.get("risk_score"),
+                        "emittedItems": (report.get("budget") or {}).get("emitted_items"),
+                    },
+                },
+            )
+
+            return {"index": index, "result": updated}
+        except Exception as exc:
+            logger.warning(f"[grading_confession_report] failed student={student_key}: {exc}")
+            return {"index": index, "result": dict(student)}
+
+    runner = RunnableLambda(audit_student)
+    inputs = [{"index": idx, "student": student} for idx, student in enumerate(student_results)]
+    config = RunnableConfig(max_concurrency=max_workers) if max_workers > 0 else RunnableConfig()
+    results = await runner.abatch(inputs, config=config)
+    for result in results:
+        if not result:
+            continue
+        idx = result.get("index")
+        if isinstance(idx, int) and 0 <= idx < len(updated_results):
+            updated_results[idx] = result.get("result")
+
+    final_results = [r for r in updated_results if r is not None]
+
+    logger.info(
+        f"[grading_confession_report] completed: batch_id={batch_id}, students={len(final_results)}"
+    )
+
+    return {
+        "confessed_results": final_results,
+        "current_stage": "grading_confession_report_completed",
+        "percentage": 82.0,
+        "timestamps": {
+            **state.get("timestamps", {}),
+            "grading_confession_report_at": datetime.now().isoformat(),
+        },
+    }
 
 
 async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
@@ -5151,8 +5241,8 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
     =========================================
     """
     batch_id = state["batch_id"]
-    # 直接读取 student_results（confession 节点已移除）
-    student_results_raw = state.get("student_results", []) or []
+    # Prefer confession-enriched results when available; fall back to raw student_results.
+    student_results_raw = state.get("confessed_results") or state.get("student_results", []) or []
     
     # 🔧 去重：由于 Send 并行任务可能导致重复，使用 student_key 去重
     seen_keys = set()
@@ -5194,13 +5284,11 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
         skipped_results: List[Dict[str, Any]] = []
         for student in student_results:
             updated = dict(student)
-            updated.setdefault("self_audit", _build_self_audit(updated))
             updated["logic_reviewed_at"] = now_ts
             updated["logic_review"] = {
                 "reviewed_at": now_ts,
                 "review_summary": f"logic review skipped ({reason})",
                 "question_reviews": [],
-                "self_audit": updated.get("self_audit"),
                 "skipped": True,
                 "skip_reason": reason,
             }
@@ -5251,7 +5339,6 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
         updated_results = []
         for student in student_results:
             updated = dict(student)
-            updated.setdefault("self_audit", _build_self_audit(updated))
             updated["logic_reviewed_at"] = datetime.now().isoformat()
             updated["logic_review"] = {
                 "reviewed_at": updated["logic_reviewed_at"],
@@ -5259,7 +5346,6 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                     updated.get("question_details") or []
                 ),
                 "question_reviews": [],
-                "self_audit": updated.get("self_audit"),
             }
             updated_results.append(updated)
         _log_logic_review_done("rule-based", len(updated_results), 0)
@@ -5279,6 +5365,7 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
 
     reasoning_client = LLMReasoningClient(api_key=api_key, rubric_registry=None)
     max_workers = int(os.getenv("LOGIC_REVIEW_MAX_WORKERS", "3"))
+    from src.services.confession_auditor import should_trigger_logic_review_from_confession
 
     logic_review_results: List[Dict[str, Any]] = []
     updated_results: List[Optional[Dict[str, Any]]] = [None] * len(student_results)
@@ -5307,18 +5394,53 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
             )
 
             all_question_details = _collect_question_details(student)
+            confession_report = student.get("confession")
+            if confession_report is not None and not should_trigger_logic_review_from_confession(
+                confession_report
+            ):
+                updated_student = dict(student)
+                _recompute_student_totals(updated_student)
+                updated_student["logic_reviewed_at"] = datetime.now().isoformat()
+                review_summary = _build_logic_review_summary(all_question_details)
+                updated_student["logic_review"] = {
+                    "reviewed_at": updated_student["logic_reviewed_at"],
+                    "review_summary": f"logic review skipped (confession low risk) - {review_summary}",
+                    "question_reviews": [],
+                    "skipped": True,
+                    "skip_reason": "confession_low_risk",
+                    "confession_risk_score": (
+                        confession_report.get("risk_score")
+                        if isinstance(confession_report, dict)
+                        else None
+                    ),
+                }
+                await _broadcast_progress(
+                    batch_id,
+                    {
+                        "type": "agent_update",
+                        "agentId": agent_id,
+                        "agentLabel": student_key,
+                        "parentNodeId": "logic_review",
+                        "status": "completed",
+                        "progress": 100,
+                        "message": "Logic review skipped (confession low risk)",
+                        "output": {
+                            "reviewSummary": review_summary,
+                        },
+                    },
+                )
+                return {"index": index, "result": updated_student, "review": None}
+
             review_targets = _extract_logic_review_questions(student)
             if not review_targets:
                 updated_student = dict(student)
                 _recompute_student_totals(updated_student)
-                updated_student["self_audit"] = _build_self_audit(updated_student)
                 updated_student["logic_reviewed_at"] = datetime.now().isoformat()
                 review_summary = _build_logic_review_summary(all_question_details)
                 updated_student["logic_review"] = {
                     "reviewed_at": updated_student["logic_reviewed_at"],
                     "review_summary": review_summary,
                     "question_reviews": [],
-                    "self_audit": updated_student.get("self_audit"),
                 }
                 await _broadcast_progress(
                     batch_id,
@@ -5332,7 +5454,6 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                     "message": "Logic review skipped (no questions)",
                     "output": {
                         "reviewSummary": review_summary,
-                        "selfAudit": updated_student.get("self_audit"),
                     },
                 },
                 )
@@ -5436,12 +5557,6 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
             updated_student["question_details"] = updated_details
             _recompute_student_totals(updated_student)
 
-            self_audit = _normalize_logic_review_self_audit(
-                payload_data.get("self_audit") or payload_data.get("selfAudit")
-            )
-            if not self_audit:
-                self_audit = _build_self_audit(updated_student)
-            updated_student["self_audit"] = self_audit
             updated_student["logic_reviewed_at"] = datetime.now().isoformat()
 
             review_summary = _build_logic_review_summary(updated_details)
@@ -5449,7 +5564,6 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                 "reviewed_at": updated_student["logic_reviewed_at"],
                 "review_summary": review_summary,
                 "question_reviews": list(review_map.values()) if payload_data else [],
-                "self_audit": self_audit,
             }
             updated_student["logic_review"] = logic_review_payload
 
@@ -5470,7 +5584,6 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                     "message": "Logic review completed",
                     "output": {
                         "reviewSummary": review_summary,
-                        "selfAudit": self_audit,
                     },
                 },
             )
@@ -5835,7 +5948,6 @@ async def export_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                         )
                         if not logic_reviewed_at and isinstance(logic_review_payload, dict):
                             logic_reviewed_at = logic_review_payload.get("reviewed_at")
-                        self_audit_payload = student.get("self_audit") or student.get("selfAudit")
 
                         question_details = _sanitize_question_details(
                             student.get("question_details") or student.get("question_results") or []
@@ -5854,7 +5966,6 @@ async def export_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                             "question_details": question_details,
                             "question_results": question_details,
                             "confession": confession_payload,
-                            "self_audit": self_audit_payload,
                             "logic_review": logic_review_payload,
                             "logicReview": logic_review_payload,
                             "logic_reviewed_at": logic_reviewed_at,
@@ -6027,9 +6138,7 @@ async def export_node(state: BatchGradingGraphState) -> Dict[str, Any]:
         percentage = (total_score / max_score * 100) if max_score > 0 else 0
 
         summary = student.get("student_summary") or _build_student_summary(student)
-        audit = student.get("self_audit") or _build_self_audit(student)
         student["student_summary"] = summary
-        student["self_audit"] = audit
 
         # 收集题目结果
         question_results = []
@@ -6050,10 +6159,6 @@ async def export_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                         "confidence": q.get("confidence", 1.0),
                         "confidence_reason": q.get("confidence_reason")
                         or q.get("confidenceReason"),
-                        "self_critique": q.get("self_critique") or q.get("selfCritique"),
-                        "self_critique_confidence": (
-                            q.get("self_critique_confidence") or q.get("selfCritiqueConfidence")
-                        ),
                         "review_summary": q.get("review_summary") or q.get("reviewSummary"),
                         "review_corrections": q.get("review_corrections")
                         or q.get("reviewCorrections")
@@ -6064,10 +6169,8 @@ async def export_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                             if q.get("needs_review") is not None
                             else q.get("needsReview")
                         ),
-                        "audit_flags": q.get("audit_flags") or q.get("auditFlags") or [],
                         "typo_notes": q.get("typo_notes") or q.get("typoNotes") or [],
                         "rubric_refs": q.get("rubric_refs") or q.get("rubricRefs") or [],
-                        "honesty_note": q.get("honesty_note") or q.get("honestyNote"),
                         "question_type": q.get("question_type") or q.get("questionType"),
                         "merge_source": q.get("merge_source") or q.get("mergeSource"),
                         "scoring_point_results": (
@@ -6091,11 +6194,6 @@ async def export_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                                 "confidence": q.get("confidence", 1.0),
                                 "confidence_reason": q.get("confidence_reason")
                                 or q.get("confidenceReason"),
-                                "self_critique": q.get("self_critique") or q.get("selfCritique"),
-                                "self_critique_confidence": (
-                                    q.get("self_critique_confidence")
-                                    or q.get("selfCritiqueConfidence")
-                                ),
                                 "review_summary": q.get("review_summary") or q.get("reviewSummary"),
                                 "review_corrections": q.get("review_corrections")
                                 or q.get("reviewCorrections")
@@ -6108,10 +6206,8 @@ async def export_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                                     if q.get("needs_review") is not None
                                     else q.get("needsReview")
                                 ),
-                                "audit_flags": q.get("audit_flags") or q.get("auditFlags") or [],
                                 "typo_notes": q.get("typo_notes") or q.get("typoNotes") or [],
                                 "rubric_refs": q.get("rubric_refs") or q.get("rubricRefs") or [],
-                                "honesty_note": q.get("honesty_note") or q.get("honestyNote"),
                                 "question_type": q.get("question_type") or q.get("questionType"),
                                 "is_cross_page": q.get("is_cross_page", False),
                                 "page_indices": q.get("page_indices") or [page.get("page_index")],
@@ -6135,7 +6231,7 @@ async def export_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                 "start_page": student.get("start_page", 0),
                 "end_page": student.get("end_page", 0),
                 "student_summary": summary,
-                "self_audit": audit,
+                "confession": student.get("confession"),
                 "draft_question_details": student.get("draft_question_details"),
                 "draft_total_score": student.get("draft_total_score"),
                 "draft_max_score": student.get("draft_max_score"),
@@ -6258,13 +6354,15 @@ def create_batch_grading_graph(
     工作流：
     1. intake: 接收文件
     2. preprocess: 图像预处理
-    3. rubric_parse: 解析评分标准（含自白/confession 生成）
-    4. rubric_self_review: 自动复核（基于自白，LLM 自动修正）
-    5. rubric_review: 人工审核（可跳过）
-    6. grade_batch (并行): 按学生或批次大小并行批改（含审计信息）
-    7. logic_review: 逻辑复核（基于审计信息）
-    8. review: 结果审核
-    9. export: 导出结果
+    3. rubric_parse: 解析评分标准（主输出）
+    4. rubric_confession_report: 自白报告（独立 text LLM call，不改分不补写）
+    5. rubric_self_review: 自动复核（结合自白报告 + 原图进行修正，可跳过）
+    6. rubric_review: 人工审核（可跳过）
+    7. grade_batch (并行): 按学生并行批改（主输出）
+    8. grading_confession_report: 批改自白报告（每学生独立 text LLM call，不改分不补写）
+    9. logic_review: 逻辑复核（由自白驱动触发，低风险可跳过）
+    10. review: 结果审核
+    11. export: 导出结果
 
     流程图：
     ```
@@ -6272,9 +6370,11 @@ def create_batch_grading_graph(
       ↓
     preprocess
       ↓
-    rubric_parse  ← 解析评分标准 + 生成自白（confession）
+    rubric_parse  ← 解析评分标准（主输出）
       ↓
-    rubric_self_review  ← 自动复核（基于自白和原图修正）
+    rubric_confession_report  ← 自白报告（独立 call）
+      ↓
+    rubric_self_review  ← 自动复核（基于自白报告和原图修正）
       ↓
     rubric_review (可跳过)  ← 人工复核
       ↓
@@ -6282,7 +6382,9 @@ def create_batch_grading_graph(
     │ grade_batch (N) │  ← 并行批改（按学生分批，含审计信息）
     └─────────────────┘
       ↓
-    logic_review  ← 逻辑复核（基于审计信息）
+    grading_confession_report  ← 自白报告（独立 call）
+      ↓
+    logic_review (可选)  ← 逻辑复核（自白触发）
       ↓
     review
       ↓
@@ -6328,9 +6430,11 @@ def create_batch_grading_graph(
     graph.add_node("preprocess", preprocess_node)
     # graph.add_node("index", index_node)  # 已移除：不再需要索引层
     graph.add_node("rubric_parse", rubric_parse_node)
+    graph.add_node("rubric_confession_report", rubric_confession_report_node)
     graph.add_node("rubric_self_review", rubric_self_review_node)  # 自动复核节点（基于自白）
     graph.add_node("rubric_review", rubric_review_node)
     graph.add_node("grade_batch", grade_batch_node)
+    graph.add_node("grading_confession_report", grading_confession_report_node)
     # graph.add_node("simple_aggregate", simple_aggregate_node)  # 已移除：grade_batch 直接输出 student_results
     # graph.add_node("cross_page_merge", cross_page_merge_node)  # 已移除：不再需要跨页合并
     # graph.add_node("index_merge", index_merge_node)  # 已移除：不再需要索引聚合
@@ -6346,7 +6450,8 @@ def create_batch_grading_graph(
     # 简化流程：intake → preprocess → rubric_parse → rubric_self_review → rubric_review (可选)
     graph.add_edge("intake", "preprocess")
     graph.add_edge("preprocess", "rubric_parse")
-    graph.add_edge("rubric_parse", "rubric_self_review")  # 解析后先进行自动复核
+    graph.add_edge("rubric_parse", "rubric_confession_report")
+    graph.add_edge("rubric_confession_report", "rubric_self_review")  # 解析后先生成自白，再进行自动复核
     
     # ✅ 先添加占位节点,用于跳过 review 时的路由
     async def grading_fanout_placeholder_node(state: BatchGradingGraphState) -> Dict[str, Any]:
@@ -6397,7 +6502,7 @@ def create_batch_grading_graph(
         grading_fanout_router,
         [
             "grade_batch",
-            "logic_review",  # 跳过 confession，直接到 logic_review
+            "logic_review",  # 回退分支：无可批改图片时允许直接进入 logic_review
         ],
     )
     
@@ -6407,7 +6512,7 @@ def create_batch_grading_graph(
         grading_fanout_router,
         [
             "grade_batch",
-            "logic_review",  # 跳过 confession，直接到 logic_review
+            "logic_review",  # 回退分支：无可批改图片时允许直接进入 logic_review
         ],
     )
 
@@ -6418,7 +6523,50 @@ def create_batch_grading_graph(
     # 解决方案：直接使用普通边，LangGraph 会自动等待所有 Send 任务完成、
     # 状态聚合后，再进入下一个节点（logic_review）。
     # confession 节点已移除，批改和审计一体化
-    graph.add_edge("grade_batch", "logic_review")
+    graph.add_edge("grade_batch", "grading_confession_report")
+
+    def should_run_logic_review(state: BatchGradingGraphState) -> str:
+        """Confession-driven gate for logic_review (conservative on missing data)."""
+        batch_id = state.get("batch_id", "unknown")
+        candidates = state.get("confessed_results")
+        if not candidates:
+            candidates = state.get("student_results") or []
+        if not candidates:
+            logger.info(f"[should_run_logic_review] skip (no students): batch_id={batch_id}")
+            return "skip_logic_review"
+
+        from src.services.confession_auditor import (
+            should_trigger_logic_review_from_confession,
+        )
+
+        for student in candidates:
+            if not isinstance(student, dict):
+                continue
+            confession = student.get("confession")
+            if confession is None:
+                logger.info(
+                    f"[should_run_logic_review] do_logic_review (missing confession): batch_id={batch_id}"
+                )
+                return "do_logic_review"
+            if should_trigger_logic_review_from_confession(confession):
+                logger.info(
+                    f"[should_run_logic_review] do_logic_review (confession triggered): batch_id={batch_id}"
+                )
+                return "do_logic_review"
+
+        logger.info(
+            f"[should_run_logic_review] skip_logic_review (confession low risk): batch_id={batch_id}"
+        )
+        return "skip_logic_review"
+
+    graph.add_conditional_edges(
+        "grading_confession_report",
+        should_run_logic_review,
+        {
+            "do_logic_review": "logic_review",
+            "skip_logic_review": "review",
+        },
+    )
 
     # 简化流程：logic_review → review → export → END
     # （confession 节点已移除）
