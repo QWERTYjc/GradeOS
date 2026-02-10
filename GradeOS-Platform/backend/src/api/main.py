@@ -23,9 +23,9 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import redis.asyncio as redis
 
-from src.api.routes import unified_api
-from src.api.routes import batch_langgraph
-from src.api.routes import runs
+# NOTE: Avoid importing heavy route modules at import time. Uvicorn must be able
+# to bind quickly for Railway healthchecks. Routes are registered lazily during
+# background bootstrap (see _register_api_routes).
 
 from src.api.middleware.rate_limit import RateLimitMiddleware
 from src.api.dependencies import init_orchestrator, close_orchestrator, get_orchestrator
@@ -214,11 +214,23 @@ async def _bootstrap_init(app: FastAPI) -> None:
             logger.warning("grading_memory init failed (will fall back): %s", exc)
 
         await _step("orchestrator", init_orchestrator(), timeout_s=40)
+
+        try:
+            _register_api_routes(app)
+            _set_component("routes", "ok")
+        except Exception as exc:
+            _set_component("routes", "error", str(exc))
+
         try:
             orch = await get_orchestrator()
             if orch is not None:
-                await batch_langgraph.resume_orphaned_streams(orch)
-                _set_component("orchestrator_resume", "ok")
+                try:
+                    from src.api.routes import batch_langgraph
+
+                    await batch_langgraph.resume_orphaned_streams(orch)
+                    _set_component("orchestrator_resume", "ok")
+                except Exception as exc:
+                    _set_component("orchestrator_resume", "error", str(exc))
         except Exception as exc:
             _set_component("orchestrator_resume", "error", str(exc))
 
@@ -243,6 +255,83 @@ async def _bootstrap_init(app: FastAPI) -> None:
         logger.error("Bootstrap crashed: %s", exc, exc_info=True)
     finally:
         st["finished_at"] = _now_iso_utc()
+
+
+def _register_api_routes(app: FastAPI) -> None:
+    """Register non-health routes lazily.
+
+    Some route modules are large / import heavy deps. Importing them during
+    module import can delay Uvicorn bind and fail Railway healthchecks.
+    """
+
+    if getattr(app.state, "routes_registered", False):
+        return
+
+    errors: list[str] = []
+
+    def _warn(msg: str, exc: Exception) -> None:
+        errors.append(f"{msg}: {exc}")
+        logger.warning("%s: %s", msg, exc)
+
+    try:
+        from src.api.routes import unified_api
+
+        app.include_router(unified_api.router, prefix="/api", tags=["GradeOS unified API"])
+    except Exception as exc:  # pragma: no cover
+        _warn("unified_api include failed", exc)
+
+    try:
+        from src.api.routes import batch_langgraph
+
+        app.include_router(batch_langgraph.router, prefix="/api", tags=["batch grading"])
+    except Exception as exc:  # pragma: no cover
+        _warn("batch_langgraph include failed", exc)
+
+    try:
+        from src.api.routes import runs
+
+        app.include_router(runs.router, prefix="/api", tags=["run observability"])
+    except Exception as exc:  # pragma: no cover
+        _warn("runs include failed", exc)
+
+    # Optional modules.
+    try:
+        from src.api.routes import annotation_grading
+
+        app.include_router(annotation_grading.router, prefix="/api", tags=["annotation grading"])
+    except Exception as exc:  # pragma: no cover
+        _warn("annotation_grading include failed", exc)
+
+    try:
+        from src.api.routes import assistant_grading
+
+        app.include_router(assistant_grading.router, prefix="/api", tags=["assistant grading"])
+    except Exception as exc:  # pragma: no cover
+        _warn("assistant_grading include failed", exc)
+
+    try:
+        from src.api.routes import memory_api
+
+        app.include_router(memory_api.router, prefix="/api", tags=["memory"])
+    except Exception as exc:  # pragma: no cover
+        _warn("memory_api include failed", exc)
+
+    try:
+        from src.api.routes import class_integration
+
+        app.include_router(class_integration.router, tags=["class integration"])
+    except Exception as exc:  # pragma: no cover
+        _warn("class_integration include failed", exc)
+
+    try:
+        from src.api.routes import openboard
+
+        app.include_router(openboard.router, prefix="/api", tags=["openboard"])
+    except Exception as exc:  # pragma: no cover
+        _warn("openboard include failed", exc)
+
+    app.state.routes_registered = True
+    app.state.routes_register_errors = errors
 
 
 @asynccontextmanager
@@ -359,59 +448,8 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 
 # 注册路由
-app.include_router(unified_api.router, prefix="/api", tags=["GradeOS统一API"])
-app.include_router(batch_langgraph.router, prefix="/api", tags=["批量批改"])
-app.include_router(runs.router, prefix="/api", tags=["运行观测"])
-logger.info(
-    "DEBUG: batch_langgraph router included with prefix=/api (router has internal /batch prefix)"
-)
+# Routes are registered lazily in background bootstrap: see _register_api_routes().
 
-# 批注批改 API
-try:
-    from src.api.routes import annotation_grading
-
-    app.include_router(annotation_grading.router, prefix="/api", tags=["批注批改"])
-    logger.info("批注批改 API 已注册")
-except ImportError as e:
-    logger.warning(f"批注批改 API 导入失败: {e}")
-
-# 辅助批改 API (新增)
-try:
-    from src.api.routes import assistant_grading
-
-    app.include_router(assistant_grading.router, prefix="/api", tags=["辅助批改"])
-    logger.info("辅助批改 API 已注册")
-except ImportError as e:
-    logger.warning(f"辅助批改 API 导入失败: {e}")
-
-# 记忆管理 API (新增)
-try:
-    from src.api.routes import memory_api
-
-    app.include_router(memory_api.router, prefix="/api", tags=["记忆管理"])
-    logger.info("记忆管理 API 已注册")
-except ImportError as e:
-    logger.warning(f"记忆管理 API 导入失败: {e}")
-
-# Phase 6: 班级系统集成 API (延迟导入避免循环依赖)
-try:
-    from src.api.routes import class_integration
-
-    app.include_router(class_integration.router, tags=["班级系统集成"])
-except ImportError as e:
-    logger.warning(f"班级系统集成 API 导入失败: {e}")
-
-# OpenBoard 论坛 API
-try:
-    from src.api.routes import openboard
-    app.include_router(openboard.router, prefix="/api", tags=["OpenBoard论坛"])
-    logger.info("OpenBoard 论坛 API 已注册")
-except ImportError as e:
-    logger.warning(f"OpenBoard 论坛 API 导入失败: {e}")
-
-
-
-# 健康检查端点
 @app.get("/health", tags=["health"])
 @app.get("/api/health", tags=["health"])
 async def health_check():
