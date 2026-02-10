@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { wsClient, buildWsUrl } from '@/services/ws';
 import { GradingAnnotationResult } from '@/types/annotation';
 import { gradingApi } from '@/services/api';
+import { normalizeStudentResults } from '@/lib/gradingResults';
 
 export type WorkflowStatus = 'IDLE' | 'UPLOADING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'REVIEWING';
 export type NodeStatus = 'pending' | 'running' | 'completed' | 'failed';
@@ -1041,7 +1042,10 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
             })
         })),
 
-        setFinalResults: (results) => set({ finalResults: results }),
+        setFinalResults: (results) => {
+            const raw = Array.isArray(results) ? (results as any[]) : [];
+            set({ finalResults: normalizeStudentResults(raw as any) });
+        },
 
         reset: () => {
             Object.values(get().nodeStatusTimers).forEach((timer) => clearTimeout(timer));

@@ -1,4 +1,4 @@
-import { StudentResult, SelfAudit, AuditInfo } from '@/store/consoleStore';
+import type { StudentResult, SelfAudit, AuditInfo } from '@/store/consoleStore';
 
 type RawObject = Record<string, unknown>;
 
@@ -140,6 +140,12 @@ export const normalizeStudentResults = (raw: RawObject[]): StudentResult[] => {
               rubricReferenceSource: (spr.rubric_reference_source || spr.rubricReferenceSource) as string | undefined,
               decision: (spr.decision || spr.result || spr.judgement || spr.judgment) as string | undefined,
               reason: (spr.reason || spr.rationale || spr.explanation) as string | undefined,
+              stepId: String(spr.step_id || spr.stepId || ''),
+              stepExcerpt: String(spr.step_excerpt || spr.stepExcerpt || ''),
+              stepRegion: (spr.step_region || spr.stepRegion) as any,
+              evidenceRegion: (spr.evidence_region || spr.evidenceRegion) as any,
+              errorRegion: (spr.error_region || spr.errorRegion) as any,
+              markType: (spr.mark_type || spr.markType) as string | undefined,
               reviewAdjusted: (spr.review_adjusted || spr.reviewAdjusted) as boolean | undefined,
               reviewBefore: (spr.review_before || spr.reviewBefore) as any,
               reviewReason: (spr.review_reason || spr.reviewReason) as string | undefined,
@@ -271,11 +277,19 @@ export const normalizeStudentResults = (raw: RawObject[]): StudentResult[] => {
       totalRevisions: (r.totalRevisions ?? r.total_revisions) as number | undefined,
       startPage: (r.startPage ?? r.start_page) as number | undefined,
       endPage: (r.endPage ?? r.end_page) as number | undefined,
+      pageRange: (r.pageRange ?? r.page_range) as string | undefined,
+      pages: r.pages as string | undefined,
       confidence: r.confidence as number | undefined,
       needsConfirmation: (r.needsConfirmation ?? r.needs_confirmation) as boolean | undefined,
       studentSummary: (r.studentSummary || r.student_summary) as any,
       selfAudit: normalizeSelfAudit(r.selfAudit || r.self_audit),
       confession: normalizeConfessionPayload(r.confession) as any,
+      logicReview: (r.logicReview || r.logic_review) as any,
+      logicReviewedAt: (r.logicReviewedAt || r.logic_reviewed_at) as string | undefined,
+      draftQuestionDetails: (r.draftQuestionDetails || r.draft_question_details) as any,
+      draftTotalScore: (r.draftTotalScore ?? r.draft_total_score) as number | undefined,
+      draftMaxScore: (r.draftMaxScore ?? r.draft_max_score) as number | undefined,
+      gradingAnnotations: (r.gradingAnnotations || r.grading_annotations) as any,
       questionResults,
     };
   });

@@ -2708,6 +2708,16 @@ def _finalize_scoring_result(
             expected_value = sp.get("expected_value") or sp.get("expectedValue") or ""
             mark_type = existing.get("mark_type") or existing.get("markType") or "M"
             step_id = existing.get("step_id") or existing.get("stepId") or ""
+            # Prefer explicit step_id from the grader; otherwise try to align to extracted steps by index,
+            # and finally fall back to point_id so frontend can always render per-step scoring chips.
+            if not step_id and steps and idx < len(steps) and isinstance(steps[idx], dict):
+                candidate_sid = (
+                    steps[idx].get("step_id") or steps[idx].get("stepId") or steps[idx].get("id")
+                )
+                if candidate_sid:
+                    step_id = str(candidate_sid)
+            if not step_id:
+                step_id = point_id
             step_excerpt = (
                 existing.get("step_excerpt")
                 or existing.get("stepExcerpt")
@@ -2813,6 +2823,17 @@ def _finalize_scoring_result(
                 reason_text = spr.get("reason", "")
                 if strict_evidence and evidence_placeholder and _safe_float(awarded) <= 0 and _safe_float(spr.get("awarded", spr.get("score", 0))) > 0:
                     reason_text = reason_text or "证据不足（严格模式给0分）"
+                step_id = spr.get("step_id") or spr.get("stepId") or ""
+                if not step_id and steps and (idx - 1) < len(steps) and isinstance(steps[idx - 1], dict):
+                    candidate_sid = (
+                        steps[idx - 1].get("step_id")
+                        or steps[idx - 1].get("stepId")
+                        or steps[idx - 1].get("id")
+                    )
+                    if candidate_sid:
+                        step_id = str(candidate_sid)
+                if not step_id:
+                    step_id = point_id
                 scoring_point_results.append(
                     {
                         "point_id": point_id,
@@ -2825,7 +2846,7 @@ def _finalize_scoring_result(
                         "max_points": max_points or 0,
                         "evidence": evidence_text,
                         "reason": reason_text,
-                        "step_id": spr.get("step_id") or spr.get("stepId") or "",
+                        "step_id": step_id,
                         "step_excerpt": _trim_text(
                             spr.get("step_excerpt")
                             or spr.get("stepExcerpt")
@@ -4483,6 +4504,11 @@ def _apply_review_flags_and_queue(
                 for item in q_items:
                     issue_type = str(item.get("issue_type") or item.get("issueType") or "").strip()
                     if not issue_type:
+                        continue
+                    # Drop stale "low confidence" signals after logic-review updates the confidence.
+                    # Confession reports are generated before logic_review, so some items can become
+                    # obsolete once the final confidence is healthy.
+                    if issue_type in ("low_confidence", "zero_marks_low_confidence") and confidence >= confidence_threshold:
                         continue
                     if issue_type not in reasons:
                         reasons.append(issue_type)

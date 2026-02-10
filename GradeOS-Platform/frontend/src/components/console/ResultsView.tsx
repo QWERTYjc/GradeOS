@@ -245,8 +245,40 @@ const buildRubricPayload = (draft: ParsedRubricDraft) => ({
     })),
 });
 
+const formatStudentText = (text: string) => {
+    const raw = (text || '').toString();
+    let normalized = raw.replace(/\r\n/g, '\n').trim();
+    if (!normalized) return '';
+
+    // Heuristic formatting for OCR / single-line math solutions.
+    // Only apply when the text is basically one long line (to avoid destroying intentional formatting).
+    const hasBlankLines = /\n\s*\n/.test(normalized);
+    const newlineCount = (normalized.match(/\n/g) || []).length;
+    const looksLikeOneLine = !hasBlankLines && newlineCount <= 1;
+    if (looksLikeOneLine && normalized.length > 140) {
+        // Paragraph breaks for common step markers: "a) ...", "1) ...", "1. ..."
+        normalized = normalized.replace(/(^|[.;])\s*([a-hA-H])\)\s*/g, (_m, sep, label) => (
+            sep ? `${sep}\n\n${label}) ` : `${label}) `
+        ));
+        normalized = normalized.replace(/(^|[.;])\s*(\d{1,2})\)\s*/g, (_m, sep, num) => (
+            sep ? `${sep}\n\n${num}) ` : `${num}) `
+        ));
+        normalized = normalized.replace(/(^|[.;])\s*(\d{1,2})\.\s*/g, (_m, sep, num) => (
+            sep ? `${sep}\n\n${num}. ` : `${num}. `
+        ));
+
+        // Soft line breaks for readability.
+        normalized = normalized.replace(/;\s+/g, ';\n');
+        normalized = normalized.replace(/\.\s+(?=[A-Za-z(])/g, '.\n');
+    }
+
+    // Avoid excessive whitespace
+    normalized = normalized.replace(/\n{3,}/g, '\n\n');
+    return normalized;
+};
+
 const splitParagraphs = (text: string) => {
-    const normalized = text.replace(/\r\n/g, '\n').trim();
+    const normalized = formatStudentText(text);
     if (!normalized) return [];
     return normalized.split(/\n\s*\n/).map((paragraph) => paragraph.trimEnd());
 };
@@ -288,6 +320,9 @@ const QuestionDetail: React.FC<{
         || (showScoringDetails && ((question.scoringPointResults?.length || 0) > 0 || (question.scoringPoints?.length || 0) > 0));
     const [detailsOpen, setDetailsOpen] = useState(defaultExpanded);
     const [analysisOpen, setAnalysisOpen] = useState(false);
+    const [rawAnswerOpen, setRawAnswerOpen] = useState(false);
+    const [scoringDetailsOpen, setScoringDetailsOpen] = useState(false);
+    const hasPointBreakdown = (question.scoringPointResults?.length || 0) > 0;
     const scoreLabel = isAssist ? 'Assist' : (question.maxScore > 0 ? `${question.score} / ${question.maxScore}` : 'N/A');
     const scoreClass = isAssist || question.maxScore <= 0
         ? 'text-slate-400'
@@ -394,7 +429,7 @@ const QuestionDetail: React.FC<{
 
             {detailsOpen && (
                 <>
-                    {question.studentAnswer && (
+                    {question.studentAnswer && !hasPointBreakdown && (
                         <div className="rounded-md p-3 border border-slate-200 bg-white">
                             <span className="text-[11px] font-semibold text-slate-500 mb-1 block">Student Answer</span>
                             <div className="space-y-2">
@@ -403,17 +438,51 @@ const QuestionDetail: React.FC<{
                         </div>
                     )}
 
+                    {/* When step/point breakdown exists, keep the raw OCR text collapsible to reduce noise. */}
+                    {question.studentAnswer && hasPointBreakdown && (
+                        <div className="rounded-lg border border-slate-200 bg-white overflow-hidden">
+                            <button
+                                type="button"
+                                onClick={() => setRawAnswerOpen((v) => !v)}
+                                className="w-full px-3 py-2 cursor-pointer hover:bg-slate-50 transition-colors flex items-center justify-between"
+                            >
+                                <span className="text-[11px] font-semibold text-slate-600">Student Answer (OCR)</span>
+                                <ChevronDown className={clsx("w-4 h-4 text-slate-400 transition-transform", rawAnswerOpen && "rotate-180")} />
+                            </button>
+                            {rawAnswerOpen && (
+                                <div className="px-3 pb-3">
+                                    <div className="space-y-2">
+                                        {renderParagraphs(question.studentAnswer)}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    )}
+
                     {(() => {
-                        const steps = (question.steps || []) as any[];
                         const pointResults = (question.scoringPointResults || []) as any[];
-                        if (steps.length === 0 || pointResults.length === 0) return null;
+                        if (pointResults.length === 0) return null;
+
+                        // Prefer backend-provided step segmentation; otherwise build a point-aligned step list.
+                        let steps = (question.steps || []) as any[];
+                        if (steps.length === 0) {
+                            steps = pointResults.map((spr, idx) => ({
+                                step_id: spr.stepId || spr.step_id || spr.pointId || spr.point_id || `S${idx + 1}`,
+                                step_content: spr.stepExcerpt || spr.step_excerpt || spr.evidence || spr.description || '',
+                                step_region: spr.stepRegion || spr.step_region || spr.errorRegion || spr.error_region,
+                                is_correct: Number(spr.awarded ?? spr.score ?? 0) > 0,
+                                mark_type: spr.markType || spr.mark_type || 'M',
+                                mark_value: Number(spr.awarded ?? spr.score ?? 0),
+                                feedback: spr.reason || '',
+                            }));
+                        }
 
                         const normalizeStepId = (step: any, index: number) =>
                             String(step.step_id || step.stepId || step.id || `S${index + 1}`);
                         const normalizeStepContent = (step: any) =>
                             String(step.step_content || step.stepContent || step.step_content || '');
                         const normalizeSprStepId = (spr: any) =>
-                            String(spr.step_id || spr.stepId || '');
+                            String(spr.step_id || spr.stepId || spr.pointId || spr.point_id || '');
                         const normalizePointId = (spr: any, idx: number) =>
                             String(
                                 spr.pointId
@@ -466,11 +535,9 @@ const QuestionDetail: React.FC<{
                                             <div className="font-semibold text-slate-900">
                                                 [{pointId}] {desc || '评分点'}
                                             </div>
-                                            {rubricRef && (
-                                                <div className="text-slate-600">
-                                                    <span className="font-semibold">标准:</span> {rubricRef}
-                                                </div>
-                                            )}
+                                            <div className={clsx("text-slate-600", !rubricRef && "text-amber-700")}>
+                                                <span className="font-semibold">评分标准:</span> {rubricRef || '未提供评分标准引用，需要人工校验'}
+                                            </div>
                                             {evidence && (
                                                 <div className="text-slate-600">
                                                     <span className="font-semibold">证据:</span> {evidence}
@@ -570,11 +637,25 @@ const QuestionDetail: React.FC<{
                     {showScoringDetails ? (
                         question.scoringPointResults && question.scoringPointResults.length > 0 ? (
                             <div className="mt-3 space-y-2">
-                                <div className="text-xs font-semibold text-slate-500 flex items-center gap-2">
-                                    <Target className="w-3.5 h-3.5" />
-                                    评分标准对照
+                                <div className="flex items-center justify-between gap-3">
+                                    <div className="text-xs font-semibold text-slate-500 flex items-center gap-2">
+                                        <Target className="w-3.5 h-3.5" />
+                                        评分标准对照
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={() => setScoringDetailsOpen((v) => !v)}
+                                        className="text-[11px] font-semibold text-slate-400 hover:text-slate-700 transition-colors"
+                                    >
+                                        {scoringDetailsOpen ? '收起' : '展开'}明细
+                                    </button>
                                 </div>
-                                {question.scoringPointResults.map((spr, idx) => {
+                                {!scoringDetailsOpen && (
+                                    <div className="text-[11px] text-slate-400">
+                                        鼠标悬停上方气泡可预览对应评分标准；如需查看全部得分点明细请展开。
+                                    </div>
+                                )}
+                                {scoringDetailsOpen && question.scoringPointResults.map((spr, idx) => {
                                     // 构建评分标准引用文本（如果没有则基于 pointId 和 description 生成）
                                     const rubricRef = spr.rubricReference 
                                         || (spr as any).rubric_reference 
@@ -704,7 +785,7 @@ const QuestionDetail: React.FC<{
                         ) : (
                             <div className="mt-2 text-xs text-slate-500 flex items-center gap-2">
                                 <AlertTriangle className="w-3.5 h-3.5 text-slate-400" />
-                                Scores available but step breakdown missing.
+                                已给出总分，但缺少逐项给分（得分点/步骤拆解缺失）。
                             </div>
                         )
                     ) : (

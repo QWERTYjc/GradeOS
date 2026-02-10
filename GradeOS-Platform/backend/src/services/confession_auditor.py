@@ -53,7 +53,6 @@ _GRADING_ISSUE_TYPES = {
     "score_out_of_bounds",
     "point_sum_mismatch",
     "low_confidence",
-    "full_marks_low_confidence",
     "zero_marks_low_confidence",
     "alternative_solution_used",
     "missing_scoring_points",
@@ -961,18 +960,6 @@ def _compute_grading_mandatory_items(student: Dict[str, Any]) -> List[Dict[str, 
                     "refs": {**({"page_indices": page_indices} if page_indices else {})},
                     "impact": {"impact_area": "score"},
                     "action": "优先复核该题给分与证据引用是否一致；必要时人工确认",
-                }
-            )
-        if max_score > 0 and score >= max_score and confidence < conf_th:
-            mandatory.append(
-                {
-                    "issue_type": "full_marks_low_confidence",
-                    "severity": "warning",
-                    "question_id": qid,
-                    "point_id": None,
-                    "refs": {**({"page_indices": page_indices} if page_indices else {})},
-                    "impact": {"impact_area": "score"},
-                    "action": "该题满分但置信度偏低：请逐点核对证据与标准是否完全匹配",
                 }
             )
         if max_score > 0 and score <= 0 and confidence < conf_th:
