@@ -317,7 +317,20 @@ async def generate_annotations(request: GenerateAnnotationsRequest):
         student_result = await get_student_result(request.grading_history_id, request.student_key)
         if not student_result:
             raise HTTPException(status_code=404, detail="学生批改结果不存在")
-        
+
+        result_data = student_result.result_data or {}
+        question_results = (
+            result_data.get("question_results")
+            or result_data.get("questionResults")
+            or result_data.get("question_details")
+            or []
+        )
+        if not question_results:
+            raise HTTPException(
+                status_code=400,
+                detail="该学生暂无批改题目结果（question_results 缺失），无法生成批注。",
+            )
+
         # 2. 获取页面图片
         page_images = await get_page_images_for_student(request.grading_history_id, request.student_key)
         if not page_images:
@@ -368,7 +381,12 @@ async def generate_annotations(request: GenerateAnnotationsRequest):
         
         # 5. 保存生成的批注
         saved_count = await save_annotations_batch(generated)
-        
+        if saved_count == 0:
+            raise HTTPException(
+                status_code=502,
+                detail="LLM 批注生成失败：未生成任何可用批注（请重试或检查 VLM/图片访问配置）。",
+            )
+
         return GenerateAnnotationsResponse(
             success=True,
             message=f"成功生成 {saved_count} 个批注",

@@ -29,7 +29,7 @@ from typing import (
 )
 
 import httpx
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 
 from src.services.chat_model_factory import get_chat_model
 from ..models.grading import RubricMappingItem
@@ -79,6 +79,19 @@ SYSTEM_PROMPT = """你是一位专业阅卷教师。请严格按以下规则批�
 
 【空白页】
 - 空白页/封面页：is_blank_page=true, score=0, max_score=0
+"""
+
+# Vision annotation (bbox) tasks are different from grading: keep the system prompt
+# small and focused to avoid the model outputting grading schemas instead of bboxes.
+ANNOTATION_SYSTEM_PROMPT = """You are a vision annotation engine for exam paper images.
+
+Rules:
+- Output MUST be valid JSON only (no Markdown, no commentary).
+- Use normalized coordinates in [0, 1] with origin at top-left:
+  {x_min, y_min, x_max, y_max}, where x increases to the right and y increases downward.
+- Every bounding_box MUST satisfy:
+  0 <= x_min < x_max <= 1 and 0 <= y_min < y_max <= 1
+- Do not guess. If you cannot confidently locate something on the image, omit that annotation.
 """
 
 
@@ -3571,36 +3584,34 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
                     {"type": "text", "text": prompt},
                     {"type": "image_url", "image_url": f"data:image/jpeg;base64,{image_base64}"},
                 ]
-                
+
+                system_message = SystemMessage(content=ANNOTATION_SYSTEM_PROMPT)
                 message = HumanMessage(content=content)
-                
+
                 # 调用 LLM
-                response = await self.llm.ainvoke([message])
-                response_text = response.content if hasattr(response, "content") else str(response)
-                
-                # 提取 JSON
-                if isinstance(response_text, str):
-                    # 清理响应
-                    clean_text = response_text.strip()
-                    if "```json" in clean_text:
-                        start = clean_text.find("```json") + 7
-                        end = clean_text.find("```", start)
-                        clean_text = clean_text[start:end].strip()
-                    elif "```" in clean_text:
-                        start = clean_text.find("```") + 3
-                        end = clean_text.find("```", start)
-                        clean_text = clean_text[start:end].strip()
-                    
-                    result = json.loads(clean_text)
-                else:
-                    result = response_text
-                
+                response = await self.llm.ainvoke([system_message, message])
+                response_content = response.content if hasattr(response, "content") else response
+                response_text = self._extract_text_from_response(response_content).strip()
+                output_text, _thinking_text = split_thinking_content(response_text)
+                text_for_json = (output_text or response_text).strip()
+
+                json_text = self._extract_json_from_text(text_for_json).strip()
+                try:
+                    result = self._load_json_with_repair(json_text)
+                except json.JSONDecodeError:
+                    json_block = self._extract_json_block(json_text) or self._extract_json_block(text_for_json)
+                    if not json_block:
+                        raise
+                    result = self._load_json_with_repair(json_block)
+
                 # 验证结果格式
                 if not isinstance(result, dict):
-                    result = {"annotations": []}
+                    result = {"annotations": result if isinstance(result, list) else []}
                 if "annotations" not in result:
+                    result["annotations"] = result.get("items") if isinstance(result.get("items"), list) else []
+                if not isinstance(result.get("annotations"), list):
                     result["annotations"] = []
-                
+
                 # 成功则返回
                 return result
                 

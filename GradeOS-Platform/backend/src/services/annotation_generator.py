@@ -6,6 +6,7 @@
 import base64
 import json
 import logging
+import os
 import uuid
 import httpx
 from typing import List, Optional, Dict, Any
@@ -16,6 +17,96 @@ from src.db.postgres_images import get_batch_images_as_bytes_list
 
 
 logger = logging.getLogger(__name__)
+
+
+def _env_truthy(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in ("1", "true", "yes", "y", "on")
+
+
+def _clamp01(value: float) -> float:
+    if value < 0.0:
+        return 0.0
+    if value > 1.0:
+        return 1.0
+    return value
+
+
+def _coerce_float(value: Any) -> Optional[float]:
+    try:
+        if value is None:
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _normalize_bbox(raw_bbox: Any, *, min_size: float = 0.002) -> Optional[Dict[str, float]]:
+    if not isinstance(raw_bbox, dict):
+        return None
+
+    def pick(*keys: str) -> Optional[float]:
+        for key in keys:
+            if key in raw_bbox and raw_bbox[key] is not None:
+                v = _coerce_float(raw_bbox[key])
+                if v is not None:
+                    return v
+        return None
+
+    x_min = pick("x_min", "xMin", "xmin", "left", "x1")
+    y_min = pick("y_min", "yMin", "ymin", "top", "y1")
+    x_max = pick("x_max", "xMax", "xmax", "right", "x2")
+    y_max = pick("y_max", "yMax", "ymax", "bottom", "y2")
+
+    if x_min is None or y_min is None or x_max is None or y_max is None:
+        return None
+
+    # If the model accidentally returned pixel coordinates, drop them (we don't know image size here).
+    if max(x_min, y_min, x_max, y_max) > 1.5:
+        return None
+
+    x0 = _clamp01(min(x_min, x_max))
+    x1 = _clamp01(max(x_min, x_max))
+    y0 = _clamp01(min(y_min, y_max))
+    y1 = _clamp01(max(y_min, y_max))
+
+    # Ensure a minimal size so the frontend renderer won't degenerate.
+    if (x1 - x0) < min_size:
+        cx = (x0 + x1) / 2
+        x0 = _clamp01(cx - min_size / 2)
+        x1 = _clamp01(cx + min_size / 2)
+    if (y1 - y0) < min_size:
+        cy = (y0 + y1) / 2
+        y0 = _clamp01(cy - min_size / 2)
+        y1 = _clamp01(cy + min_size / 2)
+
+    if x1 <= x0 or y1 <= y0:
+        return None
+
+    return {"x_min": x0, "y_min": y0, "x_max": x1, "y_max": y1}
+
+
+def _normalize_vlm_annotation(item: Any) -> Optional[Dict[str, Any]]:
+    if not isinstance(item, dict):
+        return None
+
+    ann_type = (
+        item.get("type")
+        or item.get("annotation_type")
+        or item.get("annotationType")
+        or "score"
+    )
+    bbox = _normalize_bbox(item.get("bounding_box") or item.get("boundingBox") or item.get("bbox") or {})
+    if not bbox:
+        return None
+
+    return {
+        "type": str(ann_type),
+        "bounding_box": bbox,
+        "text": str(item.get("text") or item.get("message") or ""),
+        "color": str(item.get("color") or "#FF0000"),
+        "question_id": str(item.get("question_id") or item.get("questionId") or ""),
+        "scoring_point_id": str(item.get("scoring_point_id") or item.get("scoringPointId") or ""),
+    }
 
 
 async def generate_annotations_for_student(
@@ -141,13 +232,21 @@ async def _generate_annotations_for_page(
     now = datetime.now().isoformat()
     
     # 筛选该页面的题目
-    page_questions = []
+    matched_questions: List[Dict[str, Any]] = []
+    unassigned_questions: List[Dict[str, Any]] = []
     for q in question_results:
         q_pages = q.get("page_indices") or q.get("pageIndices") or []
         # Prefer matching against the "question page index" (usually 0..N-1),
         # but keep compatibility with payloads that store absolute page indices.
-        if question_page_index in q_pages or page_index in q_pages or not q_pages:
-            page_questions.append(q)
+        if q_pages:
+            if question_page_index in q_pages or page_index in q_pages:
+                matched_questions.append(q)
+        else:
+            unassigned_questions.append(q)
+
+    # If the grading payload provides page mappings, trust them and ignore unassigned
+    # questions (otherwise we'd ask the VLM to annotate every question on every page).
+    page_questions = matched_questions if matched_questions else unassigned_questions
     
     if not page_questions:
         logger.info(f"页面 {page_index} 没有关联的题目")
@@ -157,10 +256,11 @@ async def _generate_annotations_for_page(
     image_data = await _fetch_image_data(page_image, fallback_images=fallback_images)
     if not image_data:
         logger.warning(f"无法获取页面 {page_index} 的图片数据")
-        # 使用估算位置生成批注
-        return _generate_estimated_annotations(
-            grading_history_id, student_key, page_index, page_questions, now
-        )
+        if _env_truthy("ANNOTATION_ALLOW_ESTIMATED_FALLBACK"):
+            return _generate_estimated_annotations(
+                grading_history_id, student_key, page_index, page_questions, now
+            )
+        raise RuntimeError(f"missing page image bytes for page_index={page_index}")
     
     # 调用 VLM 获取精确坐标
     try:
@@ -169,19 +269,34 @@ async def _generate_annotations_for_page(
             page_index=page_index,
             questions=page_questions,
         )
-        
-        for ann_data in vlm_annotations:
+
+        normalized: List[Dict[str, Any]] = []
+        seen: set[str] = set()
+        for item in vlm_annotations:
+            ann_data = _normalize_vlm_annotation(item)
+            if not ann_data:
+                continue
+            fingerprint = json.dumps(ann_data, sort_keys=True, ensure_ascii=True)
+            if fingerprint in seen:
+                continue
+            seen.add(fingerprint)
+            normalized.append(ann_data)
+
+        if not normalized:
+            raise RuntimeError("VLM returned no usable annotations")
+
+        for ann_data in normalized:
             annotation = GradingAnnotation(
                 id=str(uuid.uuid4()),
                 grading_history_id=grading_history_id,
                 student_key=student_key,
                 page_index=page_index,
-                annotation_type=ann_data.get("type", "score"),
-                bounding_box=ann_data.get("bounding_box", {}),
-                text=ann_data.get("text", ""),
-                color=ann_data.get("color", "#FF0000"),
-                question_id=ann_data.get("question_id", ""),
-                scoring_point_id=ann_data.get("scoring_point_id", ""),
+                annotation_type=ann_data["type"],
+                bounding_box=ann_data["bounding_box"],
+                text=ann_data["text"],
+                color=ann_data["color"],
+                question_id=ann_data["question_id"],
+                scoring_point_id=ann_data["scoring_point_id"],
                 created_by="ai",
                 created_at=now,
                 updated_at=now,
@@ -189,11 +304,13 @@ async def _generate_annotations_for_page(
             annotations.append(annotation)
         
     except Exception as e:
-        logger.error(f"VLM 批注生成失败: {e}")
-        # 降级到估算位置
-        annotations = _generate_estimated_annotations(
-            grading_history_id, student_key, page_index, page_questions, now
-        )
+        logger.error(f"VLM 批注生成失败: page={page_index}, student={student_key}, err={e}")
+        if _env_truthy("ANNOTATION_ALLOW_ESTIMATED_FALLBACK"):
+            annotations = _generate_estimated_annotations(
+                grading_history_id, student_key, page_index, page_questions, now
+            )
+        else:
+            raise
     
     return annotations
 
@@ -248,6 +365,9 @@ async def _call_vlm_for_annotations(
         if isinstance(result, dict):
             err = result.get("error")
             anns = result.get("annotations") or []
+        elif isinstance(result, list):
+            err = None
+            anns = result
         else:
             err = None
             anns = []
@@ -278,14 +398,27 @@ def _build_annotation_prompt(questions: List[Dict[str, Any]], page_index: int) -
         points_info = []
         for sp in scoring_points:
             point_id = sp.get("point_id") or sp.get("pointId", "")
+            description = (
+                sp.get("description")
+                or (sp.get("scoringPoint") or {}).get("description")
+                or (sp.get("scoring_point") or {}).get("description")
+                or ""
+            )
+            mark_type = sp.get("mark_type") or sp.get("markType") or sp.get("markType") or ""
             awarded = sp.get("awarded", 0)
             max_pts = sp.get("max_points") or sp.get("maxPoints", 1)
             evidence = sp.get("evidence", "")
+            evidence_region = sp.get("evidence_region") or sp.get("evidenceRegion")
+            error_region = sp.get("error_region") or sp.get("errorRegion")
             points_info.append({
                 "point_id": point_id,
+                "mark_type": mark_type,
                 "awarded": awarded,
                 "max_points": max_pts,
-                "evidence": evidence[:100] if evidence else "",
+                "description": description[:180] if description else "",
+                "evidence": evidence[:200] if evidence else "",
+                "evidence_region_hint": evidence_region if isinstance(evidence_region, dict) else None,
+                "error_region_hint": error_region if isinstance(error_region, dict) else None,
             })
         
         questions_info.append({
@@ -302,17 +435,20 @@ def _build_annotation_prompt(questions: List[Dict[str, Any]], page_index: int) -
 请分析这张答题图片，为以下批改结果定位批注位置。
 
 ## 页面信息
-- 页码: {page_index + 1}
+- page_index: {page_index}
 
 ## 批改结果（需要标注）
 {json.dumps(questions_info, ensure_ascii=False, indent=2)}
 
 ## 要求
 
+0. **只标注本页可见内容**：只为“本页图片中能看到作答内容”的题目输出批注。列表里但不在本页的题目，不要输出任何批注。
+0. **禁止猜测**：如果某题/某得分点在本页找不到对应证据位置，不要猜测位置；可以直接省略该得分点批注。
 1. **定位学生答案区域**：找到每道题学生作答的位置
 2. **标注分数**：在答案区域右侧或下方放置分数标注
-3. **标注错误**：如果有错误，圈出错误位置
-4. **得分点标注**：为每个得分点的关键位置添加 M/A mark
+3. **标注错误（可选）**：只有当你能清晰看到错误位置时，才输出 error_circle；否则不要输出。
+4. **得分点标注**：为每个得分点的关键位置添加 M/A mark（贴近对应步骤/证据文本旁边）
+5. **坐标合法性**：每个 bounding_box 必须满足 0 <= x_min < x_max <= 1 且 0 <= y_min < y_max <= 1。
 
 ## 坐标系统
 - 使用归一化坐标 (0.0-1.0)
@@ -422,7 +558,7 @@ def _generate_estimated_annotations(
                 color=score_color,
                 question_id=qid,
                 scoring_point_id="",
-                created_by="ai",
+                created_by="estimated",
                 created_at=now,
                 updated_at=now,
             )
@@ -458,7 +594,7 @@ def _generate_estimated_annotations(
                     color=mark_color,
                     question_id=qid,
                     scoring_point_id=point_id,
-                    created_by="ai",
+                    created_by="estimated",
                     created_at=now,
                     updated_at=now,
                 )
