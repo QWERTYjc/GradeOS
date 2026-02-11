@@ -91,6 +91,83 @@ def _coerce_int(value: Any) -> Optional[int]:
         return None
 
 
+def _coerce_page_indices(raw_pages: Any) -> List[int]:
+    if raw_pages is None:
+        return []
+    if isinstance(raw_pages, (list, tuple, set)):
+        values = list(raw_pages)
+    else:
+        values = [raw_pages]
+    indices: List[int] = []
+    for raw in values:
+        idx = _coerce_int(raw)
+        if idx is not None:
+            indices.append(idx)
+    return indices
+
+
+def _build_question_page_mapping(
+    question_results: List[Dict[str, Any]],
+    actual_page_indices: List[int],
+) -> Dict[int, int]:
+    """
+    Build a robust mapping from question.page_indices to actual page_image.page_index.
+
+    Handles common mismatches:
+    - absolute question pages (e.g. 26,27) vs relative image pages (0,1)
+    - one-based question pages (1,2) vs zero-based image pages (0,1)
+    """
+    actual_sorted = sorted({int(p) for p in actual_page_indices})
+    if not actual_sorted:
+        return {}
+
+    question_pages: set[int] = set()
+    for q in question_results:
+        q_pages = _coerce_page_indices(q.get("page_indices") or q.get("pageIndices"))
+        question_pages.update(q_pages)
+
+    if not question_pages:
+        return {}
+
+    q_sorted = sorted(question_pages)
+    actual_set = set(actual_sorted)
+
+    # Direct match.
+    if set(q_sorted).issubset(actual_set):
+        return {p: p for p in q_sorted}
+
+    # Rank-based mapping when both sides have the same number of unique pages.
+    if len(q_sorted) == len(actual_sorted):
+        return {qp: actual_sorted[i] for i, qp in enumerate(q_sorted)}
+
+    # Constant-offset mapping (absolute vs relative).
+    shift = q_sorted[0] - actual_sorted[0]
+    offset_map: Dict[int, int] = {}
+    offset_ok = True
+    for qp in q_sorted:
+        mapped = qp - shift
+        if mapped not in actual_set:
+            offset_ok = False
+            break
+        offset_map[qp] = mapped
+    if offset_ok and offset_map:
+        return offset_map
+
+    # One-based to zero-based fallback.
+    one_based_map: Dict[int, int] = {}
+    one_based_ok = True
+    for qp in q_sorted:
+        mapped = qp - 1
+        if mapped not in actual_set:
+            one_based_ok = False
+            break
+        one_based_map[qp] = mapped
+    if one_based_ok and one_based_map:
+        return one_based_map
+
+    return {}
+
+
 def _normalize_bbox(raw_bbox: Any, *, min_size: float = 0.002) -> Optional[Dict[str, float]]:
     if not isinstance(raw_bbox, dict):
         return None
@@ -257,14 +334,18 @@ def _select_questions_for_page(
     *,
     page_index: int,
     question_page_index: int,
+    question_to_actual_page: Optional[Dict[int, int]] = None,
 ) -> List[Dict[str, Any]]:
     matched_questions: List[Dict[str, Any]] = []
     unassigned_questions: List[Dict[str, Any]] = []
 
     for q in question_results:
-        q_pages = q.get("page_indices") or q.get("pageIndices") or []
+        q_pages = _coerce_page_indices(q.get("page_indices") or q.get("pageIndices"))
         if q_pages:
-            if question_page_index in q_pages or page_index in q_pages:
+            mapped_pages = set(q_pages)
+            if question_to_actual_page:
+                mapped_pages = {question_to_actual_page.get(p, p) for p in q_pages}
+            if question_page_index in mapped_pages or page_index in mapped_pages:
                 matched_questions.append(q)
         else:
             unassigned_questions.append(q)
@@ -682,10 +763,15 @@ async def generate_annotations_for_student(
     # questions to pages in both cases.
     sorted_page_indices = sorted(page_image_map.keys())
     actual_to_relative: Dict[int, int] = {actual: idx for idx, actual in enumerate(sorted_page_indices)}
+    question_to_actual_page = _build_question_page_mapping(question_results, sorted_page_indices)
     logger.info(
         f"[Annotation] page_index mapping for {student_key}: actual={sorted_page_indices} "
         f"-> relative=0..{len(sorted_page_indices) - 1}"
     )
+    if question_to_actual_page and any(k != v for k, v in question_to_actual_page.items()):
+        logger.info(
+            f"[Annotation] question->actual page remap for {student_key}: {question_to_actual_page}"
+        )
 
     # Collect all candidate pages first, then call VLM once for this student.
     candidate_pages: List[Dict[str, Any]] = []
@@ -697,7 +783,14 @@ async def generate_annotations_for_student(
             question_results,
             page_index=page_idx,
             question_page_index=question_page_index,
+            question_to_actual_page=question_to_actual_page,
         )
+        if not page_questions and len(sorted_page_indices) == 1 and question_results:
+            logger.warning(
+                f"[Annotation] no page-matched questions for single-page student {student_key}; "
+                f"falling back to all questions on page={page_idx}"
+            )
+            page_questions = question_results
         if not page_questions:
             logger.info(f"页面 {page_idx} 没有关联的题目")
             continue

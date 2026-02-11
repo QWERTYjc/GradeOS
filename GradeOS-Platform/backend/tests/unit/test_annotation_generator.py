@@ -12,7 +12,9 @@ from src.services.annotation_generator import (
     generate_annotations_for_student,
     _generate_annotations_for_page,
     _bbox_has_non_line_ink,
+    _build_question_page_mapping,
     _normalize_vlm_annotation,
+    _select_questions_for_page,
     _refine_annotation_with_hints,
 )
 
@@ -94,6 +96,30 @@ def test_bbox_has_non_line_ink_rejects_blank_ruled_area():
     img.save(buf2, format="PNG")
     raw2 = buf2.getvalue()
     assert _bbox_has_non_line_ink(raw2, {"x_min": 0.25, "y_min": 0.60, "x_max": 0.50, "y_max": 0.75}) is True
+
+
+def test_build_question_page_mapping_rank_based():
+    question_results = [
+        {"question_id": "5", "page_indices": [2]},
+        {"question_id": "6", "page_indices": [3]},
+    ]
+    mapping = _build_question_page_mapping(question_results, [0, 1])
+    assert mapping == {2: 0, 3: 1}
+
+
+def test_select_questions_for_page_with_mapping():
+    question_results = [
+        {"question_id": "5", "page_indices": [2]},
+        {"question_id": "6", "page_indices": [3]},
+    ]
+    selected = _select_questions_for_page(
+        question_results,
+        page_index=0,
+        question_page_index=0,
+        question_to_actual_page={2: 0, 3: 1},
+    )
+    assert len(selected) == 1
+    assert selected[0]["question_id"] == "5"
 
 
 def test_refine_annotation_uses_hint_for_implausible_bbox():
@@ -191,6 +217,64 @@ def test_generate_annotations_student_strict_keeps_success_and_reports_failed_pa
     assert annotations[0].page_index == 1
     assert failed_pages == [0]
     assert calls == [2]
+
+
+def test_generate_annotations_student_handles_page_index_mismatch(monkeypatch):
+    page_images = [
+        GradingPageImage(
+            id=str(uuid.uuid4()),
+            grading_history_id="history-1",
+            student_key="student-1",
+            page_index=0,
+            file_id="",
+            file_url="https://example.com/p0.jpg",
+            content_type="image/jpeg",
+            created_at=datetime.now().isoformat(),
+        ),
+    ]
+    student_result = SimpleNamespace(
+        result_data={
+            "question_results": [
+                {"question_id": "5", "page_indices": [2], "score": 4, "max_score": 4},
+            ]
+        }
+    )
+
+    async def _fake_fetch_image_data(_page_image, fallback_images=None):
+        return b"fake-image"
+
+    async def _fake_call_vlm_for_student_annotations(page_payloads):
+        assert len(page_payloads) == 1
+        assert len(page_payloads[0]["questions"]) == 1
+        return [
+            {
+                "page_index": 0,
+                "type": "score",
+                "question_id": "5",
+                "bounding_box": {"x_min": 0.72, "y_min": 0.1, "x_max": 0.9, "y_max": 0.17},
+                "text": "4/4",
+                "color": "#00AA00",
+            }
+        ]
+
+    monkeypatch.setattr(ag, "_fetch_image_data", _fake_fetch_image_data)
+    monkeypatch.setattr(ag, "_call_vlm_for_student_annotations", _fake_call_vlm_for_student_annotations)
+    monkeypatch.setattr(ag, "_bbox_has_non_line_ink", lambda *_args, **_kwargs: True)
+
+    async def _run():
+        return await generate_annotations_for_student(
+            grading_history_id="history-1",
+            student_key="student-1",
+            student_result=student_result,
+            page_images=page_images,
+            strict_vlm=True,
+            failed_pages=[],
+        )
+
+    annotations = asyncio.run(_run())
+    assert len(annotations) == 1
+    assert annotations[0].question_id == "5"
+    assert annotations[0].page_index == 0
 
 
 def test_generate_annotations_page_falls_back_to_question_wise_vlm(monkeypatch):
