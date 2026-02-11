@@ -613,6 +613,64 @@ def _bbox_has_non_line_ink(image_data: bytes, bbox: Dict[str, float]) -> bool:
         return True
 
 
+def _bbox_is_anchored_to_nearby_ink(
+    image_data: bytes,
+    bbox: Dict[str, float],
+    *,
+    expand_ratio: float = 0.08,
+    min_near_ink_pixels: int = 8,
+) -> bool:
+    """
+    Allow labels in nearby whitespace to avoid covering handwriting, but reject
+    floating labels far away from any evidence.
+    """
+    if _bbox_has_non_line_ink(image_data, bbox):
+        return True
+
+    try:
+        from PIL import Image
+        import numpy as np
+    except Exception:
+        return True
+
+    try:
+        img = Image.open(io.BytesIO(image_data)).convert("L")
+        arr = np.array(img)
+        h, w = arr.shape[:2]
+        if h < 8 or w < 8:
+            return False
+
+        x0 = max(0, min(w - 1, int(round(bbox["x_min"] * w))))
+        y0 = max(0, min(h - 1, int(round(bbox["y_min"] * h))))
+        x1 = max(x0 + 1, min(w, int(round(bbox["x_max"] * w))))
+        y1 = max(y0 + 1, min(h, int(round(bbox["y_max"] * h))))
+
+        ink = arr < 165
+        row_dark = ink.sum(axis=1)
+        ruled_rows = row_dark >= max(3, int(0.50 * w))
+        if ruled_rows.any():
+            ink = ink.copy()
+            ink[ruled_rows, :] = False
+
+        pad_x = max(4, int(round(w * expand_ratio)))
+        pad_y = max(4, int(round(h * expand_ratio)))
+        ex0 = max(0, x0 - pad_x)
+        ey0 = max(0, y0 - pad_y)
+        ex1 = min(w, x1 + pad_x)
+        ey1 = min(h, y1 + pad_y)
+
+        neighborhood = ink[ey0:ey1, ex0:ex1].copy()
+        bx0 = x0 - ex0
+        by0 = y0 - ey0
+        bx1 = bx0 + (x1 - x0)
+        by1 = by0 + (y1 - y0)
+        neighborhood[by0:by1, bx0:bx1] = False
+
+        return int(neighborhood.sum()) >= min_near_ink_pixels
+    except Exception:
+        return True
+
+
 async def _call_vlm_question_wise(
     image_data: bytes,
     page_index: int,
@@ -923,20 +981,27 @@ async def generate_annotations_for_student(
             continue
 
         filtered_annotations: List[Dict[str, Any]] = []
-        dropped_blank = 0
+        dropped_unanchored = 0
+        dropped_empty_error = 0
         for ann_data in page_annotations:
             ann_type = str(ann_data.get("type") or "")
-            # Keep only annotations that are attached to visible ink/text on the page.
-            # This suppresses floating A/M markers on blank ruled regions.
+            # Allow labels in nearby whitespace (avoid covering handwriting),
+            # but reject floating labels far away from evidence.
             if ann_type in {"score", "a_mark", "m_mark", "comment"}:
+                if not _bbox_is_anchored_to_nearby_ink(page["image_data"], ann_data["bounding_box"]):
+                    dropped_unanchored += 1
+                    continue
+            # Error marks should still be attached to visible erroneous content.
+            if ann_type in {"error_circle", "error_underline", "highlight"}:
                 if not _bbox_has_non_line_ink(page["image_data"], ann_data["bounding_box"]):
-                    dropped_blank += 1
+                    dropped_empty_error += 1
                     continue
             filtered_annotations.append(ann_data)
 
-        if dropped_blank:
+        if dropped_unanchored or dropped_empty_error:
             logger.info(
-                f"[Annotation] dropped blank-region annotations: page={page_idx}, count={dropped_blank}"
+                f"[Annotation] dropped low-quality annotations: page={page_idx}, "
+                f"unanchored={dropped_unanchored}, empty_error={dropped_empty_error}"
             )
         if not filtered_annotations:
             page_failures.append(page_idx)
@@ -1262,19 +1327,30 @@ def _build_questions_prompt_payload(questions: List[Dict[str, Any]]) -> List[Dic
             mark_type = sp.get("mark_type") or sp.get("markType") or sp.get("markType") or ""
             awarded = sp.get("awarded", 0)
             max_pts = sp.get("max_points") or sp.get("maxPoints", 1)
+            decision = sp.get("decision") or ""
             evidence = sp.get("evidence", "")
+            reason = sp.get("reason", "")
             evidence_region = sp.get("evidence_region") or sp.get("evidenceRegion")
             error_region = sp.get("error_region") or sp.get("errorRegion")
             step_id_hint = sp.get("step_id") or sp.get("stepId")
             step_excerpt_hint = sp.get("step_excerpt") or sp.get("stepExcerpt")
+            awarded_f = _coerce_float(awarded)
+            max_pts_f = _coerce_float(max_pts)
             points_info.append(
                 {
                     "point_id": point_id,
                     "mark_type": mark_type,
                     "awarded": awarded,
                     "max_points": max_pts,
+                    "decision": str(decision)[:32] if decision else "",
+                    "is_lost_point": bool(
+                        awarded_f is not None
+                        and max_pts_f is not None
+                        and (awarded_f + 1e-9 < max_pts_f)
+                    ),
                     "description": description[:180] if description else "",
                     "evidence": evidence[:200] if evidence else "",
+                    "reason": str(reason)[:200] if reason else "",
                     "evidence_region_hint": evidence_region if isinstance(evidence_region, dict) else None,
                     "error_region_hint": error_region if isinstance(error_region, dict) else None,
                     "step_id_hint": str(step_id_hint) if step_id_hint else None,
@@ -1323,9 +1399,11 @@ You are given multiple answer page images of the same student. The image order i
 4. `bounding_box` must be normalized in [0,1] and satisfy:
    0 <= x_min < x_max <= 1 and 0 <= y_min < y_max <= 1.
 5. Do not guess. If unsure, omit that annotation.
-6. Never place annotations on blank ruled lines. Anchor each annotation to visible handwriting, printed math/text, or diagram evidence.
-7. `A/M` scoring-point marks must be placed adjacent to the actual step/evidence, not empty space.
-8. If a page has no visible evidence for a point, do not output that point on that page.
+6. For `score`/`a_mark`/`m_mark`/`comment`, prefer nearby whitespace beside evidence to avoid covering handwriting.
+7. Blank-area placement is allowed only when adjacent to the corresponding step/evidence; never place labels far away.
+8. `A/M` scoring-point marks must be adjacent to the actual step/evidence, not floating.
+9. If a scoring point is lost (`awarded < max_points`) and a wrong step is visible, add one `error_underline` or `error_circle` on that wrong step with short text.
+10. If a page has no visible evidence for a point, do not output that point on that page.
 
 ## Output format
 ```json

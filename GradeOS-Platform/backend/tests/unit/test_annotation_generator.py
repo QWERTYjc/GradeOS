@@ -12,6 +12,7 @@ from src.services.annotation_generator import (
     generate_annotations_for_student,
     _generate_annotations_for_page,
     _bbox_has_non_line_ink,
+    _bbox_is_anchored_to_nearby_ink,
     _build_question_page_mapping,
     _normalize_vlm_annotation,
     _select_questions_for_page,
@@ -96,6 +97,45 @@ def test_bbox_has_non_line_ink_rejects_blank_ruled_area():
     img.save(buf2, format="PNG")
     raw2 = buf2.getvalue()
     assert _bbox_has_non_line_ink(raw2, {"x_min": 0.25, "y_min": 0.60, "x_max": 0.50, "y_max": 0.75}) is True
+
+
+def test_bbox_is_anchored_to_nearby_ink_allows_adjacent_blank_label():
+    from PIL import Image, ImageDraw
+    import io
+
+    img = Image.new("L", (400, 400), color=255)
+    draw = ImageDraw.Draw(img)
+    # handwriting-like block
+    draw.rectangle((180, 240, 235, 300), fill=40)
+
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    raw = buf.getvalue()
+
+    # Label is in nearby blank region to the right of handwriting (should be allowed).
+    assert _bbox_is_anchored_to_nearby_ink(
+        raw,
+        {"x_min": 0.60, "y_min": 0.60, "x_max": 0.70, "y_max": 0.72},
+    ) is True
+
+
+def test_bbox_is_anchored_to_nearby_ink_rejects_far_blank_label():
+    from PIL import Image, ImageDraw
+    import io
+
+    img = Image.new("L", (400, 400), color=255)
+    draw = ImageDraw.Draw(img)
+    draw.rectangle((30, 30, 80, 80), fill=40)
+
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    raw = buf.getvalue()
+
+    # Label is far away from any content (should be rejected as floating).
+    assert _bbox_is_anchored_to_nearby_ink(
+        raw,
+        {"x_min": 0.70, "y_min": 0.70, "x_max": 0.80, "y_max": 0.80},
+    ) is False
 
 
 def test_build_question_page_mapping_rank_based():
