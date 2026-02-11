@@ -1,0 +1,174 @@
+﻿.assistantGrid {
+  background-image:
+    linear-gradient(to right, rgba(2, 6, 23, 0.04) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(2, 6, 23, 0.04) 1px, transparent 1px);
+  background-size: 36px 36px;
+  animation: gridDrift 20s linear infinite;
+  pointer-events: none;
+}
+
+.assistantHalo {
+  border-radius: 9999px;
+  background: radial-gradient(circle, rgba(16, 185, 129, 0.12), rgba(59, 130, 246, 0.04) 60%, transparent 100%);
+  filter: blur(22px);
+  animation: haloPulse 5.2s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.assistantScanline {
+  height: 3px;
+  background: linear-gradient(90deg, transparent, rgba(14, 116, 144, 0.45), transparent);
+  opacity: 0.5;
+  animation: scanSweep 8s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.assistantOrb {
+  border-radius: 9999px;
+  filter: blur(36px);
+  pointer-events: none;
+}
+
+.assistantOrbLeft {
+  background: radial-gradient(circle, rgba(16, 185, 129, 0.2), transparent 70%);
+  animation: orbFloatLeft 12s ease-in-out infinite;
+}
+
+.assistantOrbRight {
+  background: radial-gradient(circle, rgba(59, 130, 246, 0.2), transparent 70%);
+  animation: orbFloatRight 14s ease-in-out infinite;
+}
+
+.assistantHighlight {
+  border-radius: 0.2rem;
+  background: linear-gradient(90deg, rgba(250, 204, 21, 0.42), rgba(245, 158, 11, 0.28));
+  color: inherit;
+  padding: 0 0.12rem;
+}
+
+.breathingLamp {
+  width: 10px;
+  height: 10px;
+  border-radius: 9999px;
+  position: relative;
+}
+
+.breathingLamp::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: 9999px;
+  opacity: 0.28;
+  animation: lampRing 2.2s ease-out infinite;
+}
+
+.breathingReady {
+  background: #16a34a;
+  box-shadow: 0 0 8px rgba(22, 163, 74, 0.35);
+}
+
+.breathingReady::after {
+  background: rgba(22, 163, 74, 0.34);
+}
+
+.breathingThinking {
+  background: #0ea5e9;
+  box-shadow: 0 0 8px rgba(14, 165, 233, 0.35);
+}
+
+.breathingThinking::after {
+  background: rgba(14, 165, 233, 0.36);
+  animation-duration: 1.2s;
+}
+
+.breathingSafety {
+  background: #f97316;
+  box-shadow: 0 0 8px rgba(249, 115, 22, 0.38);
+}
+
+.breathingSafety::after {
+  background: rgba(249, 115, 22, 0.38);
+  animation-duration: 1.5s;
+}
+
+.customScrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(30, 41, 59, 0.3) transparent;
+}
+
+.customScrollbar::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+
+.customScrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.customScrollbar::-webkit-scrollbar-thumb {
+  background: rgba(30, 41, 59, 0.26);
+  border-radius: 9999px;
+}
+
+.customScrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(30, 41, 59, 0.42);
+}
+
+.motionLow .assistantGrid,
+.motionLow .assistantHalo,
+.motionLow .assistantScanline,
+.motionLow .assistantOrb,
+.motionLow .breathingLamp::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+}
+
+.motionRich .assistantGrid,
+.motionRich .assistantHalo,
+.motionRich .assistantScanline,
+.motionRich .assistantOrb {
+  will-change: transform, opacity;
+}
+
+@keyframes gridDrift {
+  from { transform: translate3d(0, 0, 0); }
+  to { transform: translate3d(36px, 36px, 0); }
+}
+
+@keyframes haloPulse {
+  0%, 100% { opacity: 0.45; transform: scale(0.98); }
+  50% { opacity: 0.82; transform: scale(1.03); }
+}
+
+@keyframes scanSweep {
+  0%, 100% { transform: translateY(0); opacity: 0; }
+  15% { opacity: 0.5; }
+  85% { opacity: 0.5; }
+  100% { transform: translateY(92vh); opacity: 0; }
+}
+
+@keyframes orbFloatLeft {
+  0%, 100% { transform: translate3d(0, 0, 0); }
+  50% { transform: translate3d(18px, -16px, 0); }
+}
+
+@keyframes orbFloatRight {
+  0%, 100% { transform: translate3d(0, 0, 0); }
+  50% { transform: translate3d(-12px, 20px, 0); }
+}
+
+@keyframes lampRing {
+  0% { transform: scale(0.8); opacity: 0.35; }
+  100% { transform: scale(1.65); opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .assistantGrid,
+  .assistantHalo,
+  .assistantScanline,
+  .assistantOrb,
+  .breathingLamp::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

@@ -276,15 +276,41 @@ export interface AssistantMessage {
   content: string;
 }
 
+export interface AssistantAttachment {
+  type: 'image' | 'pdf_page';
+  source?: string;
+  page_index?: number;
+  name?: string;
+  size?: number;
+  mime_type?: string;
+  data?: string;
+}
+
+export interface WrongQuestionRef {
+  source: 'grading' | 'manual';
+  entry_id?: string;
+  import_id?: string;
+  batch_id?: string;
+  question_id: string;
+  student_id: string;
+  class_id?: string;
+  quick_context?: {
+    score?: number;
+    maxScore?: number;
+    feedback?: string;
+  };
+}
+
 export interface AssistantChatRequest {
   student_id: string;
   message: string;
   class_id?: string;
+  conversation_id?: string;
   history?: AssistantMessage[];
   session_mode?: string;
   concept_topic?: string;
-  // 新增：多模态支持
   images?: string[];  // base64 编码的图片列表
+  attachments?: AssistantAttachment[];
   wrong_question_context?: {
     questionId: string;
     score: number;
@@ -301,6 +327,7 @@ export interface AssistantChatRequest {
     subject?: string;
     topic?: string;
   };
+  wrong_question_ref?: WrongQuestionRef;
 }
 
 export interface ConceptNode {
@@ -329,6 +356,12 @@ export interface AssistantChatResponse {
   focus_mode?: boolean;
   concept_breakdown?: ConceptNode[];
   response_type?: string;
+  conversation_id?: string;
+  trend_score?: number;
+  trend_delta?: number;
+  parse_status?: string;
+  parse_error_code?: string;
+  safety_level?: 'L0' | 'L1' | 'L2' | 'L3';
 }
 
 export interface MasterySnapshot {
@@ -343,8 +376,24 @@ export interface MasterySnapshot {
 export interface AssistantProgressResponse {
   student_id: string;
   class_id?: string;
+  conversation_id?: string;
   concept_breakdown: ConceptNode[];
   mastery_history: MasterySnapshot[];
+  trend_score_current: number;
+  trend_timeline: Array<{
+    created_at: string;
+    mastery_score: number;
+    trend_score: number;
+    trend_delta: number;
+  }>;
+  concept_trend_breakdown: Array<{
+    concept_key: string;
+    concept_name: string;
+    mastery_score: number;
+    trend_score: number;
+    status?: string;
+    created_at: string;
+  }>;
 }
 
 export const assistantApi = {
@@ -353,10 +402,13 @@ export const assistantApi = {
       method: 'POST',
       body: JSON.stringify(data),
     }),
-  getProgress: (studentId: string, classId?: string) => {
+  getProgress: (studentId: string, classId?: string, conversationId?: string) => {
     const params = new URLSearchParams({ student_id: studentId });
     if (classId) {
       params.set('class_id', classId);
+    }
+    if (conversationId) {
+      params.set('conversation_id', conversationId);
     }
     return request<AssistantProgressResponse>(`/assistant/progress?${params.toString()}`);
   },

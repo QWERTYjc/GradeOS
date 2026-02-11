@@ -25,7 +25,13 @@ _ASSISTANT_MEMORY_KEY_PREFIX = os.getenv("ASSISTANT_MEMORY_KEY_PREFIX", "assista
 _IN_MEMORY_HISTORIES: dict[str, InMemoryChatMessageHistory] = {}
 
 
-def build_assistant_session_id(student_id: str, class_id: Optional[str]) -> str:
+def build_assistant_session_id(
+    student_id: str,
+    class_id: Optional[str],
+    conversation_id: Optional[str] = None,
+) -> str:
+    if conversation_id and conversation_id.strip():
+        return f"assistant:conv:{conversation_id.strip()}"
     suffix = class_id.strip() if class_id and class_id.strip() else "global"
     return f"assistant:{student_id}:{suffix}"
 
@@ -93,3 +99,21 @@ class AssistantMemory:
         if not messages:
             return
         await asyncio.to_thread(self._append_sync, messages)
+
+    def _clear_sync(self) -> None:
+        try:
+            if hasattr(self._history, "clear"):
+                self._history.clear()
+                return
+        except Exception:
+            pass
+        try:
+            if hasattr(self._history, "messages"):
+                self._history.messages = []
+        except Exception:
+            pass
+        if isinstance(self._history, InMemoryChatMessageHistory):
+            _IN_MEMORY_HISTORIES.pop(self._session_id, None)
+
+    async def clear(self) -> None:
+        await asyncio.to_thread(self._clear_sync)

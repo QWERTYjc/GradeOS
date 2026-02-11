@@ -63,6 +63,12 @@ from src.db import (
     list_assistant_concepts,
     save_assistant_mastery_snapshot,
     list_assistant_mastery_snapshots,
+    get_page_images_for_student,
+    get_assistant_conversation,
+    get_latest_assistant_conversation,
+    list_assistant_turns,
+    list_assistant_mastery_events,
+    list_assistant_concept_trends,
 )
 from src.services.llm_client import LLMMessage, get_llm_client
 from src.services.assistant_memory import AssistantMemory, build_assistant_session_id
@@ -71,6 +77,7 @@ from src.services.student_assistant_agent import (
     AssistantMastery,
     get_student_assistant_agent,
 )
+from src.services.student_assistant_v2 import get_student_assistant_v2_orchestrator
 from src.utils.image import to_jpeg_bytes
 from src.utils.auth import hash_password, verify_password
 
@@ -207,18 +214,45 @@ class AssistantMessage(BaseModel):
     content: str
 
 
+class AttachmentInput(BaseModel):
+    type: str
+    source: Optional[str] = None
+    page_index: Optional[int] = None
+    name: Optional[str] = None
+    size: Optional[int] = None
+    mime_type: Optional[str] = None
+    data: Optional[str] = None
+
+
+class WrongQuestionQuickContext(BaseModel):
+    score: Optional[float] = None
+    maxScore: Optional[float] = None
+    feedback: Optional[str] = None
+
+
+class WrongQuestionRef(BaseModel):
+    source: str  # grading | manual
+    entry_id: Optional[str] = None
+    import_id: Optional[str] = None
+    batch_id: Optional[str] = None
+    question_id: str
+    student_id: str
+    class_id: Optional[str] = None
+    quick_context: Optional[WrongQuestionQuickContext] = None
+
+
 class AssistantChatRequest(BaseModel):
     student_id: str
     message: str
     class_id: Optional[str] = None
+    conversation_id: Optional[str] = None
     history: Optional[List[AssistantMessage]] = None
-    # 新增：学习模式
     session_mode: Optional[str] = "learning"  # learning / assessment
     concept_topic: Optional[str] = None  # 当前学习的概念主题
-    # 新增：多模态支持 - 错题图片
     images: Optional[List[str]] = None  # base64 编码的图片列表
-    # 新增：错题上下文（从错题本跳转时传入）
+    attachments: Optional[List[AttachmentInput]] = None
     wrong_question_context: Optional[Dict[str, Any]] = None
+    wrong_question_ref: Optional[WrongQuestionRef] = None
 
 
 class ConceptNode(BaseModel):
@@ -237,37 +271,62 @@ class MasteryData(BaseModel):
     score: int  # 0-100
     level: str  # beginner / developing / proficient / mastery
     analysis: str  # 分析说明
-    evidence: List[str] = []  # 证据列表
-    suggestions: List[str] = []  # 改进建议
+    evidence: List[str] = Field(default_factory=list)  # 证据列表
+    suggestions: List[str] = Field(default_factory=list)  # 改进建议
 
 
 class AssistantChatResponse(BaseModel):
     content: str
     model: Optional[str] = None
     usage: Optional[Dict[str, Any]] = None  # 支持 OpenRouter 扩展格式（含浮点数和嵌套字典）
-    # 新增：结构化输出
     mastery: Optional[MasteryData] = None  # 掌握度评估
     next_question: Optional[str] = None  # 苏格拉底式追问
     question_options: Optional[List[str]] = None  # 追问的可选按钮
     focus_mode: bool = False  # 是否进入专注模式
     concept_breakdown: Optional[List[ConceptNode]] = None  # 第一性原理概念分解
     response_type: str = "chat"  # chat / question / assessment / explanation
+    conversation_id: Optional[str] = None
+    trend_score: Optional[int] = None
+    trend_delta: Optional[int] = None
+    parse_status: Optional[str] = None
+    parse_error_code: Optional[str] = None
+    safety_level: Optional[str] = None
 
 
 class MasterySnapshot(BaseModel):
     score: int
     level: str
     analysis: str
-    evidence: List[str] = []
-    suggestions: List[str] = []
+    evidence: List[str] = Field(default_factory=list)
+    suggestions: List[str] = Field(default_factory=list)
+    created_at: str
+
+
+class TrendPoint(BaseModel):
+    created_at: str
+    mastery_score: int
+    trend_score: int
+    trend_delta: int
+
+
+class ConceptTrendPoint(BaseModel):
+    concept_key: str
+    concept_name: str
+    mastery_score: int
+    trend_score: int
+    status: Optional[str] = None
     created_at: str
 
 
 class AssistantProgressResponse(BaseModel):
     student_id: str
     class_id: Optional[str] = None
-    concept_breakdown: List[ConceptNode] = []
-    mastery_history: List[MasterySnapshot] = []
+    conversation_id: Optional[str] = None
+    concept_breakdown: List[ConceptNode] = Field(default_factory=list)
+    mastery_history: List[MasterySnapshot] = Field(default_factory=list)
+    trend_score_current: int = 0
+    trend_timeline: List[TrendPoint] = Field(default_factory=list)
+    concept_trend_breakdown: List[ConceptTrendPoint] = Field(default_factory=list)
 
 
 def _normalize_str_like(value: Any) -> Any:
@@ -639,6 +698,169 @@ def _history_from_request(
         else:
             messages.append(HumanMessage(content=content))
     return messages
+
+
+def _generate_conversation_id() -> str:
+    return f"conv_{uuid.uuid4().hex[:16]}"
+
+
+def _history_from_conversation(conversation_id: Optional[str], limit: int = 18) -> List[BaseMessage]:
+    if not conversation_id:
+        return []
+    messages: List[BaseMessage] = []
+    try:
+        turns = list_assistant_turns(conversation_id, limit=limit)
+    except Exception as exc:
+        logger.debug("assistant conversation history read failed: %s", exc)
+        return []
+    for item in turns:
+        role = str(item.get("role") or "").strip()
+        content = str(item.get("content") or "").strip()
+        if not content:
+            continue
+        if role == "assistant":
+            messages.append(AIMessage(content=content))
+        elif role == "system":
+            messages.append(SystemMessage(content=content))
+        else:
+            messages.append(HumanMessage(content=content))
+    return messages
+
+
+def _serialize_quick_context(ref: WrongQuestionRef) -> Dict[str, Any]:
+    quick = ref.quick_context.model_dump() if ref.quick_context else {}
+    return {
+        "question_id": ref.question_id,
+        "score": quick.get("score"),
+        "max_score": quick.get("maxScore"),
+        "feedback": quick.get("feedback"),
+    }
+
+
+async def _resolve_wrong_question_ref(ref: WrongQuestionRef) -> Optional[Dict[str, Any]]:
+    """Resolve lightweight wrong-question reference to a rich context payload."""
+    if not ref:
+        return None
+    source = (ref.source or "").strip().lower()
+    question_id = str(ref.question_id or "").strip()
+    if not question_id:
+        return _serialize_quick_context(ref)
+
+    if source == "manual":
+        try:
+            entry = _MANUAL_WRONG_QUESTIONS.get(ref.entry_id or "")
+        except Exception:
+            entry = None
+        if entry and str(entry.get("student_id")) == str(ref.student_id):
+            return {
+                "source": "manual",
+                "question_id": entry.get("question_id") or question_id,
+                "score": entry.get("score"),
+                "max_score": entry.get("max_score"),
+                "feedback": entry.get("feedback"),
+                "subject": entry.get("subject"),
+                "topic": entry.get("topic"),
+                "question_content": entry.get("question_content"),
+                "student_answer": entry.get("student_answer"),
+                "correct_answer": entry.get("correct_answer"),
+                "images": entry.get("images") or [],
+                "tags": entry.get("tags") or [],
+            }
+        return _serialize_quick_context(ref)
+
+    target_batch_id = (ref.batch_id or "").strip()
+    if not target_batch_id and ref.import_id:
+        try:
+            with get_connection() as conn:
+                row = conn.execute(
+                    "SELECT batch_id FROM grading_imports WHERE id = ? LIMIT 1",
+                    (ref.import_id,),
+                ).fetchone()
+            if row:
+                target_batch_id = row.get("batch_id") or ""
+        except Exception as exc:
+            logger.debug("resolve import->batch failed: %s", exc)
+
+    student_rows = []
+    if target_batch_id:
+        try:
+            history = get_grading_history_record(target_batch_id)
+            if history:
+                student_rows = await _maybe_await(get_student_results(history.id))
+        except Exception as exc:
+            logger.debug("resolve grading by batch failed: %s", exc)
+    if not student_rows:
+        try:
+            with get_connection() as conn:
+                student_rows = conn.execute(
+                    """
+                    SELECT result_data, grading_history_id, student_key
+                    FROM student_grading_results
+                    WHERE student_id = ? AND class_id = ?
+                    ORDER BY imported_at DESC, id DESC
+                    LIMIT 30
+                    """,
+                    (ref.student_id, ref.class_id or ""),
+                ).fetchall()
+        except Exception as exc:
+            logger.debug("resolve grading fallback query failed: %s", exc)
+            student_rows = []
+
+    for row in student_rows:
+        result_data = row.result_data if hasattr(row, "result_data") else row.get("result_data")
+        grading_history_id = (
+            row.grading_history_id if hasattr(row, "grading_history_id") else row.get("grading_history_id")
+        )
+        student_key = row.student_key if hasattr(row, "student_key") else row.get("student_key")
+        if isinstance(result_data, str):
+            try:
+                result_data = json.loads(result_data)
+            except Exception:
+                result_data = {}
+        if not isinstance(result_data, dict):
+            continue
+        for question in _extract_question_results(result_data):
+            qid = str(question.get("questionId") or question.get("question_id") or "").strip()
+            if qid != question_id:
+                continue
+            page_indices = question.get("page_indices") or question.get("pageIndices") or []
+            images: List[str] = []
+            if grading_history_id and student_key:
+                try:
+                    page_rows = await _maybe_await(
+                        get_page_images_for_student(grading_history_id, student_key)
+                    )
+                    page_map = {
+                        int(getattr(page, "page_index", -1)): getattr(page, "file_url", None)
+                        for page in page_rows
+                    }
+                    for idx in page_indices:
+                        try:
+                            page_url = page_map.get(int(idx))
+                        except Exception:
+                            page_url = None
+                        if page_url:
+                            images.append(page_url)
+                except Exception as exc:
+                    logger.debug("resolve grading images failed: %s", exc)
+            return {
+                "source": "grading",
+                "question_id": qid,
+                "score": question.get("score"),
+                "max_score": question.get("maxScore") or question.get("max_score"),
+                "feedback": question.get("feedback"),
+                "question_content": question.get("questionText")
+                or question.get("question")
+                or question.get("stem"),
+                "student_answer": question.get("studentAnswer") or question.get("student_answer"),
+                "scoring_point_results": question.get("scoring_point_results")
+                or question.get("scoringPointResults")
+                or [],
+                "page_indices": page_indices if isinstance(page_indices, list) else [],
+                "images": images,
+            }
+
+    return _serialize_quick_context(ref)
 
 
 def _build_student_context(student_id: str, class_id: Optional[str] = None) -> Dict[str, Any]:
@@ -2277,199 +2499,234 @@ def _build_wrong_question_prompt(context: Dict[str, Any], images: Optional[List[
 
 @router.post("/assistant/chat", response_model=AssistantChatResponse, tags=["Student Assistant"])
 async def assistant_chat(request: AssistantChatRequest):
-    """Student assistant chat with Socratic questioning and mastery assessment.
-    
-    支持多模态输入：
-    - images: base64 编码的图片列表（用于错题分析）
-    - wrong_question_context: 错题上下文（从错题本跳转时传入）
-    """
-    # 调试日志
-    logger.info(f"[AssistantChat] 收到请求: student_id={request.student_id}, message={request.message[:50] if request.message else 'empty'}...")
-    logger.info(f"[AssistantChat] session_mode={request.session_mode}, images={len(request.images) if request.images else 0}")
-    logger.info(f"[AssistantChat] wrong_question_context={request.wrong_question_context is not None}")
-    if request.wrong_question_context:
-        logger.info(f"[AssistantChat] 错题上下文: questionId={request.wrong_question_context.get('questionId')}, score={request.wrong_question_context.get('score')}/{request.wrong_question_context.get('maxScore')}")
-    
-    context = _build_student_context(request.student_id, request.class_id)
-    
-    # 如果有错题上下文，增强学生上下文
-    if request.wrong_question_context:
-        context["wrong_question_context"] = request.wrong_question_context
-    
-    agent = get_student_assistant_agent()
+    """Student assistant chat endpoint (V2 orchestration)."""
+    logger.info(
+        "[AssistantChatV2] student_id=%s class_id=%s has_ref=%s has_ctx=%s has_images=%s has_attachments=%s",
+        request.student_id,
+        request.class_id,
+        bool(request.wrong_question_ref),
+        bool(request.wrong_question_context),
+        len(request.images or []),
+        len(request.attachments or []),
+    )
 
-    session_id = build_assistant_session_id(request.student_id, request.class_id)
+    has_wrong_review = bool(request.wrong_question_ref or request.wrong_question_context)
+    conversation_id = (request.conversation_id or "").strip() or None
+    if conversation_id:
+        belongs = get_assistant_conversation(conversation_id, request.student_id, request.class_id)
+        if not belongs:
+            conversation_id = None
+
+    if not conversation_id:
+        if has_wrong_review:
+            conversation_id = _generate_conversation_id()
+        else:
+            latest = get_latest_assistant_conversation(request.student_id, request.class_id)
+            conversation_id = (
+                latest.get("conversation_id") if latest and latest.get("conversation_id") else _generate_conversation_id()
+            )
+
+    session_id = build_assistant_session_id(
+        request.student_id,
+        request.class_id,
+        conversation_id=conversation_id,
+    )
     memory = AssistantMemory(session_id)
-    history_messages: List[BaseMessage] = []
-    
-    # 如果有错题上下文，清空历史记录开启新会话
-    if request.wrong_question_context:
-        try:
-            await memory.clear()
-        except Exception as exc:
-            logger.debug("Assistant memory clear failed: %s", exc)
-    else:
+
+    history_messages = _history_from_conversation(conversation_id)
+    if not history_messages:
         try:
             history_messages = await memory.load()
         except Exception as exc:
             logger.debug("Assistant memory load failed: %s", exc)
-
+            history_messages = []
     if not history_messages:
-        seed_messages = _history_from_request(request.history, request.message)
-        if seed_messages:
+        history_messages = _history_from_request(request.history, request.message)
+        if history_messages:
             try:
-                await memory.append(seed_messages)
-                history_messages = await memory.load()
+                await memory.append(history_messages)
             except Exception as exc:
                 logger.debug("Assistant memory seed failed: %s", exc)
-                history_messages = seed_messages
 
-    prompt_history = list(history_messages)
-    
-    # 构建消息内容
-    message_content = request.message
-    
-    # 如果有错题上下文，构建增强提示
-    if request.wrong_question_context:
-        enhanced_prompt = _build_wrong_question_prompt(
-            request.wrong_question_context, 
-            request.images
-        )
-        message_content = f"{enhanced_prompt}\n\n学生的问题: {request.message}"
-        
-        # 添加系统提示，指导 AI 进入错题深究模式
-        prompt_history.append(
-            SystemMessage(
-                content=(
-                    "Student is reviewing a wrong question from their error book. "
-                    "Focus on understanding their specific mistake, use Socratic questioning to guide them, "
-                    "and help them build first-principles understanding. "
-                    "Be encouraging but rigorous. Analyze any provided images carefully."
-                ),
-            )
-        )
-    elif _is_confused_message(request.message):
-        prompt_history.append(
-            SystemMessage(
-                content=(
-                    "Student indicates they are stuck. Provide a brief explanation of the missing concept, "
-                    "then ask a simpler Socratic question."
-                ),
-            )
-        )
+    resolved_wrong_context = None
+    if request.wrong_question_ref:
+        resolved_wrong_context = await _resolve_wrong_question_ref(request.wrong_question_ref)
+    elif request.wrong_question_context:
+        resolved_wrong_context = request.wrong_question_context
 
-    # 调用 agent（支持多模态图片输入）
-    result = await agent.ainvoke(
-        message=message_content,
-        student_context=context,
-        session_mode=request.session_mode or "learning",
-        concept_topic=request.concept_topic or "general",
-        history=prompt_history,
-        images=request.images,  # 传递图片给多模态 agent
+    previous_events = list_assistant_mastery_events(
+        request.student_id,
+        request.class_id,
+        conversation_id=conversation_id,
+        limit=1,
+    )
+    previous_trend = previous_events[-1]["trend_score"] if previous_events else None
+
+    attachments = [item.model_dump() for item in (request.attachments or [])]
+    orchestrator = get_student_assistant_v2_orchestrator()
+    context = _build_student_context(request.student_id, request.class_id)
+    result_payload = await orchestrator.ainvoke(
+        state={
+            "student_id": request.student_id,
+            "class_id": request.class_id,
+            "conversation_id": conversation_id,
+            "message": request.message,
+            "session_mode": request.session_mode or "learning",
+            "concept_topic": request.concept_topic or "general",
+            "student_context": context,
+            "history": history_messages,
+            "images": request.images or [],
+            "attachments": attachments,
+            "wrong_question_context": request.wrong_question_context,
+            "resolved_wrong_context": resolved_wrong_context,
+            "previous_trend_score": previous_trend,
+        }
     )
 
-    assistant_content = result.raw_content
-    if result.parsed and result.parsed.content:
-        assistant_content = result.parsed.content
+    def _convert_concept(node: Dict[str, Any]) -> ConceptNode:
+        children_raw = node.get("children")
+        children = (
+            [_convert_concept(child) for child in children_raw if isinstance(child, dict)]
+            if isinstance(children_raw, list)
+            else None
+        )
+        return ConceptNode(
+            id=str(node.get("id") or uuid.uuid4().hex[:8]),
+            name=str(node.get("name") or ""),
+            description=str(node.get("description") or ""),
+            understood=bool(node.get("understood")),
+            children=children,
+        )
+
+    concept_nodes = None
+    if isinstance(result_payload.get("concept_breakdown"), list):
+        concept_nodes = [
+            _convert_concept(item)
+            for item in result_payload.get("concept_breakdown", [])
+            if isinstance(item, dict)
+        ]
+
+    mastery_data = None
+    if isinstance(result_payload.get("mastery"), dict):
+        mastery_raw = result_payload["mastery"]
+        mastery_data = MasteryData(
+            score=int(mastery_raw.get("score") or 0),
+            level=str(mastery_raw.get("level") or "developing"),
+            analysis=str(mastery_raw.get("analysis") or ""),
+            evidence=[str(item) for item in mastery_raw.get("evidence") or []],
+            suggestions=[str(item) for item in mastery_raw.get("suggestions") or []],
+        )
+
     try:
         await memory.append(
             [
                 HumanMessage(content=request.message),
-                AIMessage(content=assistant_content),
+                AIMessage(content=str(result_payload.get("content") or "")),
             ]
         )
     except Exception as exc:
         logger.debug("Assistant memory append failed: %s", exc)
 
-    if not result.parsed:
-        return AssistantChatResponse(
-            content=result.raw_content,
-            model=result.model,
-            usage=result.usage or {},
-            response_type="chat",
-        )
-
-    mastery_data = None
-    if result.parsed.mastery:
-        mastery: AssistantMastery = result.parsed.mastery
-        mastery_data = MasteryData(
-            score=mastery.score,
-            level=mastery.level or "developing",
-            analysis=mastery.analysis or "",
-            evidence=mastery.evidence or [],
-            suggestions=mastery.suggestions or [],
-        )
-
-    def _convert_concept(node: AssistantConceptNode) -> ConceptNode:
-        return ConceptNode(
-            id=node.id or str(uuid.uuid4())[:8],
-            name=node.name or "",
-            description=node.description or "",
-            understood=bool(node.understood),
-            children=(
-                [_convert_concept(child) for child in node.children] if node.children else None
-            ),
-        )
-
-    concept_nodes = None
-    if result.parsed.concept_breakdown:
-        concept_nodes = [_convert_concept(node) for node in result.parsed.concept_breakdown]
-        try:
-            flattened = _flatten_concepts(result.parsed.concept_breakdown)
-            upsert_assistant_concepts(request.student_id, request.class_id, flattened)
-        except Exception as exc:
-            logger.warning("Assistant concept persistence failed: %s", exc)
-
-    if mastery_data:
-        try:
-            save_assistant_mastery_snapshot(
-                request.student_id,
-                request.class_id,
-                mastery_data.dict(),
-            )
-        except Exception as exc:
-            logger.warning("Assistant mastery persistence failed: %s", exc)
-
     await _invalidate_assistant_progress_cache(request.student_id, request.class_id)
 
     return AssistantChatResponse(
-        content=result.parsed.content or result.raw_content,
-        model=result.model,
-        usage=result.usage or {},
+        content=str(result_payload.get("content") or ""),
+        model=result_payload.get("model"),
+        usage=result_payload.get("usage") or {},
         mastery=mastery_data,
-        next_question=result.parsed.next_question,
-        question_options=result.parsed.question_options,
-        focus_mode=result.parsed.focus_mode,
+        next_question=result_payload.get("next_question"),
+        question_options=result_payload.get("question_options") or [],
+        focus_mode=bool(result_payload.get("focus_mode")),
         concept_breakdown=concept_nodes,
-        response_type=result.parsed.response_type or "chat",
+        response_type=str(result_payload.get("response_type") or "chat"),
+        conversation_id=conversation_id,
+        trend_score=int(result_payload.get("trend_score") or 0),
+        trend_delta=int(result_payload.get("trend_delta") or 0),
+        parse_status=result_payload.get("parse_status"),
+        parse_error_code=result_payload.get("parse_error_code"),
+        safety_level=result_payload.get("safety_level"),
     )
 
 
 @router.get(
     "/assistant/progress", response_model=AssistantProgressResponse, tags=["Student Assistant"]
 )
-async def assistant_progress(student_id: str, class_id: Optional[str] = None):
+async def assistant_progress(
+    student_id: str,
+    class_id: Optional[str] = None,
+    conversation_id: Optional[str] = None,
+):
     """Fetch persisted assistant progress for a student."""
-    cached = await _load_assistant_progress_cache(student_id, class_id)
+    resolved_conversation_id = conversation_id
+    if not resolved_conversation_id:
+        latest = get_latest_assistant_conversation(student_id, class_id)
+        resolved_conversation_id = latest.get("conversation_id") if latest else None
+
+    can_use_cache = not conversation_id
+    cached = await _load_assistant_progress_cache(student_id, class_id) if can_use_cache else None
     if cached:
         return AssistantProgressResponse(**cached)
 
     concept_rows: List[Dict[str, Any]] = []
     mastery_rows: List[Dict[str, Any]] = []
+    trend_rows: List[Dict[str, Any]] = []
+    concept_trend_rows: List[Dict[str, Any]] = []
     try:
         concept_rows = list_assistant_concepts(student_id, class_id)
         mastery_rows = list_assistant_mastery_snapshots(student_id, class_id, limit=6)
+        trend_rows = list_assistant_mastery_events(
+            student_id,
+            class_id,
+            conversation_id=resolved_conversation_id,
+            limit=20,
+        )
+        concept_trend_rows = list_assistant_concept_trends(
+            student_id,
+            class_id,
+            conversation_id=resolved_conversation_id,
+            limit=48,
+        )
     except Exception as exc:
         logger.warning("Assistant progress read failed: %s", exc)
+
+    trend_timeline = [
+        TrendPoint(
+            created_at=item.get("created_at") or datetime.now().isoformat(),
+            mastery_score=int(item.get("mastery_score") or 0),
+            trend_score=int(item.get("trend_score") or 0),
+            trend_delta=int(item.get("trend_delta") or 0),
+        )
+        for item in trend_rows
+    ]
+    trend_score_current = trend_timeline[-1].trend_score if trend_timeline else 0
+
+    latest_concept_map: Dict[str, ConceptTrendPoint] = {}
+    for item in concept_trend_rows:
+        key = str(item.get("concept_key") or "")
+        if not key:
+            continue
+        latest_concept_map[key] = ConceptTrendPoint(
+            concept_key=key,
+            concept_name=str(item.get("concept_name") or ""),
+            mastery_score=int(item.get("mastery_score") or 0),
+            trend_score=int(item.get("trend_score") or 0),
+            status=item.get("status"),
+            created_at=item.get("created_at") or datetime.now().isoformat(),
+        )
 
     response = AssistantProgressResponse(
         student_id=student_id,
         class_id=class_id,
+        conversation_id=resolved_conversation_id,
         concept_breakdown=_build_concept_tree(concept_rows),
         mastery_history=[MasterySnapshot(**item) for item in mastery_rows],
+        trend_score_current=trend_score_current,
+        trend_timeline=trend_timeline,
+        concept_trend_breakdown=list(latest_concept_map.values()),
     )
 
-    await _store_assistant_progress_cache(student_id, class_id, response.dict())
+    if can_use_cache:
+        await _store_assistant_progress_cache(student_id, class_id, response.dict())
     return response
 
 

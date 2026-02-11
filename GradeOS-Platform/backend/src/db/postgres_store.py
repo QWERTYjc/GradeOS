@@ -371,6 +371,114 @@ def init_db():
             "CREATE INDEX IF NOT EXISTS idx_assistant_mastery_student ON assistant_mastery_snapshots(student_id, class_id, created_at)"
         )
 
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS assistant_conversations (
+                conversation_id TEXT PRIMARY KEY,
+                student_id TEXT NOT NULL,
+                class_id TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'active',
+                summary TEXT,
+                last_message_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_assistant_conversations_student ON assistant_conversations(student_id, class_id, updated_at)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_assistant_conversations_expires ON assistant_conversations(expires_at)"
+        )
+
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS assistant_turns (
+                id TEXT PRIMARY KEY,
+                conversation_id TEXT NOT NULL,
+                student_id TEXT NOT NULL,
+                class_id TEXT NOT NULL DEFAULT '',
+                turn_index INTEGER NOT NULL DEFAULT 0,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                metadata TEXT,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (conversation_id) REFERENCES assistant_conversations(conversation_id)
+            )
+        """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_assistant_turns_conversation ON assistant_turns(conversation_id, created_at)"
+        )
+
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS assistant_mastery_events (
+                id TEXT PRIMARY KEY,
+                conversation_id TEXT,
+                student_id TEXT NOT NULL,
+                class_id TEXT NOT NULL DEFAULT '',
+                mastery_score INTEGER NOT NULL,
+                trend_score INTEGER NOT NULL,
+                trend_delta INTEGER NOT NULL DEFAULT 0,
+                evidence_quality REAL NOT NULL DEFAULT 0,
+                response_type TEXT,
+                metadata TEXT,
+                created_at TEXT NOT NULL
+            )
+        """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_assistant_mastery_events_student ON assistant_mastery_events(student_id, class_id, created_at)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_assistant_mastery_events_conversation ON assistant_mastery_events(conversation_id, created_at)"
+        )
+
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS assistant_concept_trends (
+                id TEXT PRIMARY KEY,
+                conversation_id TEXT,
+                student_id TEXT NOT NULL,
+                class_id TEXT NOT NULL DEFAULT '',
+                concept_key TEXT NOT NULL,
+                concept_name TEXT NOT NULL,
+                mastery_score INTEGER NOT NULL,
+                trend_score INTEGER NOT NULL,
+                status TEXT,
+                created_at TEXT NOT NULL
+            )
+        """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_assistant_concept_trends_student ON assistant_concept_trends(student_id, class_id, created_at)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_assistant_concept_trends_key ON assistant_concept_trends(student_id, class_id, concept_key, created_at)"
+        )
+
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS assistant_safety_events (
+                id TEXT PRIMARY KEY,
+                conversation_id TEXT,
+                student_id TEXT NOT NULL,
+                class_id TEXT NOT NULL DEFAULT '',
+                safety_level TEXT NOT NULL,
+                reason TEXT,
+                input_excerpt TEXT,
+                metadata TEXT,
+                created_at TEXT NOT NULL
+            )
+        """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_assistant_safety_events_student ON assistant_safety_events(student_id, class_id, created_at)"
+        )
+
         logger.info("PostgreSQL database initialized.")
 
 
@@ -1518,6 +1626,378 @@ def list_assistant_mastery_snapshots(
             }
         )
     return snapshots
+
+
+def upsert_assistant_conversation(
+    conversation_id: str,
+    student_id: str,
+    class_id: Optional[str],
+    *,
+    status: str = "active",
+    summary: Optional[str] = None,
+    ttl_days: int = 7,
+) -> Dict[str, Any]:
+    if not conversation_id or not student_id:
+        raise ValueError("conversation_id and student_id are required")
+    normalized_class = _normalize_class_id(class_id)
+    now = datetime.now()
+    expires_at = now.timestamp() + max(1, ttl_days) * 86400
+    now_iso = now.isoformat()
+    expires_iso = datetime.fromtimestamp(expires_at).isoformat()
+    with get_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO assistant_conversations
+            (conversation_id, student_id, class_id, status, summary, last_message_at, expires_at, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (conversation_id) DO UPDATE SET
+                student_id = EXCLUDED.student_id,
+                class_id = EXCLUDED.class_id,
+                status = EXCLUDED.status,
+                summary = CASE
+                    WHEN EXCLUDED.summary IS NULL OR EXCLUDED.summary = ''
+                    THEN assistant_conversations.summary
+                    ELSE EXCLUDED.summary
+                END,
+                last_message_at = EXCLUDED.last_message_at,
+                expires_at = EXCLUDED.expires_at,
+                updated_at = EXCLUDED.updated_at
+            """,
+            (
+                conversation_id,
+                student_id,
+                normalized_class,
+                status or "active",
+                summary or "",
+                now_iso,
+                expires_iso,
+                now_iso,
+                now_iso,
+            ),
+        )
+        row = conn.execute(
+            """
+            SELECT conversation_id, student_id, class_id, status, summary, last_message_at, expires_at, created_at, updated_at
+            FROM assistant_conversations
+            WHERE conversation_id = ?
+            """,
+            (conversation_id,),
+        ).fetchone()
+    return dict(row) if row else {}
+
+
+def get_assistant_conversation(
+    conversation_id: str,
+    student_id: str,
+    class_id: Optional[str],
+) -> Optional[Dict[str, Any]]:
+    if not conversation_id:
+        return None
+    normalized_class = _normalize_class_id(class_id)
+    with get_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT conversation_id, student_id, class_id, status, summary, last_message_at, expires_at, created_at, updated_at
+            FROM assistant_conversations
+            WHERE conversation_id = ? AND student_id = ? AND class_id = ?
+            LIMIT 1
+            """,
+            (conversation_id, student_id, normalized_class),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def get_latest_assistant_conversation(student_id: str, class_id: Optional[str]) -> Optional[Dict[str, Any]]:
+    normalized_class = _normalize_class_id(class_id)
+    now_iso = datetime.now().isoformat()
+    with get_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT conversation_id, student_id, class_id, status, summary, last_message_at, expires_at, created_at, updated_at
+            FROM assistant_conversations
+            WHERE student_id = ? AND class_id = ? AND status = 'active' AND expires_at >= ?
+            ORDER BY updated_at DESC
+            LIMIT 1
+            """,
+            (student_id, normalized_class, now_iso),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def append_assistant_turn(
+    conversation_id: str,
+    student_id: str,
+    class_id: Optional[str],
+    role: str,
+    content: str,
+    *,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> None:
+    if not conversation_id or not student_id or not role:
+        return
+    normalized_class = _normalize_class_id(class_id)
+    now_iso = datetime.now().isoformat()
+    safe_content = (content or "").strip()
+    if not safe_content:
+        return
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT COALESCE(MAX(turn_index), -1) AS max_index FROM assistant_turns WHERE conversation_id = ?",
+            (conversation_id,),
+        ).fetchone()
+        next_index = int((row or {}).get("max_index", -1) or -1) + 1
+        conn.execute(
+            """
+            INSERT INTO assistant_turns
+            (id, conversation_id, student_id, class_id, turn_index, role, content, metadata, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                str(uuid.uuid4()),
+                conversation_id,
+                student_id,
+                normalized_class,
+                next_index,
+                role,
+                safe_content,
+                json.dumps(metadata or {}, ensure_ascii=False),
+                now_iso,
+            ),
+        )
+        conn.execute(
+            """
+            UPDATE assistant_conversations
+            SET last_message_at = ?, updated_at = ?
+            WHERE conversation_id = ?
+            """,
+            (now_iso, now_iso, conversation_id),
+        )
+
+
+def list_assistant_turns(conversation_id: str, limit: int = 20) -> List[Dict[str, Any]]:
+    if not conversation_id:
+        return []
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT role, content, metadata, created_at, turn_index
+            FROM assistant_turns
+            WHERE conversation_id = ?
+            ORDER BY turn_index DESC
+            LIMIT ?
+            """,
+            (conversation_id, max(1, limit)),
+        ).fetchall()
+    turns: List[Dict[str, Any]] = []
+    for row in reversed(rows):
+        turns.append(
+            {
+                "role": row["role"],
+                "content": row["content"],
+                "metadata": _safe_json_load(row.get("metadata")) or {},
+                "created_at": row["created_at"],
+                "turn_index": int(row.get("turn_index") or 0),
+            }
+        )
+    return turns
+
+
+def save_assistant_mastery_event(
+    student_id: str,
+    class_id: Optional[str],
+    conversation_id: Optional[str],
+    event: Dict[str, Any],
+) -> None:
+    if not student_id:
+        return
+    normalized_class = _normalize_class_id(class_id)
+    now_iso = datetime.now().isoformat()
+    with get_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO assistant_mastery_events
+            (id, conversation_id, student_id, class_id, mastery_score, trend_score, trend_delta, evidence_quality, response_type, metadata, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                str(uuid.uuid4()),
+                conversation_id or "",
+                student_id,
+                normalized_class,
+                int(event.get("mastery_score") or 0),
+                int(event.get("trend_score") or 0),
+                int(event.get("trend_delta") or 0),
+                float(event.get("evidence_quality") or 0.0),
+                event.get("response_type") or "",
+                json.dumps(event.get("metadata") or {}, ensure_ascii=False),
+                now_iso,
+            ),
+        )
+
+
+def list_assistant_mastery_events(
+    student_id: str,
+    class_id: Optional[str],
+    *,
+    conversation_id: Optional[str] = None,
+    limit: int = 20,
+) -> List[Dict[str, Any]]:
+    normalized_class = _normalize_class_id(class_id)
+    with get_connection() as conn:
+        if conversation_id:
+            rows = conn.execute(
+                """
+                SELECT mastery_score, trend_score, trend_delta, evidence_quality, response_type, metadata, created_at
+                FROM assistant_mastery_events
+                WHERE student_id = ? AND class_id = ? AND conversation_id = ?
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (student_id, normalized_class, conversation_id, max(1, limit)),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT mastery_score, trend_score, trend_delta, evidence_quality, response_type, metadata, created_at
+                FROM assistant_mastery_events
+                WHERE student_id = ? AND class_id = ?
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (student_id, normalized_class, max(1, limit)),
+            ).fetchall()
+    events: List[Dict[str, Any]] = []
+    for row in reversed(rows):
+        events.append(
+            {
+                "mastery_score": int(row["mastery_score"] or 0),
+                "trend_score": int(row["trend_score"] or 0),
+                "trend_delta": int(row["trend_delta"] or 0),
+                "evidence_quality": float(row["evidence_quality"] or 0.0),
+                "response_type": row.get("response_type") or "",
+                "metadata": _safe_json_load(row.get("metadata")) or {},
+                "created_at": row["created_at"],
+            }
+        )
+    return events
+
+
+def save_assistant_concept_trends(
+    student_id: str,
+    class_id: Optional[str],
+    conversation_id: Optional[str],
+    trends: List[Dict[str, Any]],
+) -> None:
+    if not student_id or not trends:
+        return
+    normalized_class = _normalize_class_id(class_id)
+    now_iso = datetime.now().isoformat()
+    with get_connection() as conn:
+        for item in trends:
+            concept_name = (item.get("concept_name") or item.get("name") or "").strip()
+            if not concept_name:
+                continue
+            concept_key = item.get("concept_key") or _concept_key(concept_name, None)
+            conn.execute(
+                """
+                INSERT INTO assistant_concept_trends
+                (id, conversation_id, student_id, class_id, concept_key, concept_name, mastery_score, trend_score, status, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(uuid.uuid4()),
+                    conversation_id or "",
+                    student_id,
+                    normalized_class,
+                    concept_key,
+                    concept_name,
+                    int(item.get("mastery_score") or 0),
+                    int(item.get("trend_score") or 0),
+                    item.get("status") or "",
+                    now_iso,
+                ),
+            )
+
+
+def list_assistant_concept_trends(
+    student_id: str,
+    class_id: Optional[str],
+    *,
+    conversation_id: Optional[str] = None,
+    limit: int = 24,
+) -> List[Dict[str, Any]]:
+    normalized_class = _normalize_class_id(class_id)
+    with get_connection() as conn:
+        if conversation_id:
+            rows = conn.execute(
+                """
+                SELECT concept_key, concept_name, mastery_score, trend_score, status, created_at
+                FROM assistant_concept_trends
+                WHERE student_id = ? AND class_id = ? AND conversation_id = ?
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (student_id, normalized_class, conversation_id, max(1, limit)),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT concept_key, concept_name, mastery_score, trend_score, status, created_at
+                FROM assistant_concept_trends
+                WHERE student_id = ? AND class_id = ?
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (student_id, normalized_class, max(1, limit)),
+            ).fetchall()
+    trends: List[Dict[str, Any]] = []
+    for row in reversed(rows):
+        trends.append(
+            {
+                "concept_key": row["concept_key"],
+                "concept_name": row["concept_name"],
+                "mastery_score": int(row["mastery_score"] or 0),
+                "trend_score": int(row["trend_score"] or 0),
+                "status": row.get("status") or "",
+                "created_at": row["created_at"],
+            }
+        )
+    return trends
+
+
+def save_assistant_safety_event(
+    student_id: str,
+    class_id: Optional[str],
+    conversation_id: Optional[str],
+    *,
+    safety_level: str,
+    reason: str,
+    input_excerpt: str,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> None:
+    if not student_id:
+        return
+    normalized_class = _normalize_class_id(class_id)
+    now_iso = datetime.now().isoformat()
+    with get_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO assistant_safety_events
+            (id, conversation_id, student_id, class_id, safety_level, reason, input_excerpt, metadata, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                str(uuid.uuid4()),
+                conversation_id or "",
+                student_id,
+                normalized_class,
+                safety_level or "L0",
+                reason or "",
+                (input_excerpt or "")[:1000],
+                json.dumps(metadata or {}, ensure_ascii=False),
+                now_iso,
+            ),
+        )
 
 
 # 初始化数据库

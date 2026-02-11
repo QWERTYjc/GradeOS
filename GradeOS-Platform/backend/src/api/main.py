@@ -101,6 +101,7 @@ redis_client: Optional[redis.Redis] = None
 pool_manager: Optional[UnifiedPoolManager] = None
 enhanced_api_service: Optional[EnhancedAPIService] = None
 tracing_service: Optional[TracingService] = None
+grading_retention_task: Optional[asyncio.Task] = None
 
 
 def _env_truthy(name: str) -> bool:
@@ -125,6 +126,11 @@ def _now_iso_utc() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _is_grading_retention_enabled() -> bool:
+    """Default on; disabled only when `DISABLE_GRADING_DATA_RETENTION=true`."""
+    return not _env_truthy("DISABLE_GRADING_DATA_RETENTION")
+
+
 async def _bootstrap_init(app: FastAPI) -> None:
     """Initialize expensive dependencies in the background.
 
@@ -132,7 +138,7 @@ async def _bootstrap_init(app: FastAPI) -> None:
     bringing the DB/Redis/LangGraph stack online for real traffic.
     """
 
-    global redis_client, pool_manager, enhanced_api_service, tracing_service
+    global redis_client, pool_manager, enhanced_api_service, tracing_service, grading_retention_task
 
     st = getattr(app.state, "bootstrap", None)
     if st is None:
@@ -193,6 +199,34 @@ async def _bootstrap_init(app: FastAPI) -> None:
                 st.setdefault("errors", []).append(f"pool_manager failed: {exc}")
 
             await _step("db_pool", init_db_pool(use_unified_pool=True), timeout_s=25)
+
+            if _is_grading_retention_enabled():
+                try:
+                    from src.services.grading_retention import (
+                        grading_retention_worker_loop,
+                        run_grading_retention_cleanup_once,
+                    )
+
+                    retention_summary = await asyncio.wait_for(
+                        run_grading_retention_cleanup_once(), timeout=90
+                    )
+                    _set_component("grading_retention_cleanup", "ok", str(retention_summary))
+
+                    if grading_retention_task is None or grading_retention_task.done():
+                        grading_retention_task = asyncio.create_task(
+                            grading_retention_worker_loop(run_immediately=False)
+                        )
+                    _set_component("grading_retention_worker", "ok")
+                except Exception as exc:
+                    _set_component("grading_retention_cleanup", "error", str(exc))
+                    logger.warning("grading retention setup failed: %s", exc)
+            else:
+                _set_component(
+                    "grading_retention_cleanup",
+                    "disabled",
+                    "DISABLE_GRADING_DATA_RETENTION=true",
+                )
+                logger.info("grading retention cleanup disabled by configuration.")
         else:
             logger.info("Bootstrap: OFFLINE/NO-DB mode detected.")
             redis_client = None
@@ -368,7 +402,7 @@ def _register_api_routes(app: FastAPI) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan manager. Non-blocking startup for Railway healthchecks."""
-    global redis_client, pool_manager, enhanced_api_service, tracing_service
+    global redis_client, pool_manager, enhanced_api_service, tracing_service, grading_retention_task
 
     app.state.bootstrap = {
         "status": "starting",
@@ -395,6 +429,17 @@ async def lifespan(app: FastAPI):
                 pass
             except Exception:
                 logger.warning("Bootstrap task did not shut down cleanly.", exc_info=True)
+
+        if grading_retention_task is not None:
+            grading_retention_task.cancel()
+            try:
+                await grading_retention_task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                logger.warning("Grading retention task did not shut down cleanly.", exc_info=True)
+            finally:
+                grading_retention_task = None
 
         # Shutdown Redis task queue.
         try:

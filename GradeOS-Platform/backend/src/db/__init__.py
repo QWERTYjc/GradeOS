@@ -36,6 +36,16 @@ from .postgres_store import (
     list_assistant_concepts,
     save_assistant_mastery_snapshot,
     list_assistant_mastery_snapshots,
+    upsert_assistant_conversation,
+    get_assistant_conversation,
+    get_latest_assistant_conversation,
+    append_assistant_turn,
+    list_assistant_turns,
+    save_assistant_mastery_event,
+    list_assistant_mastery_events,
+    save_assistant_concept_trends,
+    list_assistant_concept_trends,
+    save_assistant_safety_event,
 )
 
 # 批改历史和学生结果使用 PostgreSQL 版本
@@ -110,6 +120,16 @@ __all__ = [
     "list_assistant_concepts",
     "save_assistant_mastery_snapshot",
     "list_assistant_mastery_snapshots",
+    "upsert_assistant_conversation",
+    "get_assistant_conversation",
+    "get_latest_assistant_conversation",
+    "append_assistant_turn",
+    "list_assistant_turns",
+    "save_assistant_mastery_event",
+    "list_assistant_mastery_events",
+    "save_assistant_concept_trends",
+    "list_assistant_concept_trends",
+    "save_assistant_safety_event",
     # PostgreSQL 图片存储
     "BatchImage",
     "save_batch_images",

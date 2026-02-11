@@ -4,11 +4,12 @@ import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation';
 import { I18N } from '../constants';
 import { ConceptNode, EnhancedChatMessage, Language } from '../types';
-import { assistantApi, AssistantProgressResponse } from '@/services/api';
+import { assistantApi, AssistantAttachment, AssistantProgressResponse } from '@/services/api';
 import { useAuthStore } from '@/store/authStore';
 import FocusMode from './FocusMode';
 import MasteryIndicator from './MasteryIndicator';
 import ConceptBreakdown from './ConceptBreakdown';
+import styles from './AIChat.module.css';
 
 interface Props {
   lang?: Language;
@@ -31,9 +32,20 @@ type PersistedState = {
   highlightEnabled?: boolean;
   selectedConceptId?: string | null;
   selectedConceptLabel?: string | null;
+  conversationId?: string | null;
 };
 
-// 错题上下文类型
+type PendingAttachment = {
+  id: string;
+  type: 'image' | 'pdf_page';
+  data: string;
+  name?: string;
+  size?: number;
+  mimeType?: string;
+  pageIndex?: number;
+  source?: string;
+};
+
 type WrongQuestionContext = {
   questionId: string;
   score: number;
@@ -49,6 +61,10 @@ type WrongQuestionContext = {
   }>;
   subject?: string;
   topic?: string;
+  source?: 'grading' | 'manual';
+  entryId?: string;
+  importId?: string;
+  batchId?: string;
   images?: string[];
   timestamp: string;
 };
@@ -60,6 +76,45 @@ const WRONG_QUESTION_STATE_KEY = 'gradeos.wrong-question-state'; // 用于 Fast 
 const MAX_PERSISTED_MESSAGES = 12;
 
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+let pdfjsLib: typeof import('pdfjs-dist') | null = null;
+let pdfjsInitialized = false;
+
+const initPdfJs = async () => {
+  if (pdfjsInitialized && pdfjsLib) return pdfjsLib;
+  if (typeof window === 'undefined') return null;
+  try {
+    pdfjsLib = await import('pdfjs-dist');
+    const version = pdfjsLib.version;
+    pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${version}/build/pdf.worker.min.mjs`;
+    pdfjsInitialized = true;
+    return pdfjsLib;
+  } catch (error) {
+    console.error('[AIChat] Failed to initialize PDF.js:', error);
+    return null;
+  }
+};
+
+const renderPdfToImages = async (file: File, maxPages = 12): Promise<string[]> => {
+  const pdfjs = await initPdfJs();
+  if (!pdfjs) throw new Error('PDF.js not available');
+  const buffer = await file.arrayBuffer();
+  const pdf = await pdfjs.getDocument({ data: new Uint8Array(buffer) }).promise;
+  const pages = Math.min(pdf.numPages, maxPages);
+  const images: string[] = [];
+  for (let i = 1; i <= pages; i += 1) {
+    const page = await pdf.getPage(i);
+    const viewport = page.getViewport({ scale: 1.5 });
+    const canvas = document.createElement('canvas');
+    const context = canvas.getContext('2d');
+    if (!context) continue;
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+    await page.render({ canvasContext: context, viewport } as Parameters<typeof page.render>[0]).promise;
+    images.push(canvas.toDataURL('image/jpeg', 0.85));
+  }
+  return images;
+};
 
 const AIChat: React.FC<Props> = ({ lang }) => {
   const resolvedLang = useMemo<Language>(() => {
@@ -84,8 +139,10 @@ const AIChat: React.FC<Props> = ({ lang }) => {
   const [highlightEnabled, setHighlightEnabled] = useState(true);
   const [selectedConceptId, setSelectedConceptId] = useState<string | null>(null);
   const [selectedConceptLabel, setSelectedConceptLabel] = useState<string | null>(null);
+  const [conversationId, setConversationId] = useState<string | null>(null);
   const [hydrated, setHydrated] = useState(false);
   const [wrongQuestionProcessed, setWrongQuestionProcessed] = useState(false);
+  const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
   const { user } = useAuthStore();
   const activeClassId = user?.classIds?.[0];
   const router = useRouter();
@@ -97,6 +154,15 @@ const AIChat: React.FC<Props> = ({ lang }) => {
   
   // 使用 ref 来同步跟踪错题上下文是否已处理（避免 React Strict Mode 双重执行问题）
   const wrongQuestionProcessedRef = useRef(false);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const media = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const update = () => setPrefersReducedMotion(media.matches);
+    update();
+    media.addEventListener('change', update);
+    return () => media.removeEventListener('change', update);
+  }, []);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -115,6 +181,7 @@ const AIChat: React.FC<Props> = ({ lang }) => {
         if (typeof parsed.highlightEnabled === 'boolean') setHighlightEnabled(parsed.highlightEnabled);
         if (parsed.selectedConceptId) setSelectedConceptId(parsed.selectedConceptId);
         if (parsed.selectedConceptLabel) setSelectedConceptLabel(parsed.selectedConceptLabel);
+        if (parsed.conversationId) setConversationId(parsed.conversationId);
       } catch (error) {
         console.warn('Assistant UI cache restore failed:', error);
       }
@@ -137,8 +204,9 @@ const AIChat: React.FC<Props> = ({ lang }) => {
 
   // 存储待处理的错题上下文（用于传递给 API）
   const [activeWrongQuestionContext, setActiveWrongQuestionContext] = useState<WrongQuestionContext | null>(null);
-  // 存储待发送的图片预览
+  // 兼容原有预览逻辑
   const [pendingImages, setPendingImages] = useState<string[]>([]);
+  const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
 
   // 处理从错题本跳转过来的深究请求 - 填充到输入框而不是自动发送
   useEffect(() => {
@@ -210,6 +278,14 @@ const AIChat: React.FC<Props> = ({ lang }) => {
               }
               if (state.images && state.images.length > 0) {
                 setPendingImages(state.images);
+                setPendingAttachments(
+                  state.images.map((img: string, idx: number) => ({
+                    id: `restored-${idx}-${Date.now()}`,
+                    type: 'image',
+                    data: img,
+                    source: 'wrongbook',
+                  })),
+                );
               }
               if (state.input) {
                 setInput(state.input);
@@ -253,6 +329,14 @@ const AIChat: React.FC<Props> = ({ lang }) => {
       // 设置待发送的图片
       if (context.images && context.images.length > 0) {
         setPendingImages(context.images);
+        setPendingAttachments(
+          context.images.map((img, idx) => ({
+            id: `wrongbook-${idx}-${Date.now()}`,
+            type: 'image',
+            data: img,
+            source: 'wrongbook',
+          })),
+        );
         console.log('[AIChat] Set pendingImages:', context.images.length);
       }
       
@@ -289,9 +373,10 @@ const AIChat: React.FC<Props> = ({ lang }) => {
       highlightEnabled,
       selectedConceptId,
       selectedConceptLabel,
+      conversationId,
     };
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
-  }, [activePage, highlightEnabled, hydrated, messages, selectedConceptId, selectedConceptLabel]);
+  }, [activePage, highlightEnabled, hydrated, messages, selectedConceptId, selectedConceptLabel, conversationId]);
 
   useEffect(() => {
     if (!user?.id) {
@@ -304,9 +389,12 @@ const AIChat: React.FC<Props> = ({ lang }) => {
     const loadProgress = async () => {
       setProgressLoading(true);
       try {
-        const data = await assistantApi.getProgress(user.id, activeClassId);
+        const data = await assistantApi.getProgress(user.id, activeClassId, conversationId || undefined);
         if (active) {
           setProgressData(data);
+          if (data.conversation_id && !conversationId) {
+            setConversationId(data.conversation_id);
+          }
         }
       } catch (error) {
         console.error('Assistant progress load failed:', error);
@@ -325,7 +413,7 @@ const AIChat: React.FC<Props> = ({ lang }) => {
     return () => {
       active = false;
     };
-  }, [user?.id, activeClassId]);
+  }, [user?.id, activeClassId, conversationId]);
 
   useEffect(() => {
     const timeline = timelineRef.current;
@@ -336,22 +424,14 @@ const AIChat: React.FC<Props> = ({ lang }) => {
 
   // 带错题上下文的发送函数
   const handleSendWithContext = useCallback(async (
-    userMsgContent: string, 
-    wrongContext?: WrongQuestionContext | null
+    userMsgContent: string,
+    wrongContext?: WrongQuestionContext | null,
   ) => {
-    console.log('[AIChat] handleSendWithContext called:', {
-      message: userMsgContent.substring(0, 50),
-      hasContext: !!wrongContext,
-      contextImages: wrongContext?.images?.length || 0,
-      userId: user?.id,
-      isStreaming
-    });
-    
     if (!userMsgContent.trim() || isStreaming) return;
     if (!user?.id) {
       setMessages((prev) => [
         ...prev,
-        { role: 'assistant', content: '请先登录后再使用学习助手功能。点击左上角返回后登录。', timestamp: new Date() },
+        { role: 'assistant', content: 'Please login first to use the assistant.', timestamp: new Date() },
       ]);
       return;
     }
@@ -376,21 +456,63 @@ const AIChat: React.FC<Props> = ({ lang }) => {
         { role: 'user' as const, content: userMsgContent, timestamp: new Date() },
       ]
         .filter((msg) => msg.content)
-        .slice(-16)  // 增加到 16 条历史消息以保持更多上下文
+        .slice(-16)
         .map((msg) => ({ role: msg.role as 'user' | 'assistant', content: msg.content }));
 
-      // 构建 API 请求，包含错题上下文和图片
       const isManualImageUpload = wrongContext?.questionId === 'manual';
+      const attachments: AssistantAttachment[] = pendingAttachments.map((item) => ({
+        type: item.type,
+        source: item.source,
+        page_index: item.pageIndex,
+        name: item.name,
+        size: item.size,
+        mime_type: item.mimeType,
+        data: item.data,
+      }));
+
+      if (attachments.length === 0 && wrongContext?.images?.length) {
+        wrongContext.images.forEach((img, idx) => {
+          attachments.push({
+            type: 'image',
+            source: wrongContext.source || 'wrongbook',
+            page_index: idx,
+            data: img,
+          });
+        });
+      }
+
       const chatRequest: Parameters<typeof assistantApi.chat>[0] = {
         student_id: user.id,
         class_id: activeClassId,
+        conversation_id: conversationId || undefined,
         message: userMsgContent,
         history,
         session_mode: wrongContext && !isManualImageUpload ? 'wrong_question_review' : 'learning',
+        attachments,
       };
 
-      // 如果有错题上下文（非手动上传），添加到请求中
+      if (attachments.length > 0) {
+        chatRequest.images = attachments.map((item) => item.data || '').filter(Boolean) as string[];
+      }
+
       if (wrongContext && !isManualImageUpload) {
+        if (wrongContext.source) {
+          chatRequest.wrong_question_ref = {
+            source: wrongContext.source,
+            entry_id: wrongContext.entryId,
+            import_id: wrongContext.importId,
+            batch_id: wrongContext.batchId,
+            question_id: wrongContext.questionId,
+            student_id: user.id,
+            class_id: activeClassId,
+            quick_context: {
+              score: wrongContext.score,
+              maxScore: wrongContext.maxScore,
+              feedback: wrongContext.feedback,
+            },
+          };
+        }
+
         chatRequest.wrong_question_context = {
           questionId: wrongContext.questionId,
           score: wrongContext.score,
@@ -402,26 +524,11 @@ const AIChat: React.FC<Props> = ({ lang }) => {
           topic: wrongContext.topic,
         };
       }
-      
-      // 如果有图片（无论是错题还是手动上传），都传递给后端
-      if (wrongContext?.images && wrongContext.images.length > 0) {
-        chatRequest.images = wrongContext.images;
-        console.log('[AIChat] Adding images to request:', wrongContext.images.length);
-      }
-
-      console.log('[AIChat] Sending chat request:', {
-        student_id: chatRequest.student_id,
-        session_mode: chatRequest.session_mode,
-        hasWrongContext: !!chatRequest.wrong_question_context,
-        imagesCount: chatRequest.images?.length || 0,
-      });
 
       const response = await assistantApi.chat(chatRequest);
-      console.log('[AIChat] Received response:', {
-        contentLength: response.content?.length || 0,
-        hasNextQuestion: !!response.next_question,
-        responseType: response.response_type,
-      });
+      if (response.conversation_id) {
+        setConversationId(response.conversation_id);
+      }
 
       setMessages((prev) => {
         const next = [...prev];
@@ -434,6 +541,10 @@ const AIChat: React.FC<Props> = ({ lang }) => {
           lastMessage.questionOptions = response.question_options;
           lastMessage.focusMode = response.focus_mode;
           lastMessage.responseType = response.response_type as 'text' | 'question' | 'diagram' | 'code';
+          lastMessage.safetyLevel = response.safety_level;
+          lastMessage.parseStatus = response.parse_status;
+          lastMessage.trendScore = response.trend_score;
+          lastMessage.trendDelta = response.trend_delta;
         }
         return next;
       });
@@ -451,7 +562,7 @@ const AIChat: React.FC<Props> = ({ lang }) => {
     } finally {
       setIsStreaming(false);
     }
-  }, [isStreaming, user?.id, t.brainFreeze, messages, activeClassId]);
+  }, [isStreaming, user?.id, t.brainFreeze, messages, activeClassId, pendingAttachments, conversationId]);
 
   // 普通发送函数（不带错题上下文）
   const handleSend = useCallback((userMsgContent: string) => {
@@ -477,17 +588,20 @@ const AIChat: React.FC<Props> = ({ lang }) => {
       // 清除上下文和图片
       setActiveWrongQuestionContext(null);
       setPendingImages([]);
-    } else if (pendingImages.length > 0) {
+      setPendingAttachments([]);
+    } else if (pendingImages.length > 0 || pendingAttachments.length > 0) {
       // 手动上传图片的情况（无错题上下文）
       const manualImageContext: WrongQuestionContext = {
         questionId: 'manual',
         score: 0,
         maxScore: 0,
+        source: 'manual',
         images: pendingImages,
         timestamp: new Date().toISOString(),
       };
       handleSendWithContext(input, manualImageContext);
       setPendingImages([]);
+      setPendingAttachments([]);
     } else {
       handleSend(input);
     }
@@ -496,41 +610,80 @@ const AIChat: React.FC<Props> = ({ lang }) => {
   // 移除待发送的图片
   const removePendingImage = (index: number) => {
     setPendingImages(prev => prev.filter((_, i) => i !== index));
+    setPendingAttachments(prev => prev.filter((_, i) => i !== index));
   };
 
   // 清除错题上下文
   const clearWrongQuestionContext = () => {
     setActiveWrongQuestionContext(null);
     setPendingImages([]);
+    setPendingAttachments([]);
     setInput('');
   };
 
-  // 处理文件上传 - 将图片转换为 base64
-  const handleFileUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+  // 处理文件上传 - 支持图片和 PDF（PDF 转页图）
+  const handleFileUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
-    
-    Array.from(files).forEach((file) => {
-      if (!file.type.startsWith('image/')) {
-        console.warn('[AIChat] Skipping non-image file:', file.name);
-        return;
+
+    const toBase64 = (file: File): Promise<string> =>
+      new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+
+    for (const file of Array.from(files)) {
+      try {
+        if (file.type.startsWith('image/')) {
+          const base64 = await toBase64(file);
+          setPendingImages((prev) => [...prev, base64]);
+          setPendingAttachments((prev) => [
+            ...prev,
+            {
+              id: `${file.name}-${Date.now()}-${prev.length}`,
+              type: 'image',
+              data: base64,
+              name: file.name,
+              size: file.size,
+              mimeType: file.type,
+              source: 'upload',
+            },
+          ]);
+          continue;
+        }
+
+        if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
+          const pages = await renderPdfToImages(file, 8);
+          pages.forEach((pageImg, pageIdx) => {
+            setPendingImages((prev) => [...prev, pageImg]);
+            setPendingAttachments((prev) => [
+              ...prev,
+              {
+                id: `${file.name}-page-${pageIdx + 1}-${Date.now()}-${prev.length}`,
+                type: 'pdf_page',
+                data: pageImg,
+                name: file.name,
+                size: file.size,
+                mimeType: 'image/jpeg',
+                pageIndex: pageIdx,
+                source: 'upload_pdf',
+              },
+            ]);
+          });
+          continue;
+        }
+
+        console.warn('[AIChat] Skipping unsupported file:', file.name);
+      } catch (err) {
+        console.error('[AIChat] Failed to process file:', file.name, err);
       }
-      
-      const reader = new FileReader();
-      reader.onload = () => {
-        const base64 = reader.result as string;
-        setPendingImages((prev) => [...prev, base64]);
-        console.log('[AIChat] Added image:', file.name, 'Total:', pendingImages.length + 1);
-      };
-      reader.onerror = () => {
-        console.error('[AIChat] Failed to read file:', file.name);
-      };
-      reader.readAsDataURL(file);
-    });
-    
+    }
+
     // 清除 input 以便可以重复选择同一文件
     e.target.value = '';
-  }, [pendingImages.length]);
+  }, []);
 
   const latestAssistant = useMemo(() => {
     for (let i = messages.length - 1; i >= 0; i -= 1) {
@@ -715,7 +868,7 @@ const AIChat: React.FC<Props> = ({ lang }) => {
       const key = `${part}-${idx}`;
       if (highlightLookup.has(part.toLowerCase())) {
         return (
-          <mark key={key} className="assistant-highlight">
+          <mark key={key} className={styles.assistantHighlight}>
             {part}
           </mark>
         );
@@ -747,6 +900,13 @@ const AIChat: React.FC<Props> = ({ lang }) => {
 
 
   const shouldShowSidebars = !sidebarsCollapsed;
+  const lowMotionMode = prefersReducedMotion || (isStreaming && pendingAttachments.length >= 6);
+  const latestSafetyLevel = latestAssistant?.safetyLevel;
+  const lampStateClass = isStreaming
+    ? styles.breathingThinking
+    : latestSafetyLevel && latestSafetyLevel !== 'L0'
+      ? styles.breathingSafety
+      : styles.breathingReady;
 
   const handleConceptSelect = (node: ConceptNode) => {
     if (!node.name) return;
@@ -763,15 +923,15 @@ const AIChat: React.FC<Props> = ({ lang }) => {
   const pageCount = 2;
 
   return (
-    <div className="relative min-h-screen bg-white text-black overflow-hidden">
-      <div className="assistant-grid absolute inset-0" aria-hidden="true" />
+    <div className={`relative min-h-screen overflow-hidden bg-white text-black ${lowMotionMode ? styles.motionLow : styles.motionRich}`}>
+      <div className={`${styles.assistantGrid} absolute inset-0`} aria-hidden="true" />
       <div
-        className="assistant-halo absolute -top-24 left-1/2 h-[420px] w-[420px] -translate-x-1/2"
+        className={`${styles.assistantHalo} absolute -top-24 left-1/2 h-[420px] w-[420px] -translate-x-1/2`}
         aria-hidden="true"
       />
-      <div className="assistant-scanline absolute inset-x-0 top-0" aria-hidden="true" />
-      <div className="assistant-orb assistant-orb--left absolute -bottom-20 -left-10 h-56 w-56" aria-hidden="true" />
-      <div className="assistant-orb assistant-orb--right absolute -top-10 right-10 h-40 w-40" aria-hidden="true" />
+      <div className={`${styles.assistantScanline} absolute inset-x-0 top-0`} aria-hidden="true" />
+      <div className={`${styles.assistantOrb} ${styles.assistantOrbLeft} absolute -bottom-20 -left-10 h-56 w-56`} aria-hidden="true" />
+      <div className={`${styles.assistantOrb} ${styles.assistantOrbRight} absolute -top-10 right-10 h-40 w-40`} aria-hidden="true" />
 
       {focusModeActive && (
         <FocusMode
@@ -804,9 +964,7 @@ const AIChat: React.FC<Props> = ({ lang }) => {
               {sidebarsCollapsed ? 'Show sidebars' : 'Hide sidebars'}
             </button>
             <span className="flex items-center gap-2">
-              <span
-                className={`h-2 w-2 rounded-full ${isStreaming ? 'bg-black animate-pulse' : 'bg-black/40'}`}
-              />
+              <span className={`${styles.breathingLamp} ${lampStateClass}`} />
               {isStreaming ? 'Thinking' : 'Ready'}
             </span>
           </div>
@@ -826,7 +984,7 @@ const AIChat: React.FC<Props> = ({ lang }) => {
 
               <div
                 ref={timelineRef}
-                className="max-h-[520px] space-y-4 overflow-y-auto pr-2 text-sm leading-relaxed text-black/80 custom-scrollbar"
+                className={`max-h-[520px] space-y-4 overflow-y-auto pr-2 text-sm leading-relaxed text-black/80 ${styles.customScrollbar}`}
               >
                 {messages.map((msg, idx) => {
                   const isAssistant = msg.role === 'assistant';
@@ -955,7 +1113,7 @@ const AIChat: React.FC<Props> = ({ lang }) => {
               <div className="text-[10px] font-semibold uppercase tracking-[0.4em] text-black/50">
                 {activePage === 'question' ? labels.question : labels.explanation}
               </div>
-              <div className="mt-6 max-h-[520px] overflow-y-auto pr-2 custom-scrollbar">
+              <div className={`mt-6 max-h-[520px] overflow-y-auto pr-2 ${styles.customScrollbar}`}>
                 {activePage === 'question' ? (
                   <div className="space-y-6">
                     <div className="text-2xl font-light leading-relaxed text-black">
@@ -1134,6 +1292,8 @@ const AIChat: React.FC<Props> = ({ lang }) => {
               <div>wrongQuestionProcessed: {String(wrongQuestionProcessed)}</div>
               <div>activeWrongQuestionContext: {activeWrongQuestionContext ? `Q${activeWrongQuestionContext.questionId}` : 'null'}</div>
               <div>pendingImages: {pendingImages.length}</div>
+              <div>pendingAttachments: {pendingAttachments.length}</div>
+              <div>conversationId: {conversationId || 'null'}</div>
               <div>input: {input.substring(0, 30)}...</div>
             </div>
           )}
@@ -1226,7 +1386,7 @@ const AIChat: React.FC<Props> = ({ lang }) => {
               type="file"
               ref={fileInputRef}
               onChange={handleFileUpload}
-              accept="image/*"
+              accept="image/*,application/pdf"
               multiple
               className="hidden"
             />
@@ -1237,7 +1397,7 @@ const AIChat: React.FC<Props> = ({ lang }) => {
               className="border border-black/20 px-3 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-black/60 transition hover:border-black/40 disabled:opacity-50"
               title="上传图片"
             >
-              📷 {pendingImages.length > 0 ? `(${pendingImages.length})` : ''}
+              Upload {pendingImages.length > 0 ? `(${pendingImages.length})` : ''}
             </button>
             
             <div className="flex-1 border-b border-black/20 pb-2">

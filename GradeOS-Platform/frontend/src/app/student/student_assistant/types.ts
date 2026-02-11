@@ -79,4 +79,8 @@ export interface EnhancedChatMessage extends ChatMessage {
   nextQuestion?: string;
   questionOptions?: string[];
   responseType?: 'chat' | 'question' | 'assessment' | 'explanation' | 'text' | 'diagram' | 'code';
+  safetyLevel?: 'L0' | 'L1' | 'L2' | 'L3';
+  parseStatus?: string;
+  trendScore?: number;
+  trendDelta?: number;
 }
