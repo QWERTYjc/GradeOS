@@ -1736,6 +1736,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
             grading_history_id: annotationGradingHistoryId,
             student_key: studentKey,
             overwrite,
+            strict_vlm: true,
         };
         
         console.log('[批注生成] 开始请求:', { url, payload });

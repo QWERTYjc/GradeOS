@@ -109,6 +109,7 @@ class GenerateAnnotationsRequest(BaseModel):
     student_key: str = Field(..., description="学生标识")
     page_indices: Optional[List[int]] = Field(None, description="指定页码列表，None 表示所有页")
     overwrite: bool = Field(default=False, description="是否覆盖已有批注")
+    strict_vlm: bool = Field(default=True, description="严格 VLM 模式（失败时不回退 estimated 批注）")
 
 
 class ExportPdfRequest(BaseModel):
@@ -407,6 +408,7 @@ async def generate_annotations(request: GenerateAnnotationsRequest):
             page_images=page_images,
             batch_id=history.batch_id if history else None,
             page_indices=request.page_indices,
+            strict_vlm=request.strict_vlm,
         )
         
         # 5. 保存生成的批注
@@ -442,6 +444,9 @@ async def generate_annotations(request: GenerateAnnotationsRequest):
         )
     except HTTPException:
         raise
+    except RuntimeError as e:
+        logger.error(f"批注 VLM 严格模式失败: {e}", exc_info=True)
+        raise HTTPException(status_code=502, detail=str(e))
     except Exception as e:
         logger.error(f"生成批注失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))

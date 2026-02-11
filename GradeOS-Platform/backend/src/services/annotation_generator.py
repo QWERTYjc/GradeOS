@@ -9,7 +9,7 @@ import logging
 import os
 import uuid
 import httpx
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 from datetime import datetime
 
 from src.db.postgres_grading import GradingAnnotation, GradingPageImage, StudentGradingResult
@@ -17,6 +17,47 @@ from src.db.postgres_images import get_batch_images_as_bytes_list
 
 
 logger = logging.getLogger(__name__)
+
+_ALLOWED_ANNOTATION_TYPES = {
+    "score",
+    "error_circle",
+    "error_underline",
+    "correct_check",
+    "partial_check",
+    "wrong_cross",
+    "comment",
+    "highlight",
+    "arrow",
+    "a_mark",
+    "m_mark",
+    "step_check",
+    "step_cross",
+}
+
+_ANNOTATION_TYPE_ALIASES = {
+    "error": "error_circle",
+    "underline": "error_underline",
+    "check": "correct_check",
+    "tick": "correct_check",
+    "cross": "wrong_cross",
+    "note": "comment",
+    "text": "comment",
+    "a": "a_mark",
+    "m": "m_mark",
+}
+
+_SMALL_ANNOTATION_TYPES = {
+    "score",
+    "a_mark",
+    "m_mark",
+    "correct_check",
+    "partial_check",
+    "wrong_cross",
+    "step_check",
+    "step_cross",
+}
+
+_LARGE_ANNOTATION_TYPES = {"error_circle", "highlight"}
 
 
 def _env_truthy(name: str) -> bool:
@@ -94,24 +135,241 @@ def _normalize_bbox(raw_bbox: Any, *, min_size: float = 0.002) -> Optional[Dict[
     return {"x_min": x0, "y_min": y0, "x_max": x1, "y_max": y1}
 
 
+def _bbox_area(bbox: Dict[str, float]) -> float:
+    return max(0.0, bbox["x_max"] - bbox["x_min"]) * max(0.0, bbox["y_max"] - bbox["y_min"])
+
+
+def _bbox_center(bbox: Dict[str, float]) -> Tuple[float, float]:
+    return ((bbox["x_min"] + bbox["x_max"]) / 2.0, (bbox["y_min"] + bbox["y_max"]) / 2.0)
+
+
+def _bbox_center_distance(a: Dict[str, float], b: Dict[str, float]) -> float:
+    ax, ay = _bbox_center(a)
+    bx, by = _bbox_center(b)
+    dx = ax - bx
+    dy = ay - by
+    return (dx * dx + dy * dy) ** 0.5
+
+
+def _bbox_iou(a: Dict[str, float], b: Dict[str, float]) -> float:
+    ix0 = max(a["x_min"], b["x_min"])
+    iy0 = max(a["y_min"], b["y_min"])
+    ix1 = min(a["x_max"], b["x_max"])
+    iy1 = min(a["y_max"], b["y_max"])
+    if ix1 <= ix0 or iy1 <= iy0:
+        return 0.0
+    inter = (ix1 - ix0) * (iy1 - iy0)
+    union = _bbox_area(a) + _bbox_area(b) - inter
+    if union <= 0:
+        return 0.0
+    return inter / union
+
+
+def _blend_bbox(
+    base_bbox: Dict[str, float],
+    anchor_bbox: Dict[str, float],
+    *,
+    anchor_weight: float,
+) -> Optional[Dict[str, float]]:
+    weight = max(0.0, min(1.0, anchor_weight))
+    merged = {
+        "x_min": base_bbox["x_min"] * (1.0 - weight) + anchor_bbox["x_min"] * weight,
+        "y_min": base_bbox["y_min"] * (1.0 - weight) + anchor_bbox["y_min"] * weight,
+        "x_max": base_bbox["x_max"] * (1.0 - weight) + anchor_bbox["x_max"] * weight,
+        "y_max": base_bbox["y_max"] * (1.0 - weight) + anchor_bbox["y_max"] * weight,
+    }
+    return _normalize_bbox(merged)
+
+
+def _canonical_annotation_type(raw_type: Any, text: str = "") -> str:
+    token = str(raw_type or "").strip().lower()
+    token = _ANNOTATION_TYPE_ALIASES.get(token, token)
+    if token in _ALLOWED_ANNOTATION_TYPES:
+        return token
+
+    upper_text = text.strip().upper()
+    if upper_text.startswith("A"):
+        return "a_mark"
+    if upper_text.startswith("M"):
+        return "m_mark"
+    return "comment"
+
+
+def _is_bbox_plausible_for_type(annotation_type: str, bbox: Dict[str, float]) -> bool:
+    area = _bbox_area(bbox)
+    if area < 0.00002:
+        return False
+    if annotation_type in _SMALL_ANNOTATION_TYPES:
+        return area <= 0.12
+    if annotation_type in _LARGE_ANNOTATION_TYPES:
+        return area <= 0.65
+    if annotation_type == "comment":
+        return area <= 0.3
+    return area <= 0.45
+
+
+def _question_identifier(question: Dict[str, Any], index: int) -> str:
+    raw = question.get("question_id") or question.get("questionId")
+    if raw is None or str(raw).strip() == "":
+        return str(index + 1)
+    return str(raw).strip()
+
+
+def _build_question_lookups(
+    page_questions: List[Dict[str, Any]],
+) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, List[str]]]:
+    question_lookup: Dict[str, Dict[str, Any]] = {}
+    point_to_questions: Dict[str, List[str]] = {}
+
+    for idx, q in enumerate(page_questions):
+        if not isinstance(q, dict):
+            continue
+        qid = _question_identifier(q, idx)
+        question_lookup[qid] = q
+
+        scoring_points = q.get("scoring_point_results") or q.get("scoringPointResults") or []
+        if not isinstance(scoring_points, list):
+            continue
+        for sp in scoring_points:
+            if not isinstance(sp, dict):
+                continue
+            point_id = (
+                sp.get("point_id")
+                or sp.get("pointId")
+                or sp.get("scoring_point_id")
+                or sp.get("scoringPointId")
+            )
+            if point_id is None:
+                continue
+            point_key = str(point_id).strip()
+            if not point_key:
+                continue
+            point_to_questions.setdefault(point_key, [])
+            if qid not in point_to_questions[point_key]:
+                point_to_questions[point_key].append(qid)
+
+    return question_lookup, point_to_questions
+
+
+def _collect_hint_regions(question: Dict[str, Any], scoring_point_id: str = "") -> List[Dict[str, float]]:
+    hints: List[Dict[str, float]] = []
+
+    answer_region = _normalize_bbox(question.get("answer_region") or question.get("answerRegion") or {})
+    if answer_region:
+        hints.append(answer_region)
+
+    steps = question.get("steps") or []
+    if isinstance(steps, list):
+        for step in steps[:20]:
+            if not isinstance(step, dict):
+                continue
+            step_region = _normalize_bbox(step.get("step_region") or step.get("stepRegion") or {})
+            if step_region:
+                hints.append(step_region)
+
+    scoring_points = question.get("scoring_point_results") or question.get("scoringPointResults") or []
+    if isinstance(scoring_points, list):
+        for sp in scoring_points:
+            if not isinstance(sp, dict):
+                continue
+            if scoring_point_id:
+                point_id = (
+                    sp.get("point_id")
+                    or sp.get("pointId")
+                    or sp.get("scoring_point_id")
+                    or sp.get("scoringPointId")
+                )
+                if str(point_id or "").strip() != scoring_point_id:
+                    continue
+            for key in ("evidence_region", "evidenceRegion", "error_region", "errorRegion"):
+                hint = _normalize_bbox(sp.get(key) or {})
+                if hint:
+                    hints.append(hint)
+
+    return hints
+
+
+def _resolve_question_id_for_annotation(
+    ann_data: Dict[str, Any],
+    question_lookup: Dict[str, Dict[str, Any]],
+    point_to_questions: Dict[str, List[str]],
+) -> str:
+    qid = str(ann_data.get("question_id") or "").strip()
+    if qid and qid in question_lookup:
+        return qid
+
+    point_id = str(ann_data.get("scoring_point_id") or "").strip()
+    if point_id:
+        matched_questions = point_to_questions.get(point_id) or []
+        if len(matched_questions) == 1:
+            return matched_questions[0]
+
+    if len(question_lookup) == 1:
+        return next(iter(question_lookup))
+    return ""
+
+
+def _refine_annotation_with_hints(
+    ann_data: Dict[str, Any],
+    question_lookup: Dict[str, Dict[str, Any]],
+    point_to_questions: Dict[str, List[str]],
+) -> Optional[Dict[str, Any]]:
+    refined = dict(ann_data)
+    refined["question_id"] = _resolve_question_id_for_annotation(refined, question_lookup, point_to_questions)
+    refined["text"] = str(refined.get("text") or "").strip()[:120]
+    ann_type = str(refined.get("type") or "comment")
+    current_bbox = refined["bounding_box"]
+    plausible_bbox = _is_bbox_plausible_for_type(ann_type, current_bbox)
+
+    qid = refined.get("question_id") or ""
+    question = question_lookup.get(qid) if qid else None
+    if not question:
+        return refined if plausible_bbox else None
+
+    point_id = str(refined.get("scoring_point_id") or "").strip()
+    hints = _collect_hint_regions(question, scoring_point_id=point_id)
+    if not hints:
+        return refined if plausible_bbox else None
+
+    best_hint = max(hints, key=lambda h: _bbox_iou(current_bbox, h))
+    iou = _bbox_iou(current_bbox, best_hint)
+    center_distance = _bbox_center_distance(current_bbox, best_hint)
+
+    adjusted_bbox: Optional[Dict[str, float]]
+    if not plausible_bbox:
+        adjusted_bbox = best_hint
+    elif iou < 0.01 and center_distance > 0.32:
+        anchor_weight = 0.8 if ann_type in _SMALL_ANNOTATION_TYPES else 0.65
+        adjusted_bbox = _blend_bbox(current_bbox, best_hint, anchor_weight=anchor_weight)
+    else:
+        adjusted_bbox = current_bbox
+
+    if not adjusted_bbox:
+        return None
+    refined["bounding_box"] = adjusted_bbox
+    return refined
+
+
 def _normalize_vlm_annotation(item: Any) -> Optional[Dict[str, Any]]:
     if not isinstance(item, dict):
         return None
 
-    ann_type = (
+    raw_ann_type = (
         item.get("type")
         or item.get("annotation_type")
         or item.get("annotationType")
         or "score"
     )
+    text = str(item.get("text") or item.get("message") or "")
+    ann_type = _canonical_annotation_type(raw_ann_type, text=text)
     bbox = _normalize_bbox(item.get("bounding_box") or item.get("boundingBox") or item.get("bbox") or {})
     if not bbox:
         return None
 
     return {
-        "type": str(ann_type),
+        "type": ann_type,
         "bounding_box": bbox,
-        "text": str(item.get("text") or item.get("message") or ""),
+        "text": text,
         "color": str(item.get("color") or "#FF0000"),
         "question_id": str(item.get("question_id") or item.get("questionId") or ""),
         "scoring_point_id": str(item.get("scoring_point_id") or item.get("scoringPointId") or ""),
@@ -125,6 +383,7 @@ async def generate_annotations_for_student(
     page_images: List[GradingPageImage],
     batch_id: Optional[str] = None,
     page_indices: Optional[List[int]] = None,
+    strict_vlm: bool = True,
 ) -> List[GradingAnnotation]:
     """
     为学生生成批注坐标
@@ -243,10 +502,15 @@ async def generate_annotations_for_student(
                 page_image=page_image,
                 question_results=question_results,
                 fallback_images=fallback_images or None,
+                strict_vlm=strict_vlm,
             )
             annotations.extend(page_annotations)
         except Exception as e:
-            logger.error(f"页面 {page_idx} 批注生成失败: {e}")
+            logger.error(f"[Annotation] page generation failed: page={page_idx}, err={e}")
+            if strict_vlm:
+                raise RuntimeError(
+                    f"VLM annotation generation failed on page {page_idx} for student {student_key}"
+                ) from e
             continue
     
     return annotations
@@ -260,6 +524,7 @@ async def _generate_annotations_for_page(
     page_image: GradingPageImage,
     question_results: List[Dict[str, Any]],
     fallback_images: Optional[Dict[int, bytes]] = None,
+    strict_vlm: bool = True,
 ) -> List[GradingAnnotation]:
     """为单个页面生成批注"""
     annotations: List[GradingAnnotation] = []
@@ -290,7 +555,7 @@ async def _generate_annotations_for_page(
     image_data = await _fetch_image_data(page_image, fallback_images=fallback_images)
     if not image_data:
         logger.warning(f"无法获取页面 {page_index} 的图片数据")
-        if _env_truthy("ANNOTATION_ALLOW_ESTIMATED_FALLBACK"):
+        if not strict_vlm and _env_truthy("ANNOTATION_ALLOW_ESTIMATED_FALLBACK"):
             return _generate_estimated_annotations(
                 grading_history_id, student_key, page_index, page_questions, now
             )
@@ -303,11 +568,15 @@ async def _generate_annotations_for_page(
             page_index=page_index,
             questions=page_questions,
         )
+        question_lookup, point_to_questions = _build_question_lookups(page_questions)
 
         normalized: List[Dict[str, Any]] = []
         seen: set[str] = set()
         for item in vlm_annotations:
             ann_data = _normalize_vlm_annotation(item)
+            if not ann_data:
+                continue
+            ann_data = _refine_annotation_with_hints(ann_data, question_lookup, point_to_questions)
             if not ann_data:
                 continue
             fingerprint = json.dumps(ann_data, sort_keys=True, ensure_ascii=True)
@@ -331,7 +600,7 @@ async def _generate_annotations_for_page(
                 color=ann_data["color"],
                 question_id=ann_data["question_id"],
                 scoring_point_id=ann_data["scoring_point_id"],
-                created_by="ai",
+                created_by="ai_vlm",
                 created_at=now,
                 updated_at=now,
             )
@@ -339,7 +608,7 @@ async def _generate_annotations_for_page(
         
     except Exception as e:
         logger.error(f"VLM 批注生成失败: page={page_index}, student={student_key}, err={e}")
-        if _env_truthy("ANNOTATION_ALLOW_ESTIMATED_FALLBACK"):
+        if not strict_vlm and _env_truthy("ANNOTATION_ALLOW_ESTIMATED_FALLBACK"):
             annotations = _generate_estimated_annotations(
                 grading_history_id, student_key, page_index, page_questions, now
             )
