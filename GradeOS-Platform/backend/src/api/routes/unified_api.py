@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Optional, List, Dict, Any
 
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Depends
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from redis.exceptions import RedisError
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 
@@ -270,6 +270,15 @@ class AssistantProgressResponse(BaseModel):
     mastery_history: List[MasterySnapshot] = []
 
 
+def _normalize_str_like(value: Any) -> Any:
+    """Normalize UUID/datetime-like DB values to API string fields."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return str(value)
+
+
 class GradingImportRecord(BaseModel):
     import_id: str
     batch_id: str
@@ -281,6 +290,19 @@ class GradingImportRecord(BaseModel):
     status: str
     created_at: str
     revoked_at: Optional[str] = None
+
+    @field_validator(
+        "import_id",
+        "batch_id",
+        "class_id",
+        "assignment_id",
+        "created_at",
+        "revoked_at",
+        mode="before",
+    )
+    @classmethod
+    def _normalize_string_fields(cls, value: Any) -> Any:
+        return _normalize_str_like(value)
 
 
 class GradingImportItem(BaseModel):
@@ -294,6 +316,20 @@ class GradingImportItem(BaseModel):
     created_at: str
     revoked_at: Optional[str] = None
     result: Optional[dict] = None
+
+    @field_validator(
+        "item_id",
+        "import_id",
+        "batch_id",
+        "class_id",
+        "student_id",
+        "created_at",
+        "revoked_at",
+        mode="before",
+    )
+    @classmethod
+    def _normalize_string_fields(cls, value: Any) -> Any:
+        return _normalize_str_like(value)
 
 
 class GradingHistoryResponse(BaseModel):
@@ -1849,6 +1885,28 @@ async def get_grading_history_detail(import_id: str):
                     )
                 else:
                     # 使用 student_grading_results 表的数据
+                    page_images_by_student: Dict[str, List[Dict[str, Any]]] = {}
+                    try:
+                        from src.db.postgres_grading import get_page_images
+
+                        all_page_images = await get_page_images(str(pg_history.id))
+                        for img in all_page_images:
+                            student_key = str(getattr(img, "student_key", "") or "")
+                            if not student_key:
+                                continue
+                            page_images_by_student.setdefault(student_key, []).append(
+                                {
+                                    "id": str(img.id),
+                                    "url": img.file_url or f"/api/batch/files/{img.file_id}/download",
+                                    "page_index": img.page_index,
+                                    "content_type": img.content_type or "image/jpeg",
+                                }
+                            )
+                        for image_list in page_images_by_student.values():
+                            image_list.sort(key=lambda image: image["page_index"])
+                    except Exception as e:
+                        logger.warning(f"grading detail image prefetch failed: {e}")
+
                     for idx, item in enumerate(pg_results):
                         result = item.result_data or {}
                         if isinstance(result, str):
@@ -1865,22 +1923,14 @@ async def get_grading_history_detail(import_id: str):
                         )
                         
                         # 🔥 关键修复：获取学生答题图片
-                        from src.db.postgres_grading import get_page_images_for_student
-                        try:
-                            page_images = await get_page_images_for_student(pg_history.id, item.student_key)
-                            # 将图片数据附加到 result 中
-                            if page_images:
-                                result["images"] = [
-                                    {
-                                        "id": img.id,
-                                        "url": img.file_url or f"/api/batch/files/{img.file_id}/download",
-                                        "page_index": img.page_index,
-                                        "content_type": img.content_type or "image/jpeg",
-                                    }
-                                    for img in sorted(page_images, key=lambda x: x.page_index)
-                                ]
-                        except Exception as e:
-                            logger.warning(f"获取学生图片失败: {e}")
+                        candidate_keys = [
+                            str(item.student_key or ""),
+                            str(item.student_id or ""),
+                        ]
+                        for key in candidate_keys:
+                            if key and key in page_images_by_student:
+                                result["images"] = page_images_by_student[key]
+                                break
                         
                         items.append(
                             {
@@ -1950,6 +2000,28 @@ async def get_grading_history_detail(import_id: str):
                 "revoked_at": None,
             }
             items = []
+            page_images_by_student: Dict[str, List[Dict[str, Any]]] = {}
+            try:
+                from src.db.postgres_grading import get_page_images
+
+                all_page_images = await get_page_images(str(row["id"]))
+                for img in all_page_images:
+                    student_key = str(getattr(img, "student_key", "") or "")
+                    if not student_key:
+                        continue
+                    page_images_by_student.setdefault(student_key, []).append(
+                        {
+                            "id": str(img.id),
+                            "url": img.file_url or f"/api/batch/files/{img.file_id}/download",
+                            "page_index": img.page_index,
+                            "content_type": img.content_type or "image/jpeg",
+                        }
+                    )
+                for image_list in page_images_by_student.values():
+                    image_list.sort(key=lambda image: image["page_index"])
+            except Exception as e:
+                logger.warning(f"fallback grading detail image prefetch failed: {e}")
+
             for idx, item in enumerate(await get_student_results(row["id"])):
                 result = item.result_data or {}
                 if isinstance(result, str):
@@ -1966,21 +2038,14 @@ async def get_grading_history_detail(import_id: str):
                 )
                 
                 # 🔥 关键修复：获取学生答题图片（fallback分支）
-                from src.db.postgres_grading import get_page_images_for_student
-                try:
-                    page_images = await get_page_images_for_student(row["id"], item.student_key)
-                    if page_images:
-                        result["images"] = [
-                            {
-                                "id": img.id,
-                                "url": img.file_url or f"/api/batch/files/{img.file_id}/download",
-                                "page_index": img.page_index,
-                                "content_type": img.content_type or "image/jpeg",
-                            }
-                            for img in sorted(page_images, key=lambda x: x.page_index)
-                        ]
-                except Exception as e:
-                    logger.warning(f"获取学生图片失败: {e}")
+                candidate_keys = [
+                    str(item.student_key or ""),
+                    str(item.student_id or ""),
+                ]
+                for key in candidate_keys:
+                    if key and key in page_images_by_student:
+                        result["images"] = page_images_by_student[key]
+                        break
                 
                 items.append(
                     {
