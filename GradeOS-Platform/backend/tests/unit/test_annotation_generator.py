@@ -11,6 +11,7 @@ from src.services import annotation_generator as ag
 from src.services.annotation_generator import (
     generate_annotations_for_student,
     _generate_annotations_for_page,
+    _bbox_has_non_line_ink,
     _normalize_vlm_annotation,
     _refine_annotation_with_hints,
 )
@@ -57,6 +58,42 @@ def test_normalize_vlm_annotation_infers_mark_type_from_text():
     )
     assert ann is not None
     assert ann["type"] == "m_mark"
+
+
+def test_normalize_vlm_annotation_score_with_scoring_point_maps_to_mark():
+    ann = _normalize_vlm_annotation(
+        {
+            "type": "score",
+            "text": "A",
+            "scoring_point_id": "12.a.1",
+            "bbox": {"x_min": 0.2, "y_min": 0.2, "x_max": 0.3, "y_max": 0.3},
+        }
+    )
+    assert ann is not None
+    assert ann["type"] == "a_mark"
+
+
+def test_bbox_has_non_line_ink_rejects_blank_ruled_area():
+    # Create a synthetic ruled page with only horizontal lines (no handwriting).
+    from PIL import Image, ImageDraw
+    import io
+
+    img = Image.new("L", (400, 400), color=255)
+    draw = ImageDraw.Draw(img)
+    for y in range(30, 390, 24):
+        draw.line((20, y, 380, y), fill=130, width=1)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    raw = buf.getvalue()
+
+    assert _bbox_has_non_line_ink(raw, {"x_min": 0.1, "y_min": 0.55, "x_max": 0.5, "y_max": 0.75}) is False
+
+    # Add a handwriting-like dark blob and ensure it is detected.
+    draw.rectangle((140, 252, 162, 278), fill=40)
+    buf2 = io.BytesIO()
+    img.save(buf2, format="PNG")
+    raw2 = buf2.getvalue()
+    assert _bbox_has_non_line_ink(raw2, {"x_min": 0.25, "y_min": 0.60, "x_max": 0.50, "y_max": 0.75}) is True
 
 
 def test_refine_annotation_uses_hint_for_implausible_bbox():

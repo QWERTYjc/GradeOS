@@ -4,6 +4,7 @@
 """
 
 import base64
+import io
 import json
 import logging
 import os
@@ -381,7 +382,16 @@ def _normalize_vlm_annotation(item: Any) -> Optional[Dict[str, Any]]:
         or "score"
     )
     text = str(item.get("text") or item.get("message") or "")
+    scoring_point_id = str(item.get("scoring_point_id") or item.get("scoringPointId") or "")
     ann_type = _canonical_annotation_type(raw_ann_type, text=text)
+    # Models sometimes return type=score with text "A"/"M" for scoring-point marks.
+    # Canonicalize these to mark types so downstream filters can treat them strictly.
+    if ann_type == "score" and scoring_point_id:
+        upper = text.strip().upper()
+        if upper.startswith("A"):
+            ann_type = "a_mark"
+        elif upper.startswith("M"):
+            ann_type = "m_mark"
     bbox = _normalize_bbox(item.get("bounding_box") or item.get("boundingBox") or item.get("bbox") or {})
     if not bbox:
         return None
@@ -392,7 +402,7 @@ def _normalize_vlm_annotation(item: Any) -> Optional[Dict[str, Any]]:
         "text": text,
         "color": str(item.get("color") or "#FF0000"),
         "question_id": str(item.get("question_id") or item.get("questionId") or ""),
-        "scoring_point_id": str(item.get("scoring_point_id") or item.get("scoringPointId") or ""),
+        "scoring_point_id": scoring_point_id,
     }
 
 
@@ -458,6 +468,68 @@ def _resolve_annotation_page_index(
             return pages[0]
 
     return None
+
+
+def _bbox_has_non_line_ink(image_data: bytes, bbox: Dict[str, float]) -> bool:
+    """
+    Reject annotations placed on blank ruled areas.
+
+    Heuristic:
+    - binarize dark pixels
+    - remove dense horizontal ruled lines
+    - require remaining dark evidence
+    """
+    try:
+        from PIL import Image
+        import numpy as np
+    except Exception:
+        # If imaging stack is unavailable, keep annotations rather than failing generation.
+        return True
+
+    try:
+        img = Image.open(io.BytesIO(image_data)).convert("L")
+        arr = np.array(img)
+        h, w = arr.shape[:2]
+        if h < 8 or w < 8:
+            return False
+
+        x0 = max(0, min(w - 1, int(round(bbox["x_min"] * w))))
+        y0 = max(0, min(h - 1, int(round(bbox["y_min"] * h))))
+        x1 = max(x0 + 1, min(w, int(round(bbox["x_max"] * w))))
+        y1 = max(y0 + 1, min(h, int(round(bbox["y_max"] * h))))
+        crop = arr[y0:y1, x0:x1]
+        if crop.size == 0:
+            return False
+
+        # Treat dark pixels as ink. Threshold tuned for scanned answer sheets.
+        ink = crop < 165
+        if ink.sum() == 0:
+            return False
+
+        ch, cw = ink.shape[:2]
+        # Rows dominated by dark pixels are typically printed/ruled lines.
+        row_dark = ink.sum(axis=1)
+        ruled_rows = row_dark >= max(3, int(0.50 * cw))
+        if ruled_rows.any():
+            ink = ink.copy()
+            ink[ruled_rows, :] = False
+
+        dark_count = int(ink.sum())
+        if dark_count <= 2:
+            return False
+
+        area = max(1, ch * cw)
+        dark_ratio = dark_count / area
+        active_rows = int((ink.sum(axis=1) >= 2).sum())
+        active_cols = int((ink.sum(axis=0) >= 2).sum())
+
+        if dark_ratio < 0.0025:
+            return False
+        if active_rows < 2 or active_cols < 2:
+            return False
+        return True
+    except Exception:
+        return True
 
 
 async def _call_vlm_question_wise(
@@ -757,7 +829,37 @@ async def generate_annotations_for_student(
                 )
             continue
 
+        filtered_annotations: List[Dict[str, Any]] = []
+        dropped_blank = 0
         for ann_data in page_annotations:
+            ann_type = str(ann_data.get("type") or "")
+            # Keep only annotations that are attached to visible ink/text on the page.
+            # This suppresses floating A/M markers on blank ruled regions.
+            if ann_type in {"score", "a_mark", "m_mark", "comment"}:
+                if not _bbox_has_non_line_ink(page["image_data"], ann_data["bounding_box"]):
+                    dropped_blank += 1
+                    continue
+            filtered_annotations.append(ann_data)
+
+        if dropped_blank:
+            logger.info(
+                f"[Annotation] dropped blank-region annotations: page={page_idx}, count={dropped_blank}"
+            )
+        if not filtered_annotations:
+            page_failures.append(page_idx)
+            if not strict_vlm and _env_truthy("ANNOTATION_ALLOW_ESTIMATED_FALLBACK"):
+                annotations.extend(
+                    _generate_estimated_annotations(
+                        grading_history_id,
+                        student_key,
+                        page_idx,
+                        page["questions"],
+                        now,
+                    )
+                )
+            continue
+
+        for ann_data in filtered_annotations:
             annotations.append(
                 GradingAnnotation(
                     id=str(uuid.uuid4()),
@@ -1128,6 +1230,9 @@ You are given multiple answer page images of the same student. The image order i
 4. `bounding_box` must be normalized in [0,1] and satisfy:
    0 <= x_min < x_max <= 1 and 0 <= y_min < y_max <= 1.
 5. Do not guess. If unsure, omit that annotation.
+6. Never place annotations on blank ruled lines. Anchor each annotation to visible handwriting, printed math/text, or diagram evidence.
+7. `A/M` scoring-point marks must be placed adjacent to the actual step/evidence, not empty space.
+8. If a page has no visible evidence for a point, do not output that point on that page.
 
 ## Output format
 ```json
@@ -1166,6 +1271,7 @@ def _build_annotation_prompt(questions: List[Dict[str, Any]], page_index: int) -
 
 0. **只标注本页可见内容**：只为“本页图片中能看到作答内容”的题目输出批注。列表里但不在本页的题目，不要输出任何批注。
 0. **禁止猜测**：如果某题/某得分点在本页找不到对应证据位置，不要猜测位置；可以直接省略该得分点批注。
+0. **禁止空白区落点**：不得把批注放在仅有横线/空白行的区域，必须贴着可见文字、公式、图形或作答痕迹。
 1. **定位学生答案区域**：找到每道题学生作答的位置
 2. **标注分数**：在答案区域右侧或下方放置分数标注
 3. **标注错误（可选）**：只有当你能清晰看到错误位置时，才输出 error_circle；否则不要输出。
