@@ -2074,6 +2074,144 @@ def _normalize_scoring_point_results(
     return normalized
 
 
+def _backfill_obvious_scoring_breakdown(
+    student_results: List[Dict[str, Any]],
+    parsed_rubric: Optional[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """
+    Backfill missing scoring_point_results for trivial cases so the console can
+    show step/point breakdowns and avoid "full marks but low confidence" noise.
+
+    Only applies when a question has *no* scoring_point_results and the rubric
+    provides scoring_points for that question.
+
+    Backfill rules (conservative):
+    - Full marks: every rubric point is awarded fully
+    - Zero marks: every rubric point is awarded 0
+
+    The backfilled points are clearly marked:
+    - rubric_reference_source = "system_backfill"
+    - citation_quality = "none"
+    - evidence = placeholder (requires verification)
+    """
+    if not student_results:
+        return student_results
+    if not isinstance(parsed_rubric, dict) or not parsed_rubric:
+        return student_results
+
+    rubric_map = _build_rubric_question_map(parsed_rubric)
+    if not rubric_map:
+        return student_results
+
+    updated_results: List[Dict[str, Any]] = []
+    for student in student_results:
+        details = student.get("question_details") or student.get("questionDetails") or []
+        if not isinstance(details, list) or not details:
+            updated_results.append(student)
+            continue
+
+        mutated = False
+        new_details: List[Any] = []
+        for q in details:
+            if not isinstance(q, dict):
+                new_details.append(q)
+                continue
+
+            qid = _normalize_question_id(
+                q.get("question_id") or q.get("questionId") or q.get("id") or ""
+            )
+            if not qid:
+                new_details.append(q)
+                continue
+
+            rubric_q = rubric_map.get(qid) or {}
+            rubric_points = rubric_q.get("scoring_points") or []
+            if not isinstance(rubric_points, list) or not rubric_points:
+                new_details.append(q)
+                continue
+
+            spr_list = (
+                q.get("scoring_point_results")
+                or q.get("scoringPointResults")
+                or q.get("scoring_results")
+                or q.get("scoringResults")
+                or []
+            )
+            if not isinstance(spr_list, list):
+                spr_list = []
+            if spr_list:
+                new_details.append(q)
+                continue
+
+            score = _safe_float(q.get("score", 0))
+            max_score = _safe_float(q.get("max_score") or q.get("maxScore") or 0)
+            is_full = max_score > 0 and abs(score - max_score) <= 1e-6
+            is_zero = score <= 1e-6
+            if not (is_full or is_zero):
+                new_details.append(q)
+                continue
+
+            filled: List[Dict[str, Any]] = []
+            for sp in rubric_points:
+                if not isinstance(sp, dict):
+                    continue
+                pid = str(sp.get("point_id") or sp.get("pointId") or "").strip()
+                if not pid:
+                    continue
+                desc = sp.get("description") or ""
+                max_pts = _safe_float(sp.get("score") or 0)
+                awarded = max_pts if is_full else 0.0
+                filled.append(
+                    {
+                        "point_id": pid,
+                        "description": desc,
+                        "mark_type": "M",
+                        "awarded": awarded,
+                        "max_points": max_pts,
+                        "rubric_reference": f"[{pid}] {desc}".strip(),
+                        "rubric_reference_source": "system_backfill",
+                        "citation_quality": "none",
+                        "decision": "得分（系统回填）" if awarded > 0 else "不得分（系统回填）",
+                        "reason": "系统回填：原输出缺少得分点明细",
+                        "evidence": "【原文引用】未找到（系统回填：原输出缺少得分点明细，需校验）",
+                        # Frontend step alignment uses these fields when present.
+                        "step_id": pid,
+                        "step_excerpt": desc,
+                    }
+                )
+
+            if not filled:
+                new_details.append(q)
+                continue
+
+            q2 = dict(q)
+            q2["scoring_point_results"] = _normalize_scoring_point_results(filled, qid)
+
+            # If the original confidence was missing/low due to the missing breakdown,
+            # avoid a "full marks but low confidence" false alarm. We cap it at the
+            # "no citation" ceiling (0.7) and provide a clear reason.
+            conf = q2.get("confidence")
+            try:
+                conf_v = float(conf) if conf is not None else None
+            except (TypeError, ValueError):
+                conf_v = None
+            if conf_v is None or conf_v < 0.7:
+                q2["confidence"] = 0.7
+                q2["confidence_reason"] = "系统回填得分点明细（原输出缺失）；按无引用上限0.7设置置信度，建议人工校验。"
+
+            mutated = True
+            new_details.append(q2)
+
+        if mutated:
+            updated_student = dict(student)
+            updated_student["question_details"] = new_details
+            updated_results.append(updated_student)
+        else:
+            updated_results.append(student)
+
+    return updated_results
+
+
 def _trim_list(items: Any, max_items: int) -> List[Any]:
     if items is None:
         return []
@@ -4501,6 +4639,60 @@ def _apply_review_flags_and_queue(
             # Confession-driven reasons.
             q_items = confession_by_question.get(qid) or []
             if q_items:
+                scoring_points = (
+                    question.get("scoring_point_results")
+                    or question.get("scoringPointResults")
+                    or question.get("scoring_results")
+                    or question.get("scoringResults")
+                    or []
+                )
+                if not isinstance(scoring_points, list):
+                    scoring_points = []
+                q_score = _safe_float(question.get("score", 0))
+                q_max = _safe_float(question.get("max_score") or question.get("maxScore") or 0)
+
+                def _all_points_have_rubric_ref() -> bool:
+                    if not scoring_points:
+                        return False
+                    for spr in scoring_points:
+                        if not isinstance(spr, dict):
+                            continue
+                        rubric_ref = spr.get("rubric_reference") or spr.get("rubricReference") or ""
+                        if not str(rubric_ref).strip():
+                            return False
+                    return True
+
+                def _all_points_have_id() -> bool:
+                    if not scoring_points:
+                        return False
+                    for spr in scoring_points:
+                        if not isinstance(spr, dict):
+                            continue
+                        pid = spr.get("point_id") or spr.get("pointId") or ""
+                        if not str(pid).strip():
+                            return False
+                    return True
+
+                def _sum_awarded() -> float:
+                    total = 0.0
+                    for spr in scoring_points:
+                        if not isinstance(spr, dict):
+                            continue
+                        total += _safe_float(spr.get("awarded", spr.get("score", 0)) or 0)
+                    return total
+
+                def _has_awarded_placeholder_evidence() -> bool:
+                    for spr in scoring_points:
+                        if not isinstance(spr, dict):
+                            continue
+                        awarded = _safe_float(spr.get("awarded", spr.get("score", 0)) or 0)
+                        if awarded <= 0:
+                            continue
+                        evidence = spr.get("evidence") or ""
+                        if _is_placeholder_evidence(str(evidence)):
+                            return True
+                    return False
+
                 for item in q_items:
                     issue_type = str(item.get("issue_type") or item.get("issueType") or "").strip()
                     if not issue_type:
@@ -4510,6 +4702,24 @@ def _apply_review_flags_and_queue(
                     # obsolete once the final confidence is healthy.
                     if issue_type in ("low_confidence", "zero_marks_low_confidence") and confidence >= confidence_threshold:
                         continue
+                    # Drop stale "missing breakdown" signals once scoring_point_results are present.
+                    if issue_type == "missing_scoring_points" and scoring_points:
+                        continue
+                    # Drop stale rubric/id omissions once we can verify the final payload contains them.
+                    if issue_type == "missing_rubric_reference" and _all_points_have_rubric_ref():
+                        continue
+                    if issue_type == "missing_point_id" and _all_points_have_id():
+                        continue
+                    # Drop stale score/format issues if the current numbers are consistent.
+                    if issue_type == "point_sum_mismatch" and scoring_points:
+                        if abs(_sum_awarded() - q_score) <= 0.1:
+                            continue
+                    if issue_type == "score_out_of_bounds" and q_max > 0:
+                        if -1e-6 <= q_score <= q_max + 1e-6:
+                            continue
+                    if issue_type == "missing_evidence_awarded_positive" and scoring_points:
+                        if not _has_awarded_placeholder_evidence():
+                            continue
                     if issue_type not in reasons:
                         reasons.append(issue_type)
             if not reasons:
@@ -5739,6 +5949,12 @@ async def review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
 
     # 统计需要确认的边界
     needs_confirmation = [b for b in student_boundaries if b.get("needs_confirmation")]
+
+    # Some upstream LLM outputs can omit scoring_point_results entirely (especially on
+    # full/zero score questions). Backfill the obvious breakdown so the console UI
+    # can display step-level scores and we don't surface "full marks but low confidence"
+    # purely due to missing breakdown fields.
+    student_results = _backfill_obvious_scoring_breakdown(student_results, state.get("parsed_rubric"))
 
     review_queue, low_confidence_questions = _apply_review_flags_and_queue(
         student_results, review_threshold
