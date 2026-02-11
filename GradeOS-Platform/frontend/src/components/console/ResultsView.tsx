@@ -1270,7 +1270,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
     const [annotationGenerating, setAnnotationGenerating] = useState(false);
     const [annotationFetchLoading, setAnnotationFetchLoading] = useState(false);
     const [annotationEditMode, setAnnotationEditMode] = useState(false);
-    const [annotationStatus, setAnnotationStatus] = useState<{ type: 'idle' | 'loading' | 'success' | 'error'; message: string | null }>({
+    const [annotationStatus, setAnnotationStatus] = useState<{ type: 'idle' | 'loading' | 'success' | 'warning' | 'error'; message: string | null }>({
         type: 'idle',
         message: null,
     });
@@ -1758,9 +1758,22 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
             }
             setShowAnnotations(true);
             const count = await fetchAnnotationsForStudent(annotationGradingHistoryId, studentKey, { silent: true });
+            const failedPages = Array.isArray(resPayload?.failed_pages)
+                ? resPayload.failed_pages
+                    .map((p: any) => Number(p))
+                    .filter((p: number) => Number.isFinite(p) && p >= 0)
+                : [];
+            const fallbackMessage = count > 0 ? `已加载 ${count} 个批注` : '批注生成完成';
+            const baseMessage = (typeof resPayload?.message === 'string' && resPayload.message.trim())
+                ? resPayload.message
+                : fallbackMessage;
+            const failedPagesDisplay = failedPages.map((p: number) => p + 1).join(', ');
+            const message = failedPages.length > 0
+                ? `${baseMessage}（需复核页: ${failedPagesDisplay}）`
+                : baseMessage;
             setAnnotationStatus({
-                type: 'success',
-                message: resPayload?.message || (count > 0 ? `已加载 ${count} 个批注` : '批注生成完成'),
+                type: failedPages.length > 0 ? 'warning' : 'success',
+                message,
             });
         } catch (error) {
             console.error('[批注生成] 失败:', error);
@@ -3168,6 +3181,8 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                                                 "flex items-center gap-1",
                                                 annotationStatus.type === 'error'
                                                     ? 'text-rose-600'
+                                                    : annotationStatus.type === 'warning'
+                                                        ? 'text-amber-600'
                                                     : annotationStatus.type === 'success'
                                                         ? 'text-emerald-600'
                                                         : 'text-slate-500'

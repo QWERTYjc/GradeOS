@@ -384,6 +384,7 @@ async def generate_annotations_for_student(
     batch_id: Optional[str] = None,
     page_indices: Optional[List[int]] = None,
     strict_vlm: bool = True,
+    failed_pages: Optional[List[int]] = None,
 ) -> List[GradingAnnotation]:
     """
     为学生生成批注坐标
@@ -492,6 +493,7 @@ async def generate_annotations_for_student(
     )
     
     # 为每个页面生成批注
+    page_failures: List[int] = []
     for page_idx, page_image in page_image_map.items():
         try:
             page_annotations = await _generate_annotations_for_page(
@@ -507,12 +509,18 @@ async def generate_annotations_for_student(
             annotations.extend(page_annotations)
         except Exception as e:
             logger.error(f"[Annotation] page generation failed: page={page_idx}, err={e}")
-            if strict_vlm:
-                raise RuntimeError(
-                    f"VLM annotation generation failed on page {page_idx} for student {student_key}"
-                ) from e
+            page_failures.append(page_idx)
             continue
-    
+
+    if failed_pages is not None and page_failures:
+        failed_pages.extend(page_failures)
+
+    if strict_vlm and page_failures and not annotations:
+        failed_joined = ", ".join(str(p) for p in sorted(set(page_failures)))
+        raise RuntimeError(
+            f"VLM annotation generation failed on all candidate pages for student {student_key}: {failed_joined}"
+        )
+
     return annotations
 
 

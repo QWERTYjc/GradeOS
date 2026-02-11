@@ -148,6 +148,7 @@ class GenerateAnnotationsResponse(BaseModel):
     success: bool
     message: str
     generated_count: int
+    failed_pages: List[int] = Field(default_factory=list, description="VLM 未生成成功的页码（0-based）")
     annotations: List[AnnotationResponse]
 
 
@@ -401,6 +402,7 @@ async def generate_annotations(request: GenerateAnnotationsRequest):
         # 4. 调用 VLM 生成批注坐标
         from src.services.annotation_generator import generate_annotations_for_student
         
+        failed_pages: List[int] = []
         generated = await generate_annotations_for_student(
             grading_history_id=resolved_history_id,
             student_key=request.student_key,
@@ -409,20 +411,36 @@ async def generate_annotations(request: GenerateAnnotationsRequest):
             batch_id=history.batch_id if history else None,
             page_indices=request.page_indices,
             strict_vlm=request.strict_vlm,
+            failed_pages=failed_pages,
         )
         
-        # 5. 保存生成的批注
+        # 5. Save generated annotations
         saved_count = await save_annotations_batch(generated)
+        failed_pages = sorted(set(int(p) for p in failed_pages))
+        failed_pages_display = ", ".join(str(p + 1) for p in failed_pages)
         if saved_count == 0:
             raise HTTPException(
                 status_code=502,
-                detail="LLM 批注生成失败：未生成任何可用批注（请重试或检查 VLM/图片访问配置）。",
+                detail=(
+                    "LLM annotation generation failed: no usable annotations were produced"
+                    + (f" (failed pages: {failed_pages_display})" if failed_pages else "")
+                    + ". Please retry or verify VLM/image access configuration."
+                ),
+            )
+
+        message = f"Generated {saved_count} annotations successfully."
+        if failed_pages:
+            message += (
+                " The following pages produced no annotations "
+                f"(VLM-only mode, no estimated fallback): {failed_pages_display}. "
+                "Please review these pages manually."
             )
 
         return GenerateAnnotationsResponse(
             success=True,
-            message=f"成功生成 {saved_count} 个批注",
+            message=message,
             generated_count=saved_count,
+            failed_pages=failed_pages,
             annotations=[
                 AnnotationResponse(
                     id=ann.id,
