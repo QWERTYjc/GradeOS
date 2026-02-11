@@ -36,6 +36,81 @@ interface ResultsViewProps {
 
 const LOW_CONFIDENCE_THRESHOLD = 0.7;
 
+type ReviewReasonMeta = {
+    title: string;
+    hint?: string;
+};
+
+const REVIEW_REASON_META: Record<string, ReviewReasonMeta> = {
+    low_confidence: {
+        title: '低置信度',
+        hint: '模型对给分存在不确定性，建议优先复核证据引用与评分标准是否匹配。',
+    },
+    full_marks_low_confidence: {
+        title: '满分但置信度低',
+        hint: '通常是因为缺少得分点拆分/证据/标准引用，导致虽然给了满分但不可复核；需要补齐分步明细或人工校验。',
+    },
+    missing_scoring_points: {
+        title: '有总分但缺少得分点拆分',
+        hint: '对应 “Scores available but step breakdown missing”：有题目总分，但缺少每个得分点/步骤的 awarded 明细，前端无法显示“哪一步多少分”。',
+    },
+    missing_rubric_reference: {
+        title: '缺少评分标准引用',
+        hint: '给分时未明确引用评分标准条目（rubric_reference）；需要补齐标准引用以便复核与回溯。',
+    },
+    missing_evidence_awarded_positive: {
+        title: '给分但证据缺失',
+        hint: '存在 awarded > 0 的得分点，但 evidence 为空或是占位文本；需要核验原文证据，否则该点不应得分。',
+    },
+    missing_evidence: {
+        title: '证据缺失',
+        hint: '得分点 evidence 为空或是占位文本；建议补齐可核验的原文引用。',
+    },
+    missing_point_id: {
+        title: '得分点编号缺失',
+        hint: 'scoring_point_results 缺少 point_id，导致无法与评分标准对齐定位；需要补齐编号。',
+    },
+    point_sum_mismatch: {
+        title: '得分点之和与题目分不一致',
+        hint: 'scoring_point_results.awarded 之和与题目 score 不一致；需核对各得分点并重算总分。',
+    },
+    score_out_of_bounds: {
+        title: '分数越界',
+        hint: '题目得分出现 < 0 或 > 满分的情况；需要修正到合法范围。',
+    },
+    zero_marks_low_confidence: {
+        title: '0分但置信度低',
+        hint: '该题给了0分但模型并不确定；需要核对是否漏判有效步骤或证据位置。',
+    },
+    alternative_solution_used: {
+        title: '使用了另类解法',
+        hint: '学生解法与标准步骤不同但可能正确；需要按评分标准确认是否符合给分条件。',
+    },
+    logic_review_adjusted: {
+        title: '逻辑复核已修正',
+        hint: '该题结果经过逻辑复核修正；可重点查看被修正的得分点与原因。',
+    },
+};
+
+const getReviewReasonMeta = (reason: string): ReviewReasonMeta | null => {
+    const key = (reason || '').trim();
+    if (!key) return null;
+    const direct = REVIEW_REASON_META[key];
+    if (direct) return direct;
+
+    const lower = key.toLowerCase();
+    if (lower.includes('scores available') && lower.includes('step breakdown') && lower.includes('missing')) {
+        return REVIEW_REASON_META.missing_scoring_points;
+    }
+    if (lower.includes('step breakdown') && lower.includes('missing')) {
+        return REVIEW_REASON_META.missing_scoring_points;
+    }
+    if (lower.includes('full') && lower.includes('marks') && lower.includes('low') && lower.includes('confidence')) {
+        return REVIEW_REASON_META.full_marks_low_confidence;
+    }
+    return null;
+};
+
 type PageAnnotation = VisualAnnotation & {
     id?: string;
     page_index?: number;
@@ -328,9 +403,12 @@ const QuestionDetail: React.FC<{
         || (showScoringDetails && ((question.scoringPointResults?.length || 0) > 0 || (question.scoringPoints?.length || 0) > 0));
     const [detailsOpen, setDetailsOpen] = useState(defaultExpanded);
     const [analysisOpen, setAnalysisOpen] = useState(false);
-    const [rawAnswerOpen, setRawAnswerOpen] = useState(false);
-    const [scoringDetailsOpen, setScoringDetailsOpen] = useState(false);
     const hasPointBreakdown = (question.scoringPointResults?.length || 0) > 0;
+    const shouldCollapseStudentAnswer = Boolean(question.studentAnswer) && (
+        hasPointBreakdown || (question.studentAnswer?.length || 0) > 240
+    );
+    const [rawAnswerOpen, setRawAnswerOpen] = useState(!shouldCollapseStudentAnswer);
+    const [scoringDetailsOpen, setScoringDetailsOpen] = useState(false);
     const scoreLabel = isAssist ? 'Assist' : (question.maxScore > 0 ? `${question.score} / ${question.maxScore}` : 'N/A');
     const scoreClass = isAssist || question.maxScore <= 0
         ? 'text-slate-400'
@@ -437,24 +515,28 @@ const QuestionDetail: React.FC<{
 
             {detailsOpen && (
                 <>
-                    {question.studentAnswer && !hasPointBreakdown && (
+                    {/* Student OCR can be very noisy; collapse long answers (and collapse by default when step breakdown exists). */}
+                    {question.studentAnswer && !shouldCollapseStudentAnswer && (
                         <div className="rounded-md p-3 border border-slate-200 bg-white">
-                            <span className="text-[11px] font-semibold text-slate-500 mb-1 block">Student Answer</span>
+                            <span className="text-[11px] font-semibold text-slate-500 mb-1 block">
+                                {hasPointBreakdown ? 'Student Answer (OCR)' : 'Student Answer'}
+                            </span>
                             <div className="space-y-2">
                                 {renderParagraphs(question.studentAnswer)}
                             </div>
                         </div>
                     )}
 
-                    {/* When step/point breakdown exists, keep the raw OCR text collapsible to reduce noise. */}
-                    {question.studentAnswer && hasPointBreakdown && (
+                    {question.studentAnswer && shouldCollapseStudentAnswer && (
                         <div className="rounded-lg border border-slate-200 bg-white overflow-hidden">
                             <button
                                 type="button"
                                 onClick={() => setRawAnswerOpen((v) => !v)}
                                 className="w-full px-3 py-2 cursor-pointer hover:bg-slate-50 transition-colors flex items-center justify-between"
                             >
-                                <span className="text-[11px] font-semibold text-slate-600">Student Answer (OCR)</span>
+                                <span className="text-[11px] font-semibold text-slate-600">
+                                    {hasPointBreakdown ? 'Student Answer (OCR)' : 'Student Answer'}
+                                </span>
                                 <ChevronDown className={clsx("w-4 h-4 text-slate-400 transition-transform", rawAnswerOpen && "rotate-180")} />
                             </button>
                             {rawAnswerOpen && (
@@ -533,7 +615,9 @@ const QuestionDetail: React.FC<{
                             const isReviewAdjusted = spr.reviewAdjusted || spr.review_adjusted;
                             const desc = spr.scoringPoint?.description || spr.scoring_point?.description || spr.description || '';
                             const evidence = spr.evidence || '';
-                            const rubricRef = spr.rubricReference || spr.rubric_reference || spr.rubric_reference;
+                            const rubricRef = spr.rubricReference || spr.rubric_reference || '';
+                            const rubricRefSource = spr.rubricReferenceSource || spr.rubric_reference_source || '';
+                            const needsVerify = !String(rubricRef).trim() || String(rubricRefSource).toLowerCase().startsWith('system');
 
                             return (
                                 <Popover
@@ -543,8 +627,9 @@ const QuestionDetail: React.FC<{
                                             <div className="font-semibold text-slate-900">
                                                 [{pointId}] {desc || '评分点'}
                                             </div>
-                                            <div className={clsx("text-slate-600", !rubricRef && "text-amber-700")}>
-                                                <span className="font-semibold">评分标准:</span> {rubricRef || '未提供评分标准引用，需要人工校验'}
+                                            <div className={clsx("text-slate-600", needsVerify && "text-amber-700")}>
+                                                <span className="font-semibold">评分标准:</span> {rubricRef || '未提供评分标准引用'}
+                                                {needsVerify && <span className="ml-1 font-semibold">(需校验)</span>}
                                             </div>
                                             {evidence && (
                                                 <div className="text-slate-600">
@@ -572,7 +657,68 @@ const QuestionDetail: React.FC<{
                             );
                         };
 
-                        const renderStepCard = (step: any, index: number) => {
+                        const renderStepScoreBadge = (sid: string, related: any[], stepScore: number) => {
+                            const hasRelated = related.length > 0;
+                            const stepMax = related.reduce((sum, item) => sum + normalizeMax(item.spr), 0);
+
+                            const popoverContent = hasRelated ? (
+                                <div className="max-w-xs text-xs space-y-2">
+                                    <div className="font-semibold text-slate-900">
+                                        {sid} 得分: {stepScore}/{stepMax || 1}
+                                    </div>
+                                    <div className="space-y-1">
+                                        {related.map(({ spr, idx }: { spr: any; idx: number }) => {
+                                            const pointId = normalizePointId(spr, idx);
+                                            const awarded = normalizeAwarded(spr);
+                                            const maxPoints = normalizeMax(spr);
+                                            const desc = spr.scoringPoint?.description || spr.scoring_point?.description || spr.description || '';
+                                            const evidence = spr.evidence || '';
+                                            const rubricRef = spr.rubricReference || spr.rubric_reference || '';
+                                            const rubricRefSource = spr.rubricReferenceSource || spr.rubric_reference_source || '';
+                                            const needsVerify = !String(rubricRef).trim() || String(rubricRefSource).toLowerCase().startsWith('system');
+
+                                            return (
+                                                <div key={`${sid}-${pointId}-${idx}`} className="text-slate-700">
+                                                    <span className="font-mono font-semibold">[{pointId}]</span>{' '}
+                                                    <span className="font-mono">{awarded}/{maxPoints || 1}</span>{' '}
+                                                    <span className="text-slate-500">{desc || '评分点'}</span>
+                                                    <div className={clsx("mt-0.5 text-slate-600", needsVerify && "text-amber-700")}>
+                                                        <span className="font-semibold">标准:</span> {rubricRef || '未提供评分标准引用'}
+                                                        {needsVerify && <span className="ml-1 font-semibold">(需校验)</span>}
+                                                    </div>
+                                                    {evidence && (
+                                                        <div className="mt-0.5 text-slate-600">
+                                                            <span className="font-semibold">证据:</span> {evidence}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            ) : (
+                                <div className="max-w-xs text-xs text-slate-600">
+                                    未对齐到任何评分点（可能是无关步骤或模型未标注）。
+                                </div>
+                            );
+
+                            return (
+                                <Popover content={popoverContent} trigger="hover" placement="top">
+                                    <span
+                                        className={clsx(
+                                            "ml-2 inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-mono cursor-help transition",
+                                            hasRelated
+                                                ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                                                : "border-slate-200 bg-slate-50 text-slate-500"
+                                        )}
+                                    >
+                                        {hasRelated ? `+${stepScore}` : "+0"}
+                                    </span>
+                                </Popover>
+                            );
+                        };
+
+                        const renderStepLine = (step: any, index: number) => {
                             const sid = normalizeStepId(step, index);
                             const content = normalizeStepContent(step);
                             const related = byStepId.get(sid) || [];
@@ -587,34 +733,26 @@ const QuestionDetail: React.FC<{
                                         hasRelated ? "border-slate-200" : "border-slate-100"
                                     )}
                                 >
-                                    <div className="flex items-start justify-between gap-3">
-                                        <div className="flex-1 min-w-0">
-                                            <div className="flex items-center gap-2 flex-wrap">
-                                                <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-slate-900 text-white">
-                                                    {sid}
-                                                </span>
-                                                {hasRelated && (
-                                                    <span className="text-[10px] font-mono px-2 py-0.5 rounded border border-emerald-200 bg-emerald-50 text-emerald-700">
-                                                        +{stepScore}
-                                                    </span>
-                                                )}
-                                            </div>
-                                            {content && (
-                                                <div className="mt-2 text-xs text-slate-700 leading-relaxed space-y-2">
-                                                    {renderParagraphs(content)}
-                                                </div>
-                                            )}
-                                            {hasRelated ? (
-                                                <div className="mt-2 flex flex-wrap gap-1.5">
-                                                    {related.map(renderPointChip)}
-                                                </div>
-                                            ) : (
-                                                <div className="mt-2 text-[11px] text-slate-400 italic">
-                                                    未对齐到任何评分点（可能是无关步骤或模型未标注）。
-                                                </div>
-                                            )}
-                                        </div>
+                                    <div className="text-xs text-slate-700 leading-relaxed whitespace-pre-wrap">
+                                        <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-slate-900 text-white mr-2">
+                                            {sid}
+                                        </span>
+                                        {content ? (
+                                            <MathText text={formatStudentText(content)} />
+                                        ) : (
+                                            <span className="italic text-slate-400">（无步骤原文）</span>
+                                        )}
+                                        {renderStepScoreBadge(sid, related, stepScore)}
                                     </div>
+                                    {hasRelated ? (
+                                        <div className="mt-2 flex flex-wrap gap-1.5">
+                                            {related.map(renderPointChip)}
+                                        </div>
+                                    ) : (
+                                        <div className="mt-2 text-[11px] text-slate-400 italic">
+                                            未对齐到任何评分点（可能是无关步骤或模型未标注）。
+                                        </div>
+                                    )}
                                 </div>
                             );
                         };
@@ -623,10 +761,10 @@ const QuestionDetail: React.FC<{
                             <div className="mt-3 space-y-2">
                                 <div className="text-xs font-semibold text-slate-500 flex items-center gap-2">
                                     <ListOrdered className="w-3.5 h-3.5" />
-                                    步骤 × 评分点对照
+                                    结构化答案（逐步给分）
                                 </div>
                                 <div className="space-y-2">
-                                    {steps.map(renderStepCard)}
+                                    {steps.map(renderStepLine)}
                                     {unmapped.length > 0 && (
                                         <div className="rounded-lg border border-slate-200 bg-slate-50/30 p-3">
                                             <div className="text-[11px] font-semibold text-slate-600 mb-2">
@@ -826,12 +964,34 @@ const QuestionDetail: React.FC<{
                                     )}
                                     {reviewReasons.length > 0 && (
                                         <div className="space-y-1">
-                                            {reviewReasons.map((item, i) => (
-                                                <div key={`rr-${i}`} className="text-[11px] text-slate-700 bg-white/70 px-2 py-1.5 rounded border border-amber-100 flex items-start gap-1.5">
-                                                    <AlertTriangle className="w-3 h-3 mt-0.5 flex-shrink-0 opacity-70" />
-                                                    <span>复核原因：{item}</span>
-                                                </div>
-                                            ))}
+                                            {reviewReasons.map((item, i) => {
+                                                const meta = getReviewReasonMeta(item);
+                                                const title = meta?.title || item;
+                                                const hint = meta?.hint;
+                                                const inner = (
+                                                    <span className={clsx(hint && "cursor-help")}>
+                                                        复核原因：{title}
+                                                        {meta && (
+                                                            <span className="ml-1 font-mono text-slate-400">({item})</span>
+                                                        )}
+                                                    </span>
+                                                );
+
+                                                return (
+                                                    <div key={`rr-${i}`} className="text-[11px] text-slate-700 bg-white/70 px-2 py-1.5 rounded border border-amber-100 flex items-start gap-1.5">
+                                                        <AlertTriangle className="w-3 h-3 mt-0.5 flex-shrink-0 opacity-70" />
+                                                        {hint ? (
+                                                            <Popover
+                                                                content={<div className="max-w-xs text-xs text-slate-700 leading-relaxed">{hint}</div>}
+                                                                trigger="hover"
+                                                                placement="top"
+                                                            >
+                                                                {inner}
+                                                            </Popover>
+                                                        ) : inner}
+                                                    </div>
+                                                );
+                                            })}
                                         </div>
                                     )}
                                     {confessionItems.length > 0 && (
