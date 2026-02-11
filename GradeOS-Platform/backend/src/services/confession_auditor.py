@@ -61,6 +61,23 @@ _GRADING_ISSUE_TYPES = {
 }
 
 
+def _env_truthy(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _memory_hints_enabled() -> bool:
+    """默认关闭，可用环境变量显式开启。"""
+    if _env_truthy("DISABLE_GRADING_MEMORY"):
+        return False
+    if os.getenv("ENABLE_GRADING_MEMORY_HINTS") is not None:
+        return _env_truthy("ENABLE_GRADING_MEMORY_HINTS")
+    if os.getenv("ENABLE_GRADING_MEMORY") is not None:
+        return _env_truthy("ENABLE_GRADING_MEMORY")
+    if os.getenv("GRADING_MEMORY_ENABLED") is not None:
+        return _env_truthy("GRADING_MEMORY_ENABLED")
+    return False
+
+
 def _clamp01(value: Any, default: float = 0.0) -> float:
     try:
         v = float(value)
@@ -657,7 +674,7 @@ def _build_grading_context(
 
     # Optional: memory hints (historical patterns). Keep it short and non-prescriptive.
     try:
-        if batch_id:
+        if batch_id and _memory_hints_enabled():
             from src.services.grading_memory import get_memory_service
 
             memory_service = get_memory_service()

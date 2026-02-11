@@ -366,7 +366,13 @@ async def generate_annotations(request: GenerateAnnotationsRequest):
         # 2. 获取页面图片
         page_images = await get_page_images_for_student(resolved_history_id, request.student_key)
         if not page_images:
-            logger.warning("未找到学生答题图片，尝试使用 batch_images 兜底")
+            if history.batch_id:
+                logger.info(
+                    "未找到学生级答题图片，将自动使用 batch_images 兜底: batch_id=%s",
+                    history.batch_id,
+                )
+            else:
+                logger.warning("未找到学生答题图片，且缺少 batch_id，无法使用 batch_images 兜底")
         
         # 3. 如果不覆盖，先检查是否已有批注
         if not request.overwrite:
@@ -497,9 +503,9 @@ async def export_annotated_pdf(request: ExportPdfRequest):
                 fallback_list = await get_batch_images_as_bytes_list(history.batch_id, "answer")
                 if fallback_list:
                     fallback_images = {idx: img for idx, img in enumerate(fallback_list)}
-                    logger.warning("未找到学生答题图片，使用 batch_images 兜底导出 PDF")
+                    logger.info("未找到学生答题图片，已使用 batch_images 兜底导出 PDF")
             if not fallback_images:
-                raise HTTPException(status_code=404, detail="未找到学生答题图片")
+                raise HTTPException(status_code=404, detail="未找到学生答题图片（batch_images 兜底也不可用）")
         
 
         

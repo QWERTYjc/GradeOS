@@ -103,6 +103,32 @@ enhanced_api_service: Optional[EnhancedAPIService] = None
 tracing_service: Optional[TracingService] = None
 
 
+def _env_truthy(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in ("1", "true", "yes", "y", "on")
+
+
+def _is_grading_memory_enabled() -> bool:
+    """默认关闭；通过环境变量显式开启。"""
+    if _env_truthy("DISABLE_GRADING_MEMORY"):
+        return False
+    if os.getenv("ENABLE_GRADING_MEMORY") is not None:
+        return _env_truthy("ENABLE_GRADING_MEMORY")
+    if os.getenv("GRADING_MEMORY_ENABLED") is not None:
+        return _env_truthy("GRADING_MEMORY_ENABLED")
+    return False
+
+
+def _is_redis_task_queue_enabled() -> bool:
+    """默认关闭；通过环境变量显式开启。"""
+    if _env_truthy("DISABLE_REDIS_TASK_QUEUE"):
+        return False
+    if os.getenv("ENABLE_REDIS_TASK_QUEUE") is not None:
+        return _env_truthy("ENABLE_REDIS_TASK_QUEUE")
+    if os.getenv("REDIS_TASK_QUEUE_ENABLED") is not None:
+        return _env_truthy("REDIS_TASK_QUEUE_ENABLED")
+    return False
+
+
 def _now_iso_utc() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -201,17 +227,23 @@ async def _bootstrap_init(app: FastAPI) -> None:
                 _set_component("enhanced_api_service", "error", str(exc))
                 st.setdefault("errors", []).append(f"enhanced_api_service failed: {exc}")
 
-        try:
-            from src.services.grading_memory import init_memory_service_with_db
+        if _is_grading_memory_enabled():
+            try:
+                from src.services.grading_memory import init_memory_service_with_db
 
-            await asyncio.wait_for(
-                init_memory_service_with_db(pool_manager=pool_manager, redis_client=redis_client),
-                timeout=25,
-            )
-            _set_component("grading_memory", "ok")
-        except Exception as exc:
-            _set_component("grading_memory", "error", str(exc))
-            logger.warning("grading_memory init failed (will fall back): %s", exc)
+                await asyncio.wait_for(
+                    init_memory_service_with_db(
+                        pool_manager=pool_manager, redis_client=redis_client
+                    ),
+                    timeout=25,
+                )
+                _set_component("grading_memory", "ok")
+            except Exception as exc:
+                _set_component("grading_memory", "error", str(exc))
+                logger.warning("grading_memory init failed (will fall back): %s", exc)
+        else:
+            _set_component("grading_memory", "disabled", "ENABLE_GRADING_MEMORY=false")
+            logger.info("grading_memory disabled by configuration.")
 
         await _step("orchestrator", init_orchestrator(), timeout_s=40)
 
@@ -234,14 +266,18 @@ async def _bootstrap_init(app: FastAPI) -> None:
         except Exception as exc:
             _set_component("orchestrator_resume", "error", str(exc))
 
-        try:
-            from src.services.redis_task_queue import init_task_queue
+        if _is_redis_task_queue_enabled():
+            try:
+                from src.services.redis_task_queue import init_task_queue
 
-            await asyncio.wait_for(init_task_queue(), timeout=20)
-            _set_component("task_queue", "ok")
-        except Exception as exc:
-            _set_component("task_queue", "error", str(exc))
-            logger.warning("task_queue init failed (will fall back): %s", exc)
+                await asyncio.wait_for(init_task_queue(), timeout=20)
+                _set_component("task_queue", "ok")
+            except Exception as exc:
+                _set_component("task_queue", "error", str(exc))
+                logger.warning("task_queue init failed (will fall back): %s", exc)
+        else:
+            _set_component("task_queue", "disabled", "ENABLE_REDIS_TASK_QUEUE=false")
+            logger.info("redis_task_queue disabled by configuration.")
 
         st["status"] = "ready" if not st.get("errors") else "degraded"
         logger.info("Bootstrap: %s", st["status"])
@@ -309,12 +345,15 @@ def _register_api_routes(app: FastAPI) -> None:
     except Exception as exc:  # pragma: no cover
         _warn("assistant_grading include failed", exc)
 
-    try:
-        from src.api.routes import memory_api
+    if _is_grading_memory_enabled():
+        try:
+            from src.api.routes import memory_api
 
-        app.include_router(memory_api.router, prefix="/api", tags=["memory"])
-    except Exception as exc:  # pragma: no cover
-        _warn("memory_api include failed", exc)
+            app.include_router(memory_api.router, prefix="/api", tags=["memory"])
+        except Exception as exc:  # pragma: no cover
+            _warn("memory_api include failed", exc)
+    else:
+        logger.info("memory_api disabled by configuration.")
 
     try:
         from src.api.routes import class_integration
