@@ -251,6 +251,26 @@ def _build_question_lookups(
     return question_lookup, point_to_questions
 
 
+def _select_questions_for_page(
+    question_results: List[Dict[str, Any]],
+    *,
+    page_index: int,
+    question_page_index: int,
+) -> List[Dict[str, Any]]:
+    matched_questions: List[Dict[str, Any]] = []
+    unassigned_questions: List[Dict[str, Any]] = []
+
+    for q in question_results:
+        q_pages = q.get("page_indices") or q.get("pageIndices") or []
+        if q_pages:
+            if question_page_index in q_pages or page_index in q_pages:
+                matched_questions.append(q)
+        else:
+            unassigned_questions.append(q)
+
+    return matched_questions if matched_questions else unassigned_questions
+
+
 def _collect_hint_regions(question: Dict[str, Any], scoring_point_id: str = "") -> List[Dict[str, float]]:
     hints: List[Dict[str, float]] = []
 
@@ -399,6 +419,45 @@ def _normalize_vlm_annotations_batch(
         normalized.append(ann_data)
 
     return normalized
+
+
+def _resolve_annotation_page_index(
+    item: Dict[str, Any],
+    *,
+    page_order: List[int],
+    valid_pages: set[int],
+    question_to_pages: Dict[str, List[int]],
+) -> Optional[int]:
+    if not isinstance(item, dict):
+        return None
+
+    raw = (
+        item.get("page_index")
+        or item.get("pageIndex")
+        or item.get("page")
+        or item.get("page_idx")
+        or item.get("pageIdx")
+        or item.get("image_slot")
+        or item.get("imageSlot")
+        or item.get("image_index")
+        or item.get("imageIndex")
+    )
+    value = _coerce_int(raw)
+    if value is not None:
+        if value in valid_pages:
+            return value
+        if 0 <= value < len(page_order):
+            return page_order[value]
+        if 1 <= value <= len(page_order):
+            return page_order[value - 1]
+
+    qid = str(item.get("question_id") or item.get("questionId") or "").strip()
+    if qid:
+        pages = question_to_pages.get(qid) or []
+        if len(pages) == 1:
+            return pages[0]
+
+    return None
 
 
 async def _call_vlm_question_wise(
@@ -555,32 +614,174 @@ async def generate_annotations_for_student(
         f"[Annotation] page_index mapping for {student_key}: actual={sorted_page_indices} "
         f"-> relative=0..{len(sorted_page_indices) - 1}"
     )
-    
-    # 为每个页面生成批注
+
+    # Collect all candidate pages first, then call VLM once for this student.
+    candidate_pages: List[Dict[str, Any]] = []
     page_failures: List[int] = []
-    for page_idx, page_image in page_image_map.items():
-        try:
-            page_annotations = await _generate_annotations_for_page(
-                grading_history_id=grading_history_id,
-                student_key=student_key,
-                page_index=page_idx,
-                question_page_index=actual_to_relative.get(page_idx, page_idx),
-                page_image=page_image,
-                question_results=question_results,
-                fallback_images=fallback_images or None,
-                strict_vlm=strict_vlm,
-            )
-            annotations.extend(page_annotations)
-        except Exception as e:
-            logger.error(f"[Annotation] page generation failed: page={page_idx}, err={e}")
-            page_failures.append(page_idx)
+    for page_idx in sorted_page_indices:
+        page_image = page_image_map[page_idx]
+        question_page_index = actual_to_relative.get(page_idx, page_idx)
+        page_questions = _select_questions_for_page(
+            question_results,
+            page_index=page_idx,
+            question_page_index=question_page_index,
+        )
+        if not page_questions:
+            logger.info(f"页面 {page_idx} 没有关联的题目")
             continue
 
+        image_data = await _fetch_image_data(page_image, fallback_images=fallback_images or None)
+        if not image_data:
+            logger.warning(f"无法获取页面 {page_idx} 的图片数据")
+            if not strict_vlm and _env_truthy("ANNOTATION_ALLOW_ESTIMATED_FALLBACK"):
+                annotations.extend(
+                    _generate_estimated_annotations(
+                        grading_history_id,
+                        student_key,
+                        page_idx,
+                        page_questions,
+                        now,
+                    )
+                )
+            else:
+                page_failures.append(page_idx)
+            continue
+
+        question_lookup, point_to_questions = _build_question_lookups(page_questions)
+        candidate_pages.append(
+            {
+                "page_index": page_idx,
+                "question_page_index": question_page_index,
+                "image_data": image_data,
+                "questions": page_questions,
+                "question_lookup": question_lookup,
+                "point_to_questions": point_to_questions,
+            }
+        )
+
+    if not candidate_pages:
+        if failed_pages is not None and page_failures:
+            failed_pages.extend(page_failures)
+        if strict_vlm and page_failures and not annotations:
+            failed_joined = ", ".join(str(p) for p in sorted(set(page_failures)))
+            raise RuntimeError(
+                f"VLM annotation generation failed on all candidate pages for student {student_key}: {failed_joined}"
+            )
+        return annotations
+
+    valid_pages = {int(p["page_index"]) for p in candidate_pages}
+    page_order = [int(p["page_index"]) for p in candidate_pages]
+    page_info_map: Dict[int, Dict[str, Any]] = {
+        int(p["page_index"]): p for p in candidate_pages
+    }
+    question_to_pages: Dict[str, List[int]] = {}
+    for page in candidate_pages:
+        page_idx = int(page["page_index"])
+        for qid in page["question_lookup"].keys():
+            bucket = question_to_pages.setdefault(str(qid), [])
+            if page_idx not in bucket:
+                bucket.append(page_idx)
+
+    try:
+        vlm_annotations = await _call_vlm_for_student_annotations(candidate_pages)
+    except Exception as e:
+        logger.error(f"[Annotation] student-level VLM generation failed: student={student_key}, err={e}")
+        if not strict_vlm and _env_truthy("ANNOTATION_ALLOW_ESTIMATED_FALLBACK"):
+            for page in candidate_pages:
+                annotations.extend(
+                    _generate_estimated_annotations(
+                        grading_history_id,
+                        student_key,
+                        int(page["page_index"]),
+                        page["questions"],
+                        now,
+                    )
+                )
+            if failed_pages is not None and page_failures:
+                failed_pages.extend(page_failures)
+            return annotations
+        raise
+
+    normalized_by_page: Dict[int, List[Dict[str, Any]]] = {int(p["page_index"]): [] for p in candidate_pages}
+    seen: set[str] = set()
+
+    for item in vlm_annotations:
+        page_idx = _resolve_annotation_page_index(
+            item,
+            page_order=page_order,
+            valid_pages=valid_pages,
+            question_to_pages=question_to_pages,
+        )
+        if page_idx is None:
+            continue
+
+        ann_data = _normalize_vlm_annotation(item)
+        if not ann_data:
+            continue
+
+        page_info = page_info_map.get(page_idx)
+        if not page_info:
+            continue
+        ann_data = _refine_annotation_with_hints(
+            ann_data,
+            page_info["question_lookup"],
+            page_info["point_to_questions"],
+        )
+        if not ann_data:
+            continue
+
+        fingerprint = json.dumps(
+            {"page_index": page_idx, **ann_data},
+            sort_keys=True,
+            ensure_ascii=True,
+        )
+        if fingerprint in seen:
+            continue
+        seen.add(fingerprint)
+        normalized_by_page[page_idx].append(ann_data)
+
+    for page in candidate_pages:
+        page_idx = int(page["page_index"])
+        page_annotations = normalized_by_page.get(page_idx) or []
+        if not page_annotations:
+            page_failures.append(page_idx)
+            if not strict_vlm and _env_truthy("ANNOTATION_ALLOW_ESTIMATED_FALLBACK"):
+                annotations.extend(
+                    _generate_estimated_annotations(
+                        grading_history_id,
+                        student_key,
+                        page_idx,
+                        page["questions"],
+                        now,
+                    )
+                )
+            continue
+
+        for ann_data in page_annotations:
+            annotations.append(
+                GradingAnnotation(
+                    id=str(uuid.uuid4()),
+                    grading_history_id=grading_history_id,
+                    student_key=student_key,
+                    page_index=page_idx,
+                    annotation_type=ann_data["type"],
+                    bounding_box=ann_data["bounding_box"],
+                    text=ann_data["text"],
+                    color=ann_data["color"],
+                    question_id=ann_data["question_id"],
+                    scoring_point_id=ann_data["scoring_point_id"],
+                    created_by="ai_vlm",
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+
+    page_failures = sorted(set(page_failures))
     if failed_pages is not None and page_failures:
         failed_pages.extend(page_failures)
 
     if strict_vlm and page_failures and not annotations:
-        failed_joined = ", ".join(str(p) for p in sorted(set(page_failures)))
+        failed_joined = ", ".join(str(p) for p in page_failures)
         raise RuntimeError(
             f"VLM annotation generation failed on all candidate pages for student {student_key}: {failed_joined}"
         )
@@ -778,11 +979,53 @@ async def _call_vlm_for_annotations(
         raise
 
 
-def _build_annotation_prompt(questions: List[Dict[str, Any]], page_index: int) -> str:
-    """构建批注生成 prompt"""
-    
-    # 构建题目信息
-    questions_info = []
+async def _call_vlm_for_student_annotations(
+    page_payloads: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Call VLM once for all pages of one student."""
+    from src.services.llm_reasoning import LLMReasoningClient
+
+    if not page_payloads:
+        return []
+
+    prompt = _build_student_annotation_prompt(page_payloads)
+    image_b64_list = [
+        base64.b64encode(page["image_data"]).decode("utf-8")
+        for page in page_payloads
+        if page.get("image_data")
+    ]
+
+    if not image_b64_list:
+        raise RuntimeError("missing all page image bytes for student-level annotation call")
+
+    client = LLMReasoningClient()
+    try:
+        result = await client.generate_annotations_multi(
+            image_base64_list=image_b64_list,
+            prompt=prompt,
+        )
+        if isinstance(result, dict):
+            err = result.get("error")
+            anns = result.get("annotations") or []
+        elif isinstance(result, list):
+            err = None
+            anns = result
+        else:
+            err = None
+            anns = []
+
+        if err:
+            raise RuntimeError(f"VLM returned error: {err}")
+        if not anns:
+            raise RuntimeError("VLM returned empty annotations")
+        return anns
+    except Exception as e:
+        logger.error(f"[Annotation] student-level VLM call failed: {e}")
+        raise
+
+
+def _build_questions_prompt_payload(questions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    questions_info: List[Dict[str, Any]] = []
     for q in questions:
         qid = q.get("question_id") or q.get("questionId") or "unknown"
         score = q.get("score", 0)
@@ -810,7 +1053,7 @@ def _build_annotation_prompt(questions: List[Dict[str, Any]], page_index: int) -
                         "is_correct": step.get("is_correct") if "is_correct" in step else step.get("isCorrect"),
                     }
                 )
-        
+
         scoring_points = q.get("scoring_point_results") or q.get("scoringPointResults") or []
         points_info = []
         for sp in scoring_points:
@@ -829,29 +1072,85 @@ def _build_annotation_prompt(questions: List[Dict[str, Any]], page_index: int) -
             error_region = sp.get("error_region") or sp.get("errorRegion")
             step_id_hint = sp.get("step_id") or sp.get("stepId")
             step_excerpt_hint = sp.get("step_excerpt") or sp.get("stepExcerpt")
-            points_info.append({
-                "point_id": point_id,
-                "mark_type": mark_type,
-                "awarded": awarded,
-                "max_points": max_pts,
-                "description": description[:180] if description else "",
-                "evidence": evidence[:200] if evidence else "",
-                "evidence_region_hint": evidence_region if isinstance(evidence_region, dict) else None,
-                "error_region_hint": error_region if isinstance(error_region, dict) else None,
-                "step_id_hint": str(step_id_hint) if step_id_hint else None,
-                "step_excerpt_hint": str(step_excerpt_hint)[:160] if step_excerpt_hint else None,
-            })
-        
-        questions_info.append({
-            "question_id": qid,
-            "score": score,
-            "max_score": max_score,
-            "feedback": feedback[:200] if feedback else "",
-            "student_answer_preview": student_answer[:100] if student_answer else "",
-            "answer_region_hint": answer_region if isinstance(answer_region, dict) else None,
-            "steps_hint": steps_info,
-            "scoring_points": points_info,
-        })
+            points_info.append(
+                {
+                    "point_id": point_id,
+                    "mark_type": mark_type,
+                    "awarded": awarded,
+                    "max_points": max_pts,
+                    "description": description[:180] if description else "",
+                    "evidence": evidence[:200] if evidence else "",
+                    "evidence_region_hint": evidence_region if isinstance(evidence_region, dict) else None,
+                    "error_region_hint": error_region if isinstance(error_region, dict) else None,
+                    "step_id_hint": str(step_id_hint) if step_id_hint else None,
+                    "step_excerpt_hint": str(step_excerpt_hint)[:160] if step_excerpt_hint else None,
+                }
+            )
+
+        questions_info.append(
+            {
+                "question_id": qid,
+                "score": score,
+                "max_score": max_score,
+                "feedback": feedback[:200] if feedback else "",
+                "student_answer_preview": student_answer[:100] if student_answer else "",
+                "answer_region_hint": answer_region if isinstance(answer_region, dict) else None,
+                "steps_hint": steps_info,
+                "scoring_points": points_info,
+            }
+        )
+    return questions_info
+
+
+def _build_student_annotation_prompt(page_payloads: List[Dict[str, Any]]) -> str:
+    pages_info: List[Dict[str, Any]] = []
+    for slot, page in enumerate(page_payloads):
+        pages_info.append(
+            {
+                "image_slot": slot,
+                "page_index": int(page["page_index"]),
+                "question_page_index": int(page["question_page_index"]),
+                "questions": _build_questions_prompt_payload(page.get("questions") or []),
+            }
+        )
+
+    return f"""# Task: Generate all annotations for one student in one pass
+
+You are given multiple answer page images of the same student. The image order is exactly the `image_slot` order in the payload below.
+
+## Pages payload
+{json.dumps(pages_info, ensure_ascii=False, indent=2)}
+
+## Rules
+1. Output JSON only. No markdown or explanation.
+2. Return annotations for all pages in one JSON payload.
+3. Every annotation must include `page_index` (actual page number from payload).
+4. `bounding_box` must be normalized in [0,1] and satisfy:
+   0 <= x_min < x_max <= 1 and 0 <= y_min < y_max <= 1.
+5. Do not guess. If unsure, omit that annotation.
+
+## Output format
+```json
+{{
+  "annotations": [
+    {{
+      "page_index": 26,
+      "type": "score",
+      "question_id": "1",
+      "scoring_point_id": "1.1",
+      "bounding_box": {{"x_min": 0.8, "y_min": 0.1, "x_max": 0.95, "y_max": 0.15}},
+      "text": "3/5",
+      "color": "#FF8800"
+    }}
+  ]
+}}
+```
+"""
+
+
+def _build_annotation_prompt(questions: List[Dict[str, Any]], page_index: int) -> str:
+    """构建批注生成 prompt"""
+    questions_info = _build_questions_prompt_payload(questions)
     
     prompt = f"""# 任务：为批改结果定位批注坐标
 

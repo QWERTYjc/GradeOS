@@ -116,30 +116,26 @@ def test_generate_annotations_student_strict_keeps_success_and_reports_failed_pa
         }
     )
 
-    async def _fake_generate_page(**kwargs):
-        page_index = kwargs["page_index"]
-        if page_index == 0:
-            raise RuntimeError("simulated VLM empty")
-        now = datetime.now().isoformat()
+    async def _fake_fetch_image_data(_page_image, fallback_images=None):
+        return b"fake-image"
+
+    calls: list[int] = []
+
+    async def _fake_call_vlm_for_student_annotations(page_payloads):
+        calls.append(len(page_payloads))
         return [
-            GradingAnnotation(
-                id=str(uuid.uuid4()),
-                grading_history_id=kwargs["grading_history_id"],
-                student_key=kwargs["student_key"],
-                page_index=page_index,
-                annotation_type="score",
-                bounding_box={"x_min": 0.1, "y_min": 0.1, "x_max": 0.2, "y_max": 0.2},
-                text="1/1",
-                color="#00AA00",
-                question_id="2",
-                scoring_point_id="2.1",
-                created_by="ai_vlm",
-                created_at=now,
-                updated_at=now,
-            )
+            {
+                "page_index": 1,
+                "type": "score",
+                "question_id": "2",
+                "bounding_box": {"x_min": 0.72, "y_min": 0.1, "x_max": 0.9, "y_max": 0.17},
+                "text": "1/1",
+                "color": "#00AA00",
+            }
         ]
 
-    monkeypatch.setattr(ag, "_generate_annotations_for_page", _fake_generate_page)
+    monkeypatch.setattr(ag, "_fetch_image_data", _fake_fetch_image_data)
+    monkeypatch.setattr(ag, "_call_vlm_for_student_annotations", _fake_call_vlm_for_student_annotations)
 
     failed_pages: list[int] = []
 
@@ -155,7 +151,9 @@ def test_generate_annotations_student_strict_keeps_success_and_reports_failed_pa
 
     annotations = asyncio.run(_run())
     assert len(annotations) == 1
+    assert annotations[0].page_index == 1
     assert failed_pages == [0]
+    assert calls == [2]
 
 
 def test_generate_annotations_page_falls_back_to_question_wise_vlm(monkeypatch):

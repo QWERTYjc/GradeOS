@@ -3634,3 +3634,79 @@ Student assist: explain mistakes and how to improve, step-by-step if needed.
         
         # 如果所有重试都失败（理论上不会到这里，因为最后一次会 raise）
         return {"annotations": [], "error": "所有重试均失败"}
+
+    async def generate_annotations_multi(
+        self,
+        image_base64_list: List[str],
+        prompt: str,
+    ) -> Dict[str, Any]:
+        """
+        Use a single VLM call with multiple page images.
+
+        Args:
+            image_base64_list: Base64 encoded images in order.
+            prompt: Annotation prompt with page manifest.
+        Returns:
+            Dict containing `annotations` list (and optional `error`).
+        """
+        if not image_base64_list:
+            return {"annotations": [], "error": "no images provided"}
+
+        max_retries = 3
+        retry_delay = 2.0
+
+        for attempt in range(max_retries):
+            try:
+                content: List[Dict[str, Any]] = [{"type": "text", "text": prompt}]
+                for image_base64 in image_base64_list:
+                    content.append(
+                        {
+                            "type": "image_url",
+                            "image_url": f"data:image/jpeg;base64,{image_base64}",
+                        }
+                    )
+
+                system_message = SystemMessage(content=ANNOTATION_SYSTEM_PROMPT)
+                message = HumanMessage(content=content)
+
+                response = await self.llm.ainvoke([system_message, message])
+                response_content = response.content if hasattr(response, "content") else response
+                response_text = self._extract_text_from_response(response_content).strip()
+                output_text, _thinking_text = split_thinking_content(response_text)
+                text_for_json = (output_text or response_text).strip()
+
+                json_text = self._extract_json_from_text(text_for_json).strip()
+                try:
+                    result = self._load_json_with_repair(json_text)
+                except json.JSONDecodeError:
+                    json_block = self._extract_json_block(json_text) or self._extract_json_block(text_for_json)
+                    if not json_block:
+                        raise
+                    result = self._load_json_with_repair(json_block)
+
+                if not isinstance(result, dict):
+                    result = {"annotations": result if isinstance(result, list) else []}
+                if "annotations" not in result:
+                    result["annotations"] = result.get("items") if isinstance(result.get("items"), list) else []
+                if not isinstance(result.get("annotations"), list):
+                    result["annotations"] = []
+
+                return result
+
+            except (httpx.RemoteProtocolError, httpx.ConnectError, httpx.ReadTimeout) as e:
+                logger.warning(
+                    f"[generate_annotations_multi] network error (attempt {attempt + 1}/{max_retries}): {e}"
+                )
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(retry_delay * (attempt + 1))
+                    continue
+                logger.error(f"[generate_annotations_multi] failed after {max_retries} retries")
+                raise
+            except json.JSONDecodeError as e:
+                logger.error(f"[generate_annotations_multi] JSON parse failed: {e}")
+                return {"annotations": [], "error": f"JSON parse failed: {e}"}
+            except Exception as e:
+                logger.error(f"[generate_annotations_multi] failed: {e}", exc_info=True)
+                return {"annotations": [], "error": str(e)}
+
+        return {"annotations": [], "error": "all retries failed"}
