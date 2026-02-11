@@ -116,6 +116,15 @@ type PageAnnotation = VisualAnnotation & {
     page_index?: number;
 };
 
+type AnnotationEditorPayload = {
+    annotation_type: string;
+    bounding_box: { x_min: number; y_min: number; x_max: number; y_max: number };
+    text: string;
+    color: string;
+    question_id: string;
+    scoring_point_id: string;
+};
+
 type ReviewQuestionDraft = {
     questionId: string;
     score: number;
@@ -1258,7 +1267,6 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
     const apiBase = getApiUrl().replace(/\/+$/, '');
     // 批注渲染状态 - 默认开启
     const [showAnnotations, setShowAnnotations] = useState(true);
-    const [annotationLoading, setAnnotationLoading] = useState<Set<number>>(new Set());
     const [annotationGenerating, setAnnotationGenerating] = useState(false);
     const [annotationFetchLoading, setAnnotationFetchLoading] = useState(false);
     const [annotationEditMode, setAnnotationEditMode] = useState(false);
@@ -1268,9 +1276,15 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
     });
     // 🔥 新增：存储每页的批注数据，用于 Canvas 直接渲染
     const [pageAnnotationsData, setPageAnnotationsData] = useState<Map<number, PageAnnotation[]>>(new Map());
-    // 使用 ref 跟踪已处理的页面，避免 useEffect 无限循环
-    const renderedPagesRef = React.useRef<Set<string>>(new Set());
-    const apiAnnotationsLoadedRef = React.useRef<Set<string>>(new Set());
+
+    const updatePageAnnotations = useCallback((pageIdx: number, updater: (current: PageAnnotation[]) => PageAnnotation[]) => {
+        setPageAnnotationsData((prev) => {
+            const next = new Map(prev);
+            const current = next.get(pageIdx) ?? [];
+            next.set(pageIdx, updater(current));
+            return next;
+        });
+    }, []);
     const [exportPdfLoading, setExportPdfLoading] = useState(false);
     const [exportStatus, setExportStatus] = useState<{ type: 'idle' | 'loading' | 'success' | 'error'; message: string | null }>({
         type: 'idle',
@@ -1690,10 +1704,6 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
             });
 
             setPageAnnotationsData(next);
-            renderedPagesRef.current.clear();
-            next.forEach((_, pageIdx) => {
-                renderedPagesRef.current.add(`${studentKey}-${pageIdx}`);
-            });
             return annotations.length;
         } catch (error) {
             if (!options?.silent) {
@@ -1717,7 +1727,6 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
         if (overwrite) {
             // Avoid showing stale boxes while the backend deletes + regenerates.
             setPageAnnotationsData(new Map());
-            renderedPagesRef.current.clear();
         }
         setAnnotationGenerating(true);
         setAnnotationStatus({ type: 'loading', message: 'AI 批注生成中...' });
@@ -1747,7 +1756,6 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                 throw new Error(resPayload?.detail || resPayload?.message || `HTTP ${res.status}: ${res.statusText}`);
             }
             setShowAnnotations(true);
-            apiAnnotationsLoadedRef.current.delete(`${annotationGradingHistoryId}-${studentKey}`);
             const count = await fetchAnnotationsForStudent(annotationGradingHistoryId, studentKey, { silent: true });
             setAnnotationStatus({
                 type: 'success',
@@ -1766,39 +1774,33 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
 
     const handleExportAnnotatedPdf = useCallback(async () => {
         if (!annotationGradingHistoryId || !detailViewStudent?.studentName) {
-            console.error('[PDF导出] 缺少必要参数:', { submissionId, studentName: detailViewStudent?.studentName });
+            console.error('[PDF Export] Missing params:', { annotationGradingHistoryId, studentName: detailViewStudent?.studentName });
             setExportStatus({ type: 'error', message: '缺少批改历史ID或学生姓名' });
             return;
         }
         setExportPdfLoading(true);
         setExportStatus({ type: 'loading', message: '正在导出批注版 PDF...' });
-        
+
         const url = `${apiBase}/annotations/export/pdf`;
         const payload = {
             grading_history_id: annotationGradingHistoryId,
             student_key: detailViewStudent.studentName,
             include_summary: true,
         };
-        
-        console.log('[PDF导出] 开始请求:', { url, payload });
-        
+
         try {
             const res = await fetch(url, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload),
             });
-            
-            console.log('[PDF导出] 响应状态:', res.status, res.statusText);
-            
+
             if (!res.ok) {
                 const errPayload = await res.json().catch(() => null);
-                console.error('[PDF导出] 错误响应:', errPayload);
                 throw new Error(errPayload?.detail || errPayload?.message || `HTTP ${res.status}: ${res.statusText}`);
             }
+
             const blob = await res.blob();
-            console.log('[PDF导出] 文件大小:', blob.size, 'bytes');
-            
             const objUrl = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = objUrl;
@@ -1810,90 +1812,27 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
             const headerFilename = filenameStar?.[1]
                 ? decodeURIComponent(filenameStar[1])
                 : filenamePlain?.[1];
+            a.download = headerFilename || `annotated_${detailViewStudent.studentName}.pdf`;
 
-            const safeStudent = String(detailViewStudent.studentName || 'student')
-                .replace(/[\/:*?"<>|]+/g, '_')
-                .slice(0, 80);
-            a.download = headerFilename || `annotated_${safeStudent}.pdf`;
-
-            // Some browsers require the element to be in DOM; also avoid revoking too early.
             document.body.appendChild(a);
             a.click();
             a.remove();
-            setTimeout(() => URL.revokeObjectURL(objUrl), 1000);
-            setExportStatus({ type: 'success', message: '批注版 PDF 已导出' });
+            URL.revokeObjectURL(objUrl);
+            setExportStatus({ type: 'success', message: '已导出批注 PDF' });
         } catch (error) {
-            console.error('[PDF导出] 失败:', error);
-            setExportStatus({
-                type: 'error',
-                message: error instanceof Error ? error.message : '导出 PDF 失败',
-            });
+            console.error('[PDF Export] Failed:', error);
+            setExportStatus({ type: 'error', message: error instanceof Error ? error.message : '导出失败' });
         } finally {
             setExportPdfLoading(false);
         }
-    }, [submissionId, detailViewStudent, apiBase]);
-
-    const updatePageAnnotations = useCallback((pageIdx: number, updater: (current: PageAnnotation[]) => PageAnnotation[]) => {
-        setPageAnnotationsData(prev => {
-            const next = new Map(prev);
-            const current = next.get(pageIdx) ?? [];
-            next.set(pageIdx, updater(current));
-            return next;
-        });
-    }, []);
-
-    const handleAnnotationAdd = useCallback(async (pageIdx: number, annotation: Omit<PageAnnotation, 'id' | 'page_index'>) => {
-        if (!annotationGradingHistoryId || !detailViewStudent?.studentName) return;
-        setAnnotationStatus({ type: 'loading', message: '保存批注中...' });
-        try {
-            const res = await fetch(`${apiBase}/annotations`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    grading_history_id: annotationGradingHistoryId,
-                    student_key: detailViewStudent.studentName,
-                    page_index: pageIdx,
-                    annotation: {
-                        annotation_type: annotation.annotation_type,
-                        bounding_box: annotation.bounding_box,
-                        text: annotation.text || '',
-                        color: annotation.color || '#0066FF',
-                        question_id: annotation.question_id || '',
-                        scoring_point_id: annotation.scoring_point_id || '',
-                    },
-                }),
-            });
-            const payload = await res.json().catch(() => null);
-            if (!res.ok) {
-                throw new Error(payload?.detail || payload?.message || '保存批注失败');
-            }
-            updatePageAnnotations(pageIdx, (current) => ([
-                ...current,
-                {
-                    id: payload?.id,
-                    annotation_type: payload?.annotation_type || annotation.annotation_type,
-                    bounding_box: payload?.bounding_box || annotation.bounding_box,
-                    text: payload?.text || annotation.text,
-                    color: payload?.color || annotation.color,
-                    question_id: payload?.question_id || annotation.question_id,
-                    scoring_point_id: payload?.scoring_point_id || annotation.scoring_point_id,
-                    page_index: pageIdx,
-                } as PageAnnotation,
-            ]));
-            setAnnotationStatus({ type: 'success', message: '批注已保存' });
-        } catch (error) {
-            setAnnotationStatus({
-                type: 'error',
-                message: error instanceof Error ? error.message : '保存批注失败',
-            });
-        }
-    }, [submissionId, detailViewStudent, apiBase, updatePageAnnotations]);
+    }, [annotationGradingHistoryId, detailViewStudent, apiBase]);
 
     const handleAnnotationDelete = useCallback(async (pageIdx: number, annotationId: string) => {
         if (!annotationId) return;
-        setAnnotationStatus({ type: 'loading', message: '删除批注中...' });
         try {
-            const res = await fetch(`${apiBase}/annotations/${annotationId}`, { method: 'DELETE' });
+            const res = await fetch(`${apiBase}/annotations/${annotationId}`, {
+                method: 'DELETE',
+            });
             if (!res.ok) {
                 const payload = await res.json().catch(() => null);
                 throw new Error(payload?.detail || payload?.message || '删除批注失败');
@@ -1908,7 +1847,57 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
         }
     }, [apiBase, updatePageAnnotations]);
 
-    const handleAnnotationUpdate = useCallback(async (pageIdx: number, annotationId: string, updates: Partial<PageAnnotation>) => {
+    const handleAnnotationAdd = useCallback(async (pageIdx: number, annotation: AnnotationEditorPayload) => {
+        if (!annotationGradingHistoryId || !detailViewStudent?.studentName) {
+            setAnnotationStatus({ type: 'error', message: '缺少批改历史ID或学生姓名' });
+            return;
+        }
+        try {
+            const res = await fetch(`${apiBase}/annotations`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    grading_history_id: annotationGradingHistoryId,
+                    student_key: detailViewStudent.studentName,
+                    page_index: pageIdx,
+                    annotation,
+                }),
+            });
+            if (!res.ok) {
+                const payload = await res.json().catch(() => null);
+                throw new Error(payload?.detail || payload?.message || '添加批注失败');
+            }
+            const created = await res.json().catch(() => null);
+            if (!created) {
+                throw new Error('添加批注失败：服务端未返回批注数据');
+            }
+            updatePageAnnotations(pageIdx, (current) => [
+                ...current,
+                {
+                    id: created.id,
+                    annotation_type: created.annotation_type,
+                    bounding_box: created.bounding_box,
+                    text: created.text || '',
+                    color: created.color,
+                    question_id: created.question_id,
+                    scoring_point_id: created.scoring_point_id,
+                    page_index: pageIdx,
+                } as PageAnnotation,
+            ]);
+            setAnnotationStatus({ type: 'success', message: '批注已添加' });
+        } catch (error) {
+            setAnnotationStatus({
+                type: 'error',
+                message: error instanceof Error ? error.message : '添加批注失败',
+            });
+        }
+    }, [annotationGradingHistoryId, detailViewStudent, apiBase, updatePageAnnotations]);
+
+    const handleAnnotationUpdate = useCallback(async (
+        pageIdx: number,
+        annotationId: string,
+        updates: Partial<PageAnnotation>
+    ) => {
         if (!annotationId) return;
         try {
             const res = await fetch(`${apiBase}/annotations/${annotationId}`, {
@@ -1926,9 +1915,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                 throw new Error(payload?.detail || payload?.message || '更新批注失败');
             }
             updatePageAnnotations(pageIdx, (current) => current.map((ann) => (
-                ann.id === annotationId
-                    ? { ...ann, ...updates }
-                    : ann
+                ann.id === annotationId ? { ...ann, ...updates } : ann
             )));
         } catch (error) {
             setAnnotationStatus({
@@ -1938,248 +1925,44 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
         }
     }, [apiBase, updatePageAnnotations]);
 
-    // 批注渲染函数 - 前端 Canvas 渲染批注
-    const renderAnnotationsForPage = useCallback(async (pageIdx: number, imageUrl: string, studentKey: string, studentData: StudentResult | null) => {
-        // 使用 studentKey + pageIdx 作为唯一标识，避免重复渲染
-        const renderKey = `${studentKey}-${pageIdx}`;
+    // 当切换学生或关闭批注时，清理已渲染的图片缓存
 
-        // 如果已经处理过，跳过
-        if (renderedPagesRef.current.has(renderKey)) return;
-
-        // 标记为已处理（立即标记，防止并发调用）
-        renderedPagesRef.current.add(renderKey);
-
-        // 标记为加载中
-        setAnnotationLoading(prev => new Set(prev).add(pageIdx));
-
-        try {
-            // 从传入的学生数据中提取该页的批注（避免闭包问题）
-            const student = studentData;
-            if (!student) return;
-
-            // 收集该页的所有批注
-            const pageAnnotations: VisualAnnotation[] = [];
-            student.questionResults?.forEach(q => {
-                const questionPages = Array.isArray(q.pageIndices) ? q.pageIndices : [];
-                const questionHasPage = questionPages.includes(pageIdx);
-                const isMultiPage = questionPages.length > 1;
-                const hasSinglePageFallback = student.startPage !== undefined
-                    && student.endPage !== undefined
-                    && student.startPage === student.endPage
-                    && student.startPage === pageIdx;
-
-                const matchesQuestionPage = (pageValue?: number | null) => {
-                    if (pageValue !== null && pageValue !== undefined && !Number.isNaN(Number(pageValue))) {
-                        return Number(pageValue) === pageIdx;
-                    }
-                    if (isMultiPage) {
-                        return false;
-                    }
-                    return questionHasPage || hasSinglePageFallback;
-                };
-
-                if (q.steps && q.steps.length > 0) {
-                    q.steps.forEach(step => {
-                        const stepRegion = step.step_region;
-                        const stepPage = stepRegion?.page_index ?? stepRegion?.pageIndex ?? step.page_index ?? step.pageIndex;
-                        if (!matchesQuestionPage(stepPage)) return;
-                        if (stepRegion) {
-                            const markText = step.mark_type === 'M'
-                                ? `M${step.mark_value}`
-                                : `A${step.mark_value}`;
-                            const annotationType = step.mark_type === 'M' ? 'm_mark' : 'a_mark';
-
-                            pageAnnotations.push({
-                                annotation_type: annotationType,
-                                bounding_box: stepRegion,
-                                text: markText,
-                                color: step.is_correct ? '#00AA00' : '#FF0000',
-                            } as VisualAnnotation);
-
-                            if (!step.is_correct && step.feedback) {
-                                pageAnnotations.push({
-                                    annotation_type: 'comment',
-                                    bounding_box: {
-                                        x_min: Math.min((stepRegion.x_max || 0.8) + 0.02, 0.95),
-                                        y_min: stepRegion.y_min,
-                                        x_max: Math.min((stepRegion.x_max || 0.8) + 0.25, 1.0),
-                                        y_max: stepRegion.y_max,
-                                    },
-                                    text: step.feedback,
-                                    color: '#0066FF',
-                                } as VisualAnnotation);
-                            }
-                        }
-                    });
-                }
-
-                q.scoringPointResults?.forEach((spr: any) => {
-                    const errorRegion = spr.errorRegion || spr.error_region;
-                    const errorPage = errorRegion?.page_index ?? errorRegion?.pageIndex ?? spr.page_index ?? spr.pageIndex;
-                    if (!matchesQuestionPage(errorPage)) return;
-                    if (errorRegion) {
-                        pageAnnotations.push({
-                            annotation_type: 'error_circle',
-                            bounding_box: errorRegion,
-                            text: spr.evidence || '',
-                            color: '#FF0000',
-                        } as VisualAnnotation);
-                    }
-                });
-
-                if (q.answerRegion && matchesQuestionPage(q.answerRegion.page_index ?? q.answerRegion.pageIndex ?? q.page_index ?? q.pageIndex)) {
-                    pageAnnotations.push({
-                        annotation_type: 'score',
-                        bounding_box: {
-                            x_min: Math.min(q.answerRegion.x_max + 0.02, 0.95),
-                            y_min: q.answerRegion.y_min,
-                            x_max: Math.min(q.answerRegion.x_max + 0.12, 1.0),
-                            y_max: q.answerRegion.y_min + 0.05,
-                        },
-                        text: `${q.score}/${q.maxScore}`,
-                        color: q.score >= q.maxScore * 0.8 ? '#00AA00' : q.score >= q.maxScore * 0.5 ? '#FF8800' : '#FF0000',
-                    } as VisualAnnotation);
-                }
-            });
-
-            if (pageAnnotations.length > 0) {
-                setPageAnnotationsData(prev => {
-                    const next = new Map(prev);
-                    next.set(pageIdx, pageAnnotations);
-                    return next;
-                });
-                setAnnotationLoading(prev => {
-                    const next = new Set(prev);
-                    next.delete(pageIdx);
-                    return next;
-                });
-                return;
-            }
-
-            const isAssistMode = (student.gradingMode || '').startsWith('assist') || student.maxScore <= 0;
-            if (isAssistMode && pageAnnotations.length === 0) {
-                console.log('Assist mode: using demo annotations');
-                const demoAnnotations: VisualAnnotation[] = [
-                    {
-                        annotation_type: 'step_check',
-                        bounding_box: { x_min: 0.15, y_min: 0.25, x_max: 0.18, y_max: 0.28 },
-                        text: 'M1',
-                        color: '#00AA00',
-                    },
-                    {
-                        annotation_type: 'step_check',
-                        bounding_box: { x_min: 0.15, y_min: 0.35, x_max: 0.18, y_max: 0.38 },
-                        text: 'M2',
-                        color: '#00AA00',
-                    },
-                    {
-                        annotation_type: 'step_cross',
-                        bounding_box: { x_min: 0.15, y_min: 0.45, x_max: 0.18, y_max: 0.48 },
-                        text: 'A1',
-                        color: '#FF0000',
-                    },
-                    {
-                        annotation_type: 'score',
-                        bounding_box: { x_min: 0.85, y_min: 0.15, x_max: 0.95, y_max: 0.20 },
-                        text: '3/4',
-                        color: '#FF6600',
-                    },
-                    {
-                        annotation_type: 'comment',
-                        bounding_box: { x_min: 0.70, y_min: 0.55, x_max: 0.95, y_max: 0.63 },
-                        text: '示例批注',
-                        color: '#0066CC',
-                    },
-                ];
-
-                setPageAnnotationsData(prev => {
-                    const next = new Map(prev);
-                    next.set(pageIdx, demoAnnotations);
-                    return next;
-                });
-            }
-        } catch (error) {
-            console.error('渲染批注失败:', error);
-        } finally {
-            setAnnotationLoading(prev => {
-                const next = new Set(prev);
-                next.delete(pageIdx);
-                return next;
-            });
-        }
-    }, [parsedRubric]);
-
-    // 当开启批注显示时，渲染当前学生的所有页面
+    // When annotations are enabled, only load backend-generated annotations (VLM/LLM).
     useEffect(() => {
         if (!showAnnotations || !detailViewStudent) return;
+        if (!annotationGradingHistoryId) return;
 
-        // 获取学生唯一标识
         const studentKey = detailViewStudent.studentName || `student-${detailViewIndex}`;
-        const loadKey = annotationGradingHistoryId ? `${annotationGradingHistoryId}-${studentKey}` : '';
-        // 保存当前学生数据的引用，避免闭包问题
-        const currentStudent = detailViewStudent;
         let cancelled = false;
 
         const loadAnnotations = async () => {
-            let usedApiAnnotations = false;
-            if (annotationGradingHistoryId && loadKey && !apiAnnotationsLoadedRef.current.has(loadKey)) {
-                const count = await fetchAnnotationsForStudent(annotationGradingHistoryId, studentKey, { silent: true });
-                if (count > 0) {
-                    apiAnnotationsLoadedRef.current.add(loadKey);
-                    usedApiAnnotations = true;
-                }
-            } else if (pageAnnotationsData.size > 0 && loadKey) {
-                usedApiAnnotations = true;
+            const count = await fetchAnnotationsForStudent(annotationGradingHistoryId, studentKey, { silent: true });
+            if (cancelled) return;
+            if (count === 0) {
+                // No local estimated fallback: keep UI honest about precision.
+                setAnnotationStatus((prev) => {
+                    if (prev.type === 'success' || prev.type === 'error') return prev;
+                    return { type: 'idle', message: '暂无 AI 批注：点击生成批注，由 VLM 自动定位。' };
+                });
             }
-
-            if (usedApiAnnotations || cancelled) return;
-            if (annotationEditMode) return;
-
-            const pages = new Set<number>();
-            if (detailViewStudent.startPage !== undefined) {
-                const start = detailViewStudent.startPage;
-                const end = detailViewStudent.endPage ?? start;
-                for (let i = start; i <= end; i += 1) pages.add(i);
-            }
-            detailViewStudent.questionResults?.forEach(q => {
-                (q.pageIndices || []).forEach(p => pages.add(p));
-            });
-
-            // 如果没有找到任何页面信息，默认使用第一页（索引 0）
-            if (pages.size === 0) {
-                pages.add(0);
-            }
-
-            const uniquePages = Array.from(pages).filter(p => Number.isFinite(p));
-
-            uniquePages.forEach(pageIdx => {
-                const imageUrl = uploadedImages[pageIdx] || currentSession?.images[pageIdx]?.url;
-                if (imageUrl) {
-                    renderAnnotationsForPage(pageIdx, imageUrl, studentKey, currentStudent);
-                }
-            });
         };
 
         void loadAnnotations();
         return () => {
             cancelled = true;
         };
-    }, [showAnnotations, detailViewStudent, detailViewIndex, uploadedImages, currentSession, renderAnnotationsForPage, submissionId, fetchAnnotationsForStudent, pageAnnotationsData.size, annotationEditMode]);
+    }, [showAnnotations, detailViewStudent, detailViewIndex, annotationGradingHistoryId, fetchAnnotationsForStudent]);
 
-    // 当切换学生或关闭批注时，清理已渲染的图片缓存
     useEffect(() => {
         if (!showAnnotations) {
             // 关闭批注时清理
             setPageAnnotationsData(new Map());
-            renderedPagesRef.current.clear();
-            apiAnnotationsLoadedRef.current.clear();
         }
     }, [showAnnotations]);
 
     // 切换学生时清理该学生的渲染缓存
     useEffect(() => {
         setPageAnnotationsData(new Map());
-        renderedPagesRef.current.clear();
     }, [detailViewIndex]);
 
     useEffect(() => {
@@ -3420,7 +3203,6 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                         {uniquePages.map((pageIdx, pageIdxIndex) => {
                             const originalImageUrl = uploadedImages[pageIdx] || currentSession?.images[pageIdx]?.url;
                             const pageAnnotations = pageAnnotationsData.get(pageIdx) || [];
-                            const isLoading = annotationLoading.has(pageIdx);
                             const hasCanvasAnnotations = showAnnotations && pageAnnotations.length > 0;
                             const canEditAnnotations = showAnnotations && annotationEditMode && !!originalImageUrl;
                             const isLastPage = pageIdxIndex === uniquePages.length - 1;
@@ -3430,13 +3212,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
                                         <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-[0.2em]">
                                             Page {pageIdx + 1}
                                         </div>
-                                        {showAnnotations && isLoading && (
-                                            <div className="flex items-center gap-1 text-xs text-blue-500">
-                                                <Loader2 className="w-3 h-3 animate-spin" />
-                                                加载批注中...
-                                            </div>
-                                        )}
-                                        {showAnnotations && hasCanvasAnnotations && !isLoading && (
+                                        {showAnnotations && hasCanvasAnnotations && (
                                             <div className="flex items-center gap-1 text-xs text-emerald-500">
                                                 <Pencil className="w-3 h-3" />
                                                 {annotationEditMode ? '可编辑批注' : '已标注 (Canvas)'}
