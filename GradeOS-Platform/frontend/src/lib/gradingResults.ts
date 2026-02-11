@@ -172,7 +172,7 @@ export const normalizeStudentResults = (raw: RawObject[]): StudentResult[] => {
           feedback: (q.feedback ?? '') as string,
           studentAnswer: (q.studentAnswer ?? q.student_answer ?? '') as string,
           questionType: (q.questionType ?? q.question_type ?? '') as string,
-          confidence: (audit?.confidence ?? q.confidence) as number | undefined,
+          confidence: (q.confidence ?? q.confidence_score ?? audit?.confidence) as number | undefined,
           confidenceReason: (q.confidence_reason || q.confidenceReason) as string | undefined,
           selfCritique: (q.self_critique || q.selfCritique) as string | undefined,
           selfCritiqueConfidence: (q.self_critique_confidence || q.selfCritiqueConfidence) as number | undefined,

@@ -2329,9 +2329,50 @@ def _is_choice_question(question_text: str, standard_answer: str) -> bool:
     return False
 
 
+def _normalize_question_type(raw_type: Any) -> str:
+    raw = str(raw_type or "").strip().lower()
+    if not raw:
+        return ""
+
+    choice_aliases = {"choice", "single_choice", "multiple_choice", "mcq"}
+    if raw in choice_aliases:
+        return "choice"
+
+    subjective_aliases = {
+        "subjective",
+        "essay",
+        "open",
+        "open_ended",
+        "free_response",
+        "proof",
+        "analysis",
+    }
+    if raw in subjective_aliases:
+        return "subjective"
+
+    objective_aliases = {
+        "objective",
+        "true_false",
+        "judge",
+        "fill_blank",
+        "stepwise",
+        "calculation",
+    }
+    if raw in objective_aliases:
+        return "objective"
+
+    if any(token in raw for token in ("choice", "mcq")):
+        return "choice"
+    if any(token in raw for token in ("subjective", "essay", "open", "proof", "analysis")):
+        return "subjective"
+    if any(token in raw for token in ("objective", "stepwise", "fill", "judge", "true_false", "calc")):
+        return "objective"
+    return raw
+
+
 def _infer_question_type(question: Dict[str, Any]) -> str:
     raw_type = question.get("question_type") or question.get("questionType") or ""
-    raw_type = str(raw_type).strip().lower()
+    raw_type = _normalize_question_type(raw_type)
     if raw_type:
         return raw_type
 
@@ -2486,7 +2527,9 @@ def _normalize_parsed_rubric_input(
         max_score = q.get("max_score", q.get("maxScore"))
         question_text = q.get("question_text") or q.get("questionText") or ""
         standard_answer = q.get("standard_answer") or q.get("standardAnswer") or ""
-        question_type = q.get("question_type") or q.get("questionType") or ""
+        question_type = _normalize_question_type(
+            q.get("question_type") or q.get("questionType") or ""
+        )
         grading_notes = q.get("grading_notes") or q.get("gradingNotes") or ""
         source_pages = q.get("source_pages") or q.get("sourcePages") or []
         if not isinstance(source_pages, list):
@@ -2764,11 +2807,11 @@ def _finalize_scoring_result(
 
         raw_steps = raw_question.get("steps") or []
         steps: List[Dict[str, Any]] = raw_steps if isinstance(raw_steps, list) else []
-        question_type = rubric.get("question_type") or (
-            _infer_question_type(rubric) if rubric else ""
+        question_type = _normalize_question_type(
+            rubric.get("question_type") or (_infer_question_type(rubric) if rubric else "")
         )
         if not question_type:
-            question_type = (
+            question_type = _normalize_question_type(
                 raw_question.get("question_type") or raw_question.get("questionType") or ""
             )
         is_choice = bool(rubric.get("is_choice") or question_type == "choice")
@@ -3028,9 +3071,11 @@ def _finalize_scoring_result(
         if not isinstance(typo_notes, list):
             typo_notes = []
 
-        total_points = (
-            max(1, len(expected_points)) if expected_points else max(1, len(scoring_point_results))
-        )
+        missing_rubric_ref = any(not spr.get("rubric_reference") for spr in scoring_point_results)
+        missing_point_id = any(not spr.get("point_id") for spr in scoring_point_results)
+        point_sum_consistent = abs(sum_awarded - score) <= 0.1
+
+        total_points = max(1, len(expected_points)) if expected_points else max(1, len(scoring_point_results))
         coverage = min(1.0, len(scoring_point_results) / total_points)
         evidence_ok = min(1.0, (total_points - missing_evidence) / total_points)
         consistency = 1.0 if not score_adjusted else 0.6
@@ -3045,8 +3090,6 @@ def _finalize_scoring_result(
             or raw_question.get("alternativeSolutionRef")
         )
         confidence_multiplier = 1.0
-        if question_type in ("subjective", "essay", "stepwise"):
-            confidence_multiplier *= 0.85
         if used_alt or rubric.get("alternative_solutions"):
             confidence_multiplier *= 0.9
         confidence = max(0.0, min(1.0, confidence * confidence_multiplier))
@@ -3059,6 +3102,14 @@ def _finalize_scoring_result(
             if rubric_ref_coverage < 1.0:
                 confidence = max(0.0, min(1.0, confidence * (0.6 + 0.4 * rubric_ref_coverage)))
 
+        rubric_complete = bool(scoring_point_results) and not score_adjusted and point_sum_consistent
+        if expected_points:
+            rubric_complete = rubric_complete and missing_points == 0
+        rubric_complete = rubric_complete and not missing_rubric_ref and not missing_point_id
+        if rubric_complete:
+            confidence_floor = 0.78 if used_alt else 0.86
+            confidence = max(confidence, confidence_floor)
+
         issues = []
         if missing_points:
             issues.append(f"Scoring coverage incomplete (missing {missing_points} points)")
@@ -3067,8 +3118,6 @@ def _finalize_scoring_result(
         if score_adjusted:
             issues.append("Point sum mismatched; adjusted total")
 
-        missing_rubric_ref = any(not spr.get("rubric_reference") for spr in scoring_point_results)
-        missing_point_id = any(not spr.get("point_id") for spr in scoring_point_results)
         if missing_rubric_ref:
             issues.append("Missing rubric reference for some points")
         if missing_point_id:
@@ -3083,7 +3132,9 @@ def _finalize_scoring_result(
             confidence_reason = f"{confidence_reason}, type={question_type}"
         if used_alt or rubric.get("alternative_solutions"):
             confidence_reason = f"{confidence_reason}, alt_solution=1"
-        confidence_reason = f"{confidence_reason}, rubric_refs={rubric_ref_coverage:.2f}"
+        confidence_reason = (
+            f"{confidence_reason}, rubric_refs={rubric_ref_coverage:.2f}, rubric_complete={1 if rubric_complete else 0}"
+        )
 
         feedback = raw_question.get("feedback", "")
         if is_choice:
@@ -3194,7 +3245,7 @@ def _finalize_assist_result(
         confidence = raw_question.get("confidence", 0.4)
         if not isinstance(confidence, (int, float)):
             confidence = 0.4
-        question_type = (
+        question_type = _normalize_question_type(
             raw_question.get("question_type") or raw_question.get("questionType") or "unknown"
         )
 

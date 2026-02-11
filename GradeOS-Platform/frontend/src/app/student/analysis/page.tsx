@@ -802,13 +802,6 @@ export default function StudentWrongBookPage() {
                     </div>
                   )}
 
-                  {activeQuestion.studentAnswer && (
-                    <div className="rounded-xl border border-slate-200 px-4 py-3 text-sm text-slate-600">
-                      <div className="text-xs uppercase tracking-[0.2em] text-slate-400">Student Answer</div>
-                      <p className="mt-2 whitespace-pre-wrap">{activeQuestion.studentAnswer}</p>
-                    </div>
-                  )}
-                  
                   {/* 评分点明细 */}
                   {activeQuestion.scoringPointResults && activeQuestion.scoringPointResults.length > 0 && (
                     <div className="rounded-xl border border-slate-200 px-4 py-3">

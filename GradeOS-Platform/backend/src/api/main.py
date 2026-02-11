@@ -108,25 +108,17 @@ def _env_truthy(name: str) -> bool:
 
 
 def _is_grading_memory_enabled() -> bool:
-    """默认关闭；通过环境变量显式开启。"""
+    """默认关闭；仅 `ENABLE_GRADING_MEMORY=true` 时开启。"""
     if _env_truthy("DISABLE_GRADING_MEMORY"):
         return False
-    if os.getenv("ENABLE_GRADING_MEMORY") is not None:
-        return _env_truthy("ENABLE_GRADING_MEMORY")
-    if os.getenv("GRADING_MEMORY_ENABLED") is not None:
-        return _env_truthy("GRADING_MEMORY_ENABLED")
-    return False
+    return _env_truthy("ENABLE_GRADING_MEMORY")
 
 
 def _is_redis_task_queue_enabled() -> bool:
-    """默认关闭；通过环境变量显式开启。"""
+    """默认关闭；仅 `ENABLE_REDIS_TASK_QUEUE=true` 时开启。"""
     if _env_truthy("DISABLE_REDIS_TASK_QUEUE"):
         return False
-    if os.getenv("ENABLE_REDIS_TASK_QUEUE") is not None:
-        return _env_truthy("ENABLE_REDIS_TASK_QUEUE")
-    if os.getenv("REDIS_TASK_QUEUE_ENABLED") is not None:
-        return _env_truthy("REDIS_TASK_QUEUE_ENABLED")
-    return False
+    return _env_truthy("ENABLE_REDIS_TASK_QUEUE")
 
 
 def _now_iso_utc() -> str:
