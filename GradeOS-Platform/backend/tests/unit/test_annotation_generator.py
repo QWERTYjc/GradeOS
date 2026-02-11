@@ -156,3 +156,60 @@ def test_generate_annotations_student_strict_keeps_success_and_reports_failed_pa
     annotations = asyncio.run(_run())
     assert len(annotations) == 1
     assert failed_pages == [0]
+
+
+def test_generate_annotations_page_falls_back_to_question_wise_vlm(monkeypatch):
+    page_image = GradingPageImage(
+        id=str(uuid.uuid4()),
+        grading_history_id="history-1",
+        student_key="student-1",
+        page_index=0,
+        file_id="",
+        file_url="https://example.com/p0.jpg",
+        content_type="image/jpeg",
+        created_at=datetime.now().isoformat(),
+    )
+
+    async def _fake_fetch_image_data(_page_image, fallback_images=None):
+        return b"fake-image"
+
+    calls: list[int] = []
+
+    async def _fake_call_vlm_for_annotations(*, image_data, page_index, questions):
+        calls.append(len(questions))
+        if len(questions) > 1:
+            raise RuntimeError("VLM returned empty annotations")
+        qid = str(questions[0].get("question_id") or "")
+        return [
+            {
+                "type": "score",
+                "question_id": qid,
+                "bounding_box": {"x_min": 0.72, "y_min": 0.1, "x_max": 0.9, "y_max": 0.17},
+                "text": "1/1",
+                "color": "#00AA00",
+            }
+        ]
+
+    monkeypatch.setattr(ag, "_fetch_image_data", _fake_fetch_image_data)
+    monkeypatch.setattr(ag, "_call_vlm_for_annotations", _fake_call_vlm_for_annotations)
+
+    question_results = [
+        {"question_id": "1", "page_indices": [0], "score": 1, "max_score": 1},
+        {"question_id": "2", "page_indices": [0], "score": 1, "max_score": 1},
+    ]
+
+    async def _run():
+        return await _generate_annotations_for_page(
+            grading_history_id="history-1",
+            student_key="student-1",
+            page_index=0,
+            question_page_index=0,
+            page_image=page_image,
+            question_results=question_results,
+            strict_vlm=True,
+        )
+
+    annotations = asyncio.run(_run())
+    assert len(annotations) == 2
+    assert calls[0] == 2
+    assert calls.count(1) == 2

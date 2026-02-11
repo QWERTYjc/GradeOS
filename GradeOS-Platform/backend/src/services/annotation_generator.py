@@ -376,6 +376,70 @@ def _normalize_vlm_annotation(item: Any) -> Optional[Dict[str, Any]]:
     }
 
 
+def _normalize_vlm_annotations_batch(
+    raw_annotations: List[Dict[str, Any]],
+    question_lookup: Dict[str, Dict[str, Any]],
+    point_to_questions: Dict[str, List[str]],
+    seen: Optional[set[str]] = None,
+) -> List[Dict[str, Any]]:
+    normalized: List[Dict[str, Any]] = []
+    dedup = seen if seen is not None else set()
+
+    for item in raw_annotations:
+        ann_data = _normalize_vlm_annotation(item)
+        if not ann_data:
+            continue
+        ann_data = _refine_annotation_with_hints(ann_data, question_lookup, point_to_questions)
+        if not ann_data:
+            continue
+        fingerprint = json.dumps(ann_data, sort_keys=True, ensure_ascii=True)
+        if fingerprint in dedup:
+            continue
+        dedup.add(fingerprint)
+        normalized.append(ann_data)
+
+    return normalized
+
+
+async def _call_vlm_question_wise(
+    image_data: bytes,
+    page_index: int,
+    page_questions: List[Dict[str, Any]],
+    question_lookup: Dict[str, Dict[str, Any]],
+    point_to_questions: Dict[str, List[str]],
+    seen: Optional[set[str]] = None,
+) -> List[Dict[str, Any]]:
+    recovered: List[Dict[str, Any]] = []
+    dedup = seen if seen is not None else set()
+
+    for question in page_questions:
+        qid = str(question.get("question_id") or question.get("questionId") or "")
+        try:
+            raw = await _call_vlm_for_annotations(
+                image_data=image_data,
+                page_index=page_index,
+                questions=[question],
+            )
+        except Exception as e:
+            logger.warning(
+                f"[Annotation] question-wise VLM failed: page={page_index}, question={qid or 'unknown'}, err={e}"
+            )
+            continue
+
+        if not raw:
+            continue
+        recovered.extend(
+            _normalize_vlm_annotations_batch(
+                raw,
+                question_lookup=question_lookup,
+                point_to_questions=point_to_questions,
+                seen=dedup,
+            )
+        )
+
+    return recovered
+
+
 async def generate_annotations_for_student(
     grading_history_id: str,
     student_key: str,
@@ -571,29 +635,50 @@ async def _generate_annotations_for_page(
     
     # 调用 VLM 获取精确坐标
     try:
-        vlm_annotations = await _call_vlm_for_annotations(
-            image_data=image_data,
-            page_index=page_index,
-            questions=page_questions,
-        )
         question_lookup, point_to_questions = _build_question_lookups(page_questions)
-
-        normalized: List[Dict[str, Any]] = []
         seen: set[str] = set()
-        for item in vlm_annotations:
-            ann_data = _normalize_vlm_annotation(item)
-            if not ann_data:
-                continue
-            ann_data = _refine_annotation_with_hints(ann_data, question_lookup, point_to_questions)
-            if not ann_data:
-                continue
-            fingerprint = json.dumps(ann_data, sort_keys=True, ensure_ascii=True)
-            if fingerprint in seen:
-                continue
-            seen.add(fingerprint)
-            normalized.append(ann_data)
+        normalized: List[Dict[str, Any]] = []
+
+        primary_error: Optional[Exception] = None
+        try:
+            vlm_annotations = await _call_vlm_for_annotations(
+                image_data=image_data,
+                page_index=page_index,
+                questions=page_questions,
+            )
+        except Exception as e:
+            primary_error = e
+            vlm_annotations = []
+
+        if vlm_annotations:
+            normalized.extend(
+                _normalize_vlm_annotations_batch(
+                    vlm_annotations,
+                    question_lookup=question_lookup,
+                    point_to_questions=point_to_questions,
+                    seen=seen,
+                )
+            )
 
         if not normalized:
+            logger.warning(
+                f"[Annotation] page-level VLM produced no usable annotations; trying question-wise fallback: "
+                f"page={page_index}, questions={len(page_questions)}"
+            )
+            normalized.extend(
+                await _call_vlm_question_wise(
+                    image_data=image_data,
+                    page_index=page_index,
+                    page_questions=page_questions,
+                    question_lookup=question_lookup,
+                    point_to_questions=point_to_questions,
+                    seen=seen,
+                )
+            )
+
+        if not normalized:
+            if primary_error is not None:
+                raise primary_error
             raise RuntimeError("VLM returned no usable annotations")
 
         for ann_data in normalized:
