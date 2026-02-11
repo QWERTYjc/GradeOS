@@ -493,6 +493,34 @@ class StudentAssistantV2Orchestrator:
         conversation_id = state["conversation_id"]
         student_id = state["student_id"]
         class_id = state.get("class_id")
+        raw_attachments = state.get("attachments") if isinstance(state.get("attachments"), list) else []
+        retained_attachments: List[Dict[str, Any]] = []
+        attachment_chars = 0
+        for item in raw_attachments:
+            if not isinstance(item, dict):
+                continue
+            attachment_type = str(item.get("type") or "").lower()
+            if attachment_type not in {"image", "pdf_page", "image_base64", "image_url"}:
+                continue
+            data = item.get("data")
+            if not isinstance(data, str) or not data.strip():
+                continue
+            if attachment_chars + len(data) > 2_000_000:
+                break
+            attachment_chars += len(data)
+            retained_attachments.append(
+                {
+                    "type": attachment_type,
+                    "source": item.get("source"),
+                    "page_index": item.get("page_index"),
+                    "name": item.get("name"),
+                    "size": item.get("size"),
+                    "mime_type": item.get("mime_type"),
+                    "data": data,
+                }
+            )
+            if len(retained_attachments) >= 8:
+                break
 
         upsert_assistant_conversation(
             conversation_id,
@@ -511,6 +539,7 @@ class StudentAssistantV2Orchestrator:
             metadata={
                 "session_mode": state.get("session_mode") or "learning",
                 "safety_level": state.get("safety_level") or "L0",
+                "attachments": retained_attachments,
             },
         )
         append_assistant_turn(

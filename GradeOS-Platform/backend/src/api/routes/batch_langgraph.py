@@ -409,8 +409,9 @@ async def broadcast_progress(batch_id: str, message: dict):
             elif status in ("running", "paused"):
                 run_updates["status"] = "running"
             elif status == "completed":
-                run_updates["status"] = "completed"
-                run_updates["completed_at"] = run_updates["updated_at"]
+                # Node-level completion must not complete the whole run.
+                # The run is completed only by a terminal `workflow_completed` event.
+                run_updates["status"] = "running"
             elif status == "failed":
                 run_updates["status"] = "failed"
                 run_updates["completed_at"] = run_updates["updated_at"]

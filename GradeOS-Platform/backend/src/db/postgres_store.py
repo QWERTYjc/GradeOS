@@ -1744,6 +1744,29 @@ def get_latest_assistant_conversation(student_id: str, class_id: Optional[str]) 
     return dict(row) if row else None
 
 
+def list_assistant_conversations(
+    student_id: str,
+    class_id: Optional[str],
+    *,
+    limit: int = 20,
+) -> List[Dict[str, Any]]:
+    normalized_class = _normalize_class_id(class_id)
+    now_iso = datetime.now().isoformat()
+    expire_assistant_conversations(now_iso=now_iso)
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT conversation_id, student_id, class_id, status, summary, last_message_at, expires_at, created_at, updated_at
+            FROM assistant_conversations
+            WHERE student_id = ? AND class_id = ? AND status = 'active' AND expires_at >= ?
+            ORDER BY updated_at DESC
+            LIMIT ?
+            """,
+            (student_id, normalized_class, now_iso, max(1, limit)),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
 def append_assistant_turn(
     conversation_id: str,
     student_id: str,

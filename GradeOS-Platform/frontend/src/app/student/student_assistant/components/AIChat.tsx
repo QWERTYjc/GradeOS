@@ -4,7 +4,12 @@ import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation';
 import { I18N } from '../constants';
 import { ConceptNode, EnhancedChatMessage, Language } from '../types';
-import { assistantApi, AssistantAttachment, AssistantProgressResponse } from '@/services/api';
+import {
+  assistantApi,
+  AssistantAttachment,
+  AssistantConversationItem,
+  AssistantProgressResponse,
+} from '@/services/api';
 import { useAuthStore } from '@/store/authStore';
 import FocusMode from './FocusMode';
 import MasteryIndicator from './MasteryIndicator';
@@ -46,6 +51,8 @@ type PendingAttachment = {
   source?: string;
 };
 
+type ConversationAttachmentMap = Record<string, PendingAttachment[]>;
+
 type WrongQuestionContext = {
   questionId: string;
   score: number;
@@ -75,8 +82,27 @@ const WRONG_QUESTION_CONTEXT_KEY = 'gradeos.wrong-question-context';
 const WRONG_QUESTION_PROCESSED_KEY = 'gradeos.wrong-question-processed';
 const WRONG_QUESTION_STATE_KEY = 'gradeos.wrong-question-state'; // 用于 Fast Refresh 恢复
 const MAX_PERSISTED_MESSAGES = 12;
+const MAX_RETAINED_ATTACHMENTS = 10;
 
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const buildStorageKey = (userId?: string, classId?: string) =>
+  userId ? `${STORAGE_KEY}:${userId}:${classId || 'global'}` : STORAGE_KEY;
+
+const mergeAttachmentList = (
+  previous: PendingAttachment[],
+  incoming: PendingAttachment[],
+  maxItems: number = MAX_RETAINED_ATTACHMENTS,
+): PendingAttachment[] => {
+  const merged = [...previous, ...incoming];
+  const map = new Map<string, PendingAttachment>();
+  merged.forEach((item) => {
+    const key = `${item.type}:${item.pageIndex ?? -1}:${item.data.slice(0, 160)}`;
+    map.set(key, item);
+  });
+  const deduped = Array.from(map.values());
+  return deduped.slice(Math.max(0, deduped.length - maxItems));
+};
 
 let pdfjsLib: typeof import('pdfjs-dist') | null = null;
 let pdfjsInitialized = false;
@@ -141,6 +167,11 @@ const AIChat: React.FC<Props> = ({ lang }) => {
   const [selectedConceptId, setSelectedConceptId] = useState<string | null>(null);
   const [selectedConceptLabel, setSelectedConceptLabel] = useState<string | null>(null);
   const [conversationId, setConversationId] = useState<string | null>(null);
+  const [conversationList, setConversationList] = useState<AssistantConversationItem[]>([]);
+  const [conversationListLoading, setConversationListLoading] = useState(false);
+  const [conversationTurnsLoading, setConversationTurnsLoading] = useState(false);
+  const [syncConversationTurns, setSyncConversationTurns] = useState(false);
+  const [forceNewConversation, setForceNewConversation] = useState(false);
   const [hydrated, setHydrated] = useState(false);
   const [wrongQuestionProcessed, setWrongQuestionProcessed] = useState(false);
   const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
@@ -149,6 +180,10 @@ const AIChat: React.FC<Props> = ({ lang }) => {
   const router = useRouter();
   const timelineRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const storageKey = useMemo(
+    () => buildStorageKey(user?.id, activeClassId),
+    [user?.id, activeClassId],
+  );
   
   // 用于存储 handleSendWithContext 函数引用，以便在 effect 中使用
   const handleSendWithContextRef = useRef<((msg: string, ctx?: WrongQuestionContext | null) => void) | null>(null);
@@ -166,8 +201,24 @@ const AIChat: React.FC<Props> = ({ lang }) => {
   }, []);
 
   useEffect(() => {
+    wrongQuestionProcessedRef.current = false;
+    setWrongQuestionProcessed(false);
+    setRetainedAttachmentsByConversation({});
+    setConversationList([]);
+    setForceNewConversation(false);
+    setSyncConversationTurns(false);
+  }, [user?.id, activeClassId]);
+
+  useEffect(() => {
     if (typeof window === 'undefined') return;
-    const raw = window.localStorage.getItem(STORAGE_KEY);
+    if (!user?.id) {
+      setMessages([]);
+      setConversationId(null);
+      setHydrated(true);
+      return;
+    }
+
+    const raw = window.localStorage.getItem(storageKey);
     if (raw) {
       try {
         const parsed = JSON.parse(raw) as PersistedState;
@@ -177,18 +228,26 @@ const AIChat: React.FC<Props> = ({ lang }) => {
             timestamp: new Date(msg.timestamp),
           }));
           setMessages(restored);
+        } else {
+          setMessages([]);
         }
         if (parsed.activePage) setActivePage(parsed.activePage);
         if (typeof parsed.highlightEnabled === 'boolean') setHighlightEnabled(parsed.highlightEnabled);
         if (parsed.selectedConceptId) setSelectedConceptId(parsed.selectedConceptId);
         if (parsed.selectedConceptLabel) setSelectedConceptLabel(parsed.selectedConceptLabel);
-        if (parsed.conversationId) setConversationId(parsed.conversationId);
+        if (parsed.conversationId) {
+          setConversationId(parsed.conversationId);
+          setSyncConversationTurns(true);
+        }
       } catch (error) {
         console.warn('Assistant UI cache restore failed:', error);
       }
+    } else {
+      setMessages([]);
+      setConversationId(null);
     }
     setHydrated(true);
-  }, []);
+  }, [storageKey, user?.id]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -207,6 +266,7 @@ const AIChat: React.FC<Props> = ({ lang }) => {
   const [activeWrongQuestionContext, setActiveWrongQuestionContext] = useState<WrongQuestionContext | null>(null);
   // 兼容原有预览逻辑
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
+  const [retainedAttachmentsByConversation, setRetainedAttachmentsByConversation] = useState<ConversationAttachmentMap>({});
   const pendingImageAttachments = useMemo(
     () => pendingAttachments.filter((item) => item.type === 'image'),
     [pendingAttachments],
@@ -309,6 +369,11 @@ const AIChat: React.FC<Props> = ({ lang }) => {
     
     try {
       const context: WrongQuestionContext = JSON.parse(contextRaw);
+      if (context.studentId && user?.id && context.studentId !== user.id) {
+        window.localStorage.removeItem(WRONG_QUESTION_CONTEXT_KEY);
+        setWrongQuestionProcessed(true);
+        return;
+      }
       console.log('[AIChat] Parsed wrong question context:', {
         questionId: context.questionId,
         score: context.score,
@@ -341,10 +406,10 @@ const AIChat: React.FC<Props> = ({ lang }) => {
       console.error('[AIChat] Failed to parse wrong question context:', err);
       setWrongQuestionProcessed(true);
     }
-  }, [hydrated, wrongQuestionProcessed, searchParams]);
+  }, [hydrated, wrongQuestionProcessed, searchParams, user?.id]);
 
   useEffect(() => {
-    if (!hydrated || typeof window === 'undefined') return;
+    if (!hydrated || typeof window === 'undefined' || !user?.id) return;
     const payload: PersistedState = {
       messages: messages.slice(-MAX_PERSISTED_MESSAGES).map((msg) => ({
         ...msg,
@@ -359,8 +424,18 @@ const AIChat: React.FC<Props> = ({ lang }) => {
       selectedConceptLabel,
       conversationId,
     };
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
-  }, [activePage, highlightEnabled, hydrated, messages, selectedConceptId, selectedConceptLabel, conversationId]);
+    window.localStorage.setItem(storageKey, JSON.stringify(payload));
+  }, [
+    activePage,
+    highlightEnabled,
+    hydrated,
+    messages,
+    selectedConceptId,
+    selectedConceptLabel,
+    conversationId,
+    storageKey,
+    user?.id,
+  ]);
 
   useEffect(() => {
     if (!user?.id) {
@@ -376,8 +451,9 @@ const AIChat: React.FC<Props> = ({ lang }) => {
         const data = await assistantApi.getProgress(user.id, activeClassId, conversationId || undefined);
         if (active) {
           setProgressData(data);
-          if (data.conversation_id && !conversationId) {
+          if (data.conversation_id && !conversationId && !forceNewConversation && messages.length <= 1) {
             setConversationId(data.conversation_id);
+            setSyncConversationTurns(true);
           }
         }
       } catch (error) {
@@ -397,7 +473,100 @@ const AIChat: React.FC<Props> = ({ lang }) => {
     return () => {
       active = false;
     };
-  }, [user?.id, activeClassId, conversationId]);
+  }, [user?.id, activeClassId, conversationId, forceNewConversation, messages.length]);
+
+  const loadConversationList = useCallback(async () => {
+    if (!user?.id) {
+      setConversationList([]);
+      return;
+    }
+    setConversationListLoading(true);
+    try {
+      const data = await assistantApi.listConversations(user.id, activeClassId, 40);
+      setConversationList(data.conversations || []);
+    } catch (error) {
+      console.error('Assistant conversations load failed:', error);
+      setConversationList([]);
+    } finally {
+      setConversationListLoading(false);
+    }
+  }, [user?.id, activeClassId]);
+
+  const loadConversationTurns = useCallback(async (targetConversationId: string) => {
+    if (!user?.id || !targetConversationId) return;
+    setConversationTurnsLoading(true);
+    try {
+      const data = await assistantApi.getConversationTurns(user.id, targetConversationId, activeClassId, 140);
+      const turns = data.turns || [];
+      const restoredMessages: EnhancedChatMessage[] = turns
+        .filter((item) => item.role === 'user' || item.role === 'assistant')
+        .map((item) => ({
+          role: item.role as 'user' | 'assistant',
+          content: item.content,
+          timestamp: item.created_at ? new Date(item.created_at) : new Date(),
+        }));
+      setMessages(
+        restoredMessages.length > 0
+          ? restoredMessages
+          : [
+              {
+                role: 'assistant',
+                content: t.chatIntro.replace(/[*#]/g, ''),
+                timestamp: new Date(),
+              },
+            ],
+      );
+
+      const retained: PendingAttachment[] = [];
+      turns.forEach((turn) => {
+        if (turn.role !== 'user') return;
+        const metadata = turn.metadata || {};
+        const attachments = Array.isArray(metadata.attachments)
+          ? (metadata.attachments as Array<Record<string, unknown>>)
+          : [];
+        attachments.forEach((item, idx) => {
+          const dataValue = typeof item.data === 'string' ? item.data : '';
+          if (!dataValue) return;
+          retained.push({
+            id: `${targetConversationId}-retained-${turn.turn_index}-${idx}`,
+            type: item.type === 'pdf_page' ? 'pdf_page' : 'image',
+            data: dataValue,
+            source: typeof item.source === 'string' ? item.source : 'history',
+            pageIndex: typeof item.page_index === 'number' ? item.page_index : undefined,
+            name: typeof item.name === 'string' ? item.name : undefined,
+            size: typeof item.size === 'number' ? item.size : undefined,
+            mimeType: typeof item.mime_type === 'string' ? item.mime_type : undefined,
+          });
+        });
+      });
+      if (retained.length > 0) {
+        setRetainedAttachmentsByConversation((prev) => ({
+          ...prev,
+          [targetConversationId]: mergeAttachmentList([], retained),
+        }));
+      }
+    } catch (error) {
+      console.error('Assistant conversation turns load failed:', error);
+      setMessages([
+        {
+          role: 'assistant',
+          content: t.chatIntro.replace(/[*#]/g, ''),
+          timestamp: new Date(),
+        },
+      ]);
+    } finally {
+      setConversationTurnsLoading(false);
+    }
+  }, [user?.id, activeClassId, t.chatIntro]);
+
+  useEffect(() => {
+    loadConversationList();
+  }, [loadConversationList]);
+
+  useEffect(() => {
+    if (!hydrated || !user?.id || !conversationId || !syncConversationTurns) return;
+    loadConversationTurns(conversationId).finally(() => setSyncConversationTurns(false));
+  }, [hydrated, user?.id, conversationId, syncConversationTurns, loadConversationTurns]);
 
   useEffect(() => {
     const timeline = timelineRef.current;
@@ -444,7 +613,11 @@ const AIChat: React.FC<Props> = ({ lang }) => {
         .map((msg) => ({ role: msg.role as 'user' | 'assistant', content: msg.content }));
 
       const isManualImageUpload = wrongContext?.questionId === 'manual';
-      const attachments: AssistantAttachment[] = pendingAttachments.map((item) => ({
+      const retainedAttachments = conversationId
+        ? retainedAttachmentsByConversation[conversationId] || []
+        : [];
+      const attachmentsForRequest = mergeAttachmentList(retainedAttachments, pendingAttachments, 12);
+      const attachments: AssistantAttachment[] = attachmentsForRequest.map((item) => ({
         type: item.type,
         source: item.source,
         page_index: item.pageIndex,
@@ -458,6 +631,7 @@ const AIChat: React.FC<Props> = ({ lang }) => {
         student_id: user.id,
         class_id: activeClassId || wrongContext?.classId,
         conversation_id: conversationId || undefined,
+        new_conversation: forceNewConversation || undefined,
         message: userMsgContent,
         history,
         session_mode: wrongContext && !isManualImageUpload ? 'wrong_question_review' : 'learning',
@@ -499,8 +673,22 @@ const AIChat: React.FC<Props> = ({ lang }) => {
       }
 
       const response = await assistantApi.chat(chatRequest);
+      const resolvedConversationId = response.conversation_id || conversationId || null;
       if (response.conversation_id) {
         setConversationId(response.conversation_id);
+      }
+      if (resolvedConversationId && pendingAttachments.length > 0) {
+        setRetainedAttachmentsByConversation((prev) => ({
+          ...prev,
+          [resolvedConversationId]: mergeAttachmentList(
+            prev[resolvedConversationId] || [],
+            pendingAttachments,
+            12,
+          ),
+        }));
+      }
+      if (forceNewConversation) {
+        setForceNewConversation(false);
       }
 
       setMessages((prev) => {
@@ -525,6 +713,7 @@ const AIChat: React.FC<Props> = ({ lang }) => {
       if (response.next_question) {
         setCurrentFocusQuestion(response.next_question);
       }
+      loadConversationList();
       setFocusModeActive(false);
     } catch (error) {
       console.error('Chat Error:', error);
@@ -535,12 +724,50 @@ const AIChat: React.FC<Props> = ({ lang }) => {
     } finally {
       setIsStreaming(false);
     }
-  }, [isStreaming, user?.id, t.brainFreeze, messages, activeClassId, pendingAttachments, conversationId]);
+  }, [
+    isStreaming,
+    user?.id,
+    t.brainFreeze,
+    messages,
+    activeClassId,
+    pendingAttachments,
+    conversationId,
+    retainedAttachmentsByConversation,
+    forceNewConversation,
+    loadConversationList,
+  ]);
 
   // 普通发送函数（不带错题上下文）
   const handleSend = useCallback((userMsgContent: string) => {
     handleSendWithContext(userMsgContent, null);
   }, [handleSendWithContext]);
+
+  const handleStartNewConversation = useCallback(() => {
+    setConversationId(null);
+    setForceNewConversation(true);
+    setSyncConversationTurns(false);
+    setMessages([
+      {
+        role: 'assistant',
+        content: t.chatIntro.replace(/[*#]/g, ''),
+        timestamp: new Date(),
+      },
+    ]);
+    setInput('');
+    setPendingAttachments([]);
+    setActiveWrongQuestionContext(null);
+    setCurrentFocusQuestion('');
+  }, [t.chatIntro]);
+
+  const handleSelectConversation = useCallback((targetConversationId: string) => {
+    if (!targetConversationId || targetConversationId === conversationId) return;
+    setConversationId(targetConversationId);
+    setSyncConversationTurns(true);
+    setForceNewConversation(false);
+    setPendingAttachments([]);
+    setActiveWrongQuestionContext(null);
+    setMessages([]);
+  }, [conversationId]);
 
   // 同步更新 ref（不使用 useEffect 以避免时序问题）
   handleSendWithContextRef.current = handleSendWithContext;
@@ -940,13 +1167,66 @@ const AIChat: React.FC<Props> = ({ lang }) => {
           {shouldShowSidebars && (
             <aside className="space-y-6 border-r border-black/10 pr-6">
               <div className="flex items-center justify-between text-[10px] font-semibold uppercase tracking-[0.4em] text-black/50">
-                <span>{labels.history}</span>
-                <span className="text-black/30">{messages.length}</span>
+                <span>Conversations</span>
+                <span className="text-black/30">{conversationList.length}</span>
               </div>
 
+              <button
+                type="button"
+                onClick={handleStartNewConversation}
+                className="w-full border border-black/20 px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-[0.25em] text-black/70 transition hover:border-black/40"
+              >
+                + New Chat
+              </button>
+
+              <div
+                className={`max-h-[520px] space-y-2 overflow-y-auto pr-2 text-xs leading-relaxed text-black/80 ${styles.customScrollbar}`}
+              >
+                {conversationListLoading && (
+                  <div className="text-xs text-black/40">Loading conversations...</div>
+                )}
+                {!conversationListLoading && conversationList.length === 0 && (
+                  <div className="text-sm text-black/40">No conversations yet.</div>
+                )}
+                {conversationList.map((item) => {
+                  const active = item.conversation_id === conversationId;
+                  const summary = (item.summary || 'New conversation').trim();
+                  const updated = item.updated_at
+                    ? new Date(item.updated_at).toLocaleString()
+                    : '';
+                  return (
+                    <button
+                      key={item.conversation_id}
+                      type="button"
+                      onClick={() => handleSelectConversation(item.conversation_id)}
+                      className={`w-full border-l-2 px-3 py-2 text-left transition ${
+                        active
+                          ? 'border-black bg-black/5 text-black'
+                          : 'border-black/10 text-black/70 hover:border-black/40'
+                      }`}
+                    >
+                      <div className="line-clamp-2 text-xs font-medium">{summary}</div>
+                      {updated && (
+                        <div className="mt-1 text-[10px] uppercase tracking-[0.2em] text-black/35">
+                          {updated}
+                        </div>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </aside>
+          )}
+
+          <section className="flex h-full flex-col gap-6">
+            <div className="border border-black/10 bg-white/70 p-4">
+              <div className="mb-3 flex items-center justify-between text-[10px] font-semibold uppercase tracking-[0.35em] text-black/45">
+                <span>{labels.history}</span>
+                <span>{conversationTurnsLoading ? 'Syncing' : `${messages.length} msgs`}</span>
+              </div>
               <div
                 ref={timelineRef}
-                className={`max-h-[520px] space-y-4 overflow-y-auto pr-2 text-sm leading-relaxed text-black/80 ${styles.customScrollbar}`}
+                className={`max-h-[360px] space-y-4 overflow-y-auto pr-2 text-sm leading-relaxed text-black/80 ${styles.customScrollbar}`}
               >
                 {messages.map((msg, idx) => {
                   const isAssistant = msg.role === 'assistant';
@@ -964,7 +1244,7 @@ const AIChat: React.FC<Props> = ({ lang }) => {
                       <div className="text-[10px] uppercase tracking-[0.3em] text-black/30">
                         {isAssistant ? 'Assistant' : 'You'}
                       </div>
-                      <div className="mt-2 whitespace-pre-line text-xs text-black/70">{content}</div>
+                      <div className="mt-2 whitespace-pre-line text-sm text-black/75">{content}</div>
                     </div>
                   );
                 })}
@@ -972,32 +1252,8 @@ const AIChat: React.FC<Props> = ({ lang }) => {
                   <div className="text-sm text-black/40">Start a conversation to see history here.</div>
                 )}
               </div>
+            </div>
 
-              <div className="border-t border-black/10 pt-4">
-                <div className="text-[10px] font-semibold uppercase tracking-[0.4em] text-black/50">
-                  {labels.focus}
-                </div>
-                <div className="mt-3 space-y-2">
-                  {focusAreas.length > 0 ? (
-                    focusAreas.slice(0, 6).map((item, idx) => (
-                      <button
-                        key={`focus-${idx}`}
-                        type="button"
-                        onClick={() => setInput(item)}
-                        className="w-full border-l-2 border-black/10 pl-3 text-left text-xs text-black/70 transition hover:border-black/40"
-                      >
-                        {item}
-                      </button>
-                    ))
-                  ) : (
-                    <div className="text-sm text-black/40">Waiting for the next mastery update.</div>
-                  )}
-                </div>
-              </div>
-            </aside>
-          )}
-
-          <section className="flex h-full flex-col gap-6">
             <div className="flex flex-wrap items-center justify-between gap-4 border-b border-black/10 pb-4">
               <div>
                 <div className="text-[10px] font-semibold uppercase tracking-[0.4em] text-black/50">

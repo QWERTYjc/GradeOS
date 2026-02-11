@@ -67,6 +67,7 @@ from src.db import (
     get_page_images_for_student,
     get_assistant_conversation,
     get_latest_assistant_conversation,
+    list_assistant_conversations,
     list_assistant_turns,
     list_assistant_mastery_events,
     list_assistant_concept_trends,
@@ -247,6 +248,7 @@ class AssistantChatRequest(BaseModel):
     message: str
     class_id: Optional[str] = None
     conversation_id: Optional[str] = None
+    new_conversation: bool = False
     history: Optional[List[AssistantMessage]] = None
     session_mode: Optional[str] = "learning"  # learning / assessment
     concept_topic: Optional[str] = None
@@ -328,6 +330,33 @@ class AssistantProgressResponse(BaseModel):
     trend_score_current: int = 0
     trend_timeline: List[TrendPoint] = Field(default_factory=list)
     concept_trend_breakdown: List[ConceptTrendPoint] = Field(default_factory=list)
+
+
+class AssistantConversationItem(BaseModel):
+    conversation_id: str
+    summary: str = ""
+    status: str = "active"
+    last_message_at: Optional[str] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+
+class AssistantConversationListResponse(BaseModel):
+    conversations: List[AssistantConversationItem] = Field(default_factory=list)
+    total: int = 0
+
+
+class AssistantTurnItem(BaseModel):
+    role: str
+    content: str
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    created_at: Optional[str] = None
+    turn_index: int = 0
+
+
+class AssistantConversationTurnsResponse(BaseModel):
+    conversation_id: str
+    turns: List[AssistantTurnItem] = Field(default_factory=list)
 
 
 def _normalize_str_like(value: Any) -> Any:
@@ -726,6 +755,65 @@ def _history_from_conversation(conversation_id: Optional[str], limit: int = 18) 
         else:
             messages.append(HumanMessage(content=content))
     return messages
+
+
+def _collect_recent_attachments(
+    conversation_id: Optional[str],
+    *,
+    max_turns: int = 8,
+    max_items: int = 8,
+    max_chars: int = 2_000_000,
+) -> List[Dict[str, Any]]:
+    if not conversation_id:
+        return []
+    try:
+        turns = list_assistant_turns(conversation_id, limit=max(1, max_turns))
+    except Exception as exc:
+        logger.debug("assistant attachment history read failed: %s", exc)
+        return []
+
+    collected: List[Dict[str, Any]] = []
+    seen: set[str] = set()
+    char_budget = 0
+
+    for item in reversed(turns):
+        if str(item.get("role") or "") != "user":
+            continue
+        metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+        attachment_list = metadata.get("attachments") if isinstance(metadata, dict) else None
+        if not isinstance(attachment_list, list):
+            continue
+
+        for attachment in attachment_list:
+            if not isinstance(attachment, dict):
+                continue
+            attachment_type = str(attachment.get("type") or "").lower()
+            if attachment_type not in {"image", "pdf_page", "image_base64", "image_url"}:
+                continue
+            data = attachment.get("data")
+            if not isinstance(data, str) or not data.strip():
+                continue
+            key = f"{attachment_type}:{data[:120]}"
+            if key in seen:
+                continue
+            if char_budget + len(data) > max_chars:
+                continue
+            seen.add(key)
+            char_budget += len(data)
+            collected.append(
+                {
+                    "type": attachment_type,
+                    "source": attachment.get("source"),
+                    "page_index": attachment.get("page_index"),
+                    "name": attachment.get("name"),
+                    "size": attachment.get("size"),
+                    "mime_type": attachment.get("mime_type"),
+                    "data": data,
+                }
+            )
+            if len(collected) >= max_items:
+                return collected
+    return collected
 
 
 def _serialize_quick_context(ref: WrongQuestionRef) -> Dict[str, Any]:
@@ -2517,20 +2605,25 @@ async def assistant_chat(request: AssistantChatRequest):
         logger.debug("assistant conversation TTL cleanup failed: %s", exc)
 
     has_wrong_review = bool(request.wrong_question_ref or request.wrong_question_context)
+    force_new_conversation = bool(request.new_conversation)
     conversation_id = (request.conversation_id or "").strip() or None
-    if conversation_id:
-        belongs = get_assistant_conversation(conversation_id, request.student_id, request.class_id)
-        if not belongs:
-            conversation_id = None
 
-    if not conversation_id:
-        if has_wrong_review:
-            conversation_id = _generate_conversation_id()
-        else:
-            latest = get_latest_assistant_conversation(request.student_id, request.class_id)
-            conversation_id = (
-                latest.get("conversation_id") if latest and latest.get("conversation_id") else _generate_conversation_id()
-            )
+    if force_new_conversation:
+        conversation_id = _generate_conversation_id()
+    else:
+        if conversation_id:
+            belongs = get_assistant_conversation(conversation_id, request.student_id, request.class_id)
+            if not belongs:
+                conversation_id = None
+
+        if not conversation_id:
+            if has_wrong_review:
+                conversation_id = _generate_conversation_id()
+            else:
+                latest = get_latest_assistant_conversation(request.student_id, request.class_id)
+                conversation_id = (
+                    latest.get("conversation_id") if latest and latest.get("conversation_id") else _generate_conversation_id()
+                )
 
     session_id = build_assistant_session_id(
         request.student_id,
@@ -2569,6 +2662,22 @@ async def assistant_chat(request: AssistantChatRequest):
     previous_trend = previous_events[-1]["trend_score"] if previous_events else None
 
     attachments = [item.model_dump() for item in (request.attachments or [])]
+    history_attachments = _collect_recent_attachments(conversation_id)
+    if history_attachments:
+        merged: List[Dict[str, Any]] = []
+        seen_attachment: set[str] = set()
+        for attachment in [*history_attachments, *attachments]:
+            if not isinstance(attachment, dict):
+                continue
+            data = attachment.get("data")
+            if not isinstance(data, str) or not data:
+                continue
+            key = f"{attachment.get('type')}:{data[:120]}"
+            if key in seen_attachment:
+                continue
+            seen_attachment.add(key)
+            merged.append(attachment)
+        attachments = merged
     orchestrator = get_student_assistant_v2_orchestrator()
     context = _build_student_context(request.student_id, request.class_id)
     result_payload = await orchestrator.ainvoke(
@@ -2651,6 +2760,69 @@ async def assistant_chat(request: AssistantChatRequest):
         parse_status=result_payload.get("parse_status"),
         parse_error_code=result_payload.get("parse_error_code"),
         safety_level=result_payload.get("safety_level"),
+    )
+
+
+@router.get(
+    "/assistant/conversations",
+    response_model=AssistantConversationListResponse,
+    tags=["Student Assistant"],
+)
+async def assistant_conversations(
+    student_id: str,
+    class_id: Optional[str] = None,
+    limit: int = 20,
+):
+    try:
+        expire_assistant_conversations()
+    except Exception as exc:
+        logger.debug("assistant conversation TTL cleanup failed: %s", exc)
+
+    rows = list_assistant_conversations(student_id, class_id, limit=max(1, min(limit, 60)))
+    conversations = [
+        AssistantConversationItem(
+            conversation_id=str(item.get("conversation_id") or ""),
+            summary=str(item.get("summary") or ""),
+            status=str(item.get("status") or "active"),
+            last_message_at=item.get("last_message_at"),
+            created_at=item.get("created_at"),
+            updated_at=item.get("updated_at"),
+        )
+        for item in rows
+        if item.get("conversation_id")
+    ]
+    return AssistantConversationListResponse(conversations=conversations, total=len(conversations))
+
+
+@router.get(
+    "/assistant/conversations/{conversation_id}/turns",
+    response_model=AssistantConversationTurnsResponse,
+    tags=["Student Assistant"],
+)
+async def assistant_conversation_turns(
+    conversation_id: str,
+    student_id: str,
+    class_id: Optional[str] = None,
+    limit: int = 120,
+):
+    belongs = get_assistant_conversation(conversation_id, student_id, class_id)
+    if not belongs:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    turns = list_assistant_turns(conversation_id, limit=max(1, min(limit, 200)))
+    normalized_turns = [
+        AssistantTurnItem(
+            role=str(item.get("role") or "assistant"),
+            content=str(item.get("content") or ""),
+            metadata=item.get("metadata") if isinstance(item.get("metadata"), dict) else {},
+            created_at=item.get("created_at"),
+            turn_index=int(item.get("turn_index") or 0),
+        )
+        for item in turns
+    ]
+    return AssistantConversationTurnsResponse(
+        conversation_id=conversation_id,
+        turns=normalized_turns,
     )
 
 

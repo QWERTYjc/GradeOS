@@ -425,8 +425,15 @@ const QuestionDetail: React.FC<{
         || (auditConfidence !== undefined && auditConfidence < LOW_CONFIDENCE_THRESHOLD)
     );
     const showScoringDetails = !isAssist && !isChoice;
+    const studentAnswerText = String(question.studentAnswer || '').trim();
+    const hasStudentAnswer = studentAnswerText.length > 0;
     const hasDetails = showScoringDetails
-        && ((question.scoringPointResults?.length || 0) > 0 || (question.scoringPoints?.length || 0) > 0 || (question.steps?.length || 0) > 0);
+        && (
+            (question.scoringPointResults?.length || 0) > 0
+            || (question.scoringPoints?.length || 0) > 0
+            || (question.steps?.length || 0) > 0
+            || hasStudentAnswer
+        );
     const [detailsOpen, setDetailsOpen] = useState(defaultExpanded);
     const [analysisOpen, setAnalysisOpen] = useState(false);
     const scoreLabel = isAssist ? 'Assist' : (question.maxScore > 0 ? `${question.score} / ${question.maxScore}` : 'N/A');
@@ -542,10 +549,13 @@ const QuestionDetail: React.FC<{
                 <>
                     {(() => {
                         const pointResults = (question.scoringPointResults || []) as any[];
+                        const answerLines = studentAnswerText
+                            .split(/\r?\n/)
+                            .map((line) => line.trim())
+                            .filter((line) => line.length > 0);
 
                         // Prefer backend-provided step segmentation; otherwise build a point-aligned step list.
                         let steps = (question.steps || []) as any[];
-                        if (steps.length === 0 && pointResults.length === 0) return null;
                         if (steps.length === 0) {
                             steps = pointResults.map((spr, idx) => ({
                                 step_id: spr.stepId || spr.step_id || spr.pointId || spr.point_id || `S${idx + 1}`,
@@ -582,6 +592,8 @@ const QuestionDetail: React.FC<{
                             ?? spr.scoring_point?.score
                             ?? 0
                         );
+                        const normalizeStepContentKey = (value: string) =>
+                            value.replace(/\s+/g, '').toLowerCase();
 
                         const byStepId = new Map<string, any[]>();
                         const syntheticSteps: any[] = [];
@@ -618,7 +630,41 @@ const QuestionDetail: React.FC<{
                             }
                         }
 
-                        if (steps.length === 0) return null;
+                        if (answerLines.length > 0) {
+                            const existingContentKeys = new Set(
+                                steps
+                                    .map((step) => normalizeStepContent(step))
+                                    .filter(Boolean)
+                                    .map((content) => normalizeStepContentKey(content))
+                            );
+                            const existingIds = new Set(steps.map((step, idx) => normalizeStepId(step, idx)));
+                            let appended = 1;
+                            for (const line of answerLines) {
+                                const key = normalizeStepContentKey(line);
+                                if (!key || existingContentKeys.has(key)) {
+                                    continue;
+                                }
+                                let stepId = `A${appended}`;
+                                while (existingIds.has(stepId)) {
+                                    appended += 1;
+                                    stepId = `A${appended}`;
+                                }
+                                steps.push({
+                                    step_id: stepId,
+                                    step_content: line,
+                                    step_region: null,
+                                    is_correct: false,
+                                    mark_type: 'M',
+                                    mark_value: 0,
+                                    feedback: '',
+                                });
+                                existingIds.add(stepId);
+                                existingContentKeys.add(key);
+                                appended += 1;
+                            }
+                        }
+
+                        if (steps.length === 0 && !hasStudentAnswer) return null;
 
                         const renderPointChip = ({ spr, idx }: { spr: any; idx: number }) => {
                             const pointId = normalizePointId(spr, idx);
@@ -630,6 +676,9 @@ const QuestionDetail: React.FC<{
                             const rubricRef = spr.rubricReference || spr.rubric_reference || '';
                             const rubricRefSource = spr.rubricReferenceSource || spr.rubric_reference_source || '';
                             const needsVerify = !String(rubricRef).trim() || String(rubricRefSource).toLowerCase().startsWith('system');
+                            const hasRubricBasis = String(rubricRef).trim().length > 0
+                                && !String(rubricRefSource).toLowerCase().startsWith('system');
+                            const hasEvidence = String(evidence).trim().length > 0;
 
                             return (
                                 <Popover
@@ -643,11 +692,12 @@ const QuestionDetail: React.FC<{
                                                 <span className="font-semibold">评分标准:</span> {rubricRef || '未提供评分标准引用'}
                                                 {needsVerify && <span className="ml-1 font-semibold">(需校验)</span>}
                                             </div>
-                                            {evidence && (
-                                                <div className="text-slate-600">
-                                                    <span className="font-semibold">证据:</span> {evidence}
-                                                </div>
-                                            )}
+                                            <div className={clsx("text-slate-600", !hasRubricBasis && "text-rose-600")}>
+                                                <span className="font-semibold">评分依据:</span> {hasRubricBasis ? '有' : '缺失'}
+                                            </div>
+                                            <div className={clsx("text-slate-600", !hasEvidence && "text-rose-600")}>
+                                                <span className="font-semibold">证据:</span> {hasEvidence ? evidence : '缺失'}
+                                            </div>
                                             {isReviewAdjusted && (
                                                 <div className="text-amber-700 font-semibold">已被逻辑复核修正</div>
                                             )}
@@ -658,7 +708,9 @@ const QuestionDetail: React.FC<{
                                 >
                                     <span className={clsx(
                                         "inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[10px] font-mono cursor-help transition",
-                                        awarded > 0 ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-slate-200 bg-slate-50 text-slate-500",
+                                        (!hasRubricBasis || !hasEvidence)
+                                            ? "border-rose-200 bg-rose-50 text-rose-700"
+                                            : (awarded > 0 ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-slate-200 bg-slate-50 text-slate-500"),
                                         isReviewAdjusted ? "border-amber-200 bg-amber-50 text-amber-700" : ""
                                     )}>
                                         <span className="font-bold">{pointId}</span>
@@ -671,9 +723,10 @@ const QuestionDetail: React.FC<{
 
                         const renderStepScoreBadge = (sid: string, related: any[], stepScore: number) => {
                             const hasRelated = related.length > 0;
+                            if (!hasRelated) return null;
                             const stepMax = related.reduce((sum, item) => sum + normalizeMax(item.spr), 0);
 
-                            const popoverContent = hasRelated ? (
+                            const popoverContent = (
                                 <div className="max-w-xs text-xs space-y-2">
                                     <div className="font-semibold text-slate-900">
                                         {sid} 得分: {stepScore}/{stepMax || 1}
@@ -688,6 +741,9 @@ const QuestionDetail: React.FC<{
                                             const rubricRef = spr.rubricReference || spr.rubric_reference || '';
                                             const rubricRefSource = spr.rubricReferenceSource || spr.rubric_reference_source || '';
                                             const needsVerify = !String(rubricRef).trim() || String(rubricRefSource).toLowerCase().startsWith('system');
+                                            const hasRubricBasis = String(rubricRef).trim().length > 0
+                                                && !String(rubricRefSource).toLowerCase().startsWith('system');
+                                            const hasEvidence = String(evidence).trim().length > 0;
 
                                             return (
                                                 <div key={`${sid}-${pointId}-${idx}`} className="text-slate-700">
@@ -698,19 +754,16 @@ const QuestionDetail: React.FC<{
                                                         <span className="font-semibold">标准:</span> {rubricRef || '未提供评分标准引用'}
                                                         {needsVerify && <span className="ml-1 font-semibold">(需校验)</span>}
                                                     </div>
-                                                    {evidence && (
-                                                        <div className="mt-0.5 text-slate-600">
-                                                            <span className="font-semibold">证据:</span> {evidence}
-                                                        </div>
-                                                    )}
+                                                    <div className={clsx("mt-0.5 text-slate-600", !hasRubricBasis && "text-rose-600")}>
+                                                        <span className="font-semibold">评分依据:</span> {hasRubricBasis ? '有' : '缺失'}
+                                                    </div>
+                                                    <div className={clsx("mt-0.5 text-slate-600", !hasEvidence && "text-rose-600")}>
+                                                        <span className="font-semibold">证据:</span> {hasEvidence ? evidence : '缺失'}
+                                                    </div>
                                                 </div>
                                             );
                                         })}
                                     </div>
-                                </div>
-                            ) : (
-                                <div className="max-w-xs text-xs text-slate-600">
-                                    未对齐到任何评分点（可能是无关步骤或模型未标注）。
                                 </div>
                             );
 
@@ -719,14 +772,10 @@ const QuestionDetail: React.FC<{
                                     <span
                                         className={clsx(
                                             "ml-2 inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-mono cursor-help transition",
-                                            hasRelated
-                                                ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                                                : "border-slate-200 bg-slate-50 text-slate-500"
+                                            "border-emerald-200 bg-emerald-50 text-emerald-700"
                                         )}
                                     >
-                                        {hasRelated
-                                            ? (stepScore > 0 ? `+${stepScore}` : `${stepScore}`)
-                                            : "0"}
+                                        {stepScore > 0 ? `+${stepScore}` : `${stepScore}`}
                                     </span>
                                 </Popover>
                             );
@@ -762,20 +811,24 @@ const QuestionDetail: React.FC<{
                                         <div className="mt-2 flex flex-wrap gap-1.5">
                                             {related.map(renderPointChip)}
                                         </div>
-                                    ) : (
-                                        <div className="mt-2 text-[11px] text-slate-400 italic">
-                                            未对齐到任何评分点（可能是无关步骤或模型未标注）。
-                                        </div>
-                                    )}
+                                    ) : null}
                                 </div>
                             );
                         };
 
                         return (
                             <div className="mt-3 space-y-2">
+                                {hasStudentAnswer && (
+                                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                                        <div className="mb-1 text-[11px] font-semibold text-slate-500">学生原始作答（完整）</div>
+                                        <div className="text-xs text-slate-700 leading-relaxed whitespace-pre-wrap">
+                                            <MathText text={formatStudentText(studentAnswerText)} />
+                                        </div>
+                                    </div>
+                                )}
                                 <div className="text-xs font-semibold text-slate-500 flex items-center gap-2">
                                     <ListOrdered className="w-3.5 h-3.5" />
-                                    结构化答案（逐步给分）
+                                    结构化答案（覆盖全部作答）
                                 </div>
                                 <div className="space-y-2">
                                     {steps.map(renderStepLine)}

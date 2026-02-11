@@ -783,6 +783,8 @@ async def rubric_parse_node(state: BatchGradingGraphState) -> Dict[str, Any]:
 
             # 🔥 关键：将解析的评分标准注册到 RubricRegistry
             # 这样后续批改时可以通过 GradingSkills.get_rubric_for_question 获取
+            question_type_map = await _classify_question_types_with_llm(parsed_rubric, api_key)
+            _apply_question_types_to_rubric(parsed_rubric, question_type_map)
             rubric_registry.register_rubrics(result.questions)
             logger.info(f"[rubric_parse] 已注册 {len(result.questions)} 道题目到 RubricRegistry")
 
@@ -1616,6 +1618,8 @@ async def rubric_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                 logger.warning(f"[rubric_review] reparse failed: {exc}", exc_info=True)
 
     if updated_rubric.get("questions"):
+        question_type_map = await _classify_question_types_with_llm(updated_rubric, api_key)
+        _apply_question_types_to_rubric(updated_rubric, question_type_map)
         updated_rubric["total_questions"] = len(updated_rubric["questions"])
         updated_rubric["total_score"] = sum(
             q.get("max_score", 0) for q in updated_rubric["questions"]
@@ -2437,6 +2441,150 @@ def _infer_question_type(question: Dict[str, Any]) -> str:
     return "objective"
 
 
+def _compact_question_for_type_classification(question: Dict[str, Any], index: int) -> Dict[str, Any]:
+    qid = (
+        _normalize_question_id(
+            question.get("question_id") or question.get("questionId") or question.get("id")
+        )
+        or f"Q{index + 1}"
+    )
+    scoring_points = question.get("scoring_points") or question.get("scoringPoints") or []
+    scoring_point_descriptions: List[str] = []
+    if isinstance(scoring_points, list):
+        for sp in scoring_points[:10]:
+            if isinstance(sp, dict):
+                desc = _normalize_text(sp.get("description"))
+                if desc:
+                    scoring_point_descriptions.append(desc[:120])
+            elif isinstance(sp, str):
+                desc = _normalize_text(sp)
+                if desc:
+                    scoring_point_descriptions.append(desc[:120])
+
+    return {
+        "question_id": qid,
+        "question_text": _normalize_text(
+            question.get("question_text") or question.get("questionText") or ""
+        )[:500],
+        "standard_answer": _normalize_text(
+            question.get("standard_answer") or question.get("standardAnswer") or ""
+        )[:500],
+        "grading_notes": _normalize_text(
+            question.get("grading_notes") or question.get("gradingNotes") or ""
+        )[:500],
+        "scoring_points": scoring_point_descriptions,
+    }
+
+
+async def _classify_question_types_with_llm(
+    parsed_rubric: Dict[str, Any],
+    api_key: Optional[str],
+) -> Dict[str, str]:
+    questions = parsed_rubric.get("questions") or []
+    if not api_key or not isinstance(questions, list) or not questions:
+        return {}
+
+    compact_questions = [
+        _compact_question_for_type_classification(q, idx)
+        for idx, q in enumerate(questions[:30])
+        if isinstance(q, dict)
+    ]
+    if not compact_questions:
+        return {}
+
+    prompt = (
+        "你是严格的题型标注器。请仅根据题干/标准答案/评分点判断题型，"
+        "并返回 JSON，不要解释。\n\n"
+        "题型定义：\n"
+        "1) choice: 明确是选项题（单选/多选）。\n"
+        "2) objective: 可客观判定对错的题（含填空、判断、计算题、步骤可核验的理科题）。\n"
+        "3) subjective: 开放作答、作文、论述、无法客观唯一判定的题。\n\n"
+        "特别要求：理科计算题通常属于 objective，不要因为有步骤就判为 subjective。\n\n"
+        "输出格式：\n"
+        "{\"question_types\":[{\"question_id\":\"Q1\",\"question_type\":\"objective|subjective|choice\","
+        "\"reason\":\"最多20字\"}]}\n\n"
+        f"输入题目：\n{json.dumps(compact_questions, ensure_ascii=False)}"
+    )
+
+    try:
+        from langchain_core.messages import HumanMessage
+
+        from src.services.chat_model_factory import get_chat_model
+
+        llm = get_chat_model(
+            api_key=api_key,
+            model_name=None,
+            purpose="analysis",
+            temperature=0.0,
+            max_output_tokens=2000,
+        )
+        response = await llm.ainvoke([HumanMessage(content=prompt)])
+        raw_content = getattr(response, "content", str(response))
+
+        if isinstance(raw_content, list):
+            parts: List[str] = []
+            for part in raw_content:
+                if isinstance(part, str):
+                    parts.append(part)
+                elif isinstance(part, dict):
+                    txt = part.get("text")
+                    if txt:
+                        parts.append(str(txt))
+            raw_text = "".join(parts)
+        else:
+            raw_text = str(raw_content)
+
+        payload = json.loads(_extract_json_from_response(raw_text))
+        items = payload.get("question_types") if isinstance(payload, dict) else []
+        if not isinstance(items, list):
+            return {}
+
+        output: Dict[str, str] = {}
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            qid = _normalize_question_id(item.get("question_id") or item.get("questionId"))
+            qtype = _normalize_question_type(item.get("question_type") or item.get("questionType"))
+            if not qid or qtype not in {"choice", "objective", "subjective"}:
+                continue
+            output[qid] = qtype
+        return output
+    except Exception as exc:
+        logger.warning(f"[question_type] LLM classification failed, fallback to rules: {exc}")
+        return {}
+
+
+def _apply_question_types_to_rubric(
+    parsed_rubric: Dict[str, Any],
+    llm_question_types: Optional[Dict[str, str]] = None,
+) -> None:
+    questions = parsed_rubric.get("questions") or []
+    if not isinstance(questions, list):
+        return
+
+    llm_question_types = llm_question_types or {}
+    for q in questions:
+        if not isinstance(q, dict):
+            continue
+        qid = _normalize_question_id(q.get("question_id") or q.get("questionId") or q.get("id"))
+        llm_type = llm_question_types.get(qid) if qid else None
+        current_type = _normalize_question_type(q.get("question_type") or q.get("questionType"))
+
+        if llm_type in {"choice", "objective", "subjective"}:
+            q["question_type"] = llm_type
+            q["question_type_source"] = "llm"
+            continue
+
+        if current_type:
+            q["question_type"] = current_type
+            q["question_type_source"] = q.get("question_type_source") or "provided"
+            continue
+
+        fallback_type = _infer_question_type(q)
+        q["question_type"] = fallback_type or "objective"
+        q["question_type_source"] = "rule_fallback"
+
+
 def _resolve_grading_mode(
     inputs: Optional[Dict[str, Any]],
     parsed_rubric: Optional[Dict[str, Any]],
@@ -2520,20 +2668,47 @@ def _normalize_parsed_rubric_input(
 ) -> Dict[str, Any]:
     fallback = fallback or {}
     raw_questions = raw_rubric.get("questions") or []
+    fallback_questions = fallback.get("questions") or []
+    fallback_by_id: Dict[str, Dict[str, Any]] = {}
+    if isinstance(fallback_questions, list):
+        for item in fallback_questions:
+            if not isinstance(item, dict):
+                continue
+            fqid = _normalize_question_id(
+                item.get("question_id") or item.get("questionId") or item.get("id")
+            )
+            if fqid:
+                fallback_by_id[fqid] = item
     normalized_questions = []
 
     for q in raw_questions:
         qid = q.get("question_id") or q.get("questionId") or q.get("id") or ""
+        normalized_qid = _normalize_question_id(qid)
+        fallback_question = fallback_by_id.get(normalized_qid) if normalized_qid else None
         max_score = q.get("max_score", q.get("maxScore"))
         question_text = q.get("question_text") or q.get("questionText") or ""
         standard_answer = q.get("standard_answer") or q.get("standardAnswer") or ""
         question_type = _normalize_question_type(
             q.get("question_type") or q.get("questionType") or ""
         )
+        if not question_type and fallback_question:
+            question_type = _normalize_question_type(
+                fallback_question.get("question_type")
+                or fallback_question.get("questionType")
+                or ""
+            )
         grading_notes = q.get("grading_notes") or q.get("gradingNotes") or ""
         source_pages = q.get("source_pages") or q.get("sourcePages") or []
         if not isinstance(source_pages, list):
             source_pages = []
+        if not source_pages and fallback_question:
+            source_pages = (
+                fallback_question.get("source_pages")
+                or fallback_question.get("sourcePages")
+                or []
+            )
+            if not isinstance(source_pages, list):
+                source_pages = []
 
         scoring_points_raw = q.get("scoring_points") or q.get("scoringPoints") or []
         scoring_points = []

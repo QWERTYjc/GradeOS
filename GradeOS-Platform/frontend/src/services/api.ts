@@ -306,10 +306,11 @@ export interface AssistantChatRequest {
   message: string;
   class_id?: string;
   conversation_id?: string;
+  new_conversation?: boolean;
   history?: AssistantMessage[];
   session_mode?: string;
   concept_topic?: string;
-  images?: string[];  // base64 编码的图片列表
+  images?: string[];
   attachments?: AssistantAttachment[];
   wrong_question_context?: {
     questionId: string;
@@ -396,12 +397,55 @@ export interface AssistantProgressResponse {
   }>;
 }
 
+export interface AssistantConversationItem {
+  conversation_id: string;
+  summary: string;
+  status: string;
+  last_message_at?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface AssistantConversationListResponse {
+  conversations: AssistantConversationItem[];
+  total: number;
+}
+
+export interface AssistantTurnItem {
+  role: 'system' | 'user' | 'assistant';
+  content: string;
+  metadata: Record<string, unknown>;
+  created_at?: string;
+  turn_index: number;
+}
+
+export interface AssistantConversationTurnsResponse {
+  conversation_id: string;
+  turns: AssistantTurnItem[];
+}
+
 export const assistantApi = {
   chat: (data: AssistantChatRequest) =>
     request<AssistantChatResponse>('/assistant/chat', {
       method: 'POST',
       body: JSON.stringify(data),
     }),
+  listConversations: (studentId: string, classId?: string, limit: number = 30) => {
+    const params = new URLSearchParams({ student_id: studentId, limit: String(limit) });
+    if (classId) {
+      params.set('class_id', classId);
+    }
+    return request<AssistantConversationListResponse>(`/assistant/conversations?${params.toString()}`);
+  },
+  getConversationTurns: (studentId: string, conversationId: string, classId?: string, limit: number = 120) => {
+    const params = new URLSearchParams({ student_id: studentId, limit: String(limit) });
+    if (classId) {
+      params.set('class_id', classId);
+    }
+    return request<AssistantConversationTurnsResponse>(
+      `/assistant/conversations/${conversationId}/turns?${params.toString()}`
+    );
+  },
   getProgress: (studentId: string, classId?: string, conversationId?: string) => {
     const params = new URLSearchParams({ student_id: studentId });
     if (classId) {

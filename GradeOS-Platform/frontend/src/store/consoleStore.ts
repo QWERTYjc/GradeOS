@@ -910,11 +910,6 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                         if (index === targetIndex) {
                             return { ...n, status: status as NodeStatus, message: message || n.message };
                         }
-                        if (index < targetIndex && (status === 'running' || status === 'completed')) {
-                            if (n.status === 'pending' || n.status === 'running') {
-                                return { ...n, status: 'completed' as NodeStatus };
-                            }
-                        }
                         return n;
                     });
                     const nextTimers = { ...current.nodeStatusTimers };
@@ -1830,20 +1825,13 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                 get().setPendingReview(null);
                 get().setReviewFocus(null);
 
-                const orderedNodes = [
-                    'intake',
-                    'preprocess',
-                    'rubric_parse',
-                    'rubric_confession_report',
-                    'rubric_self_review',
-                    'rubric_review',
-                    'grade_batch',
-                    'grading_confession_report',
-                    'logic_review',
-                    'review',
-                    'export'
-                ];
-                orderedNodes.forEach((nodeId) => get().updateNodeStatus(nodeId, 'completed'));
+                const currentNodes = get().workflowNodes;
+                currentNodes.forEach((node) => {
+                    if (node.status === 'running') {
+                        get().updateNodeStatus(node.id, 'completed');
+                    }
+                });
+                get().updateNodeStatus('export', 'completed');
 
                 const batchId =
                     data.batchId ||
@@ -1890,64 +1878,36 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                 }
                 const currentStage = data.currentStage || data.current_stage;
                 if (currentStage) {
-                    const stageToNode: Record<string, string> = {
-                        rubric_parse_completed: 'rubric_parse',
-                        rubric_confession_report_completed: 'rubric_confession_report',
-                        rubric_confession_report_skipped: 'rubric_confession_report',
-                        rubric_self_review_completed: 'rubric_self_review',
-                        rubric_self_review_skipped: 'rubric_self_review',
-                        rubric_self_review_failed: 'rubric_self_review',
-                        rubric_review_completed: 'rubric_review',
-                        rubric_review_skipped: 'rubric_review',
-                        grade_batch_completed: 'grade_batch',
-                        cross_page_merge_completed: 'grade_batch',
-                        index_merge_completed: 'grade_batch',
-                        grading_confession_report_completed: 'grading_confession_report',
-                        logic_review_completed: 'logic_review',
-                        logic_review_skipped: 'logic_review',
-                        review_completed: 'review',
-                        completed: 'export'
+                    const stageStateMap: Record<string, { node: string; status: NodeStatus; message?: string }> = {
+                        rubric_parse_completed: { node: 'rubric_parse', status: 'completed' },
+                        rubric_confession_report_completed: { node: 'rubric_confession_report', status: 'completed' },
+                        rubric_confession_report_skipped: { node: 'rubric_confession_report', status: 'pending', message: 'Skipped' },
+                        rubric_self_review_completed: { node: 'rubric_self_review', status: 'completed' },
+                        rubric_self_review_skipped: { node: 'rubric_self_review', status: 'pending', message: 'Skipped' },
+                        rubric_self_review_failed: { node: 'rubric_self_review', status: 'failed' },
+                        rubric_review_completed: { node: 'rubric_review', status: 'completed' },
+                        rubric_review_skipped: { node: 'rubric_review', status: 'pending', message: 'Skipped' },
+                        grade_batch_completed: { node: 'grade_batch', status: 'completed' },
+                        cross_page_merge_completed: { node: 'grade_batch', status: 'completed' },
+                        index_merge_completed: { node: 'grade_batch', status: 'completed' },
+                        grading_confession_report_completed: { node: 'grading_confession_report', status: 'completed' },
+                        logic_review_completed: { node: 'logic_review', status: 'completed' },
+                        logic_review_skipped: { node: 'logic_review', status: 'pending', message: 'Skipped' },
+                        review_completed: { node: 'review', status: 'completed' },
+                        completed: { node: 'export', status: 'completed' },
                     };
-                    const orderedNodes = [
-                        'intake',
-                        'preprocess',
-                        'rubric_parse',
-                        'rubric_confession_report',
-                        'rubric_self_review',
-                        'rubric_review',
-                        'grade_batch',
-                        'grading_confession_report',
-                        'logic_review',
-                        'review',
-                        'export'
-                    ];
-                    const stageNode = stageToNode[currentStage];
-                    if (stageNode) {
-                        const stageIndex = orderedNodes.indexOf(stageNode);
-                        if (stageIndex >= 0) {
-                            orderedNodes.forEach((nodeId, idx) => {
-                                if (idx < stageIndex) {
-                                    get().updateNodeStatus(nodeId, 'completed');
-                                }
-                            });
-                            const pendingReview = get().pendingReview;
-                            const holdRubricReview = stageNode === 'rubric_review'
-                                && pendingReview
-                                && (pendingReview.reviewType || '').includes('rubric');
-                            if (holdRubricReview) {
-                                get().updateNodeStatus(stageNode, 'running', 'Waiting for interaction');
-                                return;
-                            }
 
-                            get().updateNodeStatus(stageNode, 'completed');
-
-                            const nextNode = orderedNodes[stageIndex + 1];
-                            if (nextNode) {
-                                get().updateNodeStatus(nextNode, 'running');
-                            }
-                        } else {
-                            get().updateNodeStatus(stageNode, 'completed');
+                    const stageState = stageStateMap[currentStage];
+                    if (stageState) {
+                        const pendingReview = get().pendingReview;
+                        const holdRubricReview = stageState.node === 'rubric_review'
+                            && pendingReview
+                            && (pendingReview.reviewType || '').includes('rubric');
+                        if (holdRubricReview) {
+                            get().updateNodeStatus(stageState.node, 'running', 'Waiting for interaction');
+                            return;
                         }
+                        get().updateNodeStatus(stageState.node, stageState.status, stageState.message);
                     }
                 }
             });
