@@ -427,6 +427,27 @@ def _build_annotation_prompt(questions: List[Dict[str, Any]], page_index: int) -
         max_score = q.get("max_score") or q.get("maxScore", 0)
         feedback = q.get("feedback", "")
         student_answer = q.get("student_answer") or q.get("studentAnswer", "")
+        answer_region = q.get("answer_region") or q.get("answerRegion")
+
+        steps_raw = q.get("steps") or []
+        steps_info = []
+        if isinstance(steps_raw, list) and steps_raw:
+            for step in steps_raw[:12]:
+                if not isinstance(step, dict):
+                    continue
+                step_id = step.get("step_id") or step.get("stepId") or step.get("id") or ""
+                step_content = step.get("step_content") or step.get("stepContent") or ""
+                step_region = step.get("step_region") or step.get("stepRegion")
+                steps_info.append(
+                    {
+                        "step_id": str(step_id),
+                        "step_content_preview": str(step_content)[:160] if step_content else "",
+                        "step_region_hint": step_region if isinstance(step_region, dict) else None,
+                        "mark_type": str(step.get("mark_type") or step.get("markType") or ""),
+                        "mark_value": step.get("mark_value") or step.get("markValue"),
+                        "is_correct": step.get("is_correct") if "is_correct" in step else step.get("isCorrect"),
+                    }
+                )
         
         scoring_points = q.get("scoring_point_results") or q.get("scoringPointResults") or []
         points_info = []
@@ -444,6 +465,8 @@ def _build_annotation_prompt(questions: List[Dict[str, Any]], page_index: int) -
             evidence = sp.get("evidence", "")
             evidence_region = sp.get("evidence_region") or sp.get("evidenceRegion")
             error_region = sp.get("error_region") or sp.get("errorRegion")
+            step_id_hint = sp.get("step_id") or sp.get("stepId")
+            step_excerpt_hint = sp.get("step_excerpt") or sp.get("stepExcerpt")
             points_info.append({
                 "point_id": point_id,
                 "mark_type": mark_type,
@@ -453,6 +476,8 @@ def _build_annotation_prompt(questions: List[Dict[str, Any]], page_index: int) -
                 "evidence": evidence[:200] if evidence else "",
                 "evidence_region_hint": evidence_region if isinstance(evidence_region, dict) else None,
                 "error_region_hint": error_region if isinstance(error_region, dict) else None,
+                "step_id_hint": str(step_id_hint) if step_id_hint else None,
+                "step_excerpt_hint": str(step_excerpt_hint)[:160] if step_excerpt_hint else None,
             })
         
         questions_info.append({
@@ -461,6 +486,8 @@ def _build_annotation_prompt(questions: List[Dict[str, Any]], page_index: int) -
             "max_score": max_score,
             "feedback": feedback[:200] if feedback else "",
             "student_answer_preview": student_answer[:100] if student_answer else "",
+            "answer_region_hint": answer_region if isinstance(answer_region, dict) else None,
+            "steps_hint": steps_info,
             "scoring_points": points_info,
         })
     
@@ -482,6 +509,7 @@ def _build_annotation_prompt(questions: List[Dict[str, Any]], page_index: int) -
 2. **标注分数**：在答案区域右侧或下方放置分数标注
 3. **标注错误（可选）**：只有当你能清晰看到错误位置时，才输出 error_circle；否则不要输出。
 4. **得分点标注**：为每个得分点的关键位置添加 M/A mark（贴近对应步骤/证据文本旁边）
+   - 若提供了 evidence_region_hint / step_region_hint / answer_region_hint，请优先作为定位锚点（仍需在图中核验）。
 5. **坐标合法性**：每个 bounding_box 必须满足 0 <= x_min < x_max <= 1 且 0 <= y_min < y_max <= 1。
 
 ## 坐标系统
