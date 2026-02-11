@@ -296,11 +296,17 @@ class StudentAssistantV2Orchestrator:
             if not isinstance(attachment, dict):
                 continue
             attachment_type = str(attachment.get("type") or "").lower()
-            if attachment_type not in {"image", "image_base64", "pdf_page"}:
+            if attachment_type not in {"image", "image_base64", "pdf_page", "image_url"}:
                 continue
             data = attachment.get("data") or attachment.get("base64") or attachment.get("content")
             if isinstance(data, str) and data.strip():
                 prepared.append(data.strip())
+
+        resolved_wrong_context = state.get("resolved_wrong_context") or state.get("wrong_question_context")
+        if isinstance(resolved_wrong_context, dict):
+            for item in resolved_wrong_context.get("images") or []:
+                if isinstance(item, str) and item.strip():
+                    prepared.append(item.strip())
 
         unique_images: List[str] = []
         seen: set[str] = set()
@@ -579,6 +585,13 @@ class StudentAssistantV2Orchestrator:
         payload = dict(state.get("parsed_payload") or {})
         content = (state.get("assistant_content") or "").strip()
         safety_level = state.get("safety_level") or "L0"
+
+        if safety_level == "L1":
+            content = (
+                "I can help, but let's keep the reasoning visible instead of jumping straight to a final answer.\n\n"
+                + content
+            )
+            payload["content"] = content
 
         if safety_level == "L2":
             content = (

@@ -858,9 +858,8 @@ export default function StudentWrongBookPage() {
                         source: activeQuestion.source,
                         entryId: activeQuestion.source === 'manual' ? activeQuestion.id : undefined,
                         importId: activeQuestion.source === 'grading' ? activeQuestion.sourceImportId : undefined,
-                        subject: activeQuestion.subject,
-                        topic: activeQuestion.topic,
-                        images: activeQuestion.images,
+                        studentId: user?.id,
+                        classId: selectedClassId || undefined,
                         timestamp: new Date().toISOString(),
                       };
                       const contextJson = JSON.stringify(wrongQuestionContext);
@@ -868,7 +867,7 @@ export default function StudentWrongBookPage() {
                       console.log('[Analysis] Saved wrong question context:', {
                         questionId: wrongQuestionContext.questionId,
                         contextLength: contextJson.length,
-                        imagesCount: wrongQuestionContext.images?.length || 0
+                        source: wrongQuestionContext.source,
                       });
                       // 使用 setTimeout 确保 localStorage 写入完成
                       setTimeout(() => {

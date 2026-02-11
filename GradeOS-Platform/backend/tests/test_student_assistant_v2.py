@@ -1,5 +1,8 @@
 
+import asyncio
+
 from src.services.student_assistant_v2 import (
+    StudentAssistantV2Orchestrator,
     _classify_safety,
     _ensure_mastery_payload,
     _normalize_concepts,
@@ -37,3 +40,36 @@ def test_normalize_concepts_filters_invalid_nodes():
     normalized = _normalize_concepts(raw)
     assert len(normalized) == 1
     assert normalized[0]["name"] == "Algebra"
+
+
+def test_multimodal_prepare_merges_wrong_context_images():
+    orchestrator = StudentAssistantV2Orchestrator.__new__(StudentAssistantV2Orchestrator)
+    state = {
+        "attachments": [{"type": "image", "data": "data:image/png;base64,AAAA"}],
+        "resolved_wrong_context": {"images": ["https://example.com/page-1.jpg"]},
+    }
+
+    payload = asyncio.run(
+        orchestrator._multimodal_prepare_node(state)  # pylint: disable=protected-access
+    )
+    assert "https://example.com/page-1.jpg" in payload["prepared_images"]
+
+
+def test_safety_postcheck_l1_injects_guidance_prefix():
+    orchestrator = StudentAssistantV2Orchestrator.__new__(StudentAssistantV2Orchestrator)
+    payload = asyncio.run(
+        orchestrator._safety_postcheck_node(  # pylint: disable=protected-access
+            {
+                "parsed_payload": {"mastery": {"score": 70}, "question_options": []},
+                "assistant_content": "Let's solve this in 3 steps.",
+                "safety_level": "L1",
+                "trend_score": 70,
+                "trend_delta": 0,
+                "parse_status": "ok",
+            }
+        )
+    )
+
+    content = payload["response_payload"]["content"]
+    assert content.startswith("I can help, but let's keep the reasoning visible")
+    assert payload["response_payload"]["safety_level"] == "L1"

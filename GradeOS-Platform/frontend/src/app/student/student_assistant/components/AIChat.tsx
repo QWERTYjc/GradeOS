@@ -65,7 +65,8 @@ type WrongQuestionContext = {
   entryId?: string;
   importId?: string;
   batchId?: string;
-  images?: string[];
+  studentId?: string;
+  classId?: string;
   timestamp: string;
 };
 
@@ -205,8 +206,15 @@ const AIChat: React.FC<Props> = ({ lang }) => {
   // 存储待处理的错题上下文（用于传递给 API）
   const [activeWrongQuestionContext, setActiveWrongQuestionContext] = useState<WrongQuestionContext | null>(null);
   // 兼容原有预览逻辑
-  const [pendingImages, setPendingImages] = useState<string[]>([]);
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
+  const pendingImageAttachments = useMemo(
+    () => pendingAttachments.filter((item) => item.type === 'image'),
+    [pendingAttachments],
+  );
+  const pendingPdfAttachments = useMemo(
+    () => pendingAttachments.filter((item) => item.type === 'pdf_page'),
+    [pendingAttachments],
+  );
 
   // 处理从错题本跳转过来的深究请求 - 填充到输入框而不是自动发送
   useEffect(() => {
@@ -276,17 +284,6 @@ const AIChat: React.FC<Props> = ({ lang }) => {
               if (state.context) {
                 setActiveWrongQuestionContext(state.context);
               }
-              if (state.images && state.images.length > 0) {
-                setPendingImages(state.images);
-                setPendingAttachments(
-                  state.images.map((img: string, idx: number) => ({
-                    id: `restored-${idx}-${Date.now()}`,
-                    type: 'image',
-                    data: img,
-                    source: 'wrongbook',
-                  })),
-                );
-              }
               if (state.input) {
                 setInput(state.input);
               }
@@ -316,7 +313,6 @@ const AIChat: React.FC<Props> = ({ lang }) => {
         questionId: context.questionId,
         score: context.score,
         maxScore: context.maxScore,
-        imagesCount: context.images?.length || 0
       });
       
       // 清除 localStorage 中的上下文，避免重复处理
@@ -327,18 +323,7 @@ const AIChat: React.FC<Props> = ({ lang }) => {
       console.log('[AIChat] Set activeWrongQuestionContext');
       
       // 设置待发送的图片
-      if (context.images && context.images.length > 0) {
-        setPendingImages(context.images);
-        setPendingAttachments(
-          context.images.map((img, idx) => ({
-            id: `wrongbook-${idx}-${Date.now()}`,
-            type: 'image',
-            data: img,
-            source: 'wrongbook',
-          })),
-        );
-        console.log('[AIChat] Set pendingImages:', context.images.length);
-      }
+      
       
       // 构建预填充的消息内容
       const prefillMessage = `请帮我深究这道错题 Q${context.questionId}，我得了 ${context.score}/${context.maxScore} 分。`;
@@ -348,7 +333,6 @@ const AIChat: React.FC<Props> = ({ lang }) => {
       // 保存状态到 sessionStorage，用于 Fast Refresh 恢复
       window.sessionStorage.setItem(WRONG_QUESTION_STATE_KEY, JSON.stringify({
         context,
-        images: context.images || [],
         input: prefillMessage
       }));
       
@@ -470,20 +454,9 @@ const AIChat: React.FC<Props> = ({ lang }) => {
         data: item.data,
       }));
 
-      if (attachments.length === 0 && wrongContext?.images?.length) {
-        wrongContext.images.forEach((img, idx) => {
-          attachments.push({
-            type: 'image',
-            source: wrongContext.source || 'wrongbook',
-            page_index: idx,
-            data: img,
-          });
-        });
-      }
-
       const chatRequest: Parameters<typeof assistantApi.chat>[0] = {
         student_id: user.id,
-        class_id: activeClassId,
+        class_id: activeClassId || wrongContext?.classId,
         conversation_id: conversationId || undefined,
         message: userMsgContent,
         history,
@@ -504,7 +477,7 @@ const AIChat: React.FC<Props> = ({ lang }) => {
             batch_id: wrongContext.batchId,
             question_id: wrongContext.questionId,
             student_id: user.id,
-            class_id: activeClassId,
+            class_id: activeClassId || wrongContext.classId,
             quick_context: {
               score: wrongContext.score,
               maxScore: wrongContext.maxScore,
@@ -580,27 +553,20 @@ const AIChat: React.FC<Props> = ({ lang }) => {
     // 如果有错题上下文，使用带上下文的发送
     if (activeWrongQuestionContext) {
       // 如果有待发送的图片，添加到上下文中
-      const contextWithImages: WrongQuestionContext = {
-        ...activeWrongQuestionContext,
-        images: pendingImages.length > 0 ? pendingImages : activeWrongQuestionContext.images,
-      };
-      handleSendWithContext(input, contextWithImages);
+      handleSendWithContext(input, activeWrongQuestionContext);
       // 清除上下文和图片
       setActiveWrongQuestionContext(null);
-      setPendingImages([]);
       setPendingAttachments([]);
-    } else if (pendingImages.length > 0 || pendingAttachments.length > 0) {
+    } else if (pendingAttachments.length > 0) {
       // 手动上传图片的情况（无错题上下文）
       const manualImageContext: WrongQuestionContext = {
         questionId: 'manual',
         score: 0,
         maxScore: 0,
         source: 'manual',
-        images: pendingImages,
         timestamp: new Date().toISOString(),
       };
       handleSendWithContext(input, manualImageContext);
-      setPendingImages([]);
       setPendingAttachments([]);
     } else {
       handleSend(input);
@@ -608,15 +574,13 @@ const AIChat: React.FC<Props> = ({ lang }) => {
   };
 
   // 移除待发送的图片
-  const removePendingImage = (index: number) => {
-    setPendingImages(prev => prev.filter((_, i) => i !== index));
-    setPendingAttachments(prev => prev.filter((_, i) => i !== index));
+  const removePendingAttachment = (id: string) => {
+    setPendingAttachments((prev) => prev.filter((item) => item.id !== id));
   };
 
   // 清除错题上下文
   const clearWrongQuestionContext = () => {
     setActiveWrongQuestionContext(null);
-    setPendingImages([]);
     setPendingAttachments([]);
     setInput('');
   };
@@ -638,7 +602,6 @@ const AIChat: React.FC<Props> = ({ lang }) => {
       try {
         if (file.type.startsWith('image/')) {
           const base64 = await toBase64(file);
-          setPendingImages((prev) => [...prev, base64]);
           setPendingAttachments((prev) => [
             ...prev,
             {
@@ -657,7 +620,6 @@ const AIChat: React.FC<Props> = ({ lang }) => {
         if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
           const pages = await renderPdfToImages(file, 8);
           pages.forEach((pageImg, pageIdx) => {
-            setPendingImages((prev) => [...prev, pageImg]);
             setPendingAttachments((prev) => [
               ...prev,
               {
@@ -900,7 +862,7 @@ const AIChat: React.FC<Props> = ({ lang }) => {
 
 
   const shouldShowSidebars = !sidebarsCollapsed;
-  const lowMotionMode = prefersReducedMotion || (isStreaming && pendingAttachments.length >= 6);
+  const lowMotionMode = prefersReducedMotion || isStreaming || pendingAttachments.length >= 6;
   const latestSafetyLevel = latestAssistant?.safetyLevel;
   const lampStateClass = isStreaming
     ? styles.breathingThinking
@@ -1291,7 +1253,6 @@ const AIChat: React.FC<Props> = ({ lang }) => {
               <div>hydrated: {String(hydrated)}</div>
               <div>wrongQuestionProcessed: {String(wrongQuestionProcessed)}</div>
               <div>activeWrongQuestionContext: {activeWrongQuestionContext ? `Q${activeWrongQuestionContext.questionId}` : 'null'}</div>
-              <div>pendingImages: {pendingImages.length}</div>
               <div>pendingAttachments: {pendingAttachments.length}</div>
               <div>conversationId: {conversationId || 'null'}</div>
               <div>input: {input.substring(0, 30)}...</div>
@@ -1299,7 +1260,7 @@ const AIChat: React.FC<Props> = ({ lang }) => {
           )}
           
           {/* 错题上下文和图片预览 */}
-          {(activeWrongQuestionContext || pendingImages.length > 0) && (
+          {(activeWrongQuestionContext || pendingAttachments.length > 0) && (
             <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50/50 p-4">
               <div className="flex items-center justify-between mb-3">
                 <div className="text-[10px] font-semibold uppercase tracking-[0.3em] text-amber-700">
@@ -1331,18 +1292,34 @@ const AIChat: React.FC<Props> = ({ lang }) => {
               )}
               
               {/* 图片预览 */}
-              {pendingImages.length > 0 && (
+              {pendingAttachments.length > 0 && (
                 <div className="flex flex-wrap gap-2">
-                  {pendingImages.map((img, idx) => (
-                    <div key={idx} className="relative group">
+                  {pendingImageAttachments.map((attachment, idx) => (
+                    <div key={attachment.id} className="relative group">
                       <img
-                        src={img}
+                        src={attachment.data}
                         alt={`错题图片 ${idx + 1}`}
                         className="h-20 w-20 object-cover rounded-lg border border-amber-200"
                       />
                       <button
                         type="button"
-                        onClick={() => removePendingImage(idx)}
+                        onClick={() => removePendingAttachment(attachment.id)}
+                        className="absolute -top-2 -right-2 w-5 h-5 bg-amber-500 text-white rounded-full text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ))}
+                  {pendingPdfAttachments.map((attachment) => (
+                    <div key={attachment.id} className="relative group">
+                      <div className="h-20 w-24 rounded-lg border border-amber-200 bg-amber-100 p-2 text-[10px] text-amber-800">
+                        <div className="font-semibold">PDF</div>
+                        <div className="mt-1 line-clamp-2">{attachment.name || 'document.pdf'}</div>
+                        <div className="mt-1">P{(attachment.pageIndex ?? 0) + 1}</div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => removePendingAttachment(attachment.id)}
                         className="absolute -top-2 -right-2 w-5 h-5 bg-amber-500 text-white rounded-full text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
                       >
                         ✕
@@ -1359,18 +1336,34 @@ const AIChat: React.FC<Props> = ({ lang }) => {
           )}
           
           {/* 普通图片上传预览（非错题模式） */}
-          {!activeWrongQuestionContext && pendingImages.length > 0 && (
+          {!activeWrongQuestionContext && pendingAttachments.length > 0 && (
             <div className="mb-4 flex flex-wrap gap-2">
-              {pendingImages.map((img, idx) => (
-                <div key={idx} className="relative group">
+              {pendingImageAttachments.map((attachment, idx) => (
+                <div key={attachment.id} className="relative group">
                   <img
-                    src={img}
+                    src={attachment.data}
                     alt={`上传图片 ${idx + 1}`}
                     className="h-16 w-16 object-cover rounded-lg border border-black/20"
                   />
                   <button
                     type="button"
-                    onClick={() => removePendingImage(idx)}
+                    onClick={() => removePendingAttachment(attachment.id)}
+                    className="absolute -top-2 -right-2 w-5 h-5 bg-black text-white rounded-full text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                  >
+                    ✕
+                  </button>
+                </div>
+              ))}
+              {pendingPdfAttachments.map((attachment) => (
+                <div key={attachment.id} className="relative group">
+                  <div className="h-16 w-24 rounded-lg border border-black/20 bg-black/5 p-1 text-[10px] text-black/70">
+                    <div className="font-semibold">PDF</div>
+                    <div className="truncate">{attachment.name || 'document.pdf'}</div>
+                    <div>P{(attachment.pageIndex ?? 0) + 1}</div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => removePendingAttachment(attachment.id)}
                     className="absolute -top-2 -right-2 w-5 h-5 bg-black text-white rounded-full text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
                   >
                     ✕
@@ -1397,7 +1390,7 @@ const AIChat: React.FC<Props> = ({ lang }) => {
               className="border border-black/20 px-3 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-black/60 transition hover:border-black/40 disabled:opacity-50"
               title="上传图片"
             >
-              Upload {pendingImages.length > 0 ? `(${pendingImages.length})` : ''}
+              Upload {pendingAttachments.length > 0 ? `(${pendingAttachments.length})` : ''}
             </button>
             
             <div className="flex-1 border-b border-black/20 pb-2">
@@ -1405,7 +1398,7 @@ const AIChat: React.FC<Props> = ({ lang }) => {
                 type="text"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                placeholder={activeWrongQuestionContext ? '输入你对这道题的疑问，或直接点击发送...' : (pendingImages.length > 0 ? '描述图片中的问题...' : t.chatPlaceholder)}
+                placeholder={activeWrongQuestionContext ? '输入你对这道题的疑问，或直接点击发送...' : (pendingAttachments.length > 0 ? '描述图片中的问题...' : t.chatPlaceholder)}
                 className="w-full bg-transparent text-base text-black placeholder:text-black/40 focus:outline-none"
                 disabled={isStreaming}
               />

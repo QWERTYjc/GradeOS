@@ -1686,6 +1686,23 @@ def upsert_assistant_conversation(
     return dict(row) if row else {}
 
 
+def expire_assistant_conversations(*, now_iso: Optional[str] = None) -> int:
+    current = now_iso or datetime.now().isoformat()
+    with get_connection() as conn:
+        result = conn.execute(
+            """
+            UPDATE assistant_conversations
+            SET status = 'expired', updated_at = ?
+            WHERE status = 'active' AND expires_at < ?
+            """,
+            (current, current),
+        )
+    try:
+        return int(result.rowcount or 0)
+    except Exception:
+        return 0
+
+
 def get_assistant_conversation(
     conversation_id: str,
     student_id: str,
@@ -1694,15 +1711,17 @@ def get_assistant_conversation(
     if not conversation_id:
         return None
     normalized_class = _normalize_class_id(class_id)
+    now_iso = datetime.now().isoformat()
+    expire_assistant_conversations(now_iso=now_iso)
     with get_connection() as conn:
         row = conn.execute(
             """
             SELECT conversation_id, student_id, class_id, status, summary, last_message_at, expires_at, created_at, updated_at
             FROM assistant_conversations
-            WHERE conversation_id = ? AND student_id = ? AND class_id = ?
+            WHERE conversation_id = ? AND student_id = ? AND class_id = ? AND status = 'active' AND expires_at >= ?
             LIMIT 1
             """,
-            (conversation_id, student_id, normalized_class),
+            (conversation_id, student_id, normalized_class, now_iso),
         ).fetchone()
     return dict(row) if row else None
 
@@ -1710,6 +1729,7 @@ def get_assistant_conversation(
 def get_latest_assistant_conversation(student_id: str, class_id: Optional[str]) -> Optional[Dict[str, Any]]:
     normalized_class = _normalize_class_id(class_id)
     now_iso = datetime.now().isoformat()
+    expire_assistant_conversations(now_iso=now_iso)
     with get_connection() as conn:
         row = conn.execute(
             """

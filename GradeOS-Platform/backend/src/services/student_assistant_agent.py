@@ -309,10 +309,19 @@ class StudentAssistantAgent:
         
         # 添加图片
         for img_data in images:
+            if not isinstance(img_data, str):
+                continue
+            normalized_img = img_data.strip()
+            if not normalized_img:
+                continue
+            if normalized_img.startswith(("http://", "https://")):
+                content_parts.append({"type": "image_url", "image_url": {"url": normalized_img}})
+                continue
+
             # 处理 base64 图片（可能带有 data:image/xxx;base64, 前缀）
-            if img_data.startswith("data:"):
+            if normalized_img.startswith("data:"):
                 # 提取 base64 部分
-                parts = img_data.split(",", 1)
+                parts = normalized_img.split(",", 1)
                 if len(parts) == 2:
                     img_bytes = base64.b64decode(parts[1])
                     # 提取 media type
@@ -325,7 +334,7 @@ class StudentAssistantAgent:
             else:
                 # 纯 base64
                 try:
-                    img_bytes = base64.b64decode(img_data)
+                    img_bytes = base64.b64decode(normalized_img)
                     content_parts.append(llm_client.create_image_content(img_bytes))
                 except Exception:
                     pass

@@ -63,6 +63,7 @@ from src.db import (
     list_assistant_concepts,
     save_assistant_mastery_snapshot,
     list_assistant_mastery_snapshots,
+    expire_assistant_conversations,
     get_page_images_for_student,
     get_assistant_conversation,
     get_latest_assistant_conversation,
@@ -248,8 +249,8 @@ class AssistantChatRequest(BaseModel):
     conversation_id: Optional[str] = None
     history: Optional[List[AssistantMessage]] = None
     session_mode: Optional[str] = "learning"  # learning / assessment
-    concept_topic: Optional[str] = None  # 当前学习的概念主题
-    images: Optional[List[str]] = None  # base64 编码的图片列表
+    concept_topic: Optional[str] = None
+    images: Optional[List[str]] = None  # backward compatibility
     attachments: Optional[List[AttachmentInput]] = None
     wrong_question_context: Optional[Dict[str, Any]] = None
     wrong_question_ref: Optional[WrongQuestionRef] = None
@@ -278,12 +279,12 @@ class MasteryData(BaseModel):
 class AssistantChatResponse(BaseModel):
     content: str
     model: Optional[str] = None
-    usage: Optional[Dict[str, Any]] = None  # 支持 OpenRouter 扩展格式（含浮点数和嵌套字典）
-    mastery: Optional[MasteryData] = None  # 掌握度评估
-    next_question: Optional[str] = None  # 苏格拉底式追问
-    question_options: Optional[List[str]] = None  # 追问的可选按钮
-    focus_mode: bool = False  # 是否进入专注模式
-    concept_breakdown: Optional[List[ConceptNode]] = None  # 第一性原理概念分解
+    usage: Optional[Dict[str, Any]] = None
+    mastery: Optional[MasteryData] = None
+    next_question: Optional[str] = None
+    question_options: Optional[List[str]] = None
+    focus_mode: bool = False
+    concept_breakdown: Optional[List[ConceptNode]] = None
     response_type: str = "chat"  # chat / question / assessment / explanation
     conversation_id: Optional[str] = None
     trend_score: Optional[int] = None
@@ -2510,6 +2511,11 @@ async def assistant_chat(request: AssistantChatRequest):
         len(request.attachments or []),
     )
 
+    try:
+        expire_assistant_conversations()
+    except Exception as exc:
+        logger.debug("assistant conversation TTL cleanup failed: %s", exc)
+
     has_wrong_review = bool(request.wrong_question_ref or request.wrong_question_context)
     conversation_id = (request.conversation_id or "").strip() or None
     if conversation_id:
@@ -2657,6 +2663,11 @@ async def assistant_progress(
     conversation_id: Optional[str] = None,
 ):
     """Fetch persisted assistant progress for a student."""
+    try:
+        expire_assistant_conversations()
+    except Exception as exc:
+        logger.debug("assistant conversation TTL cleanup failed: %s", exc)
+
     resolved_conversation_id = conversation_id
     if not resolved_conversation_id:
         latest = get_latest_assistant_conversation(student_id, class_id)
