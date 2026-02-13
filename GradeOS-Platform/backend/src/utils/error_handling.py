@@ -10,6 +10,7 @@
 """
 
 import asyncio
+import json
 import logging
 import traceback
 from typing import TypeVar, Callable, Optional, Any, Dict, List
@@ -196,6 +197,19 @@ async def retry_with_exponential_backoff(
 
         except Exception as e:
             last_exception = e
+
+            # 区分不可重试错误：这些错误不会因重试好转，直接抛出
+            NON_RETRYABLE_ERRORS = (
+                json.JSONDecodeError,
+                ValueError,
+                KeyError,
+                TypeError,
+            )
+            if isinstance(e, NON_RETRYABLE_ERRORS):
+                logger.warning(
+                    f"函数 {func.__name__} 遇到不可重试错误 {type(e).__name__}: {e}，跳过重试"
+                )
+                raise
 
             # 记录错误日志 (Requirement 9.5)
             error_log = ErrorLog.from_exception(

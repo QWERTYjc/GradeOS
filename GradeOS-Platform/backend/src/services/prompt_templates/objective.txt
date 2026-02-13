@@ -11,21 +11,34 @@
 
 ## 输出格式
 
-请以 JSON 格式输出批改结果：
+请以纯 JSON 格式输出批改结果（不要使用 markdown 代码块标记）：
 
-```json
 {
-  "extracted_answer": "学生答案",
-  "score": 得分,
-  "max_score": 满分,
-  "confidence": 置信度(0.0-1.0),
-  "reasoning_trace": ["推理步骤1", "推理步骤2"],
-  "feedback": "评语"
+  "question_details": [
+    {
+      "question_id": "题号",
+      "score": 得分,
+      "max_score": 满分,
+      "student_answer": "学生填写的答案",
+      "is_correct": true或false,
+      "feedback": "评语（正确/错误原因）",
+      "scoring_point_results": [
+        {
+          "point_id": "得分点ID（与评分标准一致）",
+          "awarded": 给分数值,
+          "max_points": 该得分点满分,
+          "evidence": "【原文引用】学生选择了X选项/填写了X"
+        }
+      ]
+    }
+  ],
+  "score": 总得分,
+  "max_score": 总满分,
+  "confidence": 0.0到1.0
 }
-```
 
 ## 注意事项
-
-- 对于模糊不清的答案，降低置信度
-- 对于多选题，注意选项顺序
-- 对于填空题，注意单位和格式
+- question_id 必须与评分标准中的题号完全一致
+- point_id 必须与评分标准中的得分点 ID 精确匹配
+- evidence 必须引用学生实际填写的内容
+- 客观题通常只有全对全错，awarded 只能为 0 或 max_points

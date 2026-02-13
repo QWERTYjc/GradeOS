@@ -609,6 +609,56 @@ const normalizeNodeId = (value: string) => {
     return value;
 };
 
+const STREAM_DEDUPE_MIN_CHARS = 6;
+const STREAM_MAX_OVERLAP_CHARS = 4096;
+
+const clipStreamTail = (value: string, maxChars: number) => {
+    if (maxChars <= 0 || value.length <= maxChars) {
+        return value;
+    }
+    return value.slice(-maxChars);
+};
+
+const mergeStreamChunk = (currentText: string, incomingChunk: string, maxChars: number) => {
+    const current = currentText || '';
+    const incoming = incomingChunk || '';
+
+    if (!incoming) {
+        return clipStreamTail(current, maxChars);
+    }
+    if (!current) {
+        return clipStreamTail(incoming, maxChars);
+    }
+    if (incoming === current) {
+        return clipStreamTail(current, maxChars);
+    }
+
+    // Handle reconnect snapshots / repeated payloads safely.
+    if (incoming.length >= STREAM_DEDUPE_MIN_CHARS) {
+        if (current.endsWith(incoming) || current.includes(incoming)) {
+            return clipStreamTail(current, maxChars);
+        }
+    }
+    if (incoming.length >= current.length && incoming.startsWith(current)) {
+        return clipStreamTail(incoming, maxChars);
+    }
+    if (current.length >= STREAM_DEDUPE_MIN_CHARS && incoming.includes(current)) {
+        return clipStreamTail(incoming, maxChars);
+    }
+
+    // Merge overlap suffix(current) + prefix(incoming) to avoid duplicated joints.
+    if (incoming.length >= STREAM_DEDUPE_MIN_CHARS) {
+        const maxOverlap = Math.min(current.length, incoming.length, STREAM_MAX_OVERLAP_CHARS);
+        for (let overlap = maxOverlap; overlap >= STREAM_DEDUPE_MIN_CHARS; overlap -= 1) {
+            if (current.slice(-overlap) === incoming.slice(0, overlap)) {
+                return clipStreamTail(current + incoming.slice(overlap), maxChars);
+            }
+        }
+    }
+
+    return clipStreamTail(current + incoming, maxChars);
+};
+
 /**
  * 工作流节点配�? * 
  * 基于 LangGraph 架构的前端展示流程（隐藏内部 merge 节点）：
@@ -1217,16 +1267,30 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                 }
 
                 const active = updated[activeIdx];
-                const combined = (active.content || '') + contentStr;
+                const previousContent = active.content || '';
+                const combined = mergeStreamChunk(previousContent, contentStr, maxChars);
+                const grew = combined.length > previousContent.length;
+
+                if (!grew) {
+                    return state;
+                }
 
                 if (combined.length > segmentMaxChars) {
                     updated[activeIdx] = { ...active, isComplete: true };
+                    const appended = combined.startsWith(previousContent)
+                        ? combined.slice(previousContent.length)
+                        : contentStr;
+                    const nextChunk = clipStreamTail(appended || combined, segmentMaxChars);
+                    if (!nextChunk) {
+                        return { llmThoughts: updated };
+                    }
+                    contentStr = nextChunk;
                     return startNewSegment();
                 }
 
                 updated[activeIdx] = {
                     ...active,
-                    content: (maxChars > 0 && combined.length > maxChars) ? combined.slice(-maxChars) : combined
+                    content: combined
                 };
 
                 return { llmThoughts: updated };
@@ -1237,10 +1301,14 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
             if (existingIdx >= 0) {
                 // Append to existing thought
                 const updated = [...state.llmThoughts];
-                const combined = updated[existingIdx].content + contentStr;
+                const previousContent = updated[existingIdx].content || '';
+                const combined = mergeStreamChunk(previousContent, contentStr, maxChars);
+                if (combined === previousContent) {
+                    return state;
+                }
                 updated[existingIdx] = {
                     ...updated[existingIdx],
-                    content: (maxChars > 0 && combined.length > maxChars) ? combined.slice(-maxChars) : combined
+                    content: combined
                 };
                 return { llmThoughts: updated };
             }
@@ -1663,12 +1731,15 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                             return;
                         }
                         const currentText = agent.output?.streamingText || '';
-                        const combined = currentText + contentStr;
                         const maxChars = 8000;
+                        const combined = mergeStreamChunk(currentText, contentStr, maxChars);
+                        if (combined === currentText) {
+                            return;
+                        }
                         get().updateAgentStatus(agent.id, {
                             output: {
                                 ...agent.output,
-                                streamingText: combined.length > maxChars ? combined.slice(-maxChars) : combined
+                                streamingText: combined
                             }
                         });
                     }

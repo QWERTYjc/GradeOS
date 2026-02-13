@@ -2842,6 +2842,8 @@ def _format_rubric_context_from_dict(parsed_rubric: Dict[str, Any]) -> str:
             return " ".join(str(item) for item in value)
         return str(value)
 
+    total_score = float(parsed_rubric.get('total_score', 0)) or 1.0  # 避免除零
+
     lines = [
         "=" * 60,
         "RUBRIC SUMMARY",
@@ -2857,10 +2859,22 @@ def _format_rubric_context_from_dict(parsed_rubric: Dict[str, Any]) -> str:
         lines.append(f"General Notes: {general_notes}")
         lines.append("")
 
-    for q in parsed_rubric.get("questions", []):
+    # 按得分比重降序排列题目（高分值题目优先输出，确保不被截断）
+    questions = parsed_rubric.get("questions", [])
+    sorted_questions = sorted(
+        questions,
+        key=lambda q: float(q.get("max_score", 0)),
+        reverse=True,
+    )
+
+    for q in sorted_questions:
+        q_max_score = float(q.get("max_score", 0))
+        weight_ratio = q_max_score / total_score
+        weight_tag = " [HIGH]" if weight_ratio >= 0.15 else ""
+
         lines.append("-" * 40)
         question_id = ensure_str(q.get("question_id", ""))
-        lines.append(f"Question {question_id} max_score: {q.get('max_score', 0)}")
+        lines.append(f"Question {question_id} max_score: {q.get('max_score', 0)}{weight_tag}")
 
         question_text = ensure_str(q.get("question_text", ""))
         if question_text:
@@ -2869,13 +2883,15 @@ def _format_rubric_context_from_dict(parsed_rubric: Dict[str, Any]) -> str:
 
         standard_answer = ensure_str(q.get("standard_answer", ""))
         if standard_answer:
-            preview = standard_answer[:200] if len(standard_answer) > 200 else standard_answer
+            preview = standard_answer[:150] if len(standard_answer) > 150 else standard_answer
             lines.append(f"Standard answer: {preview}")
 
         scoring_points = q.get("scoring_points", [])
         if scoring_points:
             lines.append("Scoring points:")
             for idx, sp in enumerate(scoring_points, 1):
+                sp_score = float(sp.get("score", 0))
+                sp_weight = " [HIGH]" if sp_score / total_score >= 0.05 else ""
                 required = "required" if sp.get("is_required", True) else "optional"
                 keywords = sp.get("keywords") or []
                 keywords_str = f" keywords:{keywords}" if keywords else ""
@@ -2883,7 +2899,7 @@ def _format_rubric_context_from_dict(parsed_rubric: Dict[str, Any]) -> str:
                 expected_value_str = f" expected:{expected_value}" if expected_value else ""
                 point_id = sp.get("point_id") or sp.get("pointId") or f"{question_id}.{idx}"
                 lines.append(
-                    f"  [{point_id}] {sp.get('score', 0)}?/{required} - "
+                    f"  [{point_id}] {sp.get('score', 0)}pt/{required}{sp_weight} - "
                     f"{ensure_str(sp.get('description', ''))}{keywords_str}{expected_value_str}"
                 )
 
@@ -5314,6 +5330,16 @@ def _extract_json_from_response(text: str) -> str:
                 bracket_count -= 1
                 if bracket_count == 0:
                     return text[start:i+1]
+        
+        # 括号不平衡（截断的 JSON）：尝试补全缺少的闭合括号
+        if bracket_count > 0:
+            truncated = text[start:]
+            suffix = end_char * bracket_count
+            logger.warning(
+                f"[_extract_json_from_response] 检测到截断的 JSON（未闭合括号数: {bracket_count}），"
+                f"尝试补全 '{suffix}'"
+            )
+            return truncated + suffix
     
     # 如果都失败了，返回原文本
     return text.strip()

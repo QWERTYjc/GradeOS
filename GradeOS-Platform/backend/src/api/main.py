@@ -18,7 +18,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from fastapi import FastAPI, Request, HTTPException, status
+from fastapi import FastAPI, Request, HTTPException, status, WebSocket
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import redis.asyncio as redis
@@ -159,16 +159,43 @@ async def _bootstrap_init(app: FastAPI) -> None:
         comp = st.setdefault("components", {})
         comp[name] = {"status": status, "detail": detail, "at": _now_iso_utc()}
 
+    async def _register_routes_component() -> None:
+        # Register routes before orchestrator initialization to avoid long 403/404 windows.
+        try:
+            await asyncio.to_thread(_register_api_routes, app)
+            route_errors = list(getattr(app.state, "routes_register_errors", []) or [])
+            if route_errors:
+                detail = "; ".join(route_errors[:3])
+                if len(route_errors) > 3:
+                    detail += f" ... (+{len(route_errors) - 3} more)"
+                _set_component("routes", "degraded", detail)
+                st.setdefault("errors", []).append(f"routes degraded: {detail}")
+                logger.warning("Route registration completed with warnings: %s", detail)
+            else:
+                _set_component("routes", "ok")
+        except Exception as exc:
+            detail = str(exc).strip() or repr(exc)
+            _set_component("routes", "error", detail)
+            st.setdefault("errors", []).append(f"routes failed: {detail}")
+            logger.warning("Route registration failed: %s", detail)
+
     async def _step(name: str, coro, timeout_s: float) -> bool:
         _set_component(name, "starting")
         try:
             await asyncio.wait_for(coro, timeout=timeout_s)
             _set_component(name, "ok")
             return True
-        except Exception as exc:
-            msg = f"{name} failed: {exc}"
+        except asyncio.TimeoutError:
+            msg = f"{name} failed: TimeoutError after {timeout_s:.1f}s"
             st.setdefault("errors", []).append(msg)
-            _set_component(name, "error", str(exc))
+            _set_component(name, "error", msg)
+            logger.warning(msg)
+            return False
+        except Exception as exc:
+            detail = str(exc).strip() or repr(exc)
+            msg = f"{name} failed: {detail}"
+            st.setdefault("errors", []).append(msg)
+            _set_component(name, "error", detail)
             logger.warning(msg)
             return False
 
@@ -178,6 +205,7 @@ async def _bootstrap_init(app: FastAPI) -> None:
         deployment_config = get_deployment_mode()
         st["deployment_mode"] = deployment_config.mode.value
         st["features"] = deployment_config.get_feature_availability()
+        routes_task = asyncio.create_task(_register_routes_component())
 
         if deployment_config.is_database_mode:
             try:
@@ -271,13 +299,10 @@ async def _bootstrap_init(app: FastAPI) -> None:
             _set_component("grading_memory", "disabled", "ENABLE_GRADING_MEMORY=false")
             logger.info("grading_memory disabled by configuration.")
 
-        await _step("orchestrator", init_orchestrator(), timeout_s=40)
-
-        try:
-            _register_api_routes(app)
-            _set_component("routes", "ok")
-        except Exception as exc:
-            _set_component("routes", "error", str(exc))
+        orchestrator_timeout = max(
+            10.0, float(os.getenv("ORCHESTRATOR_INIT_TIMEOUT", "90"))
+        )
+        await _step("orchestrator", init_orchestrator(), timeout_s=orchestrator_timeout)
 
         try:
             orch = await get_orchestrator()
@@ -304,6 +329,14 @@ async def _bootstrap_init(app: FastAPI) -> None:
         else:
             _set_component("task_queue", "disabled", "ENABLE_REDIS_TASK_QUEUE=false")
             logger.info("redis_task_queue disabled by configuration.")
+
+        try:
+            await routes_task
+        except Exception as exc:
+            detail = str(exc).strip() or repr(exc)
+            _set_component("routes", "error", detail)
+            st.setdefault("errors", []).append(f"routes failed: {detail}")
+            logger.warning("Route registration task failed: %s", detail)
 
         st["status"] = "ready" if not st.get("errors") else "degraded"
         logger.info("Bootstrap: %s", st["status"])
@@ -606,6 +639,56 @@ async def get_api_stats():
         return {"error": "增强 API 服务不可用"}
 
     return enhanced_api_service.stats
+
+
+@app.get("/api/teacher/classes", tags=["class bootstrap"])
+async def bootstrap_get_teacher_classes(teacher_id: str):
+    """
+    Startup-safe teacher classes endpoint.
+    This avoids temporary 404 before `unified_api` finishes lazy registration.
+    """
+    try:
+        from src.db import list_classes_by_teacher, count_class_students
+
+        classes = []
+        for class_record in list_classes_by_teacher(teacher_id):
+            classes.append(
+                {
+                    "class_id": class_record.id,
+                    "class_name": class_record.name,
+                    "teacher_id": class_record.teacher_id,
+                    "invite_code": class_record.invite_code,
+                    "student_count": count_class_students(class_record.id),
+                }
+            )
+        return classes
+    except Exception as exc:
+        logger.warning("bootstrap teacher/classes fallback failed: %s", exc)
+        return []
+
+
+@app.websocket("/api/batch/ws/{batch_id}")
+async def bootstrap_batch_ws_proxy(websocket: WebSocket, batch_id: str):
+    """
+    Startup-safe WS proxy.
+    Prevents temporary 403 while `batch_langgraph` router is still warming up.
+    """
+    try:
+        from src.api.routes.batch_langgraph import websocket_endpoint as real_ws_endpoint
+    except Exception as exc:
+        logger.warning("bootstrap batch ws unavailable: %s", exc)
+        await websocket.accept()
+        await websocket.send_json(
+            {
+                "type": "workflow_error",
+                "stage": "bootstrap",
+                "error": "Batch websocket is warming up. Please retry shortly.",
+            }
+        )
+        await websocket.close(code=1013, reason="Batch WS warming up")
+        return
+
+    await real_ws_endpoint(websocket, batch_id)
 
 
 if __name__ == "__main__":

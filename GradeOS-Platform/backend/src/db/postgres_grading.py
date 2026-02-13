@@ -182,6 +182,10 @@ async def ensure_grading_history_schema() -> None:
             await conn.execute("ALTER TABLE grading_history ADD COLUMN IF NOT EXISTS result_data JSONB")
             await conn.execute("ALTER TABLE grading_history ADD COLUMN IF NOT EXISTS rubric_data JSONB")
             await conn.execute("ALTER TABLE grading_history ADD COLUMN IF NOT EXISTS current_stage VARCHAR(100)")
+            # 复合索引：加速按 batch_id 查询和按时间排序
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_grading_history_batch_id ON grading_history(batch_id)")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_grading_history_created_desc ON grading_history(created_at DESC)")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_grading_history_status ON grading_history(status)")
             await conn.commit()
         _GRADING_HISTORY_SCHEMA_READY = True
     except Exception as exc:
@@ -200,6 +204,9 @@ async def ensure_student_results_schema() -> None:
             await conn.execute("ALTER TABLE student_grading_results ADD COLUMN IF NOT EXISTS result_data JSONB")
             await conn.execute("ALTER TABLE student_grading_results ADD COLUMN IF NOT EXISTS imported_at TIMESTAMP")
             await conn.execute("ALTER TABLE student_grading_results ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMP")
+            # 复合索引：加速按 batch+student 联合查询
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_student_results_history_id ON student_grading_results(grading_history_id)")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_student_results_history_student ON student_grading_results(grading_history_id, student_key)")
             await conn.commit()
         _STUDENT_RESULTS_SCHEMA_READY = True
     except Exception as exc:

@@ -52,33 +52,33 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # 精简的 System Prompt - 提取所有通用约束
-SYSTEM_PROMPT = """你是一位专业阅卷教师。请严格按以下规则批改：
+SYSTEM_PROMPT = """你是一位严格的专业阅卷教师。你的核心职责是：根据评分标准逐点评分，每一分都必须有明确证据支撑。
 
-【坐标系统】
-- 原点：左上角，x向右(0-1)，y向下(0-1)
-- 使用 {{x_min, y_min, x_max, y_max}} 格式
+【核心原则】
+1. 严格对齐得分点：每个 point_id 必须与评分标准中的 point_id 完全一致，禁止自创
+2. 证据优先：evidence 必须直接引用学生原文，格式为「【原文引用】"学生原文内容"」
+3. 宁缺毋滥：证据不足时给 awarded=0 并在 evidence 中说明 "未找到相关作答内容"
+4. 过程给分：过程正确但结果错误，仍给过程分；前步错误导致后步错误，只扣一次
+5. 等价解法：非标准但数学/逻辑上正确的方法同样给满分
 
 【输出要求】
-- 必须返回有效JSON
-- 每个得分点必须包含：point_id, awarded, max_points, evidence
-- evidence必须以【原文引用】开头，引用学生原文
-- 坐标必须精确到图片中的具体位置
-
-【评分原则】
-1. 严格按评分标准给分，禁止自创分值
-2. 过程正确但结果错误，仍给过程分
-3. 前步错误导致后步错误，只扣一次分
-4. 非标准但正确的方法同样给分
-5. 证据不足时给0分并说明"未找到"
+- 必须返回纯 JSON（不要添加 markdown 代码块标记如 ```json）
+- question_details 数组中每题的 question_id 必须与评分标准中的题号精确匹配
+- scoring_point_results 中每项必须包含：point_id(str), awarded(number), max_points(number), evidence(str)
+- 得分点的 max_points 必须与评分标准中该 point_id 的 score 完全一致，禁止更改分值
 
 【题型处理】
-- 选择题/填空题：快速判断正误
-- 计算题：逐步骤评分
-- 证明题：检查逻辑链条
-- 应用题：检查建模、计算、结论
+- 选择题/填空题：快速判断正误，evidence 引用学生选项或填写内容
+- 计算题：逐步骤评分，每步独立给证据
+- 证明题：检查逻辑链条完整性
+- 应用题：检查建模、计算、结论三个维度
+"""
 
-【空白页】
-- 空白页/封面页：is_blank_page=true, score=0, max_score=0
+# 视觉批改时附加的坐标系统说明（仅在图像批改时注入）
+VISION_COORDINATE_ADDENDUM = """\n【坐标系统】
+- 原点：左上角，x向右(0-1)，y向下(0-1)
+- 使用 {x_min, y_min, x_max, y_max} 格式
+- 坐标必须精确到图片中的具体位置
 """
 
 # Vision annotation (bbox) tasks are different from grading: keep the system prompt
@@ -210,7 +210,13 @@ class LLMReasoningClient:
 
     def _extract_json_from_text(self, text: str) -> str:
         """
-        从文本中提取 JSON 部分
+        从文本中提取 JSON 部分（增强版：多策略提取）
+
+        策略顺序：
+        1. 提取 ```json ... ``` 代码块
+        2. 提取 ``` ... ``` 代码块
+        3. 找最外层 { ... } 包裹的 JSON 块
+        4. 返回原始文本（由调用方尝试解析）
 
         Args:
             text: 包含 JSON 的文本
@@ -218,14 +224,27 @@ class LLMReasoningClient:
         Returns:
             str: 提取的 JSON 字符串
         """
+        # 策略 1: ```json ... ```
         if "```json" in text:
             json_start = text.find("```json") + 7
             json_end = text.find("```", json_start)
-            return text[json_start:json_end].strip()
-        elif "```" in text:
+            if json_end > json_start:
+                return text[json_start:json_end].strip()
+        
+        # 策略 2: ``` ... ```
+        if "```" in text:
             json_start = text.find("```") + 3
             json_end = text.find("```", json_start)
-            return text[json_start:json_end].strip()
+            if json_end > json_start:
+                candidate = text[json_start:json_end].strip()
+                if candidate.startswith("{") or candidate.startswith("["):
+                    return candidate
+        
+        # 策略 3: 提取最外层 JSON 对象
+        block = self._extract_json_block(text)
+        if block:
+            return block
+        
         return text
 
     def _escape_invalid_backslashes(self, text: str) -> str:
@@ -247,11 +266,68 @@ class LLMReasoningClient:
                 return json.loads(repaired, strict=False)
 
     def _extract_json_block(self, text: str) -> Optional[str]:
+        """提取文本中最外层的 JSON 对象 { ... }"""
         start = text.find("{")
         end = text.rfind("}")
         if start == -1 or end <= start:
             return None
         return text[start : end + 1]
+
+    @staticmethod
+    def _fix_truncated_json(text: str) -> Optional[str]:
+        """尝试修复被截断的 JSON（补全缺少的括号）"""
+        # 只处理以 { 开头的文本
+        stripped = text.strip()
+        if not stripped.startswith("{"):
+            return None
+        
+        open_braces = 0
+        open_brackets = 0
+        in_string = False
+        escape_next = False
+        
+        for ch in stripped:
+            if escape_next:
+                escape_next = False
+                continue
+            if ch == '\\':
+                escape_next = True
+                continue
+            if ch == '"':
+                in_string = not in_string
+                continue
+            if in_string:
+                continue
+            if ch == '{':
+                open_braces += 1
+            elif ch == '}':
+                open_braces -= 1
+            elif ch == '[':
+                open_brackets += 1
+            elif ch == ']':
+                open_brackets -= 1
+        
+        if open_braces == 0 and open_brackets == 0:
+            return None  # 已经平衡，不需要修复
+        
+        # 补全缺少的括号
+        suffix = "]" * max(0, open_brackets) + "}" * max(0, open_braces)
+        if suffix:
+            return stripped + suffix
+        return None
+
+    def _empty_grading_result(self, max_score: float) -> Dict[str, Any]:
+        """生成空的批改结果（作为解析失败的兜底）"""
+        return {
+            "score": 0,
+            "max_score": max_score,
+            "confidence": 0.0,
+            "is_blank_page": False,
+            "question_numbers": [],
+            "question_details": [],
+            "page_summary": "JSON解析失败，无法获取批改结果",
+            "parse_error": True,
+        }
 
     def _normalize_question_detail(
         self,
@@ -1003,7 +1079,13 @@ class LLMReasoningClient:
 
     def _parse_grading_response(self, response_text: str, max_score: float) -> Dict[str, Any]:
         """
-        解析评分响应，并确保 scoring_point_results.evidence 字段被正确填充
+        解析评分响应（增强版：多层容错）
+
+        解析策略（按优先级）：
+        1. 提取 JSON 并直接解析
+        2. 修复无效转义和控制字符后重试
+        3. 修复截断的 JSON 后重试
+        4. 回退到空结果结构
 
         Args:
             response_text: LLM 响应文本
@@ -1012,24 +1094,48 @@ class LLMReasoningClient:
         Returns:
             Dict: 解析后的评分结果
         """
+        result = None
         json_text = self._extract_json_from_text(response_text)
-        
-        # 直接输出 AI 返回的原始 JSON - 已禁用避免日志噪音
-        # logger.debug(f"AI返回的原始JSON: {json_text}")
-        
-        result = json.loads(json_text)
 
-        # 确保所有 scoring_point_results 都有可解析的 evidence 字段（缺失时用占位符，不要臆造证据）
+        # 策略 1: 直接解析
+        try:
+            result = json.loads(json_text)
+        except json.JSONDecodeError:
+            pass
+
+        # 策略 2: 修复无效转义和控制字符
+        if result is None:
+            try:
+                result = self._load_json_with_repair(json_text)
+            except (json.JSONDecodeError, Exception):
+                pass
+
+        # 策略 3: 修复截断的 JSON
+        if result is None:
+            fixed = self._fix_truncated_json(json_text)
+            if fixed:
+                try:
+                    result = json.loads(fixed)
+                except json.JSONDecodeError:
+                    try:
+                        result = self._load_json_with_repair(fixed)
+                    except (json.JSONDecodeError, Exception):
+                        pass
+
+        # 策略 4: 回退到空结果
+        if result is None:
+            logger.warning(
+                f"所有 JSON 解析策略失败，返回默认空结果。"
+                f"原始响应前200字符: {response_text[:200]}"
+            )
+            return self._empty_grading_result(max_score)
+
+        # 确保所有 scoring_point_results 都有可解析的 evidence 字段
         for q in result.get("question_details", []):
-            # 处理 scoring_point_results 中的 evidence 字段
             for spr in q.get("scoring_point_results", []):
-                # 检查 evidence 是否为空或无效
                 evidence = spr.get("evidence", "")
-                if not evidence or evidence.strip() in ["", "无", "N/A", "null", "None"]:
+                if not evidence or str(evidence).strip() in ["", "无", "N/A", "null", "None"]:
                     spr["evidence"] = "【原文引用】未找到"
-                    # 避免日志噪音：这里只在 debug 下输出
-                    if logger.isEnabledFor(logging.DEBUG):
-                        logger.debug("evidence 字段为空，已补充占位符")
 
         return result
 
@@ -1118,12 +1224,12 @@ class LLMReasoningClient:
 - 学号
 - 班级信息
 
-## 输出格式（JSON）
-```json
+## 输出格式
+请直接返回纯 JSON（不要使用 markdown 代码块标记）：
 {{
     "score": 本页总得分,
     "max_score": 本页涉及题目的满分总和,
-    "confidence": 评分置信度（0.0-1.0）,
+    "confidence": 0.0到1.0,
     "is_blank_page": false,
     "question_numbers": ["1", "2", "3"],
     "question_details": [
@@ -1131,49 +1237,37 @@ class LLMReasoningClient:
             "question_id": "1",
             "score": 8,
             "max_score": 10,
-            "student_answer": "学生写了：...",
+            "student_answer": "学生答案摘要",
             "is_correct": false,
             "feedback": "第1步正确得3分，第2步计算错误扣2分...",
             "scoring_point_results": [
                 {{
-                    "point_index": 1,
-                    "description": "第1步计算",
-                    "max_score": 3,
+                    "point_id": "1.1",
                     "awarded": 3,
-                    "evidence": "【必填】文本第3段中学生写道：'代入x=2得y=4'，计算正确"
+                    "max_points": 3,
+                    "evidence": "【原文引用】文本第3段中学生写道：'代入x=2得y=4'，计算正确"
                 }},
                 {{
-                    "point_index": 2,
-                    "description": "第2步逻辑",
-                    "max_score": 7,
+                    "point_id": "1.2",
                     "awarded": 5,
-                    "evidence": "【必填】学生在结论处写'因此答案为5'，但正确答案应为4，扣2分"
+                    "max_points": 7,
+                    "evidence": "【原文引用】学生在结论处写'因此答案为5'，但正确答案应为4，扣2分"
                 }}
             ]
         }}
     ],
-    "page_summary": "本页包含第1-3题，学生整体表现良好，主要在计算方面有失误",
+    "page_summary": "简要总结",
     "student_info": {{
         "name": "张三",
         "student_id": "2024001"
     }}
 }}
-```
 
-## 重要评分原则
-1. **严格遵循评分标准**：每个得分点必须有明确依据
-2. **部分分数**：如果学生答案部分正确，给予相应的部分分数
-3. **max_score 计算**：只计算本页实际出现的题目的满分，不是整张试卷的总分
-4. **详细反馈**：明确指出正确和错误的部分，给出具体的扣分原因
-
-## 【关键】证据字段要求
-**evidence 字段是必填项**，必须满足以下要求：
-1. **具体位置**：说明证据在文本中的位置（如"第X段"、"第X行"、"答案末尾"）
-2. **原文引用**：尽可能直接引用学生的原始文字
-3. **对比说明**：如果答案错误，说明学生写的内容与正确答案的差异
-4. **未找到情况**：如果找不到相关内容，写明"学生未作答此部分"或"文本中未找到相关内容"
-
-禁止在 evidence 中写空字符串或模糊描述！"""
+## 评分原则
+1. **严格遵循评分标准**：每个得分点的 point_id 和 max_points 必须与评分标准完全一致
+2. **部分分数**：答案部分正确时给予相应分数
+3. **max_score 计算**：只计算本页实际出现题目的满分总和
+4. **evidence 必填**：每个 awarded > 0 的得分点必须有原文引用证据；找不到则 awarded=0"""
 
     async def grade_page(
         self,

@@ -54,6 +54,48 @@ const workflowSteps = [
   { id: "export", label: "Export" },
 ];
 
+const STREAM_DEDUPE_MIN_CHARS = 6;
+const STREAM_MAX_OVERLAP_CHARS = 4096;
+
+const clipStreamTail = (value: string, maxChars: number) => {
+  if (maxChars <= 0 || value.length <= maxChars) {
+    return value;
+  }
+  return value.slice(-maxChars);
+};
+
+const mergeStreamChunk = (currentText: string, incomingChunk: string, maxChars: number) => {
+  const current = currentText || "";
+  const incoming = incomingChunk || "";
+
+  if (!incoming) return clipStreamTail(current, maxChars);
+  if (!current) return clipStreamTail(incoming, maxChars);
+  if (incoming === current) return clipStreamTail(current, maxChars);
+
+  if (incoming.length >= STREAM_DEDUPE_MIN_CHARS) {
+    if (current.endsWith(incoming) || current.includes(incoming)) {
+      return clipStreamTail(current, maxChars);
+    }
+  }
+  if (incoming.length >= current.length && incoming.startsWith(current)) {
+    return clipStreamTail(incoming, maxChars);
+  }
+  if (current.length >= STREAM_DEDUPE_MIN_CHARS && incoming.includes(current)) {
+    return clipStreamTail(incoming, maxChars);
+  }
+
+  if (incoming.length >= STREAM_DEDUPE_MIN_CHARS) {
+    const maxOverlap = Math.min(current.length, incoming.length, STREAM_MAX_OVERLAP_CHARS);
+    for (let overlap = maxOverlap; overlap >= STREAM_DEDUPE_MIN_CHARS; overlap -= 1) {
+      if (current.slice(-overlap) === incoming.slice(0, overlap)) {
+        return clipStreamTail(current + incoming.slice(overlap), maxChars);
+      }
+    }
+  }
+
+  return clipStreamTail(current + incoming, maxChars);
+};
+
 const normalizeRubric = (raw: Record<string, unknown>): ParsedRubricDraft => {
   const rawQuestions = (raw?.questions as Array<Record<string, unknown>>) || [];
   const questions: RubricQuestionDraft[] = rawQuestions.map((q, idx: number) => {
@@ -276,19 +318,22 @@ export default function RubricReviewPage() {
       try {
         const message = JSON.parse(event.data);
         if (message.type === "llm_stream_chunk" && (message.nodeId === "rubric_parse" || message.nodeId === "rubric_self_review")) {
-          const chunk = message.chunk || "";
+          const rawChunk = message.chunk ?? "";
+          const chunk = typeof rawChunk === "string" ? rawChunk : JSON.stringify(rawChunk);
           if (!chunk) return;
           const tab = message.nodeId === "rubric_self_review" ? "self_review" : "parse";
           setLastStreamTab(tab);
           if (tab === "parse") {
-            const combined = parseStreamBufferRef.current + chunk;
-            parseStreamBufferRef.current = combined.length > 12000 ? combined.slice(-12000) : combined;
+            const combined = mergeStreamChunk(parseStreamBufferRef.current, chunk, 12000);
+            if (combined === parseStreamBufferRef.current) return;
+            parseStreamBufferRef.current = combined;
             if (!parseStreamFlushTimerRef.current) {
               parseStreamFlushTimerRef.current = setTimeout(flushParseStream, 200);
             }
           } else {
-            const combined = selfReviewStreamBufferRef.current + chunk;
-            selfReviewStreamBufferRef.current = combined.length > 12000 ? combined.slice(-12000) : combined;
+            const combined = mergeStreamChunk(selfReviewStreamBufferRef.current, chunk, 12000);
+            if (combined === selfReviewStreamBufferRef.current) return;
+            selfReviewStreamBufferRef.current = combined;
             if (!selfReviewStreamFlushTimerRef.current) {
               selfReviewStreamFlushTimerRef.current = setTimeout(flushSelfReviewStream, 200);
             }

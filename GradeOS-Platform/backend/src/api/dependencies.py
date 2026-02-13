@@ -28,6 +28,10 @@ _orchestrator: Optional[LangGraphOrchestrator] = None
 _checkpointer_cm: Optional[Any] = None
 
 
+def _env_truthy(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in ("1", "true", "yes", "y", "on")
+
+
 async def _open_postgres_checkpointer(dsn: str) -> Optional[Any]:
     global _checkpointer_cm
     if AsyncPostgresSaver is None:
@@ -72,11 +76,14 @@ async def init_orchestrator():
 
         checkpointer = None
         db_pool = None
-        if use_database and AsyncPostgresSaver is not None:
+        disable_pg_checkpointer = _env_truthy("DISABLE_POSTGRES_CHECKPOINTER")
+        if use_database and AsyncPostgresSaver is not None and not disable_pg_checkpointer:
             dsn = os.getenv("DATABASE_URL", "")
             if not dsn:
                 dsn = DatabaseConfig().connection_string
             checkpointer = await _open_postgres_checkpointer(dsn)
+        elif disable_pg_checkpointer:
+            logger.info("DISABLE_POSTGRES_CHECKPOINTER=true, using InMemorySaver.")
 
         if checkpointer is None:
             checkpointer = InMemorySaver()
@@ -91,7 +98,9 @@ async def init_orchestrator():
         )
 
         # 注册批量批改 Graph
-        batch_grading_graph = create_batch_grading_graph(checkpointer=checkpointer)
+        batch_grading_graph = await asyncio.to_thread(
+            create_batch_grading_graph, checkpointer=checkpointer
+        )
         _orchestrator.register_graph("batch_grading", batch_grading_graph)
 
         asyncio.create_task(_orchestrator.recover_incomplete_runs(graph_name="batch_grading"))

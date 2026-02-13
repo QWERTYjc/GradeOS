@@ -11,31 +11,39 @@
 
 ## 输出格式
 
-请以 JSON 格式输出批改结果：
+请以纯 JSON 格式输出批改结果（不要使用 markdown 代码块标记）：
 
-```json
 {
-  "extracted_answer": "学生完整答案",
-  "steps": [
+  "question_details": [
     {
-      "step_number": 1,
-      "content": "步骤内容",
-      "is_correct": true/false,
+      "question_id": "题号",
       "score": 得分,
       "max_score": 满分,
-      "feedback": "该步骤的评语"
+      "student_answer": "学生完整答案摘要",
+      "is_correct": true或false,
+      "feedback": "总体评语：第1步正确得X分，第2步计算错误扣X分...",
+      "scoring_point_results": [
+        {
+          "point_id": "得分点ID（与评分标准一致）",
+          "awarded": 给分数值,
+          "max_points": 该得分点满分,
+          "evidence": "【原文引用】学生写道：'具体作答内容'，过程正确/结果正确/存在错误..."
+        }
+      ]
     }
   ],
-  "score": 总分,
-  "max_score": 满分,
-  "confidence": 置信度(0.0-1.0),
-  "reasoning_trace": ["推理步骤1", "推理步骤2"],
-  "feedback": "总体评语"
+  "score": 总得分,
+  "max_score": 总满分,
+  "confidence": 0.0到1.0,
+  "page_summary": "简要总结"
 }
-```
 
 ## 注意事项
 
+- question_id 必须与评分标准中的题号完全一致
+- point_id 必须与评分标准中的得分点 ID 精确匹配
 - 即使最终答案错误，正确的中间步骤也应给分
+- 前步错误导致后步错误，只在首次出错处扣分
+- 非标准但正确的解法同样给分
+- evidence 必须引用学生原始作答内容，不能臆造
 - 注意单位换算和有效数字
-- 对于跳步的解答，根据评分标准判断是否扣分

@@ -11,30 +11,37 @@
 
 ## 输出格式
 
-请以 JSON 格式输出批改结果：
+请以纯 JSON 格式输出批改结果（不要使用 markdown 代码块标记）：
 
-```json
 {
-  "extracted_answer": "学生完整答案",
-  "key_points": [
+  "question_details": [
     {
-      "point": "要点描述",
-      "found": true/false,
+      "question_id": "题号",
       "score": 得分,
       "max_score": 满分,
-      "feedback": "该要点的评语"
+      "student_answer": "学生论述要点摘要",
+      "feedback": "总体评语：论点明确/逻辑不够严密/缺少XXX要点...",
+      "scoring_point_results": [
+        {
+          "point_id": "得分点ID（与评分标准一致）",
+          "awarded": 给分数值,
+          "max_points": 该得分点满分,
+          "evidence": "【原文引用】学生在第X段写道：'具体论述内容'，覆盖了/未覆盖该要点"
+        }
+      ]
     }
   ],
-  "score": 总分,
-  "max_score": 满分,
-  "confidence": 置信度(0.0-1.0),
-  "reasoning_trace": ["推理步骤1", "推理步骤2"],
-  "feedback": "总体评语"
+  "score": 总得分,
+  "max_score": 总满分,
+  "confidence": 0.0到1.0,
+  "page_summary": "简要总结"
 }
-```
 
 ## 注意事项
 
-- 关注答案的深度和广度
-- 允许学生用自己的语言表达，不要求与标准答案完全一致
-- 对于创新性观点，给予适当认可
+- question_id 必须与评分标准中的题号完全一致
+- point_id 必须与评分标准中的得分点 ID 精确匹配
+- 论述题得分可以是部分分，不必全对全错
+- evidence 必须引用学生原始论述内容，不能臆造
+- 学生使用不同表述但含义正确的，应当给分
+- 对于开放性论述，只要论据充分、逻辑自洽即可给分
