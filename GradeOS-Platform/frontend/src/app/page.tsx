@@ -10,7 +10,6 @@ import { HeroSection } from '@/components/landing/HeroSection';
 import AIWorkflowVisualization from '@/components/landing/AIWorkflowShowcase';
 import { FeatureGrid } from '@/components/landing/FeatureGrid';
 import { StatsRow } from '@/components/landing/StatsRow';
-import { PageFooter } from '@/components/landing/PageFooter';
 
 export default function LandingPage() {
   const { user } = useAuthStore();
@@ -189,8 +188,6 @@ export default function LandingPage() {
         <AIWorkflowVisualization />
       </div>
 
-      {/* Footer */}
-      <PageFooter />
     </main>
   );
 }
