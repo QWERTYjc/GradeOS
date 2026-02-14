@@ -3,6 +3,15 @@ import { wsClient, buildWsUrl } from '@/services/ws';
 import { GradingAnnotationResult } from '@/types/annotation';
 import { gradingApi } from '@/services/api';
 import { normalizeStudentResults } from '@/lib/gradingResults';
+import {
+    applyStageSignal,
+    buildMissingStageReason,
+    canFinalizeWithGate,
+    createInitialRequiredStageSeen,
+    deriveStageFromNodeUpdate,
+    normalizeWorkflowStage,
+    type RequiredStageSeen,
+} from '@/lib/completionGate';
 
 export type WorkflowStatus = 'IDLE' | 'UPLOADING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'REVIEWING';
 export type NodeStatus = 'pending' | 'running' | 'completed' | 'failed';
@@ -59,7 +68,7 @@ export interface WorkflowNode {
 }
 
 export interface ScoringPoint {
-    pointId?: string;           // 评分点编�?(e.g., "1.1", "1.2")
+    pointId?: string;           // 璇勫垎鐐圭紪锟?(e.g., "1.1", "1.2")
     description: string;
     score: number;
     maxScore: number;
@@ -102,14 +111,11 @@ export interface QuestionResult {
     confessionItems?: any[];
     typoNotes?: string[];
     scoringPoints?: ScoringPoint[];
-    /** 得分点明细列表（新格式） */
+    /** 寰楀垎鐐规槑缁嗗垪琛紙鏂版牸寮忥級 */
     scoringPointResults?: Array<{
-        pointId?: string;       // 评分点编号
-        scoringPoint?: ScoringPoint;  // 旧格式兼容
-        description?: string;   // 评分点描述
-        awarded: number;        // 实际得分
-        maxPoints?: number;     // 满分
-        evidence: string;       // 评分依据/证据
+        pointId?: string;       // 璇勫垎鐐圭紪鍙?        scoringPoint?: ScoringPoint;  // 鏃ф牸寮忓吋瀹?        description?: string;   // 璇勫垎鐐规弿杩?        awarded: number;        // 瀹為檯寰楀垎
+        maxPoints?: number;     // 婊″垎
+        evidence: string;       // 璇勫垎渚濇嵁/璇佹嵁
         rubricReference?: string;
         rubricReferenceSource?: string;
         decision?: string;
@@ -123,7 +129,7 @@ export interface QuestionResult {
         };
         reviewReason?: string;
         reviewBy?: string;
-        /** 错误区域坐标 */
+        /** 閿欒鍖哄煙鍧愭爣 */
         errorRegion?: {
             x_min: number;
             y_min: number;
@@ -131,19 +137,19 @@ export interface QuestionResult {
             y_max: number;
         };
     }>;
-    /** 出现在哪些页?- 新增 */
+    /** 鍑虹幇鍦ㄥ摢浜涢〉?- 鏂板 */
     pageIndices?: number[];
-    /** 是否跨页题目 - 新增 */
+    /** 鏄惁璺ㄩ〉棰樼洰 - 鏂板 */
     isCrossPage?: boolean;
-    /** 合并来源（如果是合并结果? 新增 */
+    /** 鍚堝苟鏉ユ簮锛堝鏋滄槸鍚堝苟缁撴灉? 鏂板 */
     mergeSource?: string[];
-    /** 题目审计信息（由 LLM 生成，复核可更新） */
+    /** 棰樼洰瀹¤淇℃伅锛堢敱 LLM 鐢熸垚锛屽鏍稿彲鏇存柊锛?*/
     audit?: AuditInfo;
-    /** 页面索引 (snake_case) */
+    /** 椤甸潰绱㈠紩 (snake_case) */
     page_index?: number;
-    /** 页面索引 (camelCase) */
+    /** 椤甸潰绱㈠紩 (camelCase) */
     pageIndex?: number;
-    /** 批注坐标列表 */
+    /** 鎵规敞鍧愭爣鍒楄〃 */
     annotations?: Array<{
         type: string;
         page_index?: number;
@@ -156,7 +162,7 @@ export interface QuestionResult {
         text?: string;
         color?: string;
     }>;
-    /** 步骤信息（包含坐标） */
+    /** 姝ラ淇℃伅锛堝寘鍚潗鏍囷級 */
     steps?: Array<{
         step_id: string;
         step_content: string;
@@ -176,7 +182,7 @@ export interface QuestionResult {
         page_index?: number;
         pageIndex?: number;
     }>;
-    /** 答案区域坐标 */
+    /** 绛旀鍖哄煙鍧愭爣 */
     answerRegion?: {
         x_min: number;
         y_min: number;
@@ -211,15 +217,15 @@ export interface StudentResult {
     questionResults?: QuestionResult[];
     studentSummary?: StudentSummary;
     selfAudit?: SelfAudit;
-    /** 起始页 */
+    /** 璧峰椤?*/
     startPage?: number;
-    /** 结束页 */
+    /** 缁撴潫椤?*/
     endPage?: number;
-    /** 置信度 */
+    /** 缃俊搴?*/
     confidence?: number;
-    /** 是否需要人工确认 */
+    /** 鏄惁闇€瑕佷汉宸ョ‘璁?*/
     needsConfirmation?: boolean;
-    /** 自白报告 */
+    /** 鑷櫧鎶ュ憡 */
     confession?: {
         // ConfessionReport v1 (preferred)
         version?: string;
@@ -246,21 +252,21 @@ export interface StudentResult {
         generatedAt?: string;
         source?: string;
     };
-    /** 第一次批改记录（逻辑复核前的原始结果） */
+    /** 绗竴娆℃壒鏀硅褰曪紙閫昏緫澶嶆牳鍓嶇殑鍘熷缁撴灉锛?*/
     draftQuestionDetails?: QuestionResult[];
-    /** 第一次批改总分 */
+    /** 绗竴娆℃壒鏀规€诲垎 */
     draftTotalScore?: number;
-    /** 第一次批改满分 */
+    /** 绗竴娆℃壒鏀规弧鍒?*/
     draftMaxScore?: number;
-    /** 逻辑复核 */
+    /** 閫昏緫澶嶆牳 */
     logicReview?: any;
-    /** 逻辑复核时间 */
+    /** 閫昏緫澶嶆牳鏃堕棿 */
     logicReviewedAt?: string;
-    /** 页面范围（显示用） */
+    /** 椤甸潰鑼冨洿锛堟樉绀虹敤锛?*/
     pageRange?: string;
-    /** 页面列表 */
+    /** 椤甸潰鍒楄〃 */
     pages?: string;
-    /** 批注结果（按页） */
+    /** 鎵规敞缁撴灉锛堟寜椤碉級 */
     gradingAnnotations?: GradingAnnotationResult;
 }
 
@@ -367,14 +373,14 @@ export interface RubricScoringPoint {
     keywords?: string[];
 }
 
-// 解析的评分标�?- 另类解法
+// 瑙ｆ瀽鐨勮瘎鍒嗘爣锟?- 鍙︾被瑙ｆ硶
 export interface RubricAlternativeSolution {
     description: string;
     scoringCriteria: string;
     note?: string;
 }
 
-// 解析的评分标�?- 单题详情
+// 瑙ｆ瀽鐨勮瘎鍒嗘爣锟?- 鍗曢璇︽儏
 export interface RubricQuestion {
     questionId: string;
     maxScore: number;
@@ -385,20 +391,20 @@ export interface RubricQuestion {
     gradingNotes?: string;
     criteria?: string[];
     sourcePages?: number[];
-    // 解析自白字段
+    // 瑙ｆ瀽鑷櫧瀛楁
     parseConfidence?: number;
     parseUncertainties?: string[];
     parseQualityIssues?: string[];
 }
 
-// 解析的评分标准信息（完整版）
+// 瑙ｆ瀽鐨勮瘎鍒嗘爣鍑嗕俊鎭紙瀹屾暣鐗堬級
 export interface ParsedRubric {
     totalQuestions: number;
     totalScore: number;
     questions?: RubricQuestion[];
     generalNotes?: string;
     rubricFormat?: string;
-    // LLM 直接生成的自白（极短）
+    // LLM generated confession summary (short form)
     confession?: {
         risks?: string[];
         uncertainties?: string[];
@@ -406,7 +412,7 @@ export interface ParsedRubric {
         needsReview?: string[];
         confidence?: number;
     };
-    // 解析自白相关字段
+    // 瑙ｆ瀽鑷櫧鐩稿叧瀛楁
     overallParseConfidence?: number;
     parseConfession?: {  // confession parse report
         overallStatus: 'ok' | 'caution' | 'error';
@@ -430,7 +436,7 @@ export interface ParsedRubric {
     };
 }
 
-// === 自我成长系统类型定义 ===
+// === 鑷垜鎴愰暱绯荤粺绫诲瀷瀹氫箟 ===
 
 export interface ExemplarInfo {
     id: string;
@@ -457,11 +463,11 @@ export interface PatchInfo {
 export interface SelfEvolvingState {
     calibration: CalibrationInfo | null;
     activePatches: PatchInfo[];
-    // 判例信息通常与特�?Agent/Page 关联，这里存储最近检索到的判例用于展�?
+    // 鍒や緥淇℃伅閫氬父涓庣壒锟?Agent/Page 鍏宠仈锛岃繖閲屽瓨鍌ㄦ渶杩戞绱㈠埌鐨勫垽渚嬬敤浜庡睍锟?
     recentExemplars: ExemplarInfo[];
 }
 
-// === 班级批改上下�?===
+// === 鐝骇鎵规敼涓婁笅锟?===
 
 export interface ClassStudent {
     id: string;
@@ -472,8 +478,8 @@ export interface ClassStudent {
 export interface StudentImageMapping {
     studentId: string;
     studentName: string;
-    startIndex: number; // 该学生的起始图片索引
-    endIndex: number;   // 该学生的结束图片索引 (inclusive)
+    startIndex: number; // 璇ュ鐢熺殑璧峰鍥剧墖绱㈠紩
+    endIndex: number;   // 璇ュ鐢熺殑缁撴潫鍥剧墖绱㈠紩 (inclusive)
 }
 
 export interface ClassContext {
@@ -501,21 +507,21 @@ export interface ConsoleState {
     nodeStatusTimestamps: Record<string, number>;
     nodeStatusTimers: Record<string, ReturnType<typeof setTimeout>>;
 
-    // 新增：自我成长系统状�?
+    // 鏂板锛氳嚜鎴戞垚闀跨郴缁熺姸锟?
     parsedRubric: ParsedRubric | null;
     batchProgress: BatchProgress | null;
     studentBoundaries: StudentBoundary[];
     selfEvolving: SelfEvolvingState;
-    // 新增：跨页题目信�?
+    // 鏂板锛氳法椤甸鐩俊锟?
     crossPageQuestions: CrossPageQuestion[];
-    // 新增：LLM 思考过�?
+    // 鏂板锛歀LM 鎬濊€冭繃锟?
     llmThoughts: LLMThought[];
-    // 新增：上传的图片 (用于结果页展�?
-    uploadedImages: string[];  // base64 �?URL
+    // 鏂板锛氫笂浼犵殑鍥剧墖 (鐢ㄤ簬缁撴灉椤靛睍锟?
+    uploadedImages: string[];  // base64 锟?URL
     rubricImages: string[];
     pendingReview: PendingReview | null;
     classReport: ClassReport | null;
-    // 新增：班级批改上下文
+    // 鏂板锛氱彮绾ф壒鏀逛笂涓嬫枃
     classContext: ClassContext;
     reviewFocus: 'rubric' | 'results' | null;
     expectedTotalScore: number | null;
@@ -528,6 +534,10 @@ export interface ConsoleState {
         message: string;
         details?: string;
     } | null;
+    completionBlockedReason: string | null;
+    requiredStageSeen: RequiredStageSeen;
+    lastObservedStage: string | null;
+    pendingTerminalEvent: boolean;
 
     setView: (view: 'LANDING' | 'CONSOLE') => void;
     setCurrentTab: (tab: ConsoleTab) => void;
@@ -545,14 +555,14 @@ export interface ConsoleState {
     toggleMonitor: () => void;
     connectWs: (batchId: string) => void;
 
-    // 新增：自我成长系统方�?
+    // 鏂板锛氳嚜鎴戞垚闀跨郴缁熸柟锟?
     setParsedRubric: (rubric: ParsedRubric) => void;
     setBatchProgress: (progress: BatchProgress) => void;
     setStudentBoundaries: (boundaries: StudentBoundary[]) => void;
     updateSelfEvolving: (update: Partial<SelfEvolvingState>) => void;
-    // 新增：跨页题目方�?
+    // 鏂板锛氳法椤甸鐩柟锟?
     setCrossPageQuestions: (questions: CrossPageQuestion[]) => void;
-    // 新增：LLM 思考方�?
+    // 鏂板锛歀LM 鎬濊€冩柟锟?
     appendLLMThought: (
         nodeId: string,
         nodeName: string,
@@ -564,12 +574,12 @@ export interface ConsoleState {
     ) => void;
     completeLLMThought: (nodeId: string, pageIndex?: number, streamType?: 'thinking' | 'output', agentId?: string) => void;
     clearLLMThoughts: () => void;
-    // 新增：图片方�?
+    // 鏂板锛氬浘鐗囨柟锟?
     setUploadedImages: (images: string[]) => void;
     setRubricImages: (images: string[]) => void;
     setPendingReview: (review: PendingReview | null) => void;
     setClassReport: (report: ClassReport | null) => void;
-    // 新增：班级批改上下文方法
+    // 鏂板锛氱彮绾ф壒鏀逛笂涓嬫枃鏂规硶
     setClassContext: (context: Partial<ClassContext>) => void;
     clearClassContext: () => void;
     setInteractionEnabled: (enabled: boolean) => void;
@@ -660,21 +670,19 @@ const mergeStreamChunk = (currentText: string, incomingChunk: string, maxChars: 
 };
 
 /**
- * 工作流节点配�? * 
- * 基于 LangGraph 架构的前端展示流程（隐藏内部 merge 节点）：
- * 1. intake - 接收文件
- * 2. preprocess - 预处理（转图、压缩、边界/索引等）
- * 3. rubric_parse - 解析评分标准
+ * 宸ヤ綔娴佽妭鐐归厤锟? * 
+ * 鍩轰簬 LangGraph 鏋舵瀯鐨勫墠绔睍绀烘祦绋嬶紙闅愯棌鍐呴儴 merge 鑺傜偣锛夛細
+ * 1. intake - 鎺ユ敹鏂囦欢
+ * 2. preprocess - 棰勫鐞嗭紙杞浘銆佸帇缂┿€佽竟鐣?绱㈠紩绛夛級
+ * 3. rubric_parse - 瑙ｆ瀽璇勫垎鏍囧噯
  * 4. rubric_confession_report - Rubric confession (independent honesty report)
- * 5. rubric_self_review - 评分标准自动复核
- * 6. rubric_review - 评分标准人工交互（可选）
- * 7. grade_batch - 按学生批次并行批改
- * 8. grading_confession_report - Grading confession (independent honesty report)
- * 9. logic_review - 批改逻辑复核（可选，confession 触发）
- * 10. review - 批改结果人工交互（可选）
- * 11. export - 导出结果
+ * 5. rubric_self_review - 璇勫垎鏍囧噯鑷姩澶嶆牳
+ * 6. rubric_review - 璇勫垎鏍囧噯浜哄伐浜や簰锛堝彲閫夛級
+ * 7. grade_batch - 鎸夊鐢熸壒娆″苟琛屾壒鏀? * 8. grading_confession_report - Grading confession (independent honesty report)
+ * 9. logic_review - 鎵规敼閫昏緫澶嶆牳锛堝彲閫夛紝confession 瑙﹀彂锛? * 10. review - 鎵规敼缁撴灉浜哄伐浜や簰锛堝彲閫夛級
+ * 11. export - 瀵煎嚭缁撴灉
  * 
- * 后端 LangGraph Graph 流程（含内部节点）：
+ * 鍚庣 LangGraph Graph 娴佺▼锛堝惈鍐呴儴鑺傜偣锛夛細
  * intake -> preprocess -> rubric_parse -> rubric_confession_report -> rubric_self_review -> rubric_review
  * -> grade_batch -> grading_confession_report -> logic_review -> review -> export -> END
  */
@@ -753,7 +761,7 @@ const normalizeParsedRubricPayload = (data: any): ParsedRubric | null => {
         }))
         : undefined;
 
-    // 规范化自白报�?
+    // 瑙勮寖鍖栬嚜鐧芥姤锟?
     const rawConfession =
         data.parseConfession ||
         data.parse_confession;
@@ -840,8 +848,20 @@ const extractResultsPayload = (payload: any): StudentResult[] | null => {
     return Array.isArray(results) ? results : null;
 };
 
-const waitForPostReviewResults = async (batchId: string, initialResults: StudentResult[] | null) => {
-    if (initialResults && initialResults.length > 0) {
+type PostReviewPollOptions = {
+    onStageSignal?: (stage?: string | null) => void;
+    isCompletionGateSatisfied?: () => boolean;
+};
+
+const waitForPostReviewResults = async (
+    batchId: string,
+    initialResults: StudentResult[] | null,
+    options?: PostReviewPollOptions
+) => {
+    const stageSignal = options?.onStageSignal;
+    const isCompletionGateSatisfied = options?.isCompletionGateSatisfied;
+
+    if (initialResults && initialResults.length > 0 && (!isCompletionGateSatisfied || isCompletionGateSatisfied())) {
         return initialResults;
     }
     const pollIntervalMs = 4000;
@@ -849,22 +869,34 @@ const waitForPostReviewResults = async (batchId: string, initialResults: Student
     for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
         await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
         let fetchedResults: StudentResult[] | null = null;
+        let shouldRefreshStage = !isCompletionGateSatisfied || !isCompletionGateSatisfied();
         try {
             const response = await gradingApi.getBatchResults(batchId);
             fetchedResults = extractResultsPayload(response);
+            if (!fetchedResults || fetchedResults.length === 0) {
+                shouldRefreshStage = true;
+            }
         } catch (error) {
             console.warn('Polling results failed:', error);
+            shouldRefreshStage = true;
         }
-        if (!fetchedResults) {
+        if (shouldRefreshStage) {
             try {
                 const reviewContext = await gradingApi.getResultsReviewContext(batchId);
+                const stage =
+                    normalizeWorkflowStage(
+                        (reviewContext as any)?.current_stage || (reviewContext as any)?.currentStage
+                    );
+                stageSignal?.(stage);
                 fetchedResults = extractResultsPayload(reviewContext) || (reviewContext as any)?.student_results || null;
             } catch (error) {
                 console.warn('Polling results-review fallback failed:', error);
             }
         }
         if (fetchedResults && fetchedResults.length > 0) {
-            return fetchedResults;
+            if (!isCompletionGateSatisfied || isCompletionGateSatisfied()) {
+                return fetchedResults;
+            }
         }
     }
     return null;
@@ -873,8 +905,105 @@ const waitForPostReviewResults = async (batchId: string, initialResults: Student
 
 
 export const useConsoleStore = create<ConsoleState>((set, get) => {
-    // Store 内部�?WebSocket 处理器注册标�?
+    // Store 鍐呴儴锟?WebSocket 澶勭悊鍣ㄦ敞鍐屾爣锟?
     let handlersRegistered = false;
+    const LOGIC_REVIEW_SKIP_BLOCK_REASON = 'logic_review stage was skipped; completion is blocked by policy.';
+
+    const canFinalizeCompletion = () => {
+        const state = get();
+        if (state.completionBlockedReason === LOGIC_REVIEW_SKIP_BLOCK_REASON) {
+            return false;
+        }
+        return canFinalizeWithGate(state.requiredStageSeen, state.pendingTerminalEvent);
+    };
+
+    const recordStageSignal = (rawStage?: string | null) => {
+        const normalized = normalizeWorkflowStage(rawStage);
+        if (!normalized) return;
+        set((state) => {
+            const applied = applyStageSignal(state.requiredStageSeen, normalized);
+            const nextRequired = applied.required;
+            const nextTerminalSeen = state.pendingTerminalEvent || applied.terminalSeen;
+            const gateSatisfied = canFinalizeWithGate(nextRequired, nextTerminalSeen);
+
+            const hasSkipBlock = state.completionBlockedReason === LOGIC_REVIEW_SKIP_BLOCK_REASON;
+            let nextBlockedReason = state.completionBlockedReason;
+            if (applied.logicReviewSkipped || hasSkipBlock) {
+                nextBlockedReason = LOGIC_REVIEW_SKIP_BLOCK_REASON;
+            } else if (gateSatisfied) {
+                nextBlockedReason = null;
+            }
+
+            return {
+                requiredStageSeen: nextRequired,
+                pendingTerminalEvent: nextTerminalSeen,
+                lastObservedStage: applied.normalizedStage || state.lastObservedStage,
+                completionBlockedReason: nextBlockedReason,
+            };
+        });
+    };
+
+    const blockCompletion = (reason?: string) => {
+        const state = get();
+        const fallbackReason =
+            state.completionBlockedReason === LOGIC_REVIEW_SKIP_BLOCK_REASON
+                ? LOGIC_REVIEW_SKIP_BLOCK_REASON
+                : buildMissingStageReason(state.requiredStageSeen);
+        const nextReason = reason || fallbackReason;
+        if (state.completionBlockedReason !== nextReason) {
+            get().addLog(`Completion blocked: ${nextReason}`, 'WARNING');
+        }
+        set((current) => ({
+            completionBlockedReason: nextReason,
+            status: current.status === 'FAILED' ? 'FAILED' : 'RUNNING',
+        }));
+    };
+
+    const finalizeCompletion = (data: any, resultsOverride?: StudentResult[] | null) => {
+        const message = data?.message || 'Workflow completed';
+        get().addLog(message, 'SUCCESS');
+
+        const resolvedResults = resultsOverride ?? extractResultsPayload(data);
+        if (resolvedResults && resolvedResults.length > 0) {
+            get().setFinalResults(resolvedResults);
+            get().addLog(`Saved results for ${resolvedResults.length} students`, 'SUCCESS');
+        }
+
+        const classReport = data?.classReport || data?.class_report;
+        if (classReport) {
+            const normalizedReport = normalizeClassReport(classReport);
+            if (normalizedReport) {
+                get().setClassReport(normalizedReport);
+            }
+        }
+
+        get().setStatus('COMPLETED');
+        get().setPendingReview(null);
+        get().setReviewFocus(null);
+
+        set({
+            completionBlockedReason: null,
+            pendingTerminalEvent: true,
+            lastObservedStage: 'completed',
+        });
+
+        const currentNodes = get().workflowNodes;
+        currentNodes.forEach((node) => {
+            if (node.status === 'running') {
+                get().updateNodeStatus(node.id, 'completed');
+            }
+        });
+        get().updateNodeStatus('export', 'completed');
+    };
+
+    const maybeFinalizeCompletion = (data: any, resultsOverride?: StudentResult[] | null) => {
+        if (canFinalizeCompletion()) {
+            finalizeCompletion(data, resultsOverride);
+            return true;
+        }
+        blockCompletion();
+        return false;
+    };
 
     return {
         view: 'LANDING',
@@ -892,7 +1021,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
         nodeStatusTimestamps: {},
         nodeStatusTimers: {},
 
-        // 自我成长系统状态初始�?
+        // 鑷垜鎴愰暱绯荤粺鐘舵€佸垵濮嬶拷?
         parsedRubric: null,
         batchProgress: null,
         studentBoundaries: [],
@@ -901,16 +1030,16 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
             activePatches: [],
             recentExemplars: []
         },
-        // 跨页题目信息初始�?
+        // 璺ㄩ〉棰樼洰淇℃伅鍒濆锟?
         crossPageQuestions: [],
-        // LLM 思考过程初始�?
+        // LLM 鎬濊€冭繃绋嬪垵濮嬶拷?
         llmThoughts: [],
-        // 上传的图片初始�?
+        // 涓婁紶鐨勫浘鐗囧垵濮嬶拷?
         uploadedImages: [],
         rubricImages: [],
         pendingReview: null,
         classReport: null,
-        // 班级批改上下文初始�?
+        // 鐝骇鎵规敼涓婁笅鏂囧垵濮嬶拷?
         classContext: {
             classId: null,
             homeworkId: null,
@@ -923,6 +1052,10 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
         expectedTotalScore: null,
         rubricScoreMismatch: null,
         rubricParseError: null,
+        completionBlockedReason: null,
+        requiredStageSeen: createInitialRequiredStageSeen(),
+        lastObservedStage: null,
+        pendingTerminalEvent: false,
 
         setView: (view) => set({ view }),
         setCurrentTab: (tab) => set({ currentTab: tab }),
@@ -1113,13 +1246,13 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                 })),
                 nodeStatusTimestamps: {},
                 nodeStatusTimers: {},
-                // 重置自我成长系统状�?
+                // 閲嶇疆鑷垜鎴愰暱绯荤粺鐘讹拷?
                 parsedRubric: null,
                 batchProgress: null,
                 studentBoundaries: [],
-                // 重置跨页题目信息
+                // 閲嶇疆璺ㄩ〉棰樼洰淇℃伅
                 crossPageQuestions: [],
-                // 重置 LLM 思考和图片
+                // 閲嶇疆 LLM 鎬濊€冨拰鍥剧墖
                 llmThoughts: [],
                 uploadedImages: [],
                 rubricImages: [],
@@ -1128,6 +1261,10 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                 expectedTotalScore: null,
                 rubricScoreMismatch: null,
                 rubricParseError: null,
+                completionBlockedReason: null,
+                requiredStageSeen: createInitialRequiredStageSeen(),
+                lastObservedStage: null,
+                pendingTerminalEvent: false,
             });
         },
 
@@ -1146,19 +1283,19 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
         }),
         toggleMonitor: () => set((state) => ({ isMonitorOpen: !state.isMonitorOpen })),
 
-        // 自我成长系统方法
+        // 鑷垜鎴愰暱绯荤粺鏂规硶
         setParsedRubric: (rubric) => set({ parsedRubric: rubric }),
         setBatchProgress: (progress) => set({ batchProgress: progress }),
         setStudentBoundaries: (boundaries) => set({ studentBoundaries: boundaries }),
         updateSelfEvolving: (update) => set((state) => ({
             selfEvolving: { ...state.selfEvolving, ...update }
         })),
-        // 跨页题目方法
+        // 璺ㄩ〉棰樼洰鏂规硶
         setCrossPageQuestions: (questions) => set({ crossPageQuestions: questions }),
 
-        // LLM 思考方�?
+        // LLM 鎬濊€冩柟锟?
         appendLLMThought: (nodeId, nodeName, chunk, pageIndex, streamType, agentId, agentLabel) => set((state) => {
-            // 防御性处理：确保 chunk 是字符串
+            // 闃插尽鎬у鐞嗭細纭繚 chunk 鏄瓧绗︿覆
             let contentStr = '';
             let shouldAppend = true;
             const normalizedStreamType = streamType || 'output';
@@ -1178,7 +1315,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                 shouldAppend = Boolean(contentStr);
             } else if (typeof chunk === 'string') {
                 let processedChunk = chunk;
-                // 移除可能存在�?markdown 代码块包�?
+                // 绉婚櫎鍙兘瀛樺湪锟?markdown 浠ｇ爜鍧楀寘锟?
                 if (processedChunk.startsWith('```json')) {
                     processedChunk = processedChunk.replace(/^```json\s*/, '').replace(/\s*```$/, '');
                 } else if (processedChunk.startsWith('```')) {
@@ -1187,7 +1324,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                 contentStr = processedChunk;
                 shouldAppend = contentStr !== '';
             } else if (chunk && typeof chunk === 'object') {
-                // 对象类型，尝试提�?text/content
+                // 瀵硅薄绫诲瀷锛屽皾璇曟彁锟?text/content
                 const obj = chunk as any;
                 contentStr = obj.text || obj.content || obj.thought || obj.summary || JSON.stringify(obj, null, 2);
                 shouldAppend = contentStr !== '';
@@ -1360,7 +1497,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
 
         clearLLMThoughts: () => set({ llmThoughts: [] }),
 
-        // 图片方法
+        // 鍥剧墖鏂规硶
         setUploadedImages: (images) => set({
             uploadedImages: Array.isArray(images) ? images.map(normalizeImageSource) : []
         }),
@@ -1370,7 +1507,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
         setPendingReview: (review) => set({ pendingReview: review }),
         setClassReport: (report) => set({ classReport: report }),
 
-        // 班级批改上下文方�?
+        // 鐝骇鎵规敼涓婁笅鏂囨柟锟?
         setClassContext: (context) => set((state) => ({
             classContext: { ...state.classContext, ...context }
         })),
@@ -1386,25 +1523,29 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
         }),
 
         connectWs: (batchId) => {
-            // 🔧 修复：连接新批次时重置工作流节点状态，避免旧状态残留
+            // Reset workflow state when connecting to a new batch.
             set({
-                workflowNodes: initialNodes.map(n => ({
+                workflowNodes: initialNodes.map((n) => ({
                     ...n,
                     status: 'pending' as NodeStatus,
                     message: undefined,
                     children: n.isParallelContainer ? [] : undefined
                 })),
-                llmThoughts: [],  // 清空 LLM 思考记录
+                llmThoughts: [],
+                completionBlockedReason: null,
+                requiredStageSeen: createInitialRequiredStageSeen(),
+                lastObservedStage: null,
+                pendingTerminalEvent: false,
             });
-            
+
             wsClient.connect(buildWsUrl(`/api/batch/ws/${batchId}`));
-            // 使用 store 内部状态而不是全局变量
+            // 浣跨敤 store 鍐呴儴鐘舵€佽€屼笉鏄叏灞€鍙橀噺
             if (handlersRegistered) {
                 return;
             }
             handlersRegistered = true;
 
-            // 处理工作流节点更�?
+            // 澶勭悊宸ヤ綔娴佽妭鐐规洿锟?
             wsClient.on('workflow_update', (data: any) => {
                 console.log('Workflow Update:', data);
                 const { nodeId, status, message } = data as {
@@ -1439,7 +1580,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                     }
                     return;
                 }
-                // 后端节点 ID 映射到前端（兼容旧名称）
+                // 鍚庣鑺傜偣 ID 鏄犲皠鍒板墠绔紙鍏煎鏃у悕绉帮級
                 const mappedNodeId = nodeId === 'grading' ? 'grade_batch' : nodeId;
                 const normalizedStatus = isNodeStatus(status) ? status : undefined;
                 if (!mappedNodeId || !normalizedStatus) {
@@ -1452,17 +1593,19 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                     get().updateNodeStatus(mappedNodeId, normalizedStatus);
                 }
 
-                // When the backend replays cached progress, it intentionally skips `workflow_completed`
-                // (to avoid auto-jumping to the results view). In that case, we still want the console
-                // to show "completed" once the final export stage is done.
-                if (mappedNodeId === 'export' && normalizedStatus === 'completed') {
-                    get().setStatus('COMPLETED');
-                    get().setPendingReview(null);
-                    get().setReviewFocus(null);
+                const stageSignal = deriveStageFromNodeUpdate(mappedNodeId, normalizedStatus);
+                if (stageSignal) {
+                    recordStageSignal(stageSignal);
+                }
+
+                const shouldAttemptFinalize =
+                    stageSignal === 'completed' || (get().pendingTerminalEvent && canFinalizeCompletion());
+                if (shouldAttemptFinalize) {
+                    maybeFinalizeCompletion(data);
                 }
             });
 
-            // 处理并行 Agent 创建
+            // 澶勭悊骞惰 Agent 鍒涘缓
             wsClient.on('parallel_agents_created', (data: any) => {
                 console.log('Parallel Agents Created:', data);
                 const { parentNodeId, agents } = data as {
@@ -1472,13 +1615,13 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                 if (!parentNodeId || !Array.isArray(agents)) {
                     return;
                 }
-                // 后端节点 ID 映射到前�?
+                // 鍚庣鑺傜偣 ID 鏄犲皠鍒板墠锟?
                 const mappedNodeId = parentNodeId === 'grading' ? 'grade_batch' : parentNodeId;
                 get().setParallelAgents(mappedNodeId, agents);
                 get().addLog(`Created ${agents.length} grading agents`, 'INFO');
             });
 
-            // 处理单个 Agent 更新
+            // 澶勭悊鍗曚釜 Agent 鏇存柊
             wsClient.on('agent_update', (data: any) => {
                 console.log('Agent Update:', data);
                 const payload = data as any;
@@ -1499,15 +1642,15 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                 if (message) {
                     get().addLog(message, 'INFO');
                 }
-                // 如果有错误，也记录到日志
+                // 濡傛灉鏈夐敊璇紝涔熻褰曞埌鏃ュ織
                 if (error && error.details) {
                     error.details.forEach((detail: string) => get().addLog(`[Error] ${detail}`, 'ERROR'));
                 }
             });
 
-            // ===== 设计文档新增事件类型 =====
+            // ===== 璁捐鏂囨。鏂板浜嬩欢绫诲瀷 =====
 
-            // 处理评分标准解析完成事件
+            // 澶勭悊璇勫垎鏍囧噯瑙ｆ瀽瀹屾垚浜嬩欢
             wsClient.on('rubric_parsed', (data: any) => {
                 console.log('Rubric Parsed:', data);
                 const normalized = normalizeParsedRubricPayload(data);
@@ -1576,25 +1719,25 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                 get().addLog(message, 'ERROR');
             });
 
-            // 🔥 FIX: 处理批次不存在事件 - 停止重连并清理状态
+            // Handle batch_not_found and stop noisy reconnect loops.
             wsClient.on('batch_not_found', (data: any) => {
                 console.warn('Batch Not Found:', data);
                 const message = data.message || 'This batch has completed or does not exist.';
                 const currentBatchId = get().submissionId;
                 const receivedBatchId = data.batchId || data.batch_id;
-                
-                // 只有当消息对应当前批次时才处理
+
+                // Ignore stale events from other batches.
                 if (receivedBatchId && currentBatchId && receivedBatchId !== currentBatchId) {
                     console.log(`Ignoring batch_not_found for different batch: ${receivedBatchId} vs current ${currentBatchId}`);
                     return;
                 }
-                
+
                 get().addLog(message, 'WARNING');
-                // 断开 WebSocket 连接，防止无限重连
+                // Prevent infinite reconnect loops when batch is gone.
                 wsClient.disconnect();
             });
 
-            // 🔥 处理图片预处理完成事�?- 用于结果页显示答题图�?
+            // 馃敟 澶勭悊鍥剧墖棰勫鐞嗗畬鎴愪簨锟?- 鐢ㄤ簬缁撴灉椤垫樉绀虹瓟棰樺浘锟?
             wsClient.on('images_ready', (data: any) => {
                 console.log('Images Ready:', data);
                 const { images, totalCount } = data as any;
@@ -1613,7 +1756,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                 }
             });
 
-            // 处理批次开始事件（对应设计文档 EventType.BATCH_START�?
+            // 澶勭悊鎵规寮€濮嬩簨浠讹紙瀵瑰簲璁捐鏂囨。 EventType.BATCH_START锟?
             wsClient.on('batch_start', (data: any) => {
                 console.log('Batch Start:', data);
                 const { batchIndex, totalBatches } = data as any;
@@ -1628,7 +1771,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                 }
             });
 
-            // 处理批次进度事件（后�?state_update -> batch_progress�?
+            // 澶勭悊鎵规杩涘害浜嬩欢锛堝悗锟?state_update -> batch_progress锟?
             wsClient.on('batch_progress', (data: any) => {
                 console.log('Batch Progress:', data);
                 const batchIndex = data.batchIndex ?? data.batch_index;
@@ -1645,13 +1788,13 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                 }
             });
 
-            // 处理单页完成事件（对应设计文�?EventType.PAGE_COMPLETE�?
+            // 澶勭悊鍗曢〉瀹屾垚浜嬩欢锛堝搴旇璁℃枃锟?EventType.PAGE_COMPLETE锟?
             wsClient.on('page_complete', (data: any) => {
                 console.log('Page Complete:', data);
                 const { pageIndex, success, batchIndex, revisionCount } = data as any;
                 const currentProgress = get().batchProgress;
 
-                // 更新批次进度
+                // 鏇存柊鎵规杩涘害
                 if (currentProgress) {
                     get().setBatchProgress({
                         ...currentProgress,
@@ -1660,7 +1803,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                     });
                 }
 
-                // 更新对应 Agent 的自我修正次�?
+                // 鏇存柊瀵瑰簲 Agent 鐨勮嚜鎴戜慨姝ｆ锟?
                 if (revisionCount && revisionCount > 0) {
                     const agentId = `batch_${batchIndex}`;
                     const nodes = get().workflowNodes;
@@ -1682,7 +1825,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                 }
             });
 
-            // 处理 LLM 流式输出消息 (P4) - 统一流式输出展示
+            // 澶勭悊 LLM 娴佸紡杈撳嚭娑堟伅 (P4) - 缁熶竴娴佸紡杈撳嚭灞曠ず
             wsClient.on('llm_stream_chunk', (data: any) => {
                 const rawNodeId = data.nodeId || data.node || 'unknown';
                 const normalizedNodeId = normalizeNodeId(rawNodeId);
@@ -1693,7 +1836,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                 const rawStreamType = data.streamType || data.stream_type;
                 const streamType = rawStreamType === 'thinking' ? 'thinking' : 'output';
 
-                // 防御性处理：确保 chunk 是字符串
+                // 闃插尽鎬у鐞嗭細纭繚 chunk 鏄瓧绗︿覆
                 let contentStr = '';
                 if (typeof chunk === 'string') {
                     contentStr = chunk;
@@ -1703,7 +1846,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                     contentStr = String(chunk || '');
                 }
 
-                // 使用统一的 LLM 思考追加方法
+                // Use normalized labels for streamed LLM thoughts.
                 const displayNodeName = nodeName || (
                     normalizedNodeId === 'rubric_parse' ? 'Rubric Parse' :
                         normalizedNodeId === 'rubric_self_review' ? 'Auto Review' :
@@ -1718,7 +1861,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                     get().updateNodeStatus(normalizedNodeId, 'running');
                 }
 
-                // 同时更新 Agent 状态（兼容旧逻辑�?
+                // 鍚屾椂鏇存柊 Agent 鐘舵€侊紙鍏煎鏃ч€昏緫锟?
                 if (streamType !== 'thinking' && normalizedNodeId === 'grade_batch') {
                     const nodes = get().workflowNodes;
                     const gradingNode = nodes.find(n => n.id === 'grade_batch');
@@ -1746,7 +1889,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                 }
             });
 
-            // 处理 LLM 思考完成事�?
+            // 澶勭悊 LLM 鎬濊€冨畬鎴愪簨锟?
             wsClient.on('llm_thought_complete', (data: any) => {
                 const { nodeId, pageIndex, agentId } = data as any;
                 const rawStreamType = data.streamType || data.stream_type;
@@ -1754,7 +1897,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                 get().completeLLMThought(nodeId || "unknown", pageIndex, streamType, agentId);
             });
 
-            // 处理批次完成事件（对应设计文�?EventType.BATCH_COMPLETE�?
+            // 澶勭悊鎵规瀹屾垚浜嬩欢锛堝搴旇璁℃枃锟?EventType.BATCH_COMPLETE锟?
             wsClient.on('batch_complete', (data: any) => {
                 console.log('Batch Complete:', data);
                 const { batchIndex, successCount, failureCount, processingTimeMs, totalScore, totalBatches } = data as any;
@@ -1780,7 +1923,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                 }
             });
 
-            // 处理学生识别事件（对应设计文�?EventType.STUDENT_IDENTIFIED�?
+            // 澶勭悊瀛︾敓璇嗗埆浜嬩欢锛堝搴旇璁℃枃锟?EventType.STUDENT_IDENTIFIED锟?
             wsClient.on('students_identified', (data: any) => {
                 console.log('Students Identified:', data);
                 const { students, studentCount } = data as any;
@@ -1804,7 +1947,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                         }));
                         get().setParallelAgents('grade_batch', placeholders);
                     }
-                    // 统计待确认边�?
+                    // 缁熻寰呯‘璁よ竟锟?
                     const needsConfirm = students.filter((s: any) => s.needsConfirmation).length;
                     if (needsConfirm > 0) {
                         get().addLog(`Identified ${studentCount} students, ${needsConfirm} boundaries need confirmation`, 'WARNING');
@@ -1814,17 +1957,17 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                 }
             });
 
-            // 处理审核请求事件
+            // 澶勭悊瀹℃牳璇锋眰浜嬩欢
             wsClient.on('review_required', (data: any) => {
                 console.log('Review Required:', data);
-                // 规范化数据结构以匹配 PendingReview 接口
+                // 瑙勮寖鍖栨暟鎹粨鏋勪互鍖归厤 PendingReview 鎺ュ彛
                 const reviewData = {
                     type: data.type || data.reviewType,
                     batchId: data.batchId || data.batch_id,
                     message: data.message,
                     requestedAt: data.requestedAt || data.requested_at,
                     parsedRubric: normalizeParsedRubricPayload(data.payload?.parsed_rubric || data.parsedRubric),
-                    // 如果是结果审核，可能需�?studentResults
+                    // 濡傛灉鏄粨鏋滃鏍革紝鍙兘闇€锟?studentResults
                     studentResults: data.payload?.student_results || data.studentResults,
                 };
                 const reviewType = (reviewData.type || '').toString();
@@ -1844,7 +1987,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                     requestedAt: reviewData.requestedAt,
                     payload: normalizedPayload
                 });
-                // 同时更新状态提�?
+                // 鍚屾椂鏇存柊鐘舵€佹彁锟?
                 get().setStatus('REVIEWING');
                 const reviewNodeId = isRubric ? 'rubric_review' : isResults ? 'review' : 'grade_batch';
                 get().updateNodeStatus(
@@ -1856,7 +1999,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                 get().addLog(`Review required: ${reviewType}`, 'WARNING');
             });
 
-            // 处理跨页题目检测事�?
+            // 澶勭悊璺ㄩ〉棰樼洰妫€娴嬩簨锟?
             wsClient.on('cross_page_detected', (data: any) => {
                 console.log('Cross Page Questions Detected:', data);
                 const { questions, mergedCount, crossPageCount } = data as any;
@@ -1871,20 +2014,21 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                 }
             });
 
-            // 处理工作流完�?
+            // 澶勭悊宸ヤ綔娴佸畬锟?
 
             wsClient.on('workflow_completed', async (data: any) => {
                 console.log('Workflow Completed:', data);
-                const message = data.message || 'Workflow completed';
-                get().addLog(message, 'SUCCESS');
+                recordStageSignal('workflow_completed');
+
+                const message = data?.message || 'Workflow completed';
+                get().addLog(`Terminal event received: ${message}`, 'INFO');
 
                 const initialResults = extractResultsPayload(data);
-                if (initialResults) {
+                if (initialResults && initialResults.length > 0) {
                     get().setFinalResults(initialResults);
-                    get().addLog(`Saved results for ${initialResults.length} students`, 'SUCCESS');
                 }
 
-                const classReport = data.classReport || data.class_report;
+                const classReport = data?.classReport || data?.class_report;
                 if (classReport) {
                     const normalizedReport = normalizeClassReport(classReport);
                     if (normalizedReport) {
@@ -1892,39 +2036,29 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                     }
                 }
 
-                get().setStatus('COMPLETED');
-                get().setPendingReview(null);
-                get().setReviewFocus(null);
+                if (maybeFinalizeCompletion(data, initialResults)) {
+                    return;
+                }
 
-                const currentNodes = get().workflowNodes;
-                currentNodes.forEach((node) => {
-                    if (node.status === 'running') {
-                        get().updateNodeStatus(node.id, 'completed');
-                    }
-                });
-                get().updateNodeStatus('export', 'completed');
+                get().addLog('Completion gate not satisfied; continuing to monitor post-review stages.', 'WARNING');
 
-                const batchId =
-                    data.batchId ||
-                    data.batch_id ||
-                    get().submissionId;
+                const batchId = data?.batchId || data?.batch_id || get().submissionId;
                 if (!batchId) {
-                    get().addLog('Missing batch_id; cannot verify results completion.', 'WARNING');
+                    get().addLog('Missing batch_id; cannot continue post-review completion checks.', 'WARNING');
                     return;
                 }
 
-                if (!initialResults || initialResults.length === 0) {
-                    get().addLog('等待批改结果完成后再进入结果页...', 'INFO');
-                    const gatedResults = await waitForPostReviewResults(batchId, initialResults);
-                    if (gatedResults) {
-                        get().setFinalResults(gatedResults);
-                        get().addLog('批改结果已完成，可在右下角打开结果。', 'SUCCESS');
-                    } else {
-                        get().addLog('批改结果仍未完成，已停止自动跳转结果页。', 'WARNING');
-                    }
+                const gatedResults = await waitForPostReviewResults(batchId, initialResults, {
+                    onStageSignal: recordStageSignal,
+                    isCompletionGateSatisfied: canFinalizeCompletion,
+                });
+
+                if (gatedResults && maybeFinalizeCompletion(data, gatedResults)) {
                     return;
                 }
-                // 不自动切到结果页：避免在批改过程中突然跳转，改为逐步显现流程 + 由用户主动打开结果。
+
+                blockCompletion();
+                get().addLog('Post-review stages are still incomplete; workflow remains in monitoring mode.', 'WARNING');
             });
 
             wsClient.on('page_graded', (data: any) => {
@@ -1936,11 +2070,11 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                 );
             });
 
-            // 处理批改进度事件
+            // 澶勭悊鎵规敼杩涘害浜嬩欢
             wsClient.on('grading_progress', (data: any) => {
                 console.log('Grading Progress:', data);
                 const { completedPages, totalPages, percentage } = data as any;
-                // 更新 grading 节点的进�?
+                // 鏇存柊 grading 鑺傜偣鐨勮繘锟?
                 const nodes =
                     get().workflowNodes;
                 const gradingNode = nodes.find(n => n.id === 'grade_batch');
@@ -1949,6 +2083,9 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                 }
                 const currentStage = data.currentStage || data.current_stage;
                 if (currentStage) {
+                    const normalizedStage = normalizeWorkflowStage(currentStage);
+                    recordStageSignal(normalizedStage);
+
                     const stageStateMap: Record<string, { node: string; status: NodeStatus; message?: string }> = {
                         rubric_parse_completed: { node: 'rubric_parse', status: 'completed' },
                         rubric_confession_report_completed: { node: 'rubric_confession_report', status: 'completed' },
@@ -1968,7 +2105,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                         completed: { node: 'export', status: 'completed' },
                     };
 
-                    const stageState = stageStateMap[currentStage];
+                    const stageState = normalizedStage ? stageStateMap[normalizedStage] : undefined;
                     if (stageState) {
                         const pendingReview = get().pendingReview;
                         const holdRubricReview = stageState.node === 'rubric_review'
@@ -1980,17 +2117,27 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                         }
                         get().updateNodeStatus(stageState.node, stageState.status, stageState.message);
                     }
+
+                    if (normalizedStage === 'logic_review_skipped') {
+                        blockCompletion(LOGIC_REVIEW_SKIP_BLOCK_REASON);
+                    }
+
+                    const shouldAttemptFinalize =
+                        normalizedStage === 'completed' || (get().pendingTerminalEvent && canFinalizeCompletion());
+                    if (shouldAttemptFinalize) {
+                        maybeFinalizeCompletion(data);
+                    }
                 }
             });
 
-            // 处理批次完成事件
+            // 澶勭悊鎵规瀹屾垚浜嬩欢
             wsClient.on('batch_completed', (data: any) => {
                 console.log('Batch Completed:', data);
                 const { batchSize, successCount, totalScore } = data as any;
                 get().addLog(`Run completed: ${successCount}/${batchSize} pages succeeded, total ${totalScore}`, 'INFO');
             });
 
-            // 处理审核完成事件
+            // 澶勭悊瀹℃牳瀹屾垚浜嬩欢
             wsClient.on('review_completed', (data: any) => {
                 console.log('Review Completed:', data);
                 const { summary } = data as any;
@@ -2005,7 +2152,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                 get().setReviewFocus(null);
             });
 
-            // 处理工作流错误（对应设计文档 EventType.ERROR�?
+            // 澶勭悊宸ヤ綔娴侀敊璇紙瀵瑰簲璁捐鏂囨。 EventType.ERROR锟?
             wsClient.on('workflow_error', (data: any) => {
                 console.log('Workflow Error:', data);
                 if (get().rubricScoreMismatch || get().rubricParseError) {

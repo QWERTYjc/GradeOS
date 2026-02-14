@@ -6,6 +6,7 @@ import { useRouter, useParams } from 'next/navigation';
 import { gradingApi, ActiveRunItem, ResultsReviewContext } from '@/services/api';
 import { useConsoleStore } from '@/store/consoleStore';
 import { normalizeStudentResults } from '@/lib/gradingResults';
+import { normalizeWorkflowStage, stageAllowsResultsEntry } from '@/lib/completionGate';
 import { useAuthStore } from '@/store/authStore';
 
 const ResultsView = dynamic(() => import('@/components/console/ResultsView'), { ssr: false });
@@ -114,7 +115,19 @@ export default function ResultsReviewPage() {
       .getResultsReviewContext(batchId)
       .then((data: ResultsReviewContext) => {
         if (!active) return;
-        setSubmissionId(data.batch_id || batchId);
+        const resolvedBatchId = data.batch_id || batchId;
+        setSubmissionId(resolvedBatchId);
+        const normalizedStage = normalizeWorkflowStage(
+          data.current_stage || (data as any).currentStage || null
+        );
+        const normalizedStatus = String(data.status || '').toLowerCase();
+        const canOpenResults = normalizedStatus === 'completed' && stageAllowsResultsEntry(normalizedStage);
+        if (!canOpenResults) {
+          setStatus('RUNNING');
+          setCurrentTab('process');
+          router.replace(`/console?batchId=${resolvedBatchId}`);
+          return;
+        }
         setFinalResults(normalizeStudentResults(data.student_results || []));
         
         // 设置 parsedRubric（如果存在）

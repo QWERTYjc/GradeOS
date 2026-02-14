@@ -19,6 +19,7 @@ import {
 import { useAuthStore } from '@/store/authStore';
 import { Role } from '@/types';
 import { gradingApi, ActiveRunItem } from '@/services/api';
+import { normalizeWorkflowStage, stageAllowsResultsEntry } from '@/lib/completionGate';
 
 type NavItem = {
   href: string;
@@ -185,9 +186,19 @@ export default function GlobalNavLauncher() {
     return base;
   }, [user?.role]);
 
+  const runCanOpenResults = useCallback((run?: ActiveRunItem | null) => {
+    if (!run) return false;
+    const normalizedStatus = String(run.status || '').toLowerCase();
+    if (normalizedStatus !== 'completed') return false;
+    const normalizedStage = normalizeWorkflowStage(
+      run.current_stage || (run as any).currentStage || null
+    );
+    return stageAllowsResultsEntry(normalizedStage);
+  }, []);
+
   const visibleRuns = useMemo(
-    () => activeRuns.filter((run) => !(run.status === 'completed' && dismissedRuns.has(run.batch_id))),
-    [activeRuns, dismissedRuns]
+    () => activeRuns.filter((run) => !(runCanOpenResults(run) && dismissedRuns.has(run.batch_id))),
+    [activeRuns, dismissedRuns, runCanOpenResults]
   );
 
   const persistDismissedRun = useCallback((batchId: string) => {
@@ -246,8 +257,8 @@ export default function GlobalNavLauncher() {
 
       const preferCompleted = target === 'results';
       const filtered = preferCompleted
-        ? runs.filter((run) => run.status === 'completed')
-        : runs.filter((run) => run.status !== 'completed');
+        ? runs.filter((run) => runCanOpenResults(run))
+        : runs.filter((run) => !runCanOpenResults(run));
       const pool = filtered.length > 0 ? filtered : runs;
 
       const parseTime = (value?: string) => {
@@ -266,7 +277,7 @@ export default function GlobalNavLauncher() {
         return runTime >= latestTime ? run : latest;
       }, null);
     },
-    [activeRuns, user?.id]
+    [activeRuns, runCanOpenResults, user?.id]
   );
 
   const formatStageLabel = (stage?: string) => {
@@ -290,7 +301,7 @@ export default function GlobalNavLauncher() {
         return;
       }
       if (isResults) {
-        if (latest.status === 'completed') {
+        if (runCanOpenResults(latest)) {
           router.push(`/grading/results-review/${latest.batch_id}`);
         } else {
           router.push(`/console?batchId=${latest.batch_id}`);
@@ -298,10 +309,12 @@ export default function GlobalNavLauncher() {
         return;
       }
       if (isRubric) {
-        if (latest.status !== 'completed') {
+        if (runCanOpenResults(latest)) {
+          router.push(`/grading/results-review/${latest.batch_id}`);
+        } else if (String(latest.status || '').toLowerCase() !== 'completed') {
           router.push(`/grading/rubric-review/${latest.batch_id}`);
         } else {
-          router.push(`/grading/results-review/${latest.batch_id}`);
+          router.push(`/console?batchId=${latest.batch_id}`);
         }
         return;
       }
@@ -313,7 +326,7 @@ export default function GlobalNavLauncher() {
 
   const handleRunJump = (run: ActiveRunItem) => {
     setOpen(false);
-    if (run.status === 'completed') {
+    if (runCanOpenResults(run)) {
       persistDismissedRun(run.batch_id);
       router.push(`/grading/results-review/${run.batch_id}`);
       return;

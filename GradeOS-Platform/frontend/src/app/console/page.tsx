@@ -68,7 +68,7 @@ interface ScannerContainerProps {
 
     // 班级批改模式下的学生映射
     studentNameMapping?: Array<{ studentId?: string; studentName?: string; studentKey?: string; startIndex: number; endIndex: number }>;
-    
+
     // 当前用户信息（用于获取班级列表）
     userId?: string;
     userType?: string;
@@ -94,7 +94,7 @@ const ScannerContainer = ({
     const [viewMode, setViewMode] = useState<ScanViewMode>('exams');
     const [studentBoundaries, setStudentBoundaries] = useState<number[]>([]);
     const [studentInfos, setStudentInfos] = useState<Array<{ studentName: string; studentId: string }>>([]);
-    
+
     // 班级选择相关状态
     const [availableClasses, setAvailableClasses] = useState<Array<{ class_id: string; class_name: string }>>([]);
     const [selectedClassId, setSelectedClassId] = useState<string>('');
@@ -116,12 +116,12 @@ const ScannerContainer = ({
     // 加载班级列表
     useEffect(() => {
         if (!userId || !userType) return;
-        
+
         const loadClasses = async () => {
             setIsLoadingClasses(true);
             try {
                 let classes: Array<{ class_id: string; class_name: string }> = [];
-                
+
                 if (userType === 'teacher') {
                     const response = await classApi.getTeacherClasses(userId);
                     classes = response.map((c: any) => ({ class_id: c.class_id, class_name: c.class_name }));
@@ -129,7 +129,7 @@ const ScannerContainer = ({
                     const response = await classApi.getMyClasses(userId);
                     classes = response.map((c: any) => ({ class_id: c.class_id, class_name: c.class_name }));
                 }
-                
+
                 setAvailableClasses(classes);
             } catch (error) {
                 console.error('Failed to load classes:', error);
@@ -137,7 +137,7 @@ const ScannerContainer = ({
                 setIsLoadingClasses(false);
             }
         };
-        
+
         loadClasses();
     }, [userId, userType]);
 
@@ -147,13 +147,13 @@ const ScannerContainer = ({
             setClassStudents([]);
             return;
         }
-        
+
         const loadStudents = async () => {
             setIsLoadingStudents(true);
             try {
                 const students = await classApi.getClassStudents(selectedClassId);
                 setClassStudents(students);
-                
+
                 // 自动填充学生信息到 studentInfos
                 if (students.length > 0) {
                     const autoMapping = students.map((s: any) => ({
@@ -161,7 +161,7 @@ const ScannerContainer = ({
                         studentId: s.id,
                     }));
                     setStudentInfos(autoMapping);
-                    
+
                     // 自动设置边界（假设每个学生平均分配页面）
                     if (imageCount > 0) {
                         const pagesPerStudent = Math.floor(imageCount / students.length);
@@ -175,7 +175,7 @@ const ScannerContainer = ({
                 setIsLoadingStudents(false);
             }
         };
-        
+
         loadStudents();
     }, [selectedClassId, imageCount]);
 
@@ -317,7 +317,7 @@ const ScannerContainer = ({
                                         </select>
                                     </div>
                                 )}
-                                
+
                                 {/* 学生数量显示 */}
                                 {classStudents.length > 0 && (
                                     <div className="flex items-center gap-2 rounded-full border border-blue-200 bg-blue-50 px-3 py-1.5 text-[11px] font-semibold text-blue-700">
@@ -325,7 +325,7 @@ const ScannerContainer = ({
                                         <span>{classStudents.length}</span>
                                     </div>
                                 )}
-                                
+
                                 <div className="flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-[11px] font-semibold text-slate-600">
                                     <span className="uppercase tracking-[0.2em] text-slate-400">Total</span>
                                     <input
@@ -439,7 +439,7 @@ const ScannerContainer = ({
                         )}
                     </div>
                 )}
-                
+
                 {/* 主内容区 */}
                 <div className="flex-1 min-h-0 bg-transparent">
                     {activeTab === 'scan' ? (
@@ -491,6 +491,7 @@ export default function ConsolePage() {
     const expectedTotalScore = useConsoleStore((state) => state.expectedTotalScore);
     const setExpectedTotalScore = useConsoleStore((state) => state.setExpectedTotalScore);
     const classContext = useConsoleStore((state) => state.classContext);
+    const completionBlockedReason = useConsoleStore((state) => state.completionBlockedReason);
     const rubricScoreMismatch = useConsoleStore((state) => state.rubricScoreMismatch);
     const setRubricScoreMismatch = useConsoleStore((state) => state.setRubricScoreMismatch);
     const rubricParseError = useConsoleStore((state) => state.rubricParseError);
@@ -860,7 +861,21 @@ export default function ConsolePage() {
                 </AnimatePresence>
 
                 <AnimatePresence>
-                    {status === 'COMPLETED' && currentTab !== 'results' && (
+                    {completionBlockedReason && status !== 'FAILED' && (
+                        <motion.div
+                            initial={{ opacity: 0, y: -12 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0, y: -12 }}
+                            className="fixed right-6 top-36 z-40 max-w-[460px] bg-white/90 backdrop-blur border border-amber-200 text-amber-900 shadow-lg rounded-2xl px-4 py-3"
+                        >
+                            <div className="text-sm font-semibold">Post-review stages are still running</div>
+                            <div className="mt-1 text-xs text-amber-800">{completionBlockedReason}</div>
+                        </motion.div>
+                    )}
+                </AnimatePresence>
+
+                <AnimatePresence>
+                    {status === 'COMPLETED' && !completionBlockedReason && currentTab !== 'results' && (
                         <motion.div
                             initial={{ opacity: 0, y: -12 }}
                             animate={{ opacity: 1, y: 0 }}
@@ -972,7 +987,7 @@ export default function ConsolePage() {
 
                     {/* View Results Button - Visible when Completed and in Process tab */}
                     <AnimatePresence>
-                        {status === 'COMPLETED' && currentTab === 'process' && (
+                        {status === 'COMPLETED' && !completionBlockedReason && currentTab === 'process' && (
                             <motion.div
                                 initial={{ opacity: 0, y: 20 }}
                                 animate={{ opacity: 1, y: 0 }}
