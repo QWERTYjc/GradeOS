@@ -6,7 +6,11 @@ import { useRouter, useParams } from 'next/navigation';
 import { gradingApi, ActiveRunItem, ResultsReviewContext } from '@/services/api';
 import { useConsoleStore } from '@/store/consoleStore';
 import { normalizeStudentResults } from '@/lib/gradingResults';
-import { canEnterResultsFromContext } from '@/lib/completionGate';
+import {
+  buildMissingStageReason,
+  canEnterResultsFromContext,
+  deriveRequiredStageSeenFromStudentResults,
+} from '@/lib/completionGate';
 import { useAuthStore } from '@/store/authStore';
 
 const ResultsView = dynamic(() => import('@/components/console/ResultsView'), { ssr: false });
@@ -117,16 +121,32 @@ export default function ResultsReviewPage() {
         if (!active) return;
         const resolvedBatchId = data.batch_id || batchId;
         setSubmissionId(resolvedBatchId);
+        const gateDerivation = deriveRequiredStageSeenFromStudentResults(data.student_results);
         const canOpenResults = canEnterResultsFromContext({
           status: data.status,
           student_results: data.student_results,
         });
         if (!canOpenResults) {
+          const blockedReason = gateDerivation.logicReviewSkipped
+            ? 'logic_review stage was skipped; completion is blocked by policy.'
+            : buildMissingStageReason(gateDerivation.required);
+          useConsoleStore.setState({
+            completionBlockedReason: blockedReason,
+            requiredStageSeen: gateDerivation.required,
+            pendingTerminalEvent: true,
+            lastObservedStage: 'completed',
+          });
           setStatus('RUNNING');
           setCurrentTab('process');
           router.replace(`/console?batchId=${resolvedBatchId}`);
           return;
         }
+        useConsoleStore.setState({
+          completionBlockedReason: null,
+          requiredStageSeen: gateDerivation.required,
+          pendingTerminalEvent: true,
+          lastObservedStage: 'completed',
+        });
         setFinalResults(normalizeStudentResults(data.student_results || []));
         
         // 设置 parsedRubric（如果存在）
