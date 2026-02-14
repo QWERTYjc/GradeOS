@@ -113,9 +113,12 @@ export interface QuestionResult {
     scoringPoints?: ScoringPoint[];
     /** 寰楀垎鐐规槑缁嗗垪琛紙鏂版牸寮忥級 */
     scoringPointResults?: Array<{
-        pointId?: string;       // 璇勫垎鐐圭紪鍙?        scoringPoint?: ScoringPoint;  // 鏃ф牸寮忓吋瀹?        description?: string;   // 璇勫垎鐐规弿杩?        awarded: number;        // 瀹為檯寰楀垎
-        maxPoints?: number;     // 婊″垎
-        evidence: string;       // 璇勫垎渚濇嵁/璇佹嵁
+        pointId?: string;
+        scoringPoint?: ScoringPoint;
+        description?: string;
+        awarded: number;
+        maxPoints?: number;
+        evidence: string;
         rubricReference?: string;
         rubricReferenceSource?: string;
         decision?: string;
