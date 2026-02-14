@@ -19,7 +19,11 @@ import {
 import { useAuthStore } from '@/store/authStore';
 import { Role } from '@/types';
 import { gradingApi, ActiveRunItem } from '@/services/api';
-import { normalizeWorkflowStage, stageAllowsResultsEntry } from '@/lib/completionGate';
+import {
+  canEnterResultsFromContext,
+  normalizeWorkflowStage,
+  stageAllowsResultsEntry,
+} from '@/lib/completionGate';
 
 type NavItem = {
   href: string;
@@ -196,6 +200,22 @@ export default function GlobalNavLauncher() {
     return stageAllowsResultsEntry(normalizedStage);
   }, []);
 
+  const canOpenResultsForRun = useCallback(async (run?: ActiveRunItem | null) => {
+    if (!run) return false;
+    const normalizedStatus = String(run.status || '').toLowerCase();
+    if (normalizedStatus !== 'completed') return false;
+
+    try {
+      const context = await gradingApi.getResultsReviewContext(run.batch_id);
+      return canEnterResultsFromContext({
+        status: context.status,
+        student_results: context.student_results,
+      });
+    } catch {
+      return false;
+    }
+  }, []);
+
   const visibleRuns = useMemo(
     () => activeRuns.filter((run) => !(runCanOpenResults(run) && dismissedRuns.has(run.batch_id))),
     [activeRuns, dismissedRuns, runCanOpenResults]
@@ -255,11 +275,15 @@ export default function GlobalNavLauncher() {
         }
       }
 
-      const preferCompleted = target === 'results';
-      const filtered = preferCompleted
-        ? runs.filter((run) => runCanOpenResults(run))
-        : runs.filter((run) => !runCanOpenResults(run));
-      const pool = filtered.length > 0 ? filtered : runs;
+      const pool = target === 'results'
+        ? (() => {
+            const completed = runs.filter((run) => String(run.status || '').toLowerCase() === 'completed');
+            return completed.length > 0 ? completed : runs;
+          })()
+        : (() => {
+            const filtered = runs.filter((run) => !runCanOpenResults(run));
+            return filtered.length > 0 ? filtered : runs;
+          })();
 
       const parseTime = (value?: string) => {
         const ts = Date.parse(value || '');
@@ -301,7 +325,7 @@ export default function GlobalNavLauncher() {
         return;
       }
       if (isResults) {
-        if (runCanOpenResults(latest)) {
+        if (await canOpenResultsForRun(latest)) {
           router.push(`/grading/results-review/${latest.batch_id}`);
         } else {
           router.push(`/console?batchId=${latest.batch_id}`);
@@ -324,9 +348,9 @@ export default function GlobalNavLauncher() {
     router.push(href);
   };
 
-  const handleRunJump = (run: ActiveRunItem) => {
+  const handleRunJump = async (run: ActiveRunItem) => {
     setOpen(false);
-    if (runCanOpenResults(run)) {
+    if (await canOpenResultsForRun(run)) {
       persistDismissedRun(run.batch_id);
       router.push(`/grading/results-review/${run.batch_id}`);
       return;

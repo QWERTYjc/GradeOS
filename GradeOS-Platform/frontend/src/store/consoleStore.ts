@@ -8,6 +8,7 @@ import {
     buildMissingStageReason,
     canFinalizeWithGate,
     createInitialRequiredStageSeen,
+    deriveStageSignalsFromResultsContext,
     deriveStageFromNodeUpdate,
     normalizeWorkflowStage,
     type RequiredStageSeen,
@@ -886,11 +887,8 @@ const waitForPostReviewResults = async (
         if (shouldRefreshStage) {
             try {
                 const reviewContext = await gradingApi.getResultsReviewContext(batchId);
-                const stage =
-                    normalizeWorkflowStage(
-                        (reviewContext as any)?.current_stage || (reviewContext as any)?.currentStage
-                    );
-                stageSignal?.(stage);
+                const stageDerivation = deriveStageSignalsFromResultsContext(reviewContext as any);
+                stageDerivation.signals.forEach((signal) => stageSignal?.(signal));
                 fetchedResults = extractResultsPayload(reviewContext) || (reviewContext as any)?.student_results || null;
             } catch (error) {
                 console.warn('Polling results-review fallback failed:', error);
@@ -2038,6 +2036,13 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                         get().setClassReport(normalizedReport);
                     }
                 }
+
+                const completionDerivation = deriveStageSignalsFromResultsContext({
+                    status: data?.status || 'completed',
+                    current_stage: data?.current_stage || data?.currentStage || null,
+                    student_results: initialResults || data?.student_results || data?.studentResults,
+                });
+                completionDerivation.signals.forEach((signal) => recordStageSignal(signal));
 
                 if (maybeFinalizeCompletion(data, initialResults)) {
                     return;

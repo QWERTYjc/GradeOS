@@ -6,7 +6,7 @@ import { useRouter, useParams } from 'next/navigation';
 import { gradingApi, ActiveRunItem, ResultsReviewContext } from '@/services/api';
 import { useConsoleStore } from '@/store/consoleStore';
 import { normalizeStudentResults } from '@/lib/gradingResults';
-import { normalizeWorkflowStage, stageAllowsResultsEntry } from '@/lib/completionGate';
+import { canEnterResultsFromContext } from '@/lib/completionGate';
 import { useAuthStore } from '@/store/authStore';
 
 const ResultsView = dynamic(() => import('@/components/console/ResultsView'), { ssr: false });
@@ -117,11 +117,10 @@ export default function ResultsReviewPage() {
         if (!active) return;
         const resolvedBatchId = data.batch_id || batchId;
         setSubmissionId(resolvedBatchId);
-        const normalizedStage = normalizeWorkflowStage(
-          data.current_stage || (data as any).currentStage || null
-        );
-        const normalizedStatus = String(data.status || '').toLowerCase();
-        const canOpenResults = normalizedStatus === 'completed' && stageAllowsResultsEntry(normalizedStage);
+        const canOpenResults = canEnterResultsFromContext({
+          status: data.status,
+          student_results: data.student_results,
+        });
         if (!canOpenResults) {
           setStatus('RUNNING');
           setCurrentTab('process');
