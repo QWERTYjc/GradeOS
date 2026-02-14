@@ -138,7 +138,9 @@ export default function ResultsReviewPage() {
           });
           setStatus('RUNNING');
           setCurrentTab('process');
-          router.replace(`/console?batchId=${resolvedBatchId}`);
+          router.replace(
+            `/console?batchId=${resolvedBatchId}&blockedReason=${encodeURIComponent(blockedReason)}`
+          );
           return;
         }
         useConsoleStore.setState({

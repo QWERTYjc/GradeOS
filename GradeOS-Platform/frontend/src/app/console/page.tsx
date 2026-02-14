@@ -680,6 +680,18 @@ export default function ConsolePage() {
         useConsoleStore.getState().setStatus('RUNNING');
     }, [searchParams, reset, submissionId]);
 
+    useEffect(() => {
+        const blockedReason = searchParams.get('blockedReason');
+        if (!blockedReason) {
+            return;
+        }
+        useConsoleStore.setState({
+            completionBlockedReason: blockedReason,
+            pendingTerminalEvent: true,
+            status: 'RUNNING',
+        });
+    }, [searchParams]);
+
     // Provider Methods
     const createNewSession = (name?: string) => {
         const newSession: Session = {
