@@ -958,7 +958,9 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
         if (!normalized) return;
         set((state) => {
             const applied = applyStageSignal(state.requiredStageSeen, normalized);
-            const nextRequired = applied.required;
+            const nextRequired: RequiredStageSeen = applied.logicReviewSkipped
+                ? { ...applied.required, logicReview: false }
+                : applied.required;
             const nextTerminalSeen = state.pendingTerminalEvent || applied.terminalSeen;
             const gateSatisfied = canFinalizeWithGate(nextRequired, nextTerminalSeen);
 

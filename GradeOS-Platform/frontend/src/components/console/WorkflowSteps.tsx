@@ -85,11 +85,11 @@ export default function WorkflowSteps() {
   const interactionEnabled = useConsoleStore((s) => s.interactionEnabled);
 
   const visibleNodes = useMemo(() => {
+    const reviewType = String(pendingReview?.reviewType || '').toLowerCase();
+    const hasManualReviewRequest =
+      reviewType.includes('rubric_review') || reviewType.includes('results_review');
     const shouldShowManualReview = interactionEnabled
-      || Boolean(pendingReview)
-      || workflowNodes.some(
-        (node) => (node.id === 'rubric_review' || node.id === 'review') && node.status !== 'pending'
-      );
+      || hasManualReviewRequest;
     const filteredNodes = shouldShowManualReview
       ? workflowNodes
       : workflowNodes.filter((node) => node.id !== 'rubric_review' && node.id !== 'review');

@@ -5927,8 +5927,6 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
 
     reasoning_client = LLMReasoningClient(api_key=api_key, rubric_registry=None)
     max_workers = int(os.getenv("LOGIC_REVIEW_MAX_WORKERS", "3"))
-    from src.services.confession_auditor import should_trigger_logic_review_from_confession
-
     logic_review_results: List[Dict[str, Any]] = []
     updated_results: List[Optional[Dict[str, Any]]] = [None] * len(student_results)
 
@@ -5956,42 +5954,6 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
             )
 
             all_question_details = _collect_question_details(student)
-            confession_report = student.get("confession")
-            if confession_report is not None and not should_trigger_logic_review_from_confession(
-                confession_report
-            ):
-                updated_student = dict(student)
-                _recompute_student_totals(updated_student)
-                updated_student["logic_reviewed_at"] = datetime.now().isoformat()
-                review_summary = _build_logic_review_summary(all_question_details)
-                updated_student["logic_review"] = {
-                    "reviewed_at": updated_student["logic_reviewed_at"],
-                    "review_summary": f"logic review skipped (confession low risk) - {review_summary}",
-                    "question_reviews": [],
-                    "skipped": True,
-                    "skip_reason": "confession_low_risk",
-                    "confession_risk_score": (
-                        confession_report.get("risk_score")
-                        if isinstance(confession_report, dict)
-                        else None
-                    ),
-                }
-                await _broadcast_progress(
-                    batch_id,
-                    {
-                        "type": "agent_update",
-                        "agentId": agent_id,
-                        "agentLabel": student_key,
-                        "parentNodeId": "logic_review",
-                        "status": "completed",
-                        "progress": 100,
-                        "message": "Logic review skipped (confession low risk)",
-                        "output": {
-                            "reviewSummary": review_summary,
-                        },
-                    },
-                )
-                return {"index": index, "result": updated_student, "review": None}
 
             review_targets = _extract_logic_review_questions(student)
             if not review_targets:
