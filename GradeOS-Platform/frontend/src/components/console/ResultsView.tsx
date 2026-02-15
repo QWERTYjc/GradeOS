@@ -1045,18 +1045,119 @@ const normalizeQuestionId = (questionId: string) => {
     return raw.replace(/^第\s*/i, '').replace(/^q\s*/i, '').replace(/\s*题$/i, '').replace(/\s+/g, '').replace(/[。．\.,，、]+$/g, '');
 };
 
+const isMergeableQuestionId = (questionId: string) => {
+    const normalized = normalizeQuestionId(questionId);
+    if (!normalized || normalized === 'unknown') return false;
+    if (normalized.startsWith('__missing_')) return false;
+    return true;
+};
+
+const getQuestionIdFromAny = (question: any, fallbackIndex: number) => {
+    const candidates = [
+        question?.questionId,
+        question?.question_id,
+        question?.id,
+        question?._id,
+    ];
+    for (const candidate of candidates) {
+        const text = String(candidate || '').trim();
+        if (text) return text;
+    }
+    return `__missing_${fallbackIndex}`;
+};
+
+const extractRubricQuestionSpecs = (parsedRubric: any): Array<{ questionId: string; maxScore: number }> => {
+    const questions = Array.isArray(parsedRubric?.questions) ? parsedRubric.questions : [];
+    if (!questions.length) return [];
+    const specs: Array<{ questionId: string; maxScore: number }> = [];
+    const seen = new Set<string>();
+    questions.forEach((question: any, idx: number) => {
+        const questionId = getQuestionIdFromAny(question, idx + 1);
+        const canonicalId = normalizeQuestionId(questionId);
+        if (!canonicalId || canonicalId === 'unknown' || seen.has(canonicalId)) return;
+        seen.add(canonicalId);
+        const maxScore = Number(question?.maxScore ?? question?.max_score ?? question?.score ?? question?.points ?? 0);
+        specs.push({
+            questionId,
+            maxScore: Number.isFinite(maxScore) ? maxScore : 0,
+        });
+    });
+    return specs;
+};
+
+const supplementQuestionResultsFromRubric = (
+    questionResults: QuestionResult[],
+    parsedRubric: any,
+): QuestionResult[] => {
+    const rubricSpecs = extractRubricQuestionSpecs(parsedRubric);
+    if (!rubricSpecs.length) return questionResults;
+
+    const byCanonical = new Map<string, QuestionResult>();
+    questionResults.forEach((question) => {
+        const canonical = normalizeQuestionId(question.questionId);
+        if (!canonical || canonical === 'unknown' || canonical.startsWith('__missing_')) return;
+        if (!byCanonical.has(canonical)) {
+            byCanonical.set(canonical, question);
+        }
+    });
+
+    const supplemented: QuestionResult[] = [];
+    const used = new Set<string>();
+    rubricSpecs.forEach((spec) => {
+        const canonical = normalizeQuestionId(spec.questionId);
+        const existing = byCanonical.get(canonical);
+        if (existing) {
+            supplemented.push(existing);
+            used.add(canonical);
+            return;
+        }
+        supplemented.push({
+            questionId: spec.questionId,
+            score: 0,
+            maxScore: Math.max(0, spec.maxScore),
+            feedback: '未产出/未作答（补齐题目）',
+            confidence: 1,
+            needsReview: true,
+            reviewSummary: '补齐题目',
+            reviewReasons: ['supplemented_from_rubric'],
+            scoringPointResults: [],
+            pageIndices: [],
+        });
+    });
+
+    questionResults.forEach((question, idx) => {
+        const canonical = normalizeQuestionId(question.questionId);
+        const uniqueKey = canonical && canonical !== 'unknown' ? canonical : `__idx_${idx}`;
+        if (!used.has(uniqueKey)) {
+            supplemented.push(question);
+            used.add(uniqueKey);
+        }
+    });
+
+    return supplemented;
+};
+
 const normalizeQuestionResults = (questionResults?: QuestionResult[]) => {
     if (!questionResults || questionResults.length === 0) return [];
 
     const byId = new Map<string, QuestionResult[]>();
-    questionResults.forEach((q) => {
+    const passthrough: QuestionResult[] = [];
+
+    questionResults.forEach((q, index) => {
         const key = normalizeQuestionId(q.questionId);
+        if (!isMergeableQuestionId(q.questionId)) {
+            passthrough.push({
+                ...q,
+                questionId: getQuestionIdFromAny(q, index + 1),
+            });
+            return;
+        }
         const list = byId.get(key) || [];
         list.push(q);
         byId.set(key, list);
     });
 
-    const merged = Array.from(byId.entries()).map(([normalizedId, items]) => {
+    const mergedById = Array.from(byId.entries()).map(([normalizedId, items]) => {
         if (items.length === 1) {
             return { ...items[0], questionId: normalizeQuestionId(items[0].questionId) };
         }
@@ -1065,13 +1166,18 @@ const normalizeQuestionResults = (questionResults?: QuestionResult[]) => {
         const bestItem = items.reduce((prev, curr) => (curr.score > prev.score ? curr : prev), items[0]);
         return {
             ...bestItem,
-            questionId: normalizedId !== 'unknown' ? normalizedId : (items[0].questionId || 'unknown'),
+            questionId: normalizedId,
             isCrossPage: items.some(i => i.isCrossPage),
         };
     });
 
+    const merged = [...mergedById, ...passthrough];
+
     const parseOrder = (id: string) => {
         const normalized = normalizeQuestionId(id);
+        if (normalized === 'unknown' || normalized.startsWith('__missing_')) {
+            return { number: Number.MAX_SAFE_INTEGER, suffix: normalized };
+        }
         const match = normalized.match(/\d+/);
         const number = match ? Number(match[0]) : Number.MAX_SAFE_INTEGER;
         const suffix = match ? normalized.replace(match[0], '') : normalized;
@@ -1103,6 +1209,7 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
         setFinalResults,
         status
     } = useConsoleStore();
+    const parsedRubric = useConsoleStore((state) => state.parsedRubric);
     const annotationGradingHistoryId = annotationHistoryId || submissionId;
 
     const bookScanContext = useContext(AppContext) as AppContextType | null;
@@ -1222,11 +1329,21 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
         }));
 
     const normalizedResults = useMemo(() => (
-        results.map((result) => ({
-            ...result,
-            questionResults: normalizeQuestionResults(result.questionResults)
-        }))
-    ), [results]);
+        results.map((result) => {
+            const questionResults = supplementQuestionResultsFromRubric(
+                normalizeQuestionResults(result.questionResults),
+                parsedRubric
+            );
+            const score = questionResults.reduce((sum, q) => sum + (Number(q.score) || 0), 0);
+            const maxScore = questionResults.reduce((sum, q) => sum + (Number(q.maxScore) || 0), 0);
+            return {
+                ...result,
+                score,
+                maxScore,
+                questionResults,
+            };
+        })
+    ), [results, parsedRubric]);
 
     const sortedResults = [...normalizedResults].sort((a, b) => b.score - a.score);
     const detailViewStudent = detailViewIndex !== null ? sortedResults[detailViewIndex] : null;
@@ -1536,8 +1653,6 @@ export const ResultsView: React.FC<ResultsViewProps> = ({ defaultExpandDetails =
         setReviewDraft((prev) => (prev.length > 0 ? prev : buildReviewDraft(sortedResults)));
     }, [sortedResults]);
 
-    // 获取存储的评分标准
-    const parsedRubric = useConsoleStore((state) => state.parsedRubric);
     const rubricTotalQuestions = useMemo(() => {
         if (!parsedRubric) return null;
         const anyRubric: any = parsedRubric as any;

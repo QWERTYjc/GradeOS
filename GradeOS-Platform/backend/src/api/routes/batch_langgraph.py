@@ -1762,6 +1762,160 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
         return default
 
 
+def _coerce_question_id(value: Any) -> str:
+    if value is None:
+        return ""
+    text = str(value).strip()
+    return text
+
+
+def _canonical_question_id(value: Any) -> str:
+    text = _coerce_question_id(value)
+    if not text:
+        return ""
+    normalized = text
+    for token in ("第", "题目", "题"):
+        normalized = normalized.replace(token, "")
+    normalized = normalized.replace(" ", "")
+    if normalized.lower().startswith("q"):
+        normalized = normalized[1:]
+    return normalized.strip().strip(".:：,，、").lower()
+
+
+def _resolve_question_id(question: Dict[str, Any], fallback_index: int) -> str:
+    for key in ("question_id", "questionId", "id", "_id"):
+        qid = _coerce_question_id(question.get(key))
+        if qid:
+            return qid
+    return f"__missing_{fallback_index}"
+
+
+def _extract_rubric_question_specs(parsed_rubric: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    if not isinstance(parsed_rubric, dict):
+        return []
+    questions = parsed_rubric.get("questions")
+    if not isinstance(questions, list):
+        return []
+
+    specs: List[Dict[str, Any]] = []
+    seen: set = set()
+    for index, question in enumerate(questions):
+        if not isinstance(question, dict):
+            continue
+        qid = _resolve_question_id(question, index + 1)
+        canonical = _canonical_question_id(qid)
+        if not canonical or canonical in seen:
+            continue
+        seen.add(canonical)
+        max_score = _safe_float(
+            question.get("max_score")
+            or question.get("maxScore")
+            or question.get("score")
+            or question.get("points"),
+            default=0.0,
+        )
+        specs.append(
+            {
+                "question_id": qid,
+                "canonical": canonical,
+                "max_score": max_score,
+                "question_text": question.get("question_text") or question.get("questionText") or "",
+            }
+        )
+    return specs
+
+
+def _supplement_formatted_results_with_rubric(
+    formatted_results: List[Dict[str, Any]],
+    parsed_rubric: Optional[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    rubric_specs = _extract_rubric_question_specs(parsed_rubric)
+    if not rubric_specs:
+        return formatted_results
+
+    supplemented_results: List[Dict[str, Any]] = []
+    for result in formatted_results:
+        if not isinstance(result, dict):
+            supplemented_results.append(result)
+            continue
+
+        question_results = result.get("questionResults") or []
+        if not isinstance(question_results, list):
+            question_results = []
+
+        canonical_to_question: Dict[str, Dict[str, Any]] = {}
+        for idx, question in enumerate(question_results):
+            if not isinstance(question, dict):
+                continue
+            canonical = _canonical_question_id(
+                question.get("questionId")
+                or question.get("question_id")
+                or question.get("id")
+                or question.get("_id")
+            )
+            if not canonical:
+                canonical = _canonical_question_id(f"__missing_{idx + 1}")
+            if canonical not in canonical_to_question:
+                canonical_to_question[canonical] = question
+
+        rebuilt_questions: List[Dict[str, Any]] = []
+        used: set = set()
+        for spec in rubric_specs:
+            canonical = spec["canonical"]
+            existing = canonical_to_question.get(canonical)
+            if existing:
+                rebuilt_questions.append(existing)
+                used.add(canonical)
+                continue
+
+            placeholder_max = max(spec["max_score"], 0.0)
+            rebuilt_questions.append(
+                {
+                    "questionId": spec["question_id"],
+                    "score": 0.0,
+                    "maxScore": placeholder_max,
+                    "feedback": "未产出/未作答（补齐题目）",
+                    "confidence": 1.0,
+                    "needsReview": True,
+                    "reviewReasons": ["missing_output"],
+                    "scoring_point_results": [],
+                    "page_indices": [],
+                    "rubric_refs": [],
+                    "isSupplemented": True,
+                    "supplementedFromRubric": True,
+                    "questionText": spec.get("question_text") or "",
+                }
+            )
+
+        extras: List[Dict[str, Any]] = []
+        for idx, question in enumerate(question_results):
+            if not isinstance(question, dict):
+                continue
+            canonical = _canonical_question_id(
+                question.get("questionId")
+                or question.get("question_id")
+                or question.get("id")
+                or question.get("_id")
+            )
+            if canonical in used:
+                continue
+            extras.append(question)
+            if canonical:
+                used.add(canonical)
+            else:
+                used.add(f"__idx_{idx}")
+
+        merged_questions = rebuilt_questions + extras
+
+        updated = result.copy()
+        updated["questionResults"] = merged_questions
+        updated["score"] = sum(_safe_float(q.get("score", 0.0), 0.0) for q in merged_questions)
+        updated["maxScore"] = sum(_safe_float(q.get("maxScore", 0.0), 0.0) for q in merged_questions)
+        supplemented_results.append(updated)
+
+    return supplemented_results
+
+
 def _make_student_result_id(
     grading_history_id: str,
     student_key: Optional[str],
@@ -2006,7 +2160,10 @@ def _dedupe_formatted_results(results: List[Dict[str, Any]]) -> List[Dict[str, A
     return list(grouped.values())
 
 
-def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
+def _format_results_for_frontend(
+    results: List[Dict],
+    parsed_rubric: Optional[Dict[str, Any]] = None,
+) -> List[Dict]:
     """格式化批改结果为前端格式"""
     formatted = []
     for r in results:
@@ -2028,7 +2185,7 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
                 )
                 question_results.append(
                     {
-                        "questionId": str(q.get("question_id", "")),
+                        "questionId": _resolve_question_id(q, len(question_results) + 1),
                         "score": score_value,
                         "maxScore": max_score_value,
                         "feedback": q.get("feedback", ""),
@@ -2081,7 +2238,7 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
                 )
                 question_results.append(
                     {
-                        "questionId": str(q.get("question_id", "")),
+                        "questionId": _resolve_question_id(q, len(question_results) + 1),
                         "score": score_value,
                         "maxScore": max_score_value,
                         "feedback": q.get("feedback", ""),
@@ -2139,7 +2296,7 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
                 )
                 question_results.append(
                     {
-                        "questionId": str(q.get("question_id") or q.get("questionId") or ""),
+                        "questionId": _resolve_question_id(q, len(question_results) + 1),
                         "score": score_value,
                         "maxScore": max_score_value,
                         "feedback": q.get("feedback", ""),
@@ -2197,7 +2354,7 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
                         )
                         question_results.append(
                             {
-                                "questionId": str(q.get("question_id", "")),
+                                "questionId": _resolve_question_id(q, len(question_results) + 1),
                                 "score": score_value,
                                 "maxScore": max_score_value,
                                 "feedback": q.get("feedback", ""),
@@ -2235,6 +2392,11 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
                                 "answerRegion": q.get("answer_region") or q.get("answerRegion"),
                             }
                         )
+
+        for idx, question in enumerate(question_results):
+            if not isinstance(question, dict):
+                continue
+            question["questionId"] = _resolve_question_id(question, idx + 1)
 
         computed_score = sum(_safe_float(q.get("score", 0)) for q in question_results)
         computed_max = sum(_safe_float(q.get("maxScore", 0)) for q in question_results)
@@ -2277,7 +2439,7 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
         draft_question_details = r.get("draft_question_details") or r.get("draftQuestionDetails")
         draft_question_results = []
         if draft_question_details:
-            for dq in draft_question_details:
+            for idx, dq in enumerate(draft_question_details):
                 draft_scoring_results = (
                     dq.get("scoring_point_results") or dq.get("scoring_results") or []
                 )
@@ -2294,7 +2456,7 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
                 )
                 draft_question_results.append(
                     {
-                        "questionId": str(dq.get("question_id", "")),
+                        "questionId": _resolve_question_id(dq, idx + 1),
                         "score": draft_score_value,
                         "maxScore": draft_max_score_value,
                         "feedback": dq.get("feedback", ""),
@@ -2348,7 +2510,7 @@ def _format_results_for_frontend(results: List[Dict]) -> List[Dict]:
             }
         )
     formatted = _dedupe_formatted_results(formatted)
-    return formatted
+    return _supplement_formatted_results_with_rubric(formatted, parsed_rubric)
 
 
 @router.websocket("/ws/{batch_id}")
@@ -3011,7 +3173,7 @@ async def get_results_review_context(
             batch_id=batch_id,
             status=history.status,
             current_stage=None,
-            student_results=_format_results_for_frontend(raw_results),
+            student_results=_format_results_for_frontend(raw_results, parsed_rubric=parsed_rubric),
             answer_images=answer_images,
             parsed_rubric=parsed_rubric,
         )
@@ -3143,7 +3305,10 @@ async def get_results_review_context(
             batch_id=batch_id,
             status=run_info.status.value if run_info.status else None,
             current_stage=state.get("current_stage"),
-            student_results=_format_results_for_frontend(student_results),
+            student_results=_format_results_for_frontend(
+                student_results,
+                parsed_rubric=parsed_rubric,
+            ),
             answer_images=answer_images,
             parsed_rubric=parsed_rubric,
         )
@@ -3229,7 +3394,10 @@ async def get_batch_results(batch_id: str, orchestrator: Orchestrator = Depends(
         return {
             "batch_id": batch_id,
             "status": run_info.status.value,
-            "results": _format_results_for_frontend(student_results),
+            "results": _format_results_for_frontend(
+                student_results,
+                parsed_rubric=state.get("parsed_rubric"),
+            ),
             "class_report": state.get("class_report"),
         }
 
@@ -3289,6 +3457,7 @@ async def get_full_batch_results(
             raw_results.append(data)
 
         class_report = None
+        parsed_rubric: Dict[str, Any] = {}
         history_data = history.result_data
         if history_data:
             if isinstance(history_data, str):
@@ -3298,8 +3467,12 @@ async def get_full_batch_results(
                     history_data = {}
             if isinstance(history_data, dict):
                 class_report = history_data.get("summary") or history_data.get("class_report")
+                parsed_rubric = history_data.get("parsed_rubric") or {}
 
-        formatted_results = _format_results_for_frontend(raw_results)
+        formatted_results = _format_results_for_frontend(
+            raw_results,
+            parsed_rubric=parsed_rubric,
+        )
         total_max = 0.0
         for item in formatted_results:
             try:
@@ -3312,7 +3485,7 @@ async def get_full_batch_results(
             "status": history.status or "completed",
             "results": formatted_results,
             "cross_page_questions": [],
-            "parsed_rubric": {},
+            "parsed_rubric": parsed_rubric,
             "class_report": class_report,
             "total_students": len(formatted_results),
             "total_score": total_max or 100,
@@ -3395,7 +3568,10 @@ async def get_full_batch_results(
         return {
             "batch_id": batch_id,
             "status": run_info.status.value,
-            "results": _format_results_for_frontend(student_results),
+            "results": _format_results_for_frontend(
+                student_results,
+                parsed_rubric=parsed_rubric,
+            ),
             "cross_page_questions": cross_page_questions,
             "parsed_rubric": parsed_rubric,
             "class_report": class_report,
@@ -3940,7 +4116,10 @@ async def export_excel(
             raise HTTPException(status_code=404, detail="无批改结果")
 
         # 格式化结果
-        formatted_results = _format_results_for_frontend(student_results)
+        formatted_results = _format_results_for_frontend(
+            student_results,
+            parsed_rubric=state.get("parsed_rubric"),
+        )
 
         # 导出
         exporter = ExcelExporter()
@@ -3998,7 +4177,10 @@ async def export_smart_excel(
             raise HTTPException(status_code=404, detail="无批改结果")
 
         # 格式化结果
-        formatted_results = _format_results_for_frontend(student_results)
+        formatted_results = _format_results_for_frontend(
+            student_results,
+            parsed_rubric=state.get("parsed_rubric"),
+        )
 
         # 解码模板
         template_bytes = None

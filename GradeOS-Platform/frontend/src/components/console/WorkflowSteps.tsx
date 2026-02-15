@@ -3,6 +3,7 @@
 import React, { useEffect, useMemo } from 'react';
 import clsx from 'clsx';
 import { useConsoleStore, WorkflowNode } from '@/store/consoleStore';
+import { filterManualReviewNodes } from './manualReviewVisibility';
 import {
   CheckCircle2,
   Clock,
@@ -85,14 +86,7 @@ export default function WorkflowSteps() {
   const interactionEnabled = useConsoleStore((s) => s.interactionEnabled);
 
   const visibleNodes = useMemo(() => {
-    const reviewType = String(pendingReview?.reviewType || '').toLowerCase();
-    const hasManualReviewRequest =
-      reviewType.includes('rubric_review') || reviewType.includes('results_review');
-    const shouldShowManualReview = interactionEnabled
-      || hasManualReviewRequest;
-    const filteredNodes = shouldShowManualReview
-      ? workflowNodes
-      : workflowNodes.filter((node) => node.id !== 'rubric_review' && node.id !== 'review');
+    const filteredNodes = filterManualReviewNodes(workflowNodes, interactionEnabled, pendingReview);
 
     const lastActiveIndex = filteredNodes.findLastIndex((n) => n.status !== 'pending');
     const hasAnyActive = lastActiveIndex >= 0;

@@ -11,6 +11,87 @@ interface LLMThoughtsPanelProps {
   onClose?: () => void;
 }
 
+type StreamFilter = 'all' | 'output' | 'thinking';
+
+const extractJsonObject = (text: string): string | null => {
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+  if (trimmed.startsWith('{') && trimmed.endsWith('}')) return trimmed;
+  const start = trimmed.indexOf('{');
+  const end = trimmed.lastIndexOf('}');
+  if (start >= 0 && end > start) {
+    return trimmed.slice(start, end + 1);
+  }
+  return null;
+};
+
+const flattenReviewItems = (value: unknown): Array<Record<string, unknown>> => {
+  if (!Array.isArray(value)) return [];
+  const queue: unknown[] = [...value];
+  const flat: Array<Record<string, unknown>> = [];
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (Array.isArray(current)) {
+      queue.push(...current);
+      continue;
+    }
+    if (current && typeof current === 'object') {
+      flat.push(current as Record<string, unknown>);
+    }
+  }
+  return flat;
+};
+
+const formatLogicReviewChunk = (content: string): { summary: string; raw: string } | null => {
+  const jsonText = extractJsonObject(content);
+  if (!jsonText) return null;
+  try {
+    const payload = JSON.parse(jsonText) as Record<string, unknown>;
+    const studentKey = String(payload?.student_key || payload?.studentKey || '').trim();
+    const rawItems =
+      payload?.question_reviews
+      || payload?.questionReviews
+      || payload?.questions
+      || payload?.reviews
+      || [];
+    const items = flattenReviewItems(rawItems);
+    if (!items.length) return null;
+
+    const lines = items.map((item, index) => {
+      const questionId = String(
+        item?.question_id
+        || item?.questionId
+        || item?.id
+        || item?._id
+        || item?.qid
+        || index + 1
+      ).trim();
+      const confidenceNumber = Number(item?.confidence);
+      const confidenceText = Number.isFinite(confidenceNumber)
+        ? `${Math.round(confidenceNumber * 100)}%`
+        : 'N/A';
+      const correctionsRaw =
+        item?.review_corrections
+        || item?.reviewCorrections
+        || item?.corrections
+        || item?._corrections
+        || [];
+      const correctionCount = Array.isArray(correctionsRaw)
+        ? correctionsRaw.length
+        : (correctionsRaw ? 1 : 0);
+      return `Q${questionId} | 置信度 ${confidenceText} | 修正项 ${correctionCount}`;
+    });
+
+    const header = studentKey ? `学生 ${studentKey}` : '逻辑复核';
+    return {
+      summary: `${header}\n${lines.join('\n')}`,
+      raw: content,
+    };
+  } catch {
+    return null;
+  }
+};
+
 export default function LLMThoughtsPanel({ className, onClose }: LLMThoughtsPanelProps) {
   const llmThoughts = useConsoleStore((state) => state.llmThoughts);
   const selectedNodeId = useConsoleStore((state) => state.selectedNodeId);
@@ -18,6 +99,7 @@ export default function LLMThoughtsPanel({ className, onClose }: LLMThoughtsPane
   
   const [autoScroll, setAutoScroll] = useState(true);
   const [selectedStudent, setSelectedStudent] = useState<string | null>(null);
+  const [streamFilter, setStreamFilter] = useState<StreamFilter>('all');
   const scrollRef = useRef<HTMLDivElement>(null);
   const lastScrollHeight = useRef(0);
 
@@ -50,14 +132,15 @@ export default function LLMThoughtsPanel({ className, onClose }: LLMThoughtsPane
       });
     }
     
-    // 只显示 output 类型（主要内容）
     const sorted = [...thoughts].sort((a, b) => a.timestamp - b.timestamp);
-    const outputOnly = sorted.filter((t) => (t.streamType || 'output') === 'output');
-    if (outputOnly.length > 0) {
-      return outputOnly;
+    if (streamFilter === 'output') {
+      return sorted.filter((t) => (t.streamType || 'output') === 'output');
+    }
+    if (streamFilter === 'thinking') {
+      return sorted.filter((t) => (t.streamType || 'output') === 'thinking');
     }
     return sorted;
-  }, [llmThoughts, selectedNodeId, selectedStudent]);
+  }, [llmThoughts, selectedNodeId, selectedStudent, streamFilter]);
 
   // 提取学生列表
   const students = useMemo(() => {
@@ -225,8 +308,46 @@ export default function LLMThoughtsPanel({ className, onClose }: LLMThoughtsPane
         </div>
         
         {/* 学生筛选器 */}
+        <div className="mt-3 flex flex-wrap gap-1.5">
+          <button
+            type="button"
+            onClick={() => setStreamFilter('all')}
+            className={clsx(
+              "px-2.5 py-1 rounded-full text-[10px] font-semibold transition-all",
+              streamFilter === 'all'
+                ? "bg-sky-500 text-white"
+                : "bg-slate-800 text-slate-400 hover:text-white hover:bg-slate-700"
+            )}
+          >
+            All
+          </button>
+          <button
+            type="button"
+            onClick={() => setStreamFilter('output')}
+            className={clsx(
+              "px-2.5 py-1 rounded-full text-[10px] font-semibold transition-all",
+              streamFilter === 'output'
+                ? "bg-sky-500 text-white"
+                : "bg-slate-800 text-slate-400 hover:text-white hover:bg-slate-700"
+            )}
+          >
+            Output
+          </button>
+          <button
+            type="button"
+            onClick={() => setStreamFilter('thinking')}
+            className={clsx(
+              "px-2.5 py-1 rounded-full text-[10px] font-semibold transition-all",
+              streamFilter === 'thinking'
+                ? "bg-sky-500 text-white"
+                : "bg-slate-800 text-slate-400 hover:text-white hover:bg-slate-700"
+            )}
+          >
+            Thinking
+          </button>
+        </div>
         {students.length > 1 && (
-          <div className="mt-3 flex flex-wrap gap-1.5">
+          <div className="mt-2 flex flex-wrap gap-1.5">
             <button
               type="button"
               onClick={() => setSelectedStudent(null)}
@@ -331,15 +452,44 @@ export default function LLMThoughtsPanel({ className, onClose }: LLMThoughtsPane
                 </div>
                 
                 {/* 消息内容 */}
-                <div className={clsx(
-                  "rounded-lg p-3 text-sm leading-relaxed font-mono transition-all",
-                  "bg-slate-800/50 text-slate-300 border border-slate-700/50",
-                  !thought.isComplete && "border-amber-500/30"
-                )}>
-                  <pre className="whitespace-pre-wrap break-words text-xs">
-                    {thought.content}
-                  </pre>
-                </div>
+                {(() => {
+                  const logicReviewView = thought.nodeId === 'logic_review'
+                    ? formatLogicReviewChunk(thought.content)
+                    : null;
+                  if (!logicReviewView) {
+                    return (
+                      <div className={clsx(
+                        "rounded-lg p-3 text-sm leading-relaxed font-mono transition-all",
+                        "bg-slate-800/50 text-slate-300 border border-slate-700/50",
+                        !thought.isComplete && "border-amber-500/30"
+                      )}>
+                        <pre className="whitespace-pre-wrap break-words text-xs">
+                          {thought.content}
+                        </pre>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div className={clsx(
+                      "rounded-lg p-3 text-sm leading-relaxed transition-all space-y-2",
+                      "bg-slate-800/50 text-slate-300 border border-slate-700/50",
+                      !thought.isComplete && "border-amber-500/30"
+                    )}>
+                      <pre className="whitespace-pre-wrap break-words text-xs font-mono text-emerald-200">
+                        {logicReviewView.summary}
+                      </pre>
+                      <details className="rounded border border-slate-700/70 bg-slate-900/40 px-2 py-1">
+                        <summary className="cursor-pointer text-[10px] text-slate-400">
+                          Raw chunk
+                        </summary>
+                        <pre className="mt-1 whitespace-pre-wrap break-words text-[10px] font-mono text-slate-400">
+                          {logicReviewView.raw}
+                        </pre>
+                      </details>
+                    </div>
+                  );
+                })()}
               </motion.div>
             ))
           )}

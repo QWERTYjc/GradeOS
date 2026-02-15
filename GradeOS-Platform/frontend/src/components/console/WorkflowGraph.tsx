@@ -5,6 +5,7 @@ import { useConsoleStore, WorkflowNode, GradingAgent } from '@/store/consoleStor
 import clsx from 'clsx';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Check, Loader2, AlertCircle, Clock, Cpu, GitMerge, Undo2, BookOpen, UserCheck, ShieldCheck, ZoomIn, ZoomOut, RefreshCw } from 'lucide-react';
+import { filterManualReviewNodes } from './manualReviewVisibility';
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 const MIN_ZOOM = 0.6;
@@ -385,10 +386,7 @@ export const WorkflowGraph: React.FC = () => {
     };
 
     const visibleNodes = useMemo(() => {
-        // rubric_self_review 是自动执行的，不需要在非交互模式下隐藏
-        const filteredNodes = interactionEnabled
-            ? workflowNodes
-            : workflowNodes.filter((node) => node.id !== 'rubric_review' && node.id !== 'review');
+        const filteredNodes = filterManualReviewNodes(workflowNodes, interactionEnabled, pendingReview);
         const lastActiveIndex = filteredNodes.findLastIndex((node) => node.status !== 'pending');
         // 渐进式显示：只显示已激活的节点，不显示下一个 pending 节点
         const hasAnyActive = lastActiveIndex >= 0;
@@ -417,7 +415,7 @@ export const WorkflowGraph: React.FC = () => {
                 isVisualCompleted
             };
         });
-    }, [workflowNodes, interactionEnabled, workflowStatus]);
+    }, [workflowNodes, interactionEnabled, pendingReview, workflowStatus]);
 
     const shouldIgnoreDrag = (target: EventTarget | null) => {
         if (!(target instanceof HTMLElement)) return false;

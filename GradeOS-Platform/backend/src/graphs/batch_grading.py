@@ -1867,63 +1867,162 @@ def _normalize_logic_review_items(raw_items: Any) -> List[Dict[str, Any]]:
     """
     if not raw_items:
         return []
-    
-    # 如果不是列表，尝试转换
-    if not isinstance(raw_items, list):
-        if isinstance(raw_items, dict):
-            # 可能是单个题目，包装成列表
-            raw_items = [raw_items]
-        else:
-            return []
-    
-    normalized = []
-    for item in raw_items:
-        if not isinstance(item, dict):
-            continue
-        
-        # 标准化字段名（统一使用下划线命名）
-        normalized_item = {}
+
+    def _iter_items(value: Any):
+        if isinstance(value, list):
+            for child in value:
+                yield from _iter_items(child)
+        elif isinstance(value, dict):
+            yield value
+
+    normalized: List[Dict[str, Any]] = []
+    for item in _iter_items(raw_items):
+        normalized_item: Dict[str, Any] = {}
         excluded_keys = {
             "self_critique",
             "selfCritique",
             "self_critique_confidence",
             "selfCritiqueConfidence",
         }
-        
-        # question_id / questionId
-        qid = item.get("question_id") or item.get("questionId")
+
+        # question_id aliases
+        qid = (
+            item.get("question_id")
+            or item.get("questionId")
+            or item.get("id")
+            or item.get("_id")
+            or item.get("qid")
+        )
         if qid:
             normalized_item["question_id"] = qid
-        
+
         # confidence
         if "confidence" in item:
             normalized_item["confidence"] = item["confidence"]
-        
-        # confidence_reason / confidenceReason
-        conf_reason = item.get("confidence_reason") or item.get("confidenceReason")
+
+        # confidence_reason aliases
+        conf_reason = (
+            item.get("confidence_reason")
+            or item.get("confidenceReason")
+            or item.get("reason")
+            or item.get("_reason")
+        )
         if conf_reason:
             normalized_item["confidence_reason"] = conf_reason
-        
-        # review_summary / reviewSummary
-        review_summary = item.get("review_summary") or item.get("reviewSummary")
+
+        # review_summary aliases
+        review_summary = (
+            item.get("review_summary")
+            or item.get("reviewSummary")
+            or item.get("summary")
+            or item.get("_summary")
+        )
         if review_summary:
             normalized_item["review_summary"] = review_summary
-        
-        # review_corrections / reviewCorrections
-        corrections = item.get("review_corrections") or item.get("reviewCorrections")
+
+        # review_corrections aliases
+        corrections = (
+            item.get("review_corrections")
+            or item.get("reviewCorrections")
+            or item.get("corrections")
+            or item.get("_corrections")
+        )
         if corrections:
-            normalized_item["review_corrections"] = corrections
-        
+            if isinstance(corrections, dict):
+                normalized_item["review_corrections"] = [corrections]
+            elif isinstance(corrections, list):
+                normalized_item["review_corrections"] = corrections
+
         # 保留其他所有字段
         for key, value in item.items():
             if key in excluded_keys:
                 continue
             if key not in normalized_item:
                 normalized_item[key] = value
-        
+
         normalized.append(normalized_item)
-    
+
     return normalized
+
+
+def _collect_expected_logic_review_qids(question_details: List[Dict[str, Any]]) -> List[str]:
+    expected_qids: List[str] = []
+    seen: set = set()
+    for question in question_details or []:
+        qid = _normalize_question_id(
+            question.get("question_id")
+            or question.get("questionId")
+            or question.get("id")
+            or question.get("_id")
+            or question.get("qid")
+        )
+        if qid and qid not in seen:
+            seen.add(qid)
+            expected_qids.append(qid)
+    return expected_qids
+
+
+def _build_logic_review_map_and_coverage(
+    question_reviews: Any,
+    expected_qids: List[str],
+) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, Any]]:
+    review_map: Dict[str, Dict[str, Any]] = {}
+    missing_question_id_items = 0
+    unmapped_question_ids: List[str] = []
+    expected_set = set(expected_qids)
+
+    for item in _normalize_logic_review_items(question_reviews):
+        qid = _normalize_question_id(
+            item.get("question_id")
+            or item.get("questionId")
+            or item.get("id")
+            or item.get("_id")
+            or item.get("qid")
+        )
+        if not qid:
+            missing_question_id_items += 1
+            continue
+        if expected_set and qid not in expected_set:
+            unmapped_question_ids.append(qid)
+            continue
+        review_map[qid] = item
+
+    missing_question_ids = [qid for qid in expected_qids if qid not in review_map]
+    coverage = {
+        "expected_question_ids": expected_qids,
+        "reviewed_question_ids": sorted(review_map.keys()),
+        "missing_question_ids": missing_question_ids,
+        "unmapped_question_ids": sorted(set(unmapped_question_ids)),
+        "missing_question_id_items": missing_question_id_items,
+    }
+    coverage["valid"] = (
+        missing_question_id_items == 0
+        and len(coverage["unmapped_question_ids"]) == 0
+        and len(missing_question_ids) == 0
+    )
+    return review_map, coverage
+
+
+def _build_logic_review_placeholder_items(
+    expected_qids: List[str],
+    reason: str,
+) -> List[Dict[str, Any]]:
+    note = (
+        "logic_review output failed schema/coverage validation; "
+        "kept original grading decisions unchanged."
+    )
+    payload_reason = reason or "logic_review_validation_failed"
+    return [
+        {
+            "question_id": qid,
+            "confidence": 0.35,
+            "confidence_reason": payload_reason,
+            "review_summary": note,
+            "review_corrections": [],
+            "honesty_note": note,
+        }
+        for qid in expected_qids
+    ]
 
 
 def _build_logic_review_summary(question_details: List[Dict[str, Any]]) -> str:
@@ -5209,7 +5308,7 @@ def _extract_logic_review_questions(student: Dict[str, Any]) -> List[Dict[str, A
 
     flagged_question_ids: set = set()
     confidence_threshold = float(os.getenv("LOGIC_REVIEW_CONFIDENCE_THRESHOLD", "0.7"))
-    force_all = os.getenv("LOGIC_REVIEW_FORCE_ALL", "false").lower() in ("1", "true", "yes")
+    force_all = os.getenv("LOGIC_REVIEW_FORCE_ALL", "true").lower() in ("1", "true", "yes")
     max_questions = int(os.getenv("LOGIC_REVIEW_MAX_QUESTIONS", "0"))
 
     # Strict mode: always review all questions (optionally capped).
@@ -5989,67 +6088,145 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                 limits,
             )
 
-            response_text = ""
-            try:
-                async for chunk in reasoning_client._call_text_api_stream(prompt):
-                    output_text, thinking_text = split_thinking_content(chunk)
-                    if thinking_text:
-                        await _broadcast_progress(
-                            batch_id,
-                            {
-                                "type": "llm_stream_chunk",
-                                "nodeId": "logic_review",
-                                "nodeName": "Logic Review",
-                                "agentId": agent_id,
-                                "agentLabel": student_key,
-                                "streamType": "thinking",
-                                "chunk": thinking_text,
-                            },
-                        )
-                    if output_text:
-                        await _broadcast_progress(
-                            batch_id,
-                            {
-                                "type": "llm_stream_chunk",
-                                "nodeId": "logic_review",
-                                "nodeName": "Logic Review",
-                                "agentId": agent_id,
-                                "agentLabel": student_key,
-                                "streamType": "output",
-                                "chunk": output_text,
-                            },
-                        )
-                        response_text += output_text
-                    elif thinking_text:
-                        response_text += thinking_text
-            except Exception as exc:
-                logger.warning(f"[logic_review] LLM failed student={student_key}: {exc}")
-
+            expected_qids = _collect_expected_logic_review_qids(all_question_details)
+            max_attempts = 2
+            attempt = 0
+            retry_used = False
             payload_data: Dict[str, Any] = {}
-            if response_text:
-                try:
-                    json_text = reasoning_client._extract_json_from_text(response_text)
-                    payload_data = json.loads(json_text)
-                    
-                    # 输出完整 logic_review JSON（用于调试）
-                    logger.info(f"🔍 Logic Review 完整JSON (学生={student_key}):\n{json.dumps(payload_data, ensure_ascii=False, indent=2)}")
-                    
-                except Exception as exc:
-                    logger.warning(f"[logic_review] parse failed student={student_key}: {exc}")
-
-            question_reviews = (
-                payload_data.get("question_reviews")
-                or payload_data.get("questionReviews")
-                or payload_data.get("questions")
-                or payload_data.get("reviews")
-                or []
-            )
             review_map: Dict[str, Dict[str, Any]] = {}
-            for item in _normalize_logic_review_items(question_reviews):
-                qid = _normalize_question_id(item.get("question_id") or item.get("questionId"))
-                if not qid:
-                    continue
-                review_map[qid] = item
+            coverage = {
+                "expected_question_ids": expected_qids,
+                "reviewed_question_ids": [],
+                "missing_question_ids": expected_qids,
+                "unmapped_question_ids": [],
+                "missing_question_id_items": 0,
+                "valid": False,
+            }
+            validation_error: Optional[str] = None
+
+            while attempt < max_attempts:
+                attempt += 1
+                if attempt > 1:
+                    retry_used = True
+                    await _broadcast_progress(
+                        batch_id,
+                        {
+                            "type": "agent_update",
+                            "agentId": agent_id,
+                            "agentLabel": student_key,
+                            "parentNodeId": "logic_review",
+                            "status": "running",
+                            "progress": 40,
+                            "message": "Logic review retrying due to invalid schema/coverage...",
+                        },
+                    )
+
+                response_text = ""
+                try:
+                    async for chunk in reasoning_client._call_text_api_stream(prompt):
+                        output_text, thinking_text = split_thinking_content(chunk)
+                        if thinking_text:
+                            await _broadcast_progress(
+                                batch_id,
+                                {
+                                    "type": "llm_stream_chunk",
+                                    "nodeId": "logic_review",
+                                    "nodeName": "Logic Review",
+                                    "agentId": agent_id,
+                                    "agentLabel": student_key,
+                                    "streamType": "thinking",
+                                    "chunk": thinking_text,
+                                },
+                            )
+                        if output_text:
+                            await _broadcast_progress(
+                                batch_id,
+                                {
+                                    "type": "llm_stream_chunk",
+                                    "nodeId": "logic_review",
+                                    "nodeName": "Logic Review",
+                                    "agentId": agent_id,
+                                    "agentLabel": student_key,
+                                    "streamType": "output",
+                                    "chunk": output_text,
+                                },
+                            )
+                            response_text += output_text
+                        elif thinking_text:
+                            response_text += thinking_text
+                except Exception as exc:
+                    validation_error = f"llm_error:{exc}"
+                    logger.warning(f"[logic_review] LLM failed student={student_key}: {exc}")
+
+                payload_data = {}
+                if response_text:
+                    try:
+                        json_text = reasoning_client._extract_json_from_text(response_text)
+                        payload_data = json.loads(json_text)
+                    except Exception as exc:
+                        validation_error = f"parse_error:{exc}"
+                        logger.warning(f"[logic_review] parse failed student={student_key}: {exc}")
+
+                question_reviews = (
+                    payload_data.get("question_reviews")
+                    or payload_data.get("questionReviews")
+                    or payload_data.get("questions")
+                    or payload_data.get("reviews")
+                    or []
+                )
+                review_map, coverage = _build_logic_review_map_and_coverage(
+                    question_reviews,
+                    expected_qids,
+                )
+
+                if coverage.get("valid"):
+                    validation_error = None
+                    break
+
+                validation_error = validation_error or "coverage_invalid"
+                logger.warning(
+                    "[logic_review] invalid output student=%s attempt=%s expected_qids=%s mapped_qids=%s missing_qids=%s unmapped_qids=%s missing_qid_items=%s",
+                    student_key,
+                    attempt,
+                    coverage.get("expected_question_ids"),
+                    coverage.get("reviewed_question_ids"),
+                    coverage.get("missing_question_ids"),
+                    coverage.get("unmapped_question_ids"),
+                    coverage.get("missing_question_id_items"),
+                )
+
+            if not coverage.get("valid"):
+                reason = validation_error or "logic_review_validation_failed"
+                review_map = {}
+                payload_data = {
+                    "question_reviews": _build_logic_review_placeholder_items(
+                        expected_qids,
+                        reason,
+                    )
+                }
+                _, coverage = _build_logic_review_map_and_coverage(
+                    payload_data.get("question_reviews") or [],
+                    expected_qids,
+                )
+                coverage["valid"] = False
+                coverage["validation_error"] = reason
+                logger.warning(
+                    "[logic_review] fallback to placeholders student=%s expected_qids=%s retry_used=%s reason=%s",
+                    student_key,
+                    expected_qids,
+                    retry_used,
+                    reason,
+                )
+
+            coverage["retried"] = retry_used
+            logger.info(
+                "[logic_review] coverage student=%s expected_qids=%s mapped_qids=%s missing_qids=%s retry_used=%s",
+                student_key,
+                coverage.get("expected_question_ids"),
+                coverage.get("reviewed_question_ids"),
+                coverage.get("missing_question_ids"),
+                retry_used,
+            )
 
             updated_student = dict(student)
             import copy
@@ -6084,10 +6261,19 @@ async def logic_review_node(state: BatchGradingGraphState) -> Dict[str, Any]:
             updated_student["logic_reviewed_at"] = datetime.now().isoformat()
 
             review_summary = _build_logic_review_summary(updated_details)
+            question_reviews_payload = (
+                payload_data.get("question_reviews")
+                or payload_data.get("questionReviews")
+                or payload_data.get("questions")
+                or payload_data.get("reviews")
+                or []
+            )
+            normalized_question_reviews = _normalize_logic_review_items(question_reviews_payload)
             logic_review_payload = {
                 "reviewed_at": updated_student["logic_reviewed_at"],
                 "review_summary": review_summary,
-                "question_reviews": list(review_map.values()) if payload_data else [],
+                "question_reviews": normalized_question_reviews,
+                "coverage": coverage,
             }
             updated_student["logic_review"] = logic_review_payload
 
