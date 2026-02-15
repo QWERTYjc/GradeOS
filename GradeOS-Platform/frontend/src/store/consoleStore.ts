@@ -944,6 +944,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
     // Store 鍐呴儴锟?WebSocket 澶勭悊鍣ㄦ敞鍐屾爣锟?
     let handlersRegistered = false;
     const LOGIC_REVIEW_SKIP_BLOCK_REASON = 'logic_review stage was skipped; completion is blocked by policy.';
+    const RESULTS_MISSING_BLOCK_REASON = 'terminal event received, but grading results are still missing.';
 
     const canFinalizeCompletion = () => {
         const state = get();
@@ -951,6 +952,21 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
             return false;
         }
         return canFinalizeWithGate(state.requiredStageSeen, state.pendingTerminalEvent);
+    };
+
+    const hasResultsForCompletion = (
+        data?: any,
+        resultsOverride?: StudentResult[] | null
+    ) => {
+        if (Array.isArray(resultsOverride) && resultsOverride.length > 0) {
+            return true;
+        }
+        const payloadResults = extractResultsPayload(data);
+        if (Array.isArray(payloadResults) && payloadResults.length > 0) {
+            return true;
+        }
+        const stateResults = get().finalResults;
+        return Array.isArray(stateResults) && stateResults.length > 0;
     };
 
     const recordStageSignal = (rawStage?: string | null) => {
@@ -1081,12 +1097,16 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
     };
 
     const maybeFinalizeCompletion = (data: any, resultsOverride?: StudentResult[] | null) => {
-        if (canFinalizeCompletion()) {
-            finalizeCompletion(data, resultsOverride);
-            return true;
+        if (!canFinalizeCompletion()) {
+            blockCompletion();
+            return false;
         }
-        blockCompletion();
-        return false;
+        if (!hasResultsForCompletion(data, resultsOverride)) {
+            blockCompletion(RESULTS_MISSING_BLOCK_REASON);
+            return false;
+        }
+        finalizeCompletion(data, resultsOverride);
+        return true;
     };
 
     return {
@@ -2193,7 +2213,11 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                     return;
                 }
 
-                blockCompletion();
+                if (canFinalizeCompletion()) {
+                    blockCompletion(RESULTS_MISSING_BLOCK_REASON);
+                } else {
+                    blockCompletion();
+                }
                 get().addLog('Post-review stages are still incomplete; workflow remains in monitoring mode.', 'WARNING');
             });
 
