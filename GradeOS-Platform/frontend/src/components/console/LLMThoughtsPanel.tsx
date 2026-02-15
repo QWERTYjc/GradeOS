@@ -21,6 +21,11 @@ export default function LLMThoughtsPanel({ className, onClose }: LLMThoughtsPane
   const scrollRef = useRef<HTMLDivElement>(null);
   const lastScrollHeight = useRef(0);
 
+  const selectedNode = useMemo(() => {
+    if (!selectedNodeId) return null;
+    return workflowNodes.find((n) => n.id === selectedNodeId) || null;
+  }, [selectedNodeId, workflowNodes]);
+
   // 获取当前节点的显示名称
   const currentNodeName = useMemo(() => {
     if (!selectedNodeId) return 'AI Stream';
@@ -74,6 +79,61 @@ export default function LLMThoughtsPanel({ className, onClose }: LLMThoughtsPane
   const hasActiveStream = useMemo(() => {
     return filteredThoughts.some((t) => !t.isComplete);
   }, [filteredThoughts]);
+
+  const fallbackMessages = useMemo(() => {
+    if (filteredThoughts.length > 0 || !selectedNode) {
+      return [];
+    }
+
+    const entries: Array<{ id: string; title: string; content: string }> = [];
+
+    if (selectedNode.message) {
+      entries.push({
+        id: `${selectedNode.id}-status`,
+        title: selectedNode.label,
+        content: selectedNode.message,
+      });
+    }
+
+    (selectedNode.children || []).forEach((agent, index) => {
+      const chunks: string[] = [];
+      const streamingText = agent.output?.streamingText?.trim();
+      if (streamingText) {
+        chunks.push(streamingText);
+      }
+      const reviewNotes = agent.output?.reviewSummary?.notes?.trim();
+      if (reviewNotes) {
+        chunks.push(reviewNotes);
+      }
+      const feedback = agent.output?.feedback?.trim();
+      if (feedback) {
+        chunks.push(feedback);
+      }
+      const recentLogs = (agent.logs || []).filter(Boolean).slice(-3).join('\n').trim();
+      if (recentLogs) {
+        chunks.push(recentLogs);
+      }
+      if (chunks.length > 0) {
+        entries.push({
+          id: `${selectedNode.id}-${agent.id || index}`,
+          title: agent.label || agent.id || `Agent ${index + 1}`,
+          content: chunks.join('\n\n'),
+        });
+      }
+    });
+
+    if (entries.length === 0 && selectedNode.status === 'completed') {
+      entries.push({
+        id: `${selectedNode.id}-completed`,
+        title: selectedNode.label,
+        content: 'No stream chunks were emitted for this stage, but it completed successfully.',
+      });
+    }
+
+    return entries;
+  }, [filteredThoughts.length, selectedNode]);
+
+  const visibleMessageCount = filteredThoughts.length > 0 ? filteredThoughts.length : fallbackMessages.length;
 
   // 自动滚动到底部
   const scrollToBottom = useCallback(() => {
@@ -201,14 +261,37 @@ export default function LLMThoughtsPanel({ className, onClose }: LLMThoughtsPane
       >
         <AnimatePresence initial={false}>
           {filteredThoughts.length === 0 ? (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              className="h-full flex flex-col items-center justify-center text-slate-600 gap-3 py-12"
-            >
-              <Sparkles className="w-10 h-10 opacity-30" />
-              <p className="text-sm font-medium">Waiting for AI stream...</p>
-            </motion.div>
+            fallbackMessages.length > 0 ? (
+              fallbackMessages.map((entry) => (
+                <motion.div
+                  key={entry.id}
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.2 }}
+                  className="group"
+                >
+                  <div className="flex items-center gap-2 mb-1.5">
+                    <span className="px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300 text-[10px] font-semibold">
+                      {entry.title}
+                    </span>
+                  </div>
+                  <div className="rounded-lg p-3 text-sm leading-relaxed font-mono transition-all bg-slate-800/50 text-slate-300 border border-slate-700/50">
+                    <pre className="whitespace-pre-wrap break-words text-xs">
+                      {entry.content}
+                    </pre>
+                  </div>
+                </motion.div>
+              ))
+            ) : (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                className="h-full flex flex-col items-center justify-center text-slate-600 gap-3 py-12"
+              >
+                <Sparkles className="w-10 h-10 opacity-30" />
+                <p className="text-sm font-medium">Waiting for AI stream...</p>
+              </motion.div>
+            )
           ) : (
             filteredThoughts.map((thought) => (
               <motion.div
@@ -278,7 +361,7 @@ export default function LLMThoughtsPanel({ className, onClose }: LLMThoughtsPane
       {/* Footer 状态栏 */}
       <div className="flex-shrink-0 px-4 py-2 border-t border-slate-800/50 bg-slate-900/50">
         <div className="flex items-center justify-between text-[10px] text-slate-500">
-          <span>{filteredThoughts.length} messages</span>
+          <span>{visibleMessageCount} messages</span>
           {hasActiveStream && (
             <span className="flex items-center gap-1.5 text-emerald-400">
               <Play className="w-3 h-3" />

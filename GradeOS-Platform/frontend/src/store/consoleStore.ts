@@ -1170,7 +1170,18 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                 set((current) => {
                     const updatedNodes = current.workflowNodes.map((n, index) => {
                         if (index === targetIndex) {
-                            return { ...n, status: status as NodeStatus, message: message || n.message };
+                            const statusChanged = n.status !== status;
+                            let nextMessage = n.message;
+
+                            if (message !== undefined) {
+                                nextMessage = message;
+                            } else if (statusChanged && status === 'completed') {
+                                nextMessage = `${n.label} completed`;
+                            } else if (statusChanged && status === 'pending') {
+                                nextMessage = undefined;
+                            }
+
+                            return { ...n, status: status as NodeStatus, message: nextMessage };
                         }
                         return n;
                     });
