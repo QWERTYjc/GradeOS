@@ -732,6 +732,11 @@ async def rubric_parse_node(state: BatchGradingGraphState) -> Dict[str, Any]:
                 )
                 raise Exception(f"Rubric parse timeout after {rubric_parse_timeout}s")
 
+            if not getattr(result, "questions", None):
+                raise ValueError(
+                    "Rubric parse returned zero questions. Please upload a clearer rubric or use text input."
+                )
+
             # 转换为字典格式
             parsed_rubric = {
                 "total_questions": result.total_questions,

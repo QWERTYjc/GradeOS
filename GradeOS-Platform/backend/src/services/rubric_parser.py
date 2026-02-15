@@ -13,6 +13,7 @@ import base64
 import json
 import logging
 import os
+import re
 from typing import List, Optional, Dict, Any
 from dataclasses import dataclass, field
 
@@ -98,6 +99,163 @@ def _load_json_with_repair(text: str) -> Optional[Dict[str, Any]]:
         except json.JSONDecodeError:
             continue
     return None
+
+
+def _coerce_float(value: Any, default: float = 0.0) -> float:
+    try:
+        if value is None:
+            return default
+        if isinstance(value, str):
+            cleaned = value.strip()
+            if not cleaned:
+                return default
+            match = re.search(r"-?\d+(?:\.\d+)?", cleaned.replace(",", ""))
+            if not match:
+                return default
+            return float(match.group(0))
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _first_non_empty(*values: Any) -> Any:
+    for value in values:
+        if value is None:
+            continue
+        if isinstance(value, str) and not value.strip():
+            continue
+        return value
+    return None
+
+
+def _flatten_nested_items(items: Any) -> List[Any]:
+    if items is None:
+        return []
+    if not isinstance(items, list):
+        return [items]
+    flattened: List[Any] = []
+    for item in items:
+        if isinstance(item, list):
+            flattened.extend(_flatten_nested_items(item))
+        else:
+            flattened.append(item)
+    return flattened
+
+
+def _extract_questions_from_plain_text(text: str) -> Dict[str, Any]:
+    if not text:
+        return {"questions": [], "total_score": 0.0, "general_notes": ""}
+
+    lines = [line.strip() for line in text.splitlines() if line and line.strip()]
+    if not lines:
+        return {"questions": [], "total_score": 0.0, "general_notes": ""}
+
+    question_header_re = re.compile(
+        r"(?i)^question\s*([0-9]+[a-zA-Z]?)\s*(?:[\(\-:]\s*([0-9]+(?:\.[0-9]+)?)\s*(?:marks?|points?)\s*\)?)?"
+    )
+    scoring_point_re = re.compile(
+        r"(?i)^(q?\s*([0-9]+(?:\.[0-9]+)+))\s+(.+?)(?:\s*-\s*([0-9]+(?:\.[0-9]+)?)\s*(?:marks?|points?))?$"
+    )
+    marks_hint_re = re.compile(r"(?i)([0-9]+(?:\.[0-9]+)?)\s*(?:marks?|points?)")
+    total_score_re = re.compile(r"(?i)^total\s*score\s*[:：]\s*([0-9]+(?:\.[0-9]+)?)")
+
+    questions: List[Dict[str, Any]] = []
+    current: Optional[Dict[str, Any]] = None
+    notes_lines: List[str] = []
+    in_notes = False
+    detected_total = 0.0
+
+    for line in lines:
+        total_match = total_score_re.search(line)
+        if total_match:
+            detected_total = _coerce_float(total_match.group(1), default=detected_total)
+            continue
+
+        header_match = question_header_re.match(line)
+        if header_match:
+            if current:
+                questions.append(current)
+            qid = str(header_match.group(1)).strip()
+            max_score = _coerce_float(header_match.group(2), default=0.0)
+            current = {
+                "question_id": qid,
+                "max_score": max_score,
+                "question_text": line,
+                "standard_answer": "",
+                "scoring_points": [],
+                "alternative_solutions": [],
+                "deduction_rules": [],
+                "grading_notes": "",
+            }
+            in_notes = False
+            continue
+
+        if current is None:
+            if line.lower().startswith("general notes"):
+                in_notes = True
+            if in_notes:
+                notes_lines.append(line)
+            continue
+
+        scoring_match = scoring_point_re.match(line)
+        if scoring_match:
+            point_label = scoring_match.group(1).replace(" ", "")
+            description = scoring_match.group(3).strip()
+            score = _coerce_float(scoring_match.group(4), default=0.0)
+            current["scoring_points"].append(
+                {
+                    "point_id": point_label,
+                    "description": description,
+                    "score": score,
+                    "is_required": True,
+                    "keywords": [],
+                    "expected_value": "",
+                }
+            )
+            continue
+
+        if line.lower().startswith("general notes"):
+            in_notes = True
+            notes_lines.append(line)
+            continue
+
+        if in_notes:
+            notes_lines.append(line)
+            continue
+
+        mark_hint = marks_hint_re.search(line)
+        if mark_hint and current and not current["max_score"]:
+            current["max_score"] = _coerce_float(mark_hint.group(1), default=0.0)
+
+    if current:
+        questions.append(current)
+
+    for question in questions:
+        points = question.get("scoring_points") or []
+        if not question.get("max_score"):
+            question["max_score"] = sum(_coerce_float(p.get("score"), default=0.0) for p in points)
+        if not points and question.get("max_score", 0.0) > 0:
+            qid = str(question.get("question_id") or "")
+            question["scoring_points"] = [
+                {
+                    "point_id": f"{qid}.1" if qid else "",
+                    "description": "Full-credit criterion",
+                    "score": question["max_score"],
+                    "is_required": True,
+                    "keywords": [],
+                    "expected_value": "",
+                }
+            ]
+
+    if not detected_total:
+        detected_total = sum(_coerce_float(q.get("max_score"), default=0.0) for q in questions)
+
+    general_notes = "\n".join(notes_lines).strip()
+    return {
+        "questions": questions,
+        "total_score": detected_total,
+        "general_notes": general_notes,
+    }
 
 
 @dataclass
@@ -547,27 +705,103 @@ class RubricParserService:
                     json_text = json_text[brace_start:]
 
             if not json_text or not json_text.strip().startswith("{"):
-                logger.warning(f"无法从响应中提取 JSON: {result_text[:200]}...")
-                return ParsedRubric(
-                    total_questions=0,
-                    total_score=0,
-                    questions=[],
-                    general_notes="",
-                    rubric_format="standard",
-                )
+                logger.warning(f"Unable to extract JSON from rubric response: {result_text[:200]}...")
+                text_fallback = _extract_questions_from_plain_text(result_text)
+                if text_fallback.get("questions"):
+                    data = {
+                        "questions": text_fallback.get("questions", []),
+                        "general_notes": text_fallback.get("general_notes", ""),
+                        "total_score": text_fallback.get("total_score", 0.0),
+                        "rubric_format": "standard",
+                    }
+                else:
+                    return ParsedRubric(
+                        total_questions=0,
+                        total_score=0,
+                        questions=[],
+                        general_notes="",
+                        rubric_format="standard",
+                    )
+            else:
+                data = _load_json_with_repair(json_text)
+                if data is None:
+                    logger.warning(
+                        f"[rubric_parse] JSON decode failed after repair attempts. Raw: {json_text[:200]}..."
+                    )
+                    text_fallback = _extract_questions_from_plain_text(result_text)
+                    if text_fallback.get("questions"):
+                        data = {
+                            "questions": text_fallback.get("questions", []),
+                            "general_notes": text_fallback.get("general_notes", ""),
+                            "total_score": text_fallback.get("total_score", 0.0),
+                            "rubric_format": "standard",
+                        }
+                    else:
+                        return ParsedRubric(
+                            total_questions=0,
+                            total_score=0,
+                            questions=[],
+                            general_notes="",
+                            rubric_format="standard",
+                        )
 
-            data = _load_json_with_repair(json_text)
-            if data is None:
-                logger.warning(
-                    f"[rubric_parse] JSON decode failed after repair attempts. Raw: {json_text[:200]}..."
-                )
-                return ParsedRubric(
-                    total_questions=0,
-                    total_score=0,
-                    questions=[],
-                    general_notes="",
-                    rubric_format="standard",
-                )
+            def _extract_questions_payload(parsed: Dict[str, Any]) -> tuple[List[Any], Dict[str, Any]]:
+                candidate_containers: List[Dict[str, Any]] = []
+                if isinstance(parsed, dict):
+                    candidate_containers.append(parsed)
+                    for key in (
+                        "rubric",
+                        "parsed_rubric",
+                        "result",
+                        "data",
+                        "output",
+                        "payload",
+                    ):
+                        nested = parsed.get(key)
+                        if isinstance(nested, dict):
+                            candidate_containers.append(nested)
+
+                for container in candidate_containers:
+                    questions_value = container.get("questions")
+                    if isinstance(questions_value, dict):
+                        return list(questions_value.values()), container
+                    if isinstance(questions_value, list):
+                        return _flatten_nested_items(questions_value), container
+                    for key in (
+                        "question_results",
+                        "questionResults",
+                        "question_rubrics",
+                        "questionRubrics",
+                        "rubrics",
+                        "items",
+                    ):
+                        alt_value = container.get(key)
+                        if isinstance(alt_value, dict):
+                            return list(alt_value.values()), container
+                        if isinstance(alt_value, list):
+                            return _flatten_nested_items(alt_value), container
+
+                return [], parsed
+
+            questions_payload, data_container = _extract_questions_payload(data)
+            if not questions_payload:
+                text_fallback = _extract_questions_from_plain_text(result_text)
+                if text_fallback.get("questions"):
+                    questions_payload = text_fallback["questions"]
+                    data_container = {
+                        **data_container,
+                        "general_notes": (
+                            data_container.get("general_notes")
+                            or text_fallback.get("general_notes")
+                            or ""
+                        ),
+                        "total_score": data_container.get("total_score")
+                        or text_fallback.get("total_score", 0.0),
+                    }
+                    logger.warning(
+                        "[rubric_parse] no structured questions found, fallback text parser extracted %d question(s)",
+                        len(questions_payload),
+                    )
 
             def ensure_string(value, default=""):
                 """确保值是字符串类型"""
@@ -623,19 +857,87 @@ class RubricParserService:
 
             # 先收集所有题目，然后按主题编号合并
             raw_questions = []
-            for q in data.get("questions", []):
-                # 处理 scoring_points，可能是字典列表或字符串列表
-                raw_scoring_points = q.get("scoring_points", [])
+            point_score_hint_re = re.compile(r"(?i)-\s*([0-9]+(?:\.[0-9]+)?)\s*(?:marks?|points?)")
+            question_id_hint_re = re.compile(r"(?i)\b(?:question|q)\s*([0-9]+[a-zA-Z]?)\b")
+            max_score_hint_re = re.compile(
+                r"(?i)\(?\s*([0-9]+(?:\.[0-9]+)?)\s*(?:marks?|points?)\s*\)?"
+            )
+
+            for idx, q in enumerate(_flatten_nested_items(questions_payload), start=1):
+                if not isinstance(q, dict):
+                    continue
+
+                question_text = ensure_string(
+                    _first_non_empty(
+                        q.get("question_text"),
+                        q.get("questionText"),
+                        q.get("text"),
+                        q.get("title"),
+                        q.get("description"),
+                        q.get("question"),
+                    ),
+                    default="",
+                )
+                question_id_raw = ensure_string(
+                    _first_non_empty(
+                        q.get("question_id"),
+                        q.get("questionId"),
+                        q.get("id"),
+                        q.get("_id"),
+                        q.get("qid"),
+                    ),
+                    default="",
+                ).strip()
+                if not question_id_raw and question_text:
+                    qid_match = question_id_hint_re.search(question_text)
+                    if qid_match:
+                        question_id_raw = qid_match.group(1)
+                if not question_id_raw:
+                    question_id_raw = str(idx)
+
+                raw_scoring_points = _first_non_empty(
+                    q.get("scoring_points"),
+                    q.get("scoringPoints"),
+                    q.get("criteria"),
+                    q.get("points"),
+                    q.get("rubric_points"),
+                )
+                if isinstance(raw_scoring_points, dict):
+                    raw_scoring_points = list(raw_scoring_points.values())
+                raw_scoring_points = _flatten_nested_items(raw_scoring_points)
+
                 scoring_points = []
-                for sp in raw_scoring_points:
+                for sp_idx, sp in enumerate(raw_scoring_points, start=1):
                     if isinstance(sp, dict):
                         scoring_points.append(
                             ScoringPoint(
-                                description=ensure_string(sp.get("description", "")),
-                                score=float(sp.get("score", 0)),
+                                description=ensure_string(
+                                    _first_non_empty(
+                                        sp.get("description"),
+                                        sp.get("text"),
+                                        sp.get("criterion"),
+                                        sp.get("name"),
+                                        sp.get("title"),
+                                        sp.get("point"),
+                                    ),
+                                    default="",
+                                ),
+                                score=_coerce_float(
+                                    _first_non_empty(
+                                        sp.get("score"),
+                                        sp.get("max_score"),
+                                        sp.get("maxScore"),
+                                        sp.get("marks"),
+                                        sp.get("points"),
+                                    ),
+                                    default=0.0,
+                                ),
                                 is_required=sp.get("is_required", True),
                                 point_id=ensure_string(
-                                    sp.get("point_id") or sp.get("pointId") or sp.get("id") or ""
+                                    sp.get("point_id")
+                                    or sp.get("pointId")
+                                    or sp.get("id")
+                                    or f"{question_id_raw}.{sp_idx}"
                                 ),
                                 keywords=(
                                     [str(item) for item in (sp.get("keywords") or [])]
@@ -648,37 +950,55 @@ class RubricParserService:
                             )
                         )
                     elif isinstance(sp, str):
-                        # 如果是字符串，将其作为描述，分数设为 0
+                        score = 0.0
+                        hint_match = point_score_hint_re.search(sp)
+                        if hint_match:
+                            score = _coerce_float(hint_match.group(1), default=0.0)
                         scoring_points.append(
                             ScoringPoint(
-                                description=sp,
-                                score=0,
+                                description=sp.strip(),
+                                score=score,
                                 is_required=True,
-                                point_id="",
+                                point_id=f"{question_id_raw}.{sp_idx}",
                                 keywords=[],
                                 expected_value="",
                             )
                         )
 
-                # 处理 alternative_solutions，可能是字典列表或字符串列表
-                raw_alt_solutions = q.get("alternative_solutions", [])
+                raw_alt_solutions = _first_non_empty(
+                    q.get("alternative_solutions"),
+                    q.get("alternativeSolutions"),
+                    q.get("alternatives"),
+                )
+                if isinstance(raw_alt_solutions, dict):
+                    raw_alt_solutions = list(raw_alt_solutions.values())
+                raw_alt_solutions = _flatten_nested_items(raw_alt_solutions)
                 alternative_solutions = []
                 for alt in raw_alt_solutions:
                     if isinstance(alt, dict):
                         alternative_solutions.append(
                             AlternativeSolution(
                                 description=ensure_string(alt.get("description", "")),
-                                scoring_criteria=ensure_string(alt.get("scoring_criteria", "")),
+                                scoring_criteria=ensure_string(
+                                    alt.get("scoring_criteria") or alt.get("scoringCriteria") or ""
+                                ),
                                 note=ensure_string(alt.get("note", "")),
                             )
                         )
                     elif isinstance(alt, str):
-                        # 如果是字符串，将其作为描述
                         alternative_solutions.append(
                             AlternativeSolution(description=alt, scoring_criteria="", note="")
                         )
 
-                raw_deductions = q.get("deduction_rules") or q.get("deductionRules") or []
+                raw_deductions = _first_non_empty(
+                    q.get("deduction_rules"),
+                    q.get("deductionRules"),
+                    q.get("deductions"),
+                    q.get("penalties"),
+                )
+                if isinstance(raw_deductions, dict):
+                    raw_deductions = list(raw_deductions.values())
+                raw_deductions = _flatten_nested_items(raw_deductions)
                 deduction_rules = []
                 for dr in raw_deductions:
                     if isinstance(dr, dict):
@@ -687,7 +1007,15 @@ class RubricParserService:
                                 description=ensure_string(
                                     dr.get("description") or dr.get("rule") or ""
                                 ),
-                                deduction=float(dr.get("deduction", dr.get("score", 0)) or 0),
+                                deduction=_coerce_float(
+                                    _first_non_empty(
+                                        dr.get("deduction"),
+                                        dr.get("score"),
+                                        dr.get("points"),
+                                        dr.get("marks"),
+                                    ),
+                                    default=0.0,
+                                ),
                                 conditions=ensure_string(
                                     dr.get("conditions") or dr.get("when") or ""
                                 ),
@@ -706,34 +1034,94 @@ class RubricParserService:
                             )
                         )
 
-                # 提取 LLM 生成的题目级 confession
+                max_score = _coerce_float(
+                    _first_non_empty(
+                        q.get("max_score"),
+                        q.get("maxScore"),
+                        q.get("score"),
+                        q.get("marks"),
+                        q.get("points"),
+                    ),
+                    default=0.0,
+                )
+                if max_score <= 0 and question_text:
+                    max_score_match = max_score_hint_re.search(question_text)
+                    if max_score_match:
+                        max_score = _coerce_float(max_score_match.group(1), default=0.0)
+                if max_score <= 0 and scoring_points:
+                    max_score = sum(sp.score for sp in scoring_points)
+                if not scoring_points and max_score > 0:
+                    scoring_points.append(
+                        ScoringPoint(
+                            description="Full-credit criterion",
+                            score=max_score,
+                            is_required=True,
+                            point_id=f"{question_id_raw}.1",
+                            keywords=[],
+                            expected_value="",
+                        )
+                    )
+
                 q_confession_raw = q.get("confession") or {}
                 q_confession = QuestionConfession(
-                    risk=ensure_string(q_confession_raw.get("risk", "")),
-                    uncertainty=ensure_string(q_confession_raw.get("uncertainty", "")),
+                    risk=ensure_string(_first_non_empty(q_confession_raw.get("risk"), q.get("risk"), "")),
+                    uncertainty=ensure_string(
+                        _first_non_empty(q_confession_raw.get("uncertainty"), q.get("uncertainty"), "")
+                    ),
                 )
 
                 raw_questions.append(
                     {
-                        "original_id": str(q.get("question_id", "")),
-                        "normalized_id": normalize_question_id(str(q.get("question_id", ""))),
-                        "max_score": float(q.get("max_score", 0)),
-                        "question_text": ensure_string(q.get("question_text", "")),
-                        "standard_answer": ensure_string(q.get("standard_answer", "")),
+                        "original_id": str(question_id_raw),
+                        "normalized_id": normalize_question_id(str(question_id_raw)),
+                        "max_score": max_score,
+                        "question_text": question_text,
+                        "standard_answer": ensure_string(
+                            _first_non_empty(
+                                q.get("standard_answer"),
+                                q.get("standardAnswer"),
+                                q.get("answer"),
+                                q.get("model_answer"),
+                                q.get("modelAnswer"),
+                            ),
+                            default="",
+                        ),
                         "scoring_points": scoring_points,
                         "alternative_solutions": alternative_solutions,
                         "deduction_rules": deduction_rules,
-                        "grading_notes": ensure_string(q.get("grading_notes", "")),
-                        # LLM 直接生成的自白（极短）
+                        "grading_notes": ensure_string(
+                            _first_non_empty(q.get("grading_notes"), q.get("gradingNotes"), ""),
+                            default="",
+                        ),
                         "confession": q_confession,
-                        # LLM 输出的置信度字段（兼容旧版）
-                        "parse_confidence": float(q.get("parse_confidence", 1.0) or 1.0),
-                        "parse_uncertainties": q.get("parse_uncertainties") or [],
-                        "parse_quality_issues": q.get("parse_quality_issues") or [],
+                        "parse_confidence": _coerce_float(
+                            _first_non_empty(
+                                q.get("parse_confidence"),
+                                q.get("parseConfidence"),
+                                q.get("confidence"),
+                                1.0,
+                            ),
+                            default=1.0,
+                        ),
+                        "parse_uncertainties": _flatten_nested_items(
+                            _first_non_empty(
+                                q.get("parse_uncertainties"),
+                                q.get("parseUncertainties"),
+                                q.get("uncertainties"),
+                                [],
+                            )
+                        ),
+                        "parse_quality_issues": _flatten_nested_items(
+                            _first_non_empty(
+                                q.get("parse_quality_issues"),
+                                q.get("parseQualityIssues"),
+                                q.get("quality_issues"),
+                                [],
+                            )
+                        ),
                     }
                 )
 
-            # 按标准化题目编号合并子题
             merged_questions = {}
             for q in raw_questions:
                 norm_id = q["normalized_id"]
@@ -804,7 +1192,7 @@ class RubricParserService:
                 )
 
             # 提取 LLM 直接生成的整体 confession
-            confession_raw = data.get("confession") or {}
+            confession_raw = data_container.get("confession") or data.get("confession") or {}
             llm_confession = RubricConfession(
                 risks=confession_raw.get("risks") or [],
                 uncertainties=confession_raw.get("uncertainties") or [],
@@ -827,8 +1215,8 @@ class RubricParserService:
                 total_questions=len(questions),
                 total_score=sum(q.max_score for q in questions),
                 questions=questions,
-                general_notes=ensure_string(data.get("general_notes", "")),
-                rubric_format=ensure_string(data.get("rubric_format", "standard")),
+                general_notes=ensure_string(data_container.get("general_notes", "")),
+                rubric_format=ensure_string(data_container.get("rubric_format", "standard")),
                 # LLM 直接生成的自白
                 confession=llm_confession,
                 # LLM 解析置信度
