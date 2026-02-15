@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import clsx from 'clsx';
 import { useConsoleStore, WorkflowNode } from '@/store/consoleStore';
 import {
@@ -82,16 +82,34 @@ export default function WorkflowSteps() {
   const status = useConsoleStore((s) => s.status);
   const submissionId = useConsoleStore((s) => s.submissionId);
   const pendingReview = useConsoleStore((s) => s.pendingReview);
+  const interactionEnabled = useConsoleStore((s) => s.interactionEnabled);
 
   const visibleNodes = useMemo(() => {
-    const lastActiveIndex = workflowNodes.findLastIndex((n) => n.status !== 'pending');
+    const shouldShowManualReview = interactionEnabled
+      || Boolean(pendingReview)
+      || workflowNodes.some(
+        (node) => (node.id === 'rubric_review' || node.id === 'review') && node.status !== 'pending'
+      );
+    const filteredNodes = shouldShowManualReview
+      ? workflowNodes
+      : workflowNodes.filter((node) => node.id !== 'rubric_review' && node.id !== 'review');
+
+    const lastActiveIndex = filteredNodes.findLastIndex((n) => n.status !== 'pending');
     const hasAnyActive = lastActiveIndex >= 0;
     const revealIndex = hasAnyActive ? lastActiveIndex + 1 : 1; // show at least intake + preprocess
-    return workflowNodes.map((n, idx) => ({
+    return filteredNodes.map((n, idx) => ({
       node: n,
       isFuture: idx > revealIndex && n.status === 'pending',
     }));
-  }, [workflowNodes]);
+  }, [interactionEnabled, pendingReview, workflowNodes]);
+
+  useEffect(() => {
+    if (!selectedNodeId) return;
+    const stillVisible = visibleNodes.some(({ node }) => node.id === selectedNodeId);
+    if (!stillVisible) {
+      setSelectedNodeId(null);
+    }
+  }, [selectedNodeId, setSelectedNodeId, visibleNodes]);
 
   return (
     <div className="w-full h-full flex items-center justify-center px-6 py-10">

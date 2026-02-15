@@ -7094,38 +7094,10 @@ def create_batch_grading_graph(
     graph.add_edge("grade_batch", "grading_confession_report")
 
     def should_run_logic_review(state: BatchGradingGraphState) -> str:
-        """Confession-driven gate for logic_review (conservative on missing data)."""
+        """Always execute logic_review to keep the post-review stage chain consistent."""
         batch_id = state.get("batch_id", "unknown")
-        candidates = state.get("confessed_results")
-        if not candidates:
-            candidates = state.get("student_results") or []
-        if not candidates:
-            logger.info(f"[should_run_logic_review] skip (no students): batch_id={batch_id}")
-            return "skip_logic_review"
-
-        from src.services.confession_auditor import (
-            should_trigger_logic_review_from_confession,
-        )
-
-        for student in candidates:
-            if not isinstance(student, dict):
-                continue
-            confession = student.get("confession")
-            if confession is None:
-                logger.info(
-                    f"[should_run_logic_review] do_logic_review (missing confession): batch_id={batch_id}"
-                )
-                return "do_logic_review"
-            if should_trigger_logic_review_from_confession(confession):
-                logger.info(
-                    f"[should_run_logic_review] do_logic_review (confession triggered): batch_id={batch_id}"
-                )
-                return "do_logic_review"
-
-        logger.info(
-            f"[should_run_logic_review] skip_logic_review (confession low risk): batch_id={batch_id}"
-        )
-        return "skip_logic_review"
+        logger.info(f"[should_run_logic_review] do_logic_review (forced): batch_id={batch_id}")
+        return "do_logic_review"
 
     graph.add_conditional_edges(
         "grading_confession_report",

@@ -10,6 +10,7 @@ import {
     createInitialRequiredStageSeen,
     deriveStageSignalsFromResultsContext,
     deriveStageFromNodeUpdate,
+    normalizeWorkflowNodeId,
     normalizeWorkflowStage,
     type RequiredStageSeen,
 } from '@/lib/completionGate';
@@ -614,13 +615,26 @@ const normalizeNodeId = (value: string) => {
     if (!value) {
         return value;
     }
-    if (value === 'index_node') {
-        return 'index';
-    }
-    if (value === 'grading') {
-        return 'grade_batch';
-    }
-    return value;
+    const compact = value.trim().toLowerCase().replace(/\s+/g, '_');
+    const base = compact
+        .split(':', 1)[0]
+        .split('.', 1)[0]
+        .split('/', 1)[0]
+        .replace(/-+/g, '_');
+
+    const aliasMap: Record<string, string> = {
+        index_node: 'index',
+        indexer: 'index',
+        grading: 'grade_batch',
+        grade_student: 'grade_batch',
+        batch_grading: 'grade_batch',
+        confession: 'grading_confession_report',
+        confession_report: 'grading_confession_report',
+        grading_confession: 'grading_confession_report',
+        final_review: 'review',
+    };
+    const aliased = aliasMap[base] || base;
+    return normalizeWorkflowNodeId(aliased) || aliased;
 };
 
 const STREAM_DEDUPE_MIN_CHARS = 6;
@@ -703,6 +717,27 @@ const initialNodes: WorkflowNode[] = [
     { id: 'review', label: 'Results Review', status: 'pending' },
     { id: 'export', label: 'Export', status: 'pending' },
 ];
+
+const POST_LOGIC_REVIEW_HOLD_MESSAGE = 'Blocked until logic_review_completed';
+
+const STAGE_STATE_MAP: Record<string, { node: string; status: NodeStatus; message?: string }> = {
+    rubric_parse_completed: { node: 'rubric_parse', status: 'completed' },
+    rubric_confession_report_completed: { node: 'rubric_confession_report', status: 'completed' },
+    rubric_confession_report_skipped: { node: 'rubric_confession_report', status: 'pending', message: 'Skipped' },
+    rubric_self_review_completed: { node: 'rubric_self_review', status: 'completed' },
+    rubric_self_review_skipped: { node: 'rubric_self_review', status: 'pending', message: 'Skipped' },
+    rubric_self_review_failed: { node: 'rubric_self_review', status: 'failed' },
+    rubric_review_completed: { node: 'rubric_review', status: 'completed' },
+    rubric_review_skipped: { node: 'rubric_review', status: 'pending', message: 'Skipped' },
+    grade_batch_completed: { node: 'grade_batch', status: 'completed' },
+    cross_page_merge_completed: { node: 'grade_batch', status: 'completed' },
+    index_merge_completed: { node: 'grade_batch', status: 'completed' },
+    grading_confession_report_completed: { node: 'grading_confession_report', status: 'completed' },
+    logic_review_completed: { node: 'logic_review', status: 'completed' },
+    logic_review_skipped: { node: 'logic_review', status: 'pending', message: 'Skipped' },
+    review_completed: { node: 'review', status: 'completed' },
+    completed: { node: 'export', status: 'completed' },
+};
 
 const NODE_MIN_TRANSITION_MS = 2200;
 
@@ -944,6 +979,42 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
         });
     };
 
+    const shouldHoldPostLogicNodeCompletion = (nodeId: string, status: NodeStatus) =>
+        status === 'completed'
+        && (nodeId === 'review' || nodeId === 'export')
+        && !get().requiredStageSeen.logicReview;
+
+    const updateNodeStatusWithCompletionGate = (
+        nodeId: string,
+        status: NodeStatus,
+        message?: string
+    ) => {
+        if (shouldHoldPostLogicNodeCompletion(nodeId, status)) {
+            get().updateNodeStatus('logic_review', 'running', 'Waiting for logic review');
+            get().updateNodeStatus(nodeId, 'pending', POST_LOGIC_REVIEW_HOLD_MESSAGE);
+            return;
+        }
+        get().updateNodeStatus(nodeId, status, message);
+    };
+
+    const applyStageState = (rawStage?: string | null) => {
+        const normalizedStage = normalizeWorkflowStage(rawStage);
+        if (!normalizedStage) return;
+        const stageState = STAGE_STATE_MAP[normalizedStage];
+        if (!stageState) return;
+
+        const pendingReview = get().pendingReview;
+        const holdRubricReview = stageState.node === 'rubric_review'
+            && pendingReview
+            && (pendingReview.reviewType || '').includes('rubric');
+        if (holdRubricReview) {
+            get().updateNodeStatus(stageState.node, 'running', 'Waiting for interaction');
+            return;
+        }
+
+        updateNodeStatusWithCompletionGate(stageState.node, stageState.status, stageState.message);
+    };
+
     const blockCompletion = (reason?: string) => {
         const state = get();
         const fallbackReason =
@@ -953,6 +1024,9 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
         const nextReason = reason || fallbackReason;
         if (state.completionBlockedReason !== nextReason) {
             get().addLog(`Completion blocked: ${nextReason}`, 'WARNING');
+        }
+        if (!state.requiredStageSeen.logicReview) {
+            get().updateNodeStatus('logic_review', 'running', 'Waiting for logic review');
         }
         set((current) => ({
             completionBlockedReason: nextReason,
@@ -994,6 +1068,8 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                 get().updateNodeStatus(node.id, 'completed');
             }
         });
+        get().updateNodeStatus('logic_review', 'completed');
+        get().updateNodeStatus('review', 'completed');
         get().updateNodeStatus('export', 'completed');
     };
 
@@ -1582,16 +1658,16 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                     return;
                 }
                 // 鍚庣鑺傜偣 ID 鏄犲皠鍒板墠绔紙鍏煎鏃у悕绉帮級
-                const mappedNodeId = nodeId === 'grading' ? 'grade_batch' : nodeId;
+                const mappedNodeId = nodeId ? normalizeNodeId(nodeId) : undefined;
                 const normalizedStatus = isNodeStatus(status) ? status : undefined;
                 if (!mappedNodeId || !normalizedStatus) {
                     return;
                 }
                 if (message) {
-                    get().updateNodeStatus(mappedNodeId, normalizedStatus, message);
+                    updateNodeStatusWithCompletionGate(mappedNodeId, normalizedStatus, message);
                     get().addLog(message, 'INFO');
                 } else {
-                    get().updateNodeStatus(mappedNodeId, normalizedStatus);
+                    updateNodeStatusWithCompletionGate(mappedNodeId, normalizedStatus);
                 }
 
                 const stageSignal = deriveStageFromNodeUpdate(mappedNodeId, normalizedStatus);
@@ -1617,7 +1693,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                     return;
                 }
                 // 鍚庣鑺傜偣 ID 鏄犲皠鍒板墠锟?
-                const mappedNodeId = parentNodeId === 'grading' ? 'grade_batch' : parentNodeId;
+                const mappedNodeId = normalizeNodeId(parentNodeId);
                 get().setParallelAgents(mappedNodeId, agents);
                 get().addLog(`Created ${agents.length} grading agents`, 'INFO');
             });
@@ -1629,7 +1705,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                 const { agentId, status, progress, message, output, logs, error } = payload;
                 const label = payload.agentLabel || payload.agent_label || payload.agentName || payload.agent_name;
                 const rawParentNodeId = payload.parentNodeId || payload.nodeId;
-                const parentNodeId = rawParentNodeId === 'grading' ? 'grade_batch' : rawParentNodeId;
+                const parentNodeId = rawParentNodeId ? normalizeNodeId(rawParentNodeId) : rawParentNodeId;
                 if (parentNodeId) {
                     const node = get().workflowNodes.find((n) => n.id === parentNodeId);
                     if (node && node.status === 'pending') {
@@ -1975,6 +2051,28 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                 const isRubric = reviewType.includes('rubric_review');
                 const isResults = reviewType.includes('results_review');
                 const isGradingRetry = reviewType.includes('grading_retry');
+                if (!get().interactionEnabled && (isRubric || isResults)) {
+                    const resolvedBatchId = reviewData.batchId || get().submissionId;
+                    if (resolvedBatchId) {
+                        const approvePromise = isRubric
+                            ? gradingApi.submitRubricReview({ batch_id: resolvedBatchId, action: 'approve' })
+                            : gradingApi.submitResultsReview({ batch_id: resolvedBatchId, action: 'approve' });
+                        void approvePromise
+                            .then(() => {
+                                get().addLog(
+                                    `Manual review disabled; auto-approved ${isRubric ? 'rubric' : 'results'} review.`,
+                                    'INFO'
+                                );
+                            })
+                            .catch((error) => {
+                                console.warn('Auto-approve review failed:', error);
+                                get().addLog('Manual review auto-approval failed; backend may still be waiting.', 'WARNING');
+                            });
+                    }
+                    const reviewNodeId = isRubric ? 'rubric_review' : 'review';
+                    get().updateNodeStatus(reviewNodeId, 'pending', 'Skipped (manual review disabled)');
+                    return;
+                }
                 const rawPayload = (data.payload && typeof data.payload === 'object') ? data.payload : {};
                 const normalizedPayload = {
                     ...rawPayload,
@@ -2042,7 +2140,10 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                     current_stage: data?.current_stage || data?.currentStage || null,
                     student_results: initialResults || data?.student_results || data?.studentResults,
                 });
-                completionDerivation.signals.forEach((signal) => recordStageSignal(signal));
+                completionDerivation.signals.forEach((signal) => {
+                    recordStageSignal(signal);
+                    applyStageState(signal);
+                });
 
                 if (maybeFinalizeCompletion(data, initialResults)) {
                     return;
@@ -2057,7 +2158,10 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                 }
 
                 const gatedResults = await waitForPostReviewResults(batchId, initialResults, {
-                    onStageSignal: recordStageSignal,
+                    onStageSignal: (signal) => {
+                        recordStageSignal(signal);
+                        applyStageState(signal);
+                    },
                     isCompletionGateSatisfied: canFinalizeCompletion,
                 });
 
@@ -2093,38 +2197,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                 if (currentStage) {
                     const normalizedStage = normalizeWorkflowStage(currentStage);
                     recordStageSignal(normalizedStage);
-
-                    const stageStateMap: Record<string, { node: string; status: NodeStatus; message?: string }> = {
-                        rubric_parse_completed: { node: 'rubric_parse', status: 'completed' },
-                        rubric_confession_report_completed: { node: 'rubric_confession_report', status: 'completed' },
-                        rubric_confession_report_skipped: { node: 'rubric_confession_report', status: 'pending', message: 'Skipped' },
-                        rubric_self_review_completed: { node: 'rubric_self_review', status: 'completed' },
-                        rubric_self_review_skipped: { node: 'rubric_self_review', status: 'pending', message: 'Skipped' },
-                        rubric_self_review_failed: { node: 'rubric_self_review', status: 'failed' },
-                        rubric_review_completed: { node: 'rubric_review', status: 'completed' },
-                        rubric_review_skipped: { node: 'rubric_review', status: 'pending', message: 'Skipped' },
-                        grade_batch_completed: { node: 'grade_batch', status: 'completed' },
-                        cross_page_merge_completed: { node: 'grade_batch', status: 'completed' },
-                        index_merge_completed: { node: 'grade_batch', status: 'completed' },
-                        grading_confession_report_completed: { node: 'grading_confession_report', status: 'completed' },
-                        logic_review_completed: { node: 'logic_review', status: 'completed' },
-                        logic_review_skipped: { node: 'logic_review', status: 'pending', message: 'Skipped' },
-                        review_completed: { node: 'review', status: 'completed' },
-                        completed: { node: 'export', status: 'completed' },
-                    };
-
-                    const stageState = normalizedStage ? stageStateMap[normalizedStage] : undefined;
-                    if (stageState) {
-                        const pendingReview = get().pendingReview;
-                        const holdRubricReview = stageState.node === 'rubric_review'
-                            && pendingReview
-                            && (pendingReview.reviewType || '').includes('rubric');
-                        if (holdRubricReview) {
-                            get().updateNodeStatus(stageState.node, 'running', 'Waiting for interaction');
-                            return;
-                        }
-                        get().updateNodeStatus(stageState.node, stageState.status, stageState.message);
-                    }
+                    applyStageState(normalizedStage);
 
                     if (normalizedStage === 'logic_review_skipped') {
                         blockCompletion(LOGIC_REVIEW_SKIP_BLOCK_REASON);

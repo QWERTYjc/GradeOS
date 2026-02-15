@@ -46,9 +46,12 @@ export default function LLMThoughtsPanel({ className, onClose }: LLMThoughtsPane
     }
     
     // 只显示 output 类型（主要内容）
-    return thoughts
-      .filter((t) => (t.streamType || 'output') === 'output')
-      .sort((a, b) => a.timestamp - b.timestamp);
+    const sorted = [...thoughts].sort((a, b) => a.timestamp - b.timestamp);
+    const outputOnly = sorted.filter((t) => (t.streamType || 'output') === 'output');
+    if (outputOnly.length > 0) {
+      return outputOnly;
+    }
+    return sorted;
   }, [llmThoughts, selectedNodeId, selectedStudent]);
 
   // 提取学生列表
@@ -207,7 +210,7 @@ export default function LLMThoughtsPanel({ className, onClose }: LLMThoughtsPane
               <p className="text-sm font-medium">Waiting for AI stream...</p>
             </motion.div>
           ) : (
-            filteredThoughts.map((thought, index) => (
+            filteredThoughts.map((thought) => (
               <motion.div
                 key={thought.id}
                 initial={{ opacity: 0, y: 8 }}
@@ -229,6 +232,11 @@ export default function LLMThoughtsPanel({ className, onClose }: LLMThoughtsPane
                     <span className="flex items-center gap-1 text-[10px] text-amber-400 font-semibold">
                       <span className="w-1.5 h-1.5 bg-amber-400 rounded-full animate-pulse" />
                       streaming
+                    </span>
+                  )}
+                  {(thought.streamType || 'output') === 'thinking' && (
+                    <span className="px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 text-[10px] font-semibold">
+                      thinking
                     </span>
                   )}
                 </div>
