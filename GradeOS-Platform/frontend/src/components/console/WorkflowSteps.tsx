@@ -84,9 +84,15 @@ export default function WorkflowSteps() {
   const submissionId = useConsoleStore((s) => s.submissionId);
   const pendingReview = useConsoleStore((s) => s.pendingReview);
   const interactionEnabled = useConsoleStore((s) => s.interactionEnabled);
+  const manualReviewRequested = useConsoleStore((s) => s.manualReviewRequested);
 
   const visibleNodes = useMemo(() => {
-    const filteredNodes = filterManualReviewNodes(workflowNodes, interactionEnabled, pendingReview);
+    const filteredNodes = filterManualReviewNodes(
+      workflowNodes,
+      interactionEnabled,
+      pendingReview,
+      manualReviewRequested,
+    );
 
     const lastActiveIndex = filteredNodes.findLastIndex((n) => n.status !== 'pending');
     const hasAnyActive = lastActiveIndex >= 0;
@@ -95,7 +101,7 @@ export default function WorkflowSteps() {
       node: n,
       isFuture: idx > revealIndex && n.status === 'pending',
     }));
-  }, [interactionEnabled, pendingReview, workflowNodes]);
+  }, [interactionEnabled, manualReviewRequested, pendingReview, workflowNodes]);
 
   useEffect(() => {
     if (!selectedNodeId) return;

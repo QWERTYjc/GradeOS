@@ -525,6 +525,7 @@ export interface ConsoleState {
     uploadedImages: string[];  // base64 锟?URL
     rubricImages: string[];
     pendingReview: PendingReview | null;
+    manualReviewRequested: boolean;
     classReport: ClassReport | null;
     // 鏂板锛氱彮绾ф壒鏀逛笂涓嬫枃
     classContext: ClassContext;
@@ -1083,6 +1084,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
             completionBlockedReason: null,
             pendingTerminalEvent: true,
             lastObservedStage: 'completed',
+            manualReviewRequested: false,
         });
 
         const currentNodes = get().workflowNodes;
@@ -1142,6 +1144,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
         uploadedImages: [],
         rubricImages: [],
         pendingReview: null,
+        manualReviewRequested: false,
         classReport: null,
         // 鐝骇鎵规敼涓婁笅鏂囧垵濮嬶拷?
         classContext: {
@@ -1378,6 +1381,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                 uploadedImages: [],
                 rubricImages: [],
                 pendingReview: null,
+                manualReviewRequested: false,
                 classReport: null,
                 expectedTotalScore: null,
                 rubricScoreMismatch: null,
@@ -1653,6 +1657,9 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                     children: n.isParallelContainer ? [] : undefined
                 })),
                 llmThoughts: [],
+                pendingReview: null,
+                reviewFocus: null,
+                manualReviewRequested: false,
                 completionBlockedReason: null,
                 requiredStageSeen: createInitialRequiredStageSeen(),
                 lastObservedStage: null,
@@ -2095,6 +2102,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                 const isRubric = reviewType.includes('rubric_review');
                 const isResults = reviewType.includes('results_review');
                 const isGradingRetry = reviewType.includes('grading_retry');
+                set({ manualReviewRequested: true });
                 if (!get().interactionEnabled && (isRubric || isResults)) {
                     const resolvedBatchId = reviewData.batchId || get().submissionId;
                     if (resolvedBatchId) {
@@ -2282,6 +2290,7 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                 }
                 get().setPendingReview(null);
                 get().setReviewFocus(null);
+                set({ manualReviewRequested: false });
             });
 
             // 澶勭悊宸ヤ綔娴侀敊璇紙瀵瑰簲璁捐鏂囨。 EventType.ERROR锟?

@@ -8,18 +8,15 @@ const hasManualReviewRequest = (pendingReview: PendingReview | null): boolean =>
   return reviewType.includes('rubric') || reviewType.includes('results') || reviewType.includes('review');
 };
 
-const hasRenderedManualReviewSignals = (workflowNodes: WorkflowNode[]): boolean => (
-  workflowNodes.some((node) => MANUAL_REVIEW_NODE_IDS.has(node.id) && node.status !== 'pending')
-);
-
 export const shouldShowManualReviewNodes = (
-  workflowNodes: WorkflowNode[],
+  _workflowNodes: WorkflowNode[],
   interactionEnabled: boolean,
   pendingReview: PendingReview | null,
+  manualReviewRequested: boolean,
 ): boolean => {
   if (interactionEnabled) return true;
   if (hasManualReviewRequest(pendingReview)) return true;
-  if (hasRenderedManualReviewSignals(workflowNodes)) return true;
+  if (manualReviewRequested) return true;
   return false;
 };
 
@@ -27,10 +24,10 @@ export const filterManualReviewNodes = (
   workflowNodes: WorkflowNode[],
   interactionEnabled: boolean,
   pendingReview: PendingReview | null,
+  manualReviewRequested: boolean,
 ): WorkflowNode[] => {
-  if (shouldShowManualReviewNodes(workflowNodes, interactionEnabled, pendingReview)) {
+  if (shouldShowManualReviewNodes(workflowNodes, interactionEnabled, pendingReview, manualReviewRequested)) {
     return workflowNodes;
   }
   return workflowNodes.filter((node) => !MANUAL_REVIEW_NODE_IDS.has(node.id));
 };
-

@@ -348,6 +348,7 @@ export const WorkflowGraph: React.FC = () => {
         setSelectedAgentId,
         interactionEnabled,
         pendingReview,
+        manualReviewRequested,
         submissionId,
         setCurrentTab,
         setReviewFocus
@@ -386,7 +387,12 @@ export const WorkflowGraph: React.FC = () => {
     };
 
     const visibleNodes = useMemo(() => {
-        const filteredNodes = filterManualReviewNodes(workflowNodes, interactionEnabled, pendingReview);
+        const filteredNodes = filterManualReviewNodes(
+            workflowNodes,
+            interactionEnabled,
+            pendingReview,
+            manualReviewRequested
+        );
         const lastActiveIndex = filteredNodes.findLastIndex((node) => node.status !== 'pending');
         // 渐进式显示：只显示已激活的节点，不显示下一个 pending 节点
         const hasAnyActive = lastActiveIndex >= 0;
@@ -415,7 +421,7 @@ export const WorkflowGraph: React.FC = () => {
                 isVisualCompleted
             };
         });
-    }, [workflowNodes, interactionEnabled, pendingReview, workflowStatus]);
+    }, [workflowNodes, interactionEnabled, pendingReview, manualReviewRequested, workflowStatus]);
 
     const shouldIgnoreDrag = (target: EventTarget | null) => {
         if (!(target instanceof HTMLElement)) return false;
