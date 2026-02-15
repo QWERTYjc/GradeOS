@@ -1054,6 +1054,11 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
             }
         }
 
+        // Prevent delayed status timers from replaying stale "running" updates after completion.
+        const activeTimers = Object.values(get().nodeStatusTimers);
+        activeTimers.forEach((timer) => clearTimeout(timer));
+        set({ nodeStatusTimers: {} });
+
         get().setStatus('COMPLETED');
         get().setPendingReview(null);
         get().setReviewFocus(null);
@@ -1158,6 +1163,12 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
             const state = get();
             const targetIndex = state.workflowNodes.findIndex(n => n.id === nodeId);
             if (targetIndex === -1) return;
+            if (
+                (state.status === 'COMPLETED' || state.status === 'FAILED')
+                && (status === 'running' || status === 'pending')
+            ) {
+                return;
+            }
 
             const targetNode = state.workflowNodes[targetIndex];
             const isStatusChange = targetNode.status !== status;
@@ -2198,6 +2209,9 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
             // 澶勭悊鎵规敼杩涘害浜嬩欢
             wsClient.on('grading_progress', (data: any) => {
                 console.log('Grading Progress:', data);
+                if (get().status === 'COMPLETED' || get().status === 'FAILED') {
+                    return;
+                }
                 const { completedPages, totalPages, percentage } = data as any;
                 // 鏇存柊 grading 鑺傜偣鐨勮繘锟?
                 const nodes =
