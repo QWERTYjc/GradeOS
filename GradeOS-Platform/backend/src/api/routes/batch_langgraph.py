@@ -399,6 +399,7 @@ async def broadcast_progress(batch_id: str, message: dict):
         "grading_progress",
         "workflow_completed",
         "workflow_error",
+        "rubric_parse_failed",
         "batch_error",
     ):
         run_updates: Dict[str, Any] = {"updated_at": datetime.now().isoformat()}
@@ -2613,6 +2614,30 @@ async def websocket_endpoint(websocket: WebSocket, batch_id: str):
                             )
                     else:
                         logger.warning(f"跳过发送 workflow_completed: 状态为 completed 但没有结果数据, batch_id={batch_id}")
+            if run_info and run_info.status and run_info.status.value in ("failed", "error", "cancelled"):
+                failed_stage = state.get("current_stage") or "rubric_parse"
+                failed_message = (
+                    state.get("error")
+                    or state.get("last_error")
+                    or "Workflow failed"
+                )
+                async with ws_locks[ws_id]:
+                    await websocket.send_json(
+                        {
+                            "type": "workflow_update",
+                            "nodeId": _map_node_to_frontend(failed_stage),
+                            "status": "failed",
+                            "message": failed_message,
+                        }
+                    )
+                async with ws_locks[ws_id]:
+                    await websocket.send_json(
+                        {
+                            "type": "workflow_error",
+                            "message": failed_message,
+                            "currentStage": failed_stage,
+                        }
+                    )
             if run_info and run_info.status and run_info.status.value in ("running", "pending"):
                 run_controller = await get_run_controller()
                 teacher_key = None

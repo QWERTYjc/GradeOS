@@ -1628,9 +1628,9 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                 pendingTerminalEvent: false,
             });
 
-            wsClient.connect(buildWsUrl(`/api/batch/ws/${batchId}`));
-            // 浣跨敤 store 鍐呴儴鐘舵€佽€屼笉鏄叏灞€鍙橀噺
+            // Register listeners once, before opening the socket.
             if (handlersRegistered) {
+                wsClient.connect(buildWsUrl(`/api/batch/ws/${batchId}`));
                 return;
             }
             handlersRegistered = true;
@@ -2253,8 +2253,9 @@ export const useConsoleStore = create<ConsoleState>((set, get) => {
                     return;
                 }
                 set({ status: 'FAILED' });
-                get().addLog(`Error: ${data.message}`, 'ERROR');
+                get().addLog(`Error: ${data.message || data.error || 'Unknown workflow error'}`, 'ERROR');
             });
+            wsClient.connect(buildWsUrl(`/api/batch/ws/${batchId}`));
         }
     };
 });

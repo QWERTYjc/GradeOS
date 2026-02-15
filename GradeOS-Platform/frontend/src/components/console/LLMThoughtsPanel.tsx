@@ -80,6 +80,12 @@ export default function LLMThoughtsPanel({ className, onClose }: LLMThoughtsPane
     return filteredThoughts.some((t) => !t.isComplete);
   }, [filteredThoughts]);
 
+  const streamStatusText = useMemo(() => {
+    if (hasActiveStream) return 'Live Stream';
+    if (selectedNode?.status === 'running') return 'Awaiting Stream...';
+    return 'Stream Complete';
+  }, [hasActiveStream, selectedNode?.status]);
+
   const fallbackMessages = useMemo(() => {
     if (filteredThoughts.length > 0 || !selectedNode) {
       return [];
@@ -179,7 +185,7 @@ export default function LLMThoughtsPanel({ className, onClose }: LLMThoughtsPane
             <div>
               <h3 className="text-sm font-semibold text-white">{currentNodeName}</h3>
               <p className="text-[10px] text-slate-500 uppercase tracking-wider">
-                {hasActiveStream ? 'Live Stream' : 'Stream Complete'}
+                {streamStatusText}
               </p>
             </div>
           </div>
