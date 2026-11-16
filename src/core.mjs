@@ -132,6 +132,14 @@ export function wireEstimate(payload) {
   return { images, imageTokenReserve, textBytes: Buffer.byteLength(compact), inputTokenReserve, payloadHash: digest(payload) };
 }
 
+export function parseStudentBudget(value, aggregateCap) {
+  const cap = Number(value);
+  if (!Number.isFinite(cap) || cap <= 0 || !Number.isFinite(aggregateCap) || cap > aggregateCap) {
+    throw Error('Per-student budget must be positive and no more than the aggregate budget');
+  }
+  return cap;
+}
+
 export class Budget {
   constructor({ cap = 1, maxRequests = 24, deadlineMs = 900000, scopeCap = null } = {}) {
     this.cap = cap; this.maxRequests = maxRequests; this.deadline = Date.now() + deadlineMs;
