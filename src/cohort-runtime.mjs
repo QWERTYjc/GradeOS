@@ -1,0 +1,191 @@
+import { readFile, writeFile, mkdir, rename, appendFile, open } from 'node:fs/promises';
+import { resolve } from 'node:path';
+import { Budget, digest, wireEstimate } from './core.mjs';
+import { inputContextSnapshot, inputContextReceipt, inputContextEstimate } from './input-context-estimate.mjs';
+import {requireFeedbackSubmission,requestOutputLimit,requireGradingCorrectionTool} from './submission-contract.mjs';
+
+export const redactImages = value => JSON.parse(JSON.stringify(value, (key, data) => {
+  if ((key === 'data' && typeof data === 'string' && data.length > 1000) ||
+      (key === 'url' && typeof data === 'string' && data.startsWith('data:image/'))) return `<image sha256=${digest(data)}>`;
+  return data;
+}));
+export async function freezeJson(directory, name, value) {
+  const data = JSON.stringify(value, null, 2) + '\n';
+  const pending = resolve(directory, `${name}.pending`);
+  const handle = await open(pending, 'wx');
+  try { await handle.writeFile(data); await handle.sync(); } finally { await handle.close(); }
+  await writeFile(resolve(directory, name.replace(/\.json$/, '.sha256')), digest(data) + '\n', { flag: 'wx' });
+  await rename(pending, resolve(directory, name));
+}
+export async function readImage(page) {
+  const bytes = await readFile(page.absolute_path);
+  if (digest(bytes) !== page.sha256) throw Error('Image changed after manifest freeze');
+  return { type: 'image', mimeType: 'image/png', data: bytes.toString('base64') };
+}
+
+export function isolateStudentCache(payload, scope) {
+  if (!scope || !/^[A-Za-z0-9/_-]{1,160}$/.test(scope)) throw Error('Invalid student cache namespace');
+  const firstUser = payload.messages.find(message => message.role === 'user');
+  if (!firstUser) throw Error('Student request has no user content');
+  const original = firstUser.content;
+  if (typeof original !== 'string' && !Array.isArray(original)) throw Error('Unsupported student user content');
+  firstUser.content = [{ type: 'text', text: `Submission namespace: ${scope}. This opaque identifier is bookkeeping only and has no grading meaning.` },
+    ...(typeof original === 'string' ? [{ type: 'text', text: original }] : original)];
+  return payload;
+}
+
+export function createRuntime({ models, model, output, cap, controller, maxRequests = 60, deadlineMs = 900000, maxOutputTokens = 12000, studentCacheNamespace = null, phaseOutputLimits = {}, progress = null, interaction = null, structuredOutput = true, provider = { only: ['openai'], allow_fallbacks: false, require_parameters: true, data_collection: 'deny' }, workerModel = model, workerProvider = provider, singlePassGrading = false, coldCacheNamespace = null, studentCapUsd = null }) {
+  if (!Number.isInteger(maxOutputTokens) || maxOutputTokens < 1) throw Error('Invalid output token budget');
+  const budget = new Budget({ cap, maxRequests, deadlineMs, scopeCap:studentCapUsd });
+  const active = new Set();
+  const isolatedAgents = new WeakSet();
+  const deadline = budget.deadline;
+  const timer = interaction ? setInterval(() => {
+    budget.deadline = deadline + interaction.waitMilliseconds;
+    if (Date.now() >= budget.deadline) controller.abort(Error('Cohort deadline'));
+  }, 250) : setTimeout(() => controller.abort(Error('Cohort deadline')), deadlineMs);
+  const log = async event => {
+    const entry={ at: new Date().toISOString(), ...event };
+    await appendFile(resolve(output, 'events.jsonl'), JSON.stringify(entry) + '\n');
+    await progress?.observe(entry);
+  };
+  const io = async (lane, phase, { isolated = false } = {}) => {
+    const directory = resolve(output, lane); await mkdir(directory);
+    const laneModel = lane === 'main' ? model : workerModel;
+    const laneProvider = lane === 'main' ? provider : workerProvider;
+    let current = null, currentInputSnapshot = null, previousInputReceipt = null;
+    const laneLog = event => log({ lane, ...event });
+    const streamFn = (selectedModel, context, options) => {
+      if (selectedModel.id !== laneModel.id || selectedModel.provider !== laneModel.provider) throw Error('Agent model differs from the declared lane model');
+      const {gradingCorrectionRequest,...providerOptions}=options??{};
+      const requestPhase = phase(); const normalLimit = phaseOutputLimits[requestPhase] ?? maxOutputTokens;
+      const outputLimit = requestOutputLimit(normalLimit,requestPhase,lane,gradingCorrectionRequest);
+      return models.streamSimple(selectedModel, context, {
+      ...providerOptions, apiKey: process.env.OPENROUTER_API_KEY, maxRetries: 0, maxTokens: outputLimit, timeoutMs: singlePassGrading ? 240000 : 180000,
+      signal: options?.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal,
+      onPayload: async payload => {
+        await interaction?.beforeRequest(lane);
+        if (interaction) budget.deadline = deadline + interaction.waitMilliseconds;
+        if (controller.signal.aborted) throw Error('Cohort cancelled');
+        if (!isolated) await interaction?.recordDelivery(lane, payload);
+        if (payload.model !== laneModel.id) throw Error('Serialized model differs from the declared lane model');
+        payload.provider = laneProvider; payload.usage = { include: true };
+        // The OpenRouter OpenAI Luna endpoint declares max_tokens, not the
+        // catalog serializer's max_completion_tokens. Keep strict routing.
+        if(laneModel.id==='openai/gpt-6-luna'&&payload.max_completion_tokens!==undefined) {
+          payload.max_tokens=payload.max_completion_tokens;
+          delete payload.max_completion_tokens;
+        }
+        if(singlePassGrading && requestPhase==='student_grading') {
+          payload.tools=payload.tools.filter(tool=>tool.function.name==='submit_grading');
+          payload.tool_choice={type:'function',function:{name:'submit_grading'}};
+          // This source-bound schema is already authored for strict sampling.
+          // Enable it on the serialized wire: Pi's optional normalizer rejects
+          // valid provider-supported $defs/$ref and structured anyOf branches.
+          payload.tools[0].function.strict=true;
+        }
+        if(coldCacheNamespace) {
+          if(!/^[A-Za-z0-9_-]{1,100}$/.test(coldCacheNamespace))throw Error('Invalid cold cache namespace');
+          const first=payload.messages[0], prefix=`Execution namespace ${coldCacheNamespace}. Bookkeeping only; no scoring meaning.\n`;
+          first.content=typeof first.content==='string'?prefix+first.content:[{type:'text',text:prefix},...first.content];
+        }
+        requireFeedbackSubmission(payload, requestPhase);
+        requireGradingCorrectionTool(payload, gradingCorrectionRequest);
+        const cacheScope = studentCacheNamespace && /^(student|feedback|exception|source-review)-/.test(lane) ? `${studentCacheNamespace}/${lane}` : null;
+        if (cacheScope) isolateStudentCache(payload, cacheScope);
+        for (const message of payload.messages) for (const part of Array.isArray(message.content) ? message.content : []) {
+          if (part.type === 'image_url') part.image_url.detail = laneModel.id === 'openai/gpt-6-luna' ? 'original' : 'high';
+        }
+        const estimate = wireEstimate(payload);
+        const inputSnapshot = inputContextSnapshot(payload, estimate);
+        const inputContext = inputContextEstimate(inputSnapshot, estimate, previousInputReceipt);
+        const tier=(laneModel.cost.tiers??[]).filter(t=>inputContext.upperBound>t.inputTokensAbove).at(-1)??laneModel.cost;
+        const reservation = {input_usd:inputContext.upperBound*Math.max(tier.input,tier.cacheWrite??0)/1e6,output_usd:outputLimit*tier.output/1e6};
+        const reserve = reservation.input_usd+reservation.output_usd;
+        const metadata={lane,phase:requestPhase,...(singlePassGrading&&requestPhase==='student_grading'?{budget_scope:lane,student_cap_usd:studentCapUsd}:{}),configured_model:laneModel.id,configured_provider:laneProvider,max_output_tokens:outputLimit,normal_max_output_tokens:normalLimit,
+          request_kind:gradingCorrectionRequest?.kind??'normal',grading_correction:gradingCorrectionRequest??null,
+          reservation,student_cache_scope:cacheScope,...estimate,cost_input_token_reserve:inputContext.upperBound,input_context_estimate:inputContext};
+        try {
+          if (inputContext.upperBound + outputLimit >= laneModel.contextWindow) throw Error('Conservative reservation exceeds model context window');
+          current = budget.admit(reserve,metadata);
+          currentInputSnapshot = inputSnapshot;
+        } catch (error) {
+          const rejection={...metadata,reason:error.message,reserve_usd:reserve,cap_usd:budget.cap,
+            charged_or_reserved_usd:budget.chargedOrReserved,available_usd:budget.cap-budget.chargedOrReserved,
+            admitted_requests:budget.requests.length,max_requests:budget.maxRequests,deadline:budget.deadline};
+          await writeFile(resolve(directory,'rejected-request.json'),JSON.stringify({admission:rejection,payload:redactImages(payload)},null,2)+'\n',{flag:'wx'});
+          await laneLog({ type: 'request_rejected_before_send', ...rejection });
+          if(error.code!=='STUDENT_BUDGET_LIMIT')controller.abort(error); throw error;
+        }
+        await writeFile(resolve(directory, `request-${current.number}.json`), JSON.stringify(redactImages(payload)), { flag: 'wx' });
+        await laneLog({ type: 'request_admitted', request: current });
+        return payload;
+      },
+      onResponse: async response => {
+        if (current) { current.http_status = response.status; current.response_headers_at = new Date().toISOString(); }
+        await laneLog({ type: 'http_response', number: current?.number, status: response.status });
+      },
+      onProviderStreamEvent: async chunk => {
+        if (current) {
+          const at=new Date().toISOString();
+          if (!current.first_stream_event_at) current.first_stream_event_at=at;
+          const deltas=Array.isArray(chunk?.choices)?chunk.choices.map(choice=>choice.delta ?? {}):[];
+          for(const delta of deltas) for(const call of delta.tool_calls??[]) {
+            current.stream_tool_names=[...new Set([...(current.stream_tool_names??[]),...(call.function?.name?[call.function.name]:[])])];
+            current.stream_tool_argument_bytes=(current.stream_tool_argument_bytes??0)+Buffer.byteLength(call.function?.arguments??'');
+          }
+          for(const choice of chunk?.choices??[]) if(choice.finish_reason) current.provider_finish_reason=choice.finish_reason;
+          if (!current.first_output_delta_at && deltas.some(delta=>(typeof delta.content==='string'&&delta.content.length)||delta.tool_calls?.some(call=>call.function?.arguments?.length))) {
+            current.first_output_delta_at=at; await laneLog({type:'first_output_delta',number:current.number,at});
+          }
+          if (!current.first_reasoning_delta_at && deltas.some(delta=>delta.reasoning?.length||delta.reasoning_content?.length||delta.reasoning_details?.length)) current.first_reasoning_delta_at=at;
+        }
+        if (chunk?.provider && current) current.actual_provider = chunk.provider;
+        if (chunk?.usage) {
+          if (current) current.provider_prompt_tokens = Number.isSafeInteger(chunk.usage.prompt_tokens) ? chunk.usage.prompt_tokens : null;
+          await laneLog({ type: 'provider_receipt', number: current?.number, id: chunk.id, model: chunk.model, provider: chunk.provider, usage: chunk.usage });
+        }
+      },
+    }); };
+    const attach = agent => {
+      const singlePass=singlePassGrading&&phase()==='student_grading';
+      if (isolated) isolatedAgents.add(agent);
+      const detachInteraction = isolated ? null : interaction?.attach(agent, lane, { interactiveTools: !singlePass&&phase() !== 'student_feedback', singlePass });
+      const unsubscribe = agent.subscribe(async event => {
+      if (event.type === 'message_end' && event.message.role === 'assistant') {
+        if (current) {
+          const settled=current;
+          budget.settle(settled, event.message);
+          previousInputReceipt = inputContextReceipt(currentInputSnapshot, settled, event.message);
+          currentInputSnapshot = null;
+          current = null;
+          await laneLog({ type: 'request_terminal', request: settled });
+          if(structuredOutput)console.log(JSON.stringify({ lane, request: settled.number, phase: settled.phase, stop: event.message.stopReason, cost_usd: settled.cost_usd ?? null }));
+        }
+        await laneLog({ type: 'assistant_message', message: event.message });
+      }
+      if (event.type === 'tool_execution_end') await laneLog({ type: event.type, tool: event.toolName, is_error: event.isError });
+      });
+      return () => { unsubscribe(); detachInteraction?.(); };
+    };
+    return { directory, streamFn, log: laneLog, attach };
+  };
+  const run = async (agent, prompt, directory) => {
+    active.add(agent);
+    const abort = () => agent.abort(); controller.signal.addEventListener('abort', abort, { once: true });
+    try {
+      if (controller.signal.aborted) throw Error('Cohort cancelled before agent start');
+      await agent.prompt(interaction && !isolatedAgents.has(agent) ? await interaction.preparePrompt(agent, prompt) : prompt);
+    } finally {
+      controller.signal.removeEventListener('abort', abort); active.delete(agent);
+      await writeFile(resolve(directory, 'transcript.json'), JSON.stringify(redactImages(agent.state.messages), null, 2) + '\n');
+    }
+  };
+  const totals = requests => ({
+    admitted_requests: requests.length,
+    provider_reported_cost_usd: requests.filter(x => x.status === 'provider_reported').reduce((n, x) => n + x.cost_usd, 0),
+    unknown_cost_requests: requests.filter(x => x.status === 'unknown').length,
+    charged_or_reserved_usd: requests.reduce((n, x) => n + (x.cost_usd ?? x.reserve_usd), 0),
+  });
+  return { io, run, budget, provider, log, totals, close: () => clearTimeout(timer), active, signal: controller.signal };
+}

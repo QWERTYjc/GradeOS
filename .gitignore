@@ -1,0 +1,16 @@
+node_modules/
+runs/
+.env
+.env.local
+.workspace/
+__pycache__/
+.venv/
+.env.*
+!.env.example
+*.pyc
+.DS_Store
+coverage/
+*.log
+.workspace*/
+/evals/fixtures/
+/evals/medly/

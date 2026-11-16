@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "GradeOS grading generalization manifest",
+  "type": "object",
+  "required": ["version", "dataset_id", "cases"],
+  "properties": {
+    "version": {"const": "grading-generalization-v1"},
+    "dataset_id": {"type": "string", "minLength": 1},
+    "purpose": {"type": "string", "minLength": 1},
+    "cases": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["case_id", "status", "source_type", "subject", "task_family", "scoring_semantics", "language", "challenge_tags"],
+        "properties": {
+          "case_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]+$"},
+          "status": {"enum": ["planned", "ready", "retired"]},
+          "split": {"enum": ["dev", "frozen_validation", "hidden_test"]},
+          "source_type": {"enum": ["deidentified_real", "open_licensed", "synthetic"]},
+          "subject": {"type": "string", "minLength": 1},
+          "task_family": {"type": "string", "minLength": 1},
+          "scoring_semantics": {"enum": ["point", "holistic", "band"]},
+          "language": {"type": "string", "minLength": 1},
+          "challenge_tags": {"type": "array", "items": {"type": "string"}},
+          "family_id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._-]*$"
+          },
+          "variant_id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._-]*$"
+          },
+          "challenge_axes": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_-]*$"
+            }
+          },
+          "deidentified": {"type": "boolean"},
+          "licence": {"type": "string"},
+          "content_hash": {"type": "string"},
+          "input_ref": {"type": "string"}
+        },
+        "dependentRequired": {
+          "family_id": ["variant_id", "challenge_axes"],
+          "variant_id": ["family_id", "challenge_axes"]
+        },
+        "allOf": [
+          {
+            "if": {"properties": {"status": {"const": "ready"}}},
+            "then": {"required": ["split", "content_hash", "input_ref"]}
+          },
+          {
+            "if": {
+              "properties": {
+                "status": {"const": "ready"},
+                "source_type": {"const": "deidentified_real"}
+              },
+              "required": ["status", "source_type"]
+            },
+            "then": {"properties": {"deidentified": {"const": true}}, "required": ["deidentified"]}
+          },
+          {
+            "if": {
+              "properties": {
+                "status": {"const": "ready"},
+                "source_type": {"const": "open_licensed"}
+              },
+              "required": ["status", "source_type"]
+            },
+            "then": {"required": ["licence"]}
+          }
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 24,
+      "uniqueItems": true
+    }
+  },
+  "additionalProperties": false
+}
