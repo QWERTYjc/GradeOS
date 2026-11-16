@@ -8,7 +8,7 @@ import { parseArgs } from 'node:util';
 import { randomUUID } from 'node:crypto';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
-import { digest } from './core.mjs';
+import { digest, parseStudentBudget } from './core.mjs';
 import { createCoordinator, createStudentAgent, StudentRegistry, validateFrozenRubric, parseConcurrency, MAIN_PROMPT, REPLAY_MAIN_PROMPT, studentPromptForProtocol } from './cohort-core.mjs';
 import { createRuntime, freezeJson, readImage } from './cohort-runtime.mjs';
 import { ResultsStore } from './results-store.mjs';
@@ -80,9 +80,8 @@ const economy=values['economy-reporting'],lean=values['lean-reports'];
 if(lean&&!economy)throw Error('Lean reports require economy reporting');
 const feedbackMode=lean?'source-bound-v5':economy?'compact-v2':'detailed-v1';
 const maxRequests = Number(values['max-requests']);
-const studentCapUsd=Number(values['student-cap']);
-if(!Number.isFinite(studentCapUsd)||studentCapUsd<=0||studentCapUsd>0.01)throw Error('Per-student Luna budget must be positive and no more than $0.01');
 if (!Number.isFinite(cap) || cap <= 0 || cap > 5) throw Error('Invalid cohort limits');
+const studentCapUsd=parseStudentBudget(values['student-cap'],cap);
 if (!Number.isInteger(maxRequests) || maxRequests < 1 || maxRequests > 512) throw Error('Invalid aggregate request limit');
 new StudentRegistry(input.students.map(x => x.id), concurrency);
 const scheme = await loadDocument(input.scheme_input, 'scheme');
@@ -200,7 +199,7 @@ const plan = { version: 2, mode: reusedRubric ? 'frozen-rubric replay' : 'full-c
   initial_student_image_variant:imageVariants?{mode:imageVariants.mode,manifest_sha256:digest(await readFile(resolve(output,'student-image-variants/manifest.json'))),pixel_reduction_fraction:imageVariants.pixel_reduction_fraction,preparation_elapsed_seconds:imagePreparationSeconds}:null,
   context_policy: 'Main preserves the compilation prefix through MS self-review, then receives frozen rubric navigation; scoped source views remain available. Student/exception/feedback sessions stay isolated. Delivered result batches and point/image views can be checkpointed with source-bound notes; context retains score/null/review/source issues and immutable refs.',
   comparison: 'Count declared tasks and actual executions separately; duplicated answer books measure repeatability, not a diverse student population.' };
-if(scripted)Object.assign(plan,{execution:'scripted-single-pass',reporting:'Deterministic scripts from immutable grading records; zero model calls',
+if(scripted)Object.assign(plan,{execution:'scripted-single-pass',student_cap_usd:studentCapUsd,reporting:'Deterministic scripts from immutable grading records; zero model calls',
   student_prompt_hash:digest(singlePassPrompt({inlineAnnotations,annotationGrid})),point_wire_protocol:annotationGrid?'fixed-observed-ink-grid-v3':'fixed-observed-ink-v3',
   student_feedback:'Exact saved evidence and reasons; deterministic rendering; zero model calls',
   exception_review:{enabled:false,policy:'Positive exception proposals withheld as null pending teacher review; raw primary preserved'},
