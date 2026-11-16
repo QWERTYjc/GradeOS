@@ -1,0 +1,23 @@
+{
+  "fixture_id": "2023_M2",
+  "description": "GradeOS DSE 2023 M2 grading regression fixture.",
+  "rubric_pdf": "2023_M2 MS.pdf",
+  "student_pdf": "2023_M2 Student Answer.pdf",
+  "reference_result_pdf": "2023_M2 Score Details.pdf",
+  "reference_parser": "hkeaa_score_details_v1",
+  "reference_labels_file": "labels.json",
+  "frozen_input_binding": {
+    "schema": "sha256-v1",
+    "rubric_pdf_sha256": "30a4da87c386da9a242960d9b92697e88375a26b2848b6494700ae16664c3918",
+    "student_pdf_sha256": "3d626d1c92340ee19c63fcf99b09fa56bb4872543c2f91cec207d9543bad6879",
+    "reference_result_pdf_sha256": "96978ab939988f886a7963e9a7ab008ce814f4b18357f2fee3da6bcc41736561"
+  },
+  "subject": "math",
+  "instances": 6,
+  "rubric_point_batch_size": 2,
+  "dpi": 150,
+  "quality": 76,
+  "artifact_subdir": "m2_grading_fixture",
+  "langsmith_project": "gradeos-m2-fixture",
+  "langsmith_tags": ["gradeos", "m2-fixture"]
+}

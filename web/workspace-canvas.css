@@ -1,0 +1,270 @@
+/* A single paper surface per document; shared controls stay outside the paper. */
+.canvas-header{height:60px;border:0;background:#f8f9fa;padding:0 28px}
+.canvas-header .brand-line{gap:16px}
+.canvas-header .canvas-wordmark{font-size:19px;letter-spacing:-.7px}
+.canvas-header .project-name{font-size:12px;color:#73777d}
+.canvas-header .pi-label{background:transparent;color:#9a9ea5}
+.canvas-workspace{display:flex;flex-direction:column;background:#f8f9fa;padding:0 24px 128px;gap:0}
+.workflow-stage{display:flex;align-items:center;justify-content:space-between;gap:28px;padding:12px 8px 8px;flex:none}
+.workflow-copy{min-width:0}
+.workflow-path{display:flex;align-items:center;gap:12px;font-size:11px;color:#92979f;margin-bottom:8px}
+.workflow-path [aria-current]{color:#444f5d;font-weight:550}
+.workflow-path i{color:#b9bec6;font-style:normal}
+.workflow-path small{font-size:10px;color:#8f959e;margin-left:8px}
+.workflow-stage h1{font-size:20px;font-weight:550;line-height:1.3;letter-spacing:-.5px;margin:0 0 4px;color:#2c333c}
+.workflow-stage p{font-size:12px;line-height:1.8;color:#7b818a;margin:0}
+.workflow-action{flex:none}
+.workflow-action button{border-radius:11px;font-size:12px;padding:10px 16px;min-height:38px}
+.workflow-secondary{color:#616a76;background:#eef0f3}
+.canvas-toolbar{height:46px;min-height:46px;gap:12px;padding:0 7px;display:flex;border:0;background:transparent}
+.canvas-toolbar .workspace-hint{font-size:11px;color:#8c929b;margin-right:auto}
+.canvas-toolbar .canvas-tools{background:transparent;gap:2px;padding:0}
+.canvas-toolbar .tool{font-size:11px;min-height:30px;padding:5px 10px;border-radius:8px;color:#858b94}
+.canvas-toolbar .tool.active{background:#e9edf3;box-shadow:none;color:#47617f}
+.canvas-toolbar .compare-action{font-size:11px;color:#707884;gap:6px;padding:5px 8px;min-height:30px}
+.canvas-toolbar .compare-action .icon{width:13px;height:13px}
+.multi-canvas{flex:1;min-height:0;position:relative}
+.workspace-panels{height:100%;display:grid;grid-auto-columns:minmax(0,1fr);grid-auto-flow:column;gap:16px;background:transparent}
+.workspace-panels[data-count="3"],.workspace-panels[data-count="4"]{grid-template-columns:repeat(2,minmax(0,1fr));grid-template-rows:repeat(2,minmax(0,1fr));grid-auto-flow:row}
+.workspace-pane{background:white;display:flex;flex-direction:column;min-width:0;min-height:0;position:relative;overflow:hidden;border-radius:16px;box-shadow:0 2px 8px #22324a04,0 0 0 1px #e9ecf180}
+.pane-heading{height:52px;min-height:52px;display:flex;align-items:center;gap:8px;padding:0 18px;background:transparent;border:0;position:relative;z-index:8}
+.pane-document{display:flex;align-items:center;gap:8px;min-width:0;flex:1}
+.pane-document>.icon{width:14px;height:14px;color:#9aa1ac;flex:none}
+.pane-document-picker{max-width:100%;width:100%;border:0;background-color:transparent;font-size:12px;font-weight:500;color:#596370;padding:4px 16px 4px 0;min-width:0;text-overflow:ellipsis}
+.pane-heading>button,.pane-pager>button{width:25px;min-height:25px;padding:6px;border-radius:7px;color:#929aa5}
+.pane-heading .icon{width:13px;height:13px}
+.pane-pager{display:flex;align-items:center;gap:4px;font-size:11px;white-space:nowrap;color:#6b7582}
+.pane-pager small{font-size:11px;color:#a4abb5}
+.pane-content{flex:1;min-height:0;position:relative;display:flex;flex-direction:column}
+.pane-page-scroll{overflow:auto;overscroll-behavior-y:contain;flex:1;min-height:0;padding:4px 12px 30px;scrollbar-width:thin;scrollbar-color:#dce1e8 transparent}
+.pane-page-scroll .canvas-paper{max-width:none;min-width:100px;box-shadow:none;background:white}
+.pane-footer{min-height:28px;display:flex;align-items:center;justify-content:center;gap:12px;padding:0 18px 6px;border:0;background:white;font-size:10px;color:#9aa2ad;position:relative}
+.pane-footer:empty{display:none}
+.pane-footer>div{display:flex;gap:6px;align-items:center}
+.pane-footer button{font-size:10px;padding:3px 6px;min-height:23px;color:#a1a8b2}
+.pane-footer .icon{width:10px;height:10px}
+.workspace-panels[data-count="1"]{max-width:1000px;margin:auto}
+.is-empty .workspace-panels{display:block;background:transparent}
+.is-empty .canvas-empty{height:100%}
+
+/* Editing and saved state share the file heading instead of adding another toolbar. */
+.pane-editor-tools{flex:none}
+.document-editor{flex:1;min-height:0;background:#fff;display:flex;flex-direction:column;position:relative}
+.editor-controls{display:flex;gap:9px;align-items:center;padding:0;border:0;min-height:28px}
+.editor-controls button,.document-download{font-size:11px;color:#7e8793;min-height:28px;padding:4px 8px;border-radius:7px}
+.editor-controls [data-editor="toggle-mode"]{color:#51677f;background:#f0f3f7;white-space:nowrap}
+.editor-controls .save-state{color:#a1a8b1;font-size:10px;white-space:nowrap}
+.editor-more{position:relative}
+.editor-more summary{list-style:none;cursor:pointer;padding:5px;color:#929ba8;display:flex}
+.editor-more summary::-webkit-details-marker{display:none}
+.editor-more[open]>div{position:absolute;top:30px;right:0;display:flex;flex-direction:column;background:#fff;border:1px solid #e8ecf2;border-radius:10px;box-shadow:0 6px 24px #22324a12;padding:6px;min-width:130px;z-index:12}
+.editor-more button,.editor-more a{text-align:left;justify-content:flex-start;white-space:nowrap}
+.editor-content{flex:1;min-height:0;display:flex}
+.document-input{width:100%;height:100%;resize:none;border:0!important;border-radius:0;outline:0!important;box-shadow:none!important;background:#fff;color:#434e5e;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif;font-size:14px;line-height:1.95;tab-size:2;white-space:pre-wrap;overflow:auto}
+.document-input,.document-preview{padding:24px 42px 48px;scrollbar-width:thin;scrollbar-color:#dce1e8 transparent}
+.document-preview{font-size:14px;line-height:1.95;overflow:auto;width:100%;overflow-wrap:anywhere;color:#4c5665}
+.document-preview h1{font-size:25px;font-weight:550;line-height:1.5;margin:0 0 28px;color:#303b4a;letter-spacing:-.5px}
+.document-preview h2{font-size:16px;font-weight:550;margin:26px 0 10px;color:#354253}
+.document-preview h3{font-size:14px;font-weight:550;margin:22px 0 8px;color:#354253}
+.document-preview p{margin:0 0 14px}
+.document-preview ul,.document-preview ol{padding-left:21px}
+.document-preview li{margin-bottom:8px}
+.document-preview a{color:#5d7ba8}
+.document-preview blockquote{border-left:2px solid #d8e1ed;color:#858f9b;padding-left:14px;margin:18px 0}
+.document-preview table{font-size:12px}
+.document-preview td,.document-preview th{padding:8px}
+
+/* Keep the compact composer; conversation opens alongside the canvas. */
+.collaboration-dock{bottom:20px;width:min(660px,calc(100% - 40px));gap:6px}
+.composer{border-color:#e3e7ed;box-shadow:0 4px 18px #22324a06;border-radius:22px}
+.composer-left{gap:8px}
+.execution-mode-button{font-size:11px;color:#6f7c8c;gap:5px;min-height:28px;padding:0 4px;white-space:nowrap}
+.execution-mode-button .icon{width:10px;height:10px;opacity:.55}
+.agent-status{background:none}
+.status-label{color:#8b939f}
+.guide-ready{color:#8f7953}
+.conversation-panel{position:fixed;z-index:24;top:76px;bottom:20px;right:24px;width:332px;border:0;border-radius:16px;background:#fff;box-shadow:none;backdrop-filter:none;display:flex;flex-direction:column}
+.conversation-heading{height:52px;min-height:52px;border:0;padding:0 18px;gap:8px}
+.conversation-scroll{max-height:none;flex:1;min-height:0;padding:18px;scrollbar-color:#dce1e8 transparent}
+.conversation-task{border:0;background:#f6f8fa;border-radius:12px;padding:14px}
+.conversation-panel .chat-message.user{background:#f1f3f6}
+.conversation-panel .chat-message{font-size:12px}
+.conversation-panel .chat-message .prose{font-size:12px}
+.mode-intro{font-size:13px;line-height:1.8;color:#828994;margin-bottom:18px}
+.mode-options{display:flex;flex-direction:column;gap:10px}
+.mode-options button{padding:17px;text-align:left;white-space:normal;gap:18px;align-items:center;justify-content:space-between;background:#f8f9fb;border:1px solid transparent;border-radius:12px}
+.mode-options button[aria-pressed="true"]{border-color:#aabbd2;background:#f5f8fc}
+.mode-options strong{font-size:14px;font-weight:550;display:block;color:#3e4d60}
+.mode-options small{display:block;color:#828c99;font-size:12px;line-height:1.8;margin-top:6px}
+.mode-options .icon{width:17px;color:#6884a8;flex:none}
+
+@media(min-width:1100px){
+  .workspace-panels[data-count="3"]{grid-template-columns:repeat(3,minmax(0,1fr));grid-template-rows:1fr}
+  .conversation-open .canvas-workspace{margin-right:380px;padding-right:0}
+  .conversation-open .workflow-stage{gap:16px}
+  .conversation-open .workflow-stage h1{font-size:20px}
+  .conversation-open .workflow-path small{display:none}
+  .conversation-open .workflow-action button{padding:9px 12px}
+  .conversation-open .workspace-panels{gap:12px}
+  .conversation-open .pane-heading{padding:0 12px;gap:5px}
+  .conversation-open .document-input,.conversation-open .document-preview{padding-left:26px;padding-right:36px;font-size:13px}
+  .conversation-open .pane-heading .save-state{display:none}
+  .conversation-open .collaboration-dock{left:calc((100% - 380px)/2);width:min(660px,calc(100% - 428px))}
+}
+@media(max-width:1099px){
+  .conversation-panel{top:auto;bottom:146px;right:20px;width:min(440px,calc(100% - 40px));max-height:62dvh;border:1px solid #e7ecf3;border-radius:16px;box-shadow:0 12px 36px #22324a12}
+}
+@media(max-width:900px){
+  .canvas-workspace{padding:0 16px 124px}
+  .workflow-stage{padding:15px 4px 10px;gap:18px}
+  .workflow-stage h1{font-size:20px}
+  .workflow-path{gap:8px;margin-bottom:9px}
+  .workflow-path small{display:none}
+  .workspace-panels{gap:12px}
+  .pane-heading{padding:0 12px;gap:5px;height:46px;min-height:46px}
+  .pane-document-picker{font-size:11px}
+  .document-input,.document-preview{padding:22px 34px 36px 26px;font-size:13px}
+  .document-preview h1{font-size:22px}
+  .editor-controls{gap:4px}
+  .editor-controls .save-state{font-size:9px}
+}
+@media(max-width:600px){
+  .canvas-header{height:54px;padding:0 15px}
+  .canvas-workspace{height:calc(100dvh - 54px);padding:0 10px 126px}
+  .workflow-stage{padding:12px 6px 10px;gap:10px;flex-wrap:wrap}
+  .workflow-copy{flex:1 1 230px}
+  .workflow-stage h1{font-size:18px;margin-bottom:4px}
+  .workflow-stage p{font-size:11px}
+  .workflow-path{font-size:10px;gap:9px;margin-bottom:8px}
+  .workflow-action button{font-size:11px;min-height:31px;padding:6px 10px}
+  .canvas-toolbar{height:40px;min-height:40px;padding:0 4px;gap:6px}
+  .canvas-toolbar .workspace-hint{display:none}
+  .canvas-toolbar .canvas-tools{margin-right:auto;display:flex;gap:2px}
+  .canvas-toolbar .tool{font-size:10px;padding:5px 7px}
+  .canvas-toolbar .compare-action{font-size:10px;padding:4px 6px;gap:4px}
+  .canvas-toolbar .new-document-action{display:none}
+  .workspace-panels[data-count="2"],.workspace-panels[data-count="3"],.workspace-panels[data-count="4"]{display:flex;overflow-x:auto;scroll-snap-type:x proximity;gap:10px;background:transparent;scrollbar-width:thin;scrollbar-color:#dce1e8 transparent}
+  .workspace-pane{flex:0 0 94%;scroll-snap-align:start;border-radius:12px}
+  .workspace-panels[data-count="1"] .workspace-pane{width:100%}
+  .pane-heading{height:44px;min-height:44px}
+  .pane-page-scroll{padding:0 12px 24px}
+  .pane-footer{min-height:25px;font-size:9px}
+  .document-input,.document-preview{padding:18px 34px 30px 24px}
+  .document-annotations{right:10px}
+  .annotation-popover textarea{font-size:16px}
+  .collaboration-dock{bottom:max(12px,env(safe-area-inset-bottom));width:calc(100% - 24px)}
+  .composer-left{gap:3px}
+  .scope-button,.execution-mode-button{font-size:10px}
+  .composer-agent{display:none}
+  .is-empty .canvas-empty>div{flex-wrap:wrap;justify-content:center}
+}
+
+.annotation-pins{position:absolute;inset:0;pointer-events:none}
+.pane-page-scroll.has-grading-notes{padding-right:66px}
+.grading-controls select{font:inherit;color:#788393;border:0;background:transparent;max-width:104px;cursor:pointer;padding:4px 0}
+.grading-pin{width:46px;height:36px}
+.grading-marker{display:flex;flex-direction:column;gap:3px;align-items:center;justify-content:center;width:46px;min-height:36px;padding:4px 2px;border:0;border-radius:7px;background:#f2f7f4;color:#648776;pointer-events:auto;font-size:10px;line-height:1.2;white-space:nowrap}
+.grading-marker small{font-size:9px;opacity:.8}
+.grading-pin.deduction .grading-marker{background:#fbf2e9;color:#a57442}
+.grading-pin.review .grading-marker{background:#f7eddb;color:#9b782c}
+.grading-pin.is-active .grading-marker,.grading-marker:hover{box-shadow:0 0 0 1px currentColor}
+.grading-marker:focus-visible{outline:2px solid #3976ba;outline-offset:2px}
+.grading-note-title{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:14px;padding:3px 1px 10px;color:#486d59}
+.grading-note-title.deduction,.grading-note-title.review{color:#946a38}
+.grading-note-title span{font-size:12px;font-variant-numeric:tabular-nums}
+.grading-note-body{max-height:min(360px,calc(100dvh - 230px));overflow:auto;overscroll-behavior:contain;padding-right:3px;scrollbar-width:thin}
+.grading-note-body section+section{margin-top:12px}
+.grading-note-body h4{font-size:10px;color:#929aa4;font-weight:500;margin:0 0 3px}
+.grading-note-body p{font-size:12px;line-height:1.7;white-space:pre-wrap;overflow-wrap:anywhere;margin:0;color:#4c535d}
+.grading-source-links{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
+.grading-source-links button{padding:2px 4px;min-height:22px;color:#557b9e;font-size:10px}
+.grading-note-body .grading-note-provenance{font-size:10px;color:#a0a6af;margin-top:10px;line-height:1.6}
+.grading-controls{margin-right:auto;min-width:0}
+.annotation-export{font-size:11px;color:#516e88;text-decoration:none;white-space:nowrap;padding:5px 7px;border-radius:5px}
+.annotation-export:hover,.annotation-export:focus-visible{background:#eef3f7;color:#264f75}
+.pane-footer:has(.grading-controls){gap:4px;padding-left:12px;padding-right:12px;flex-wrap:wrap}
+.annotation-pin{position:absolute;line-height:1;pointer-events:none;z-index:3}
+.annotation-target{position:absolute;inset:0;width:100%;height:100%;min-height:0;padding:0;border:0;border-radius:0;background:transparent;pointer-events:none}
+.annotation-target:focus-visible{outline:2px dashed #3976ba;outline-offset:4px;background:transparent}
+.annotation-remove{position:absolute;top:-9px;right:-9px;width:18px;height:18px;min-height:18px;padding:0;border:1px solid #e1e6ed;background:#fff;border-radius:50%;color:#98a5b5;font-size:12px;opacity:0;pointer-events:none;line-height:16px;display:flex;align-items:center;justify-content:center;transition:opacity .12s}
+.annotation-pin.is-hovered .annotation-remove,.annotation-pin.is-active .annotation-remove,.annotation-pin:focus-within .annotation-remove,.annotation-remove:hover{opacity:.8;pointer-events:auto}
+.annotation-remove:hover{opacity:1;color:#45566c}
+.annotation-marker{width:24px;height:24px;min-height:24px;padding:5px;border:0;border-radius:5px;background:transparent;color:#6c86a7;opacity:.6;pointer-events:auto}
+.annotation-marker .icon{width:14px;height:14px}
+.annotation-marker:hover,.annotation-marker:focus-visible,.annotation-pin.is-active .annotation-marker{opacity:1;background:#f0f4f9}
+.annotation-popover{position:fixed;width:298px;max-width:calc(100vw - 24px);z-index:45;background:#fff;border:1px solid #e2e5ea;border-radius:12px;box-shadow:0 8px 32px #2439571a;padding:11px;line-height:1.6}
+.annotation-heading{display:flex;align-items:center;justify-content:space-between;font-size:10px;color:#9a9a9a;margin-bottom:7px}.annotation-heading button{min-height:18px;width:20px;font-size:17px;padding:0;color:#aaa}
+.annotation-popover textarea{width:100%;min-height:80px;max-height:210px;resize:vertical;border:0;background:#fafafa;font-size:13px;padding:9px;line-height:1.7;border-radius:7px}.annotation-actions{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:8px}.annotation-actions button{font-size:11px;gap:4px;min-height:30px;padding:5px 8px}.annotation-actions .icon{width:12px;height:12px}.annotation-popover blockquote{font-size:11px;color:#949494;border-left:2px solid #dbe3ef;padding-left:8px;margin:0 0 10px;max-height:76px;overflow:auto;white-space:pre-wrap}
+.document-annotations{position:absolute;inset:0 14px 0 auto;width:24px;pointer-events:none;z-index:5}
+.document-annotations:empty{display:none}.document-annotations .annotation-pin{right:0;width:24px;height:24px}
+.document-annotations .annotation-remove{top:-5px;right:-8px}
+.text-selection-menu{position:fixed;z-index:44;background:#fff;border:1px solid #e1e5eb;box-shadow:0 4px 18px #00000015;border-radius:9px;display:flex;gap:4px;padding:4px}.text-selection-menu button{font-size:11px;padding:6px 9px;gap:5px;min-height:30px;white-space:nowrap}.text-selection-menu .icon{width:13px;height:13px}.editor-notice{font-size:11px;color:#a17b37;background:#fffaf0;padding:7px 15px;line-height:1.8}.editor-notice button{font-size:10px;min-height:24px;padding:3px 6px;text-decoration:underline}.version-popover{position:absolute;inset:40px 12px 20px;background:#fff;border:1px solid #ddd;box-shadow:0 6px 28px #00000012;border-radius:10px;padding:15px;z-index:10;display:flex;flex-direction:column;gap:10px;min-height:0}.version-heading{display:flex;align-items:center;justify-content:space-between;font-size:12px}.version-heading button{min-height:24px;padding:3px 5px}.version-popover select{font-size:11px;max-width:100%}.version-popover pre{overflow:auto;font-size:12px;line-height:1.8;white-space:pre-wrap;word-break:break-word;background:#fafafa;padding:12px;flex:1;min-height:0}.documents-list{display:flex;flex-direction:column;gap:4px;margin-top:14px}.documents-list button{justify-content:flex-start;font-size:12px;padding:8px;gap:8px}.documents-list button span{margin-left:auto;font-size:10px;color:#999}.guide-inbox{border:1px solid #e8e0d0;background:#fffcf7;border-radius:10px;padding:12px;margin-bottom:15px;font-size:12px;display:flex;align-items:center;justify-content:space-between;gap:12px}.guide-inbox button{font-size:11px}.guide-ready{color:#8c713e}
+
+/* Grading intake: material selection first, optional controls on demand. */
+.collaboration-dock[hidden],.canvas-toolbar[hidden]{display:none!important}
+.material-intake{width:min(540px,100%);margin:auto;gap:18px;padding:36px 20px;min-height:0;text-align:center}
+.material-intake h1{font-size:28px;letter-spacing:-.7px;font-weight:600}
+.material-intake p{color:#66707c;font-size:14px}
+.intake-path{display:flex!important;justify-content:center;gap:24px;font-size:12px;color:#747c87;margin-bottom:12px}
+.intake-path [aria-current]{color:#293441;font-weight:600}
+.intake-cards{display:grid!important;grid-template-columns:1fr 1fr;gap:12px!important;width:100%;margin-top:10px}
+.intake-cards button{display:flex;justify-content:flex-start;text-align:left;gap:14px;border:1px solid #dce1e7;border-radius:14px;padding:20px;background:#fff;min-height:86px;white-space:normal}
+.intake-cards button:hover{background:#f8fafc!important;border-color:#aab6c3}
+.intake-cards strong{display:block;font-size:15px;font-weight:600;color:#283442}
+.intake-cards small{display:block;font-size:12px;line-height:1.7;margin-top:4px;color:#697583}
+.intake-cards .intake-student{grid-column:1/-1;border-color:#bac6d3;min-height:100px;box-shadow:0 3px 14px #26374805}
+.intake-student>.icon{width:26px;height:26px;opacity:.85}
+.intake-add,.intake-optional>.icon:last-child{margin-left:auto}
+.intake-formats{color:#707985;font-size:11px}
+.workflow-action{display:flex;align-items:center;gap:10px}
+.task-setup-dialog{width:min(560px,calc(100vw - 32px))}
+.task-setup{gap:20px!important}
+.setup-materials{border:1px solid #dce2e9;border-radius:12px;background:#fafbfc;overflow:hidden}
+.setup-materials>summary{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:17px;cursor:pointer;list-style:none}
+.setup-materials>summary::-webkit-details-marker{display:none}
+.setup-materials strong{display:block;color:#2d3948;font-size:15px;font-weight:600}
+.setup-materials small{display:block;margin-top:6px;color:#667383;font-size:12px;line-height:1.6;overflow-wrap:anywhere}
+.setup-edit{color:#506982;font-size:12px;flex:none}
+.setup-material-fields{border-top:1px solid #e2e7ed;padding:16px;display:flex;flex-direction:column;gap:18px;background:#fff}
+.setup-material-fields .scope-picker{max-height:220px;overflow:auto;padding:10px 12px}
+.setup-material-fields .scope-picker label{display:flex!important;flex-direction:row;align-items:center!important;gap:10px}
+.setup-material-fields .scope-picker label span:nth-child(2){flex:1;min-width:0;overflow-wrap:anywhere}
+.setup-material-fields .form-columns{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px}
+.task-setup label{color:#435061;font-size:13px}
+.task-setup textarea{font-size:14px;line-height:1.7;border-color:#d3dbe5;padding:12px;border-radius:10px}
+.task-setup select{width:100%;font-size:13px}
+.setup-options{border-top:1px solid #e5e9ef;border-bottom:1px solid #e5e9ef}
+.setup-options>summary{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:14px 0;cursor:pointer;font-size:13px;color:#405269;list-style:none}
+.setup-options>summary::-webkit-details-marker{display:none}
+.setup-options>summary:after{content:'+';color:#6e7a8a;font-size:18px}
+.setup-options[open]>summary:after{content:'−'}
+.setup-options>summary span{margin-left:auto;font-size:11px;color:#657386}
+.setup-option-fields{display:flex;flex-direction:column;gap:16px;padding:6px 0 18px}
+.task-setup .research-option{display:flex;flex-direction:row;align-items:center;gap:10px}
+.task-setup .muted{font-size:12px;color:#667383}
+.setup-footer{position:sticky;bottom:-24px;margin-top:0;padding:8px 0 0;background:#fff}
+.setup-mode-hint,.setup-connection-note{font-size:12px;color:#59687b;line-height:1.7;margin:0 0 8px}
+.setup-connection-note{color:#78674e}
+.task-setup .form-actions{display:flex;justify-content:flex-end;gap:12px;margin-top:10px}
+.task-setup .form-actions .primary{min-height:44px;padding:11px 24px}
+.task-setup .form-actions .quiet{font-size:13px;color:#53657a;padding:8px 12px}
+@media(max-width:600px){
+  .material-intake{padding:30px 16px;width:100%;gap:14px}
+  .material-intake h1{font-size:24px}
+  .material-intake p{font-size:13px}
+  .intake-path{gap:14px;font-size:11px;margin-bottom:6px}
+  .intake-cards{gap:10px!important}
+  .intake-cards button{padding:16px 12px;gap:10px;min-height:82px}
+  .intake-cards strong{font-size:14px}
+  .intake-cards small{font-size:11px}
+  .intake-optional>.icon:last-child{display:none}
+  .task-setup-dialog{width:calc(100vw - 20px)}
+  .task-setup{gap:17px!important}
+  .setup-materials>summary{padding:14px;gap:8px;align-items:flex-start}
+  .setup-edit{font-size:11px;white-space:nowrap;text-align:right}
+  .setup-material-fields .form-columns{grid-template-columns:1fr}
+  .task-setup textarea,.task-setup select{font-size:16px}
+  .setup-options>summary span{font-size:10px}
+  .setup-footer{bottom:-16px}
+  .workflow-action{gap:8px}
+}

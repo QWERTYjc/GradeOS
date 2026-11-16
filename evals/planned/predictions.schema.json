@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "GradeOS grading generalization prediction runs",
+  "type": "object",
+  "required": ["metadata", "runs"],
+  "properties": {
+    "metadata": {
+      "type": "object",
+      "required": ["phase", "dataset_id", "public_manifest_sha256", "worker_mode"],
+      "properties": {
+        "phase": {"enum": ["dev", "frozen_validation", "hidden_test"]},
+        "dataset_id": {"type": "string", "minLength": 1},
+        "public_manifest_sha256": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "worker_mode": {"const": "score_blind_subprocess"},
+        "hidden_test_execution": {
+          "type": "object",
+          "required": [
+            "campaign_id",
+            "attempt",
+            "prior_attempts",
+            "prompt_frozen",
+            "frozen_validation_passed",
+            "tuned_after_hidden"
+          ],
+          "properties": {
+            "campaign_id": {"type": "string", "minLength": 1},
+            "attempt": {"const": 1},
+            "prior_attempts": {"const": 0},
+            "prompt_frozen": {"const": true},
+            "frozen_validation_passed": {"const": true},
+            "tuned_after_hidden": {"const": false}
+          },
+          "additionalProperties": false
+        }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"phase": {"const": "hidden_test"}}},
+          "then": {"required": ["hidden_test_execution"]}
+        }
+      ],
+      "additionalProperties": false
+    },
+    "runs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["case_id", "run_id", "result", "metadata"],
+        "properties": {
+          "case_id": {"type": "string", "minLength": 1},
+          "run_id": {"type": "string", "minLength": 1},
+          "variant_id": {"type": "string", "minLength": 1},
+          "result": {"type": "object", "minProperties": 1},
+          "metadata": {
+            "type": "object",
+            "required": [
+              "prompt_hash",
+              "model",
+              "adapter",
+              "slice",
+              "context_manifest",
+              "langsmith_trace_id"
+            ],
+            "properties": {
+              "prompt_hash": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              },
+              "model": {"type": "string", "minLength": 1},
+              "adapter": {"type": "string", "minLength": 1},
+              "slice": {"enum": ["dev", "frozen_validation", "hidden_test"]},
+              "langsmith_trace_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "context_manifest": {
+                "type": "object",
+                "required": ["included", "omitted"],
+                "properties": {
+                  "included": {
+                    "type": "array",
+                    "minItems": 2,
+                    "uniqueItems": true,
+                    "items": {"type": "string", "minLength": 1}
+                  },
+                  "omitted": {"type": "array", "maxItems": 0},
+                  "truncated": {"type": "array", "maxItems": 0}
+                },
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

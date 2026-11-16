@@ -1,0 +1,1225 @@
+[
+  {
+    "input": {
+      "result_set_hash": "neutral-fixture",
+      "cohort_context": {
+        "unique_answer_sources": 1
+      },
+      "rubric": {
+        "artifact": {
+          "items": [
+            {
+              "item_id": "Z(c)",
+              "criteria": "A justified comparison.",
+              "max_score": 4
+            },
+            {
+              "item_id": "R",
+              "criteria": "Follow the stated condition.",
+              "max_score": 6
+            }
+          ]
+        }
+      },
+      "records": [
+        {
+          "student_id": "neutral-0",
+          "grade": null
+        }
+      ]
+    },
+    "expected": {
+      "result_set_hash": "neutral-fixture",
+      "cohort_context": {
+        "unique_answer_sources": 1
+      },
+      "gradeos_class_report": {
+        "total_students": 1,
+        "scored_student_count": 0,
+        "average_score": null,
+        "average_percentage": null,
+        "pass_rate": null,
+        "score_distribution": {
+          "A": 0,
+          "B": 0,
+          "C": 0,
+          "D": 0,
+          "E": 0
+        },
+        "weak_points": [],
+        "strong_points": [],
+        "summary": "No complete numerical results; unavailable scores are not zero."
+      },
+      "gradeos_global_logic_audit": {
+        "summary": "Global logic audit completed.",
+        "issue_count": 0,
+        "issues": [],
+        "score_distribution": {
+          "student_count": 0,
+          "min_total_score": 0.0,
+          "max_total_score": 0.0,
+          "average_total_score": 0.0,
+          "average_max_score": 0.0
+        },
+        "question_audits": [],
+        "point_audits": []
+      },
+      "gradeos_student_summaries": [
+        {
+          "student_id": "neutral-0",
+          "summary": {
+            "overall": "评分暂不可用，证据或评分契约需要教师复核。",
+            "percentage": null,
+            "knowledge_points": [],
+            "improvement_suggestions": []
+          }
+        }
+      ],
+      "harness_repeatability": {
+        "score_distribution": {},
+        "mean": null,
+        "population_sd": null,
+        "constant_items": 2,
+        "item_count": 2,
+        "items": [
+          {
+            "item_id": "Z(c)",
+            "max_score": 4,
+            "score_distribution": {},
+            "mean_score_rate": null,
+            "unknown_count": 0,
+            "varies": false,
+            "evidence_refs": []
+          },
+          {
+            "item_id": "R",
+            "max_score": 6,
+            "score_distribution": {},
+            "mean_score_rate": null,
+            "unknown_count": 0,
+            "varies": false,
+            "evidence_refs": []
+          }
+        ]
+      },
+      "coverage": {
+        "requested_records": 1,
+        "scored_records": 0,
+        "excluded_from_numeric_audit": [
+          "neutral-0"
+        ],
+        "granularity": "score-detail item; not internal M/A point",
+        "knowledge_mapping": "Unavailable. GradeOS knowledge_points here are item-score proxies, not validated topic mastery.",
+        "point_evidence_audit": "Not evaluated: no internal M/A ledger or literal evidence quotations supplied.",
+        "grade_bands": "GradeOS internal A>=85/B>=70/C>=60/D>=50/E<50; not official exam grades.",
+        "mastery_thresholds": "Class-report weak<0.60 and strong>=0.85 apply to item score rates only.",
+        "jev_error_taxonomy": "Not invoked; no classification was invented.",
+        "official_reference": "Not provided to this analysis or the reporting agent.",
+        "risk_calibration": "Not evaluated; statistical outliers are review prompts, not calibrated Risk."
+      }
+    }
+  },
+  {
+    "input": {
+      "result_set_hash": "neutral-fixture",
+      "cohort_context": {
+        "unique_answer_sources": 3
+      },
+      "rubric": {
+        "artifact": {
+          "items": [
+            {
+              "item_id": "Z(c)",
+              "criteria": "A justified comparison.",
+              "max_score": 4
+            },
+            {
+              "item_id": "R",
+              "criteria": "Follow the stated condition.",
+              "max_score": 6
+            }
+          ]
+        }
+      },
+      "records": [
+        {
+          "student_id": "neutral-0",
+          "grade": {
+            "total_score": 5,
+            "max_score": 10,
+            "items": [
+              {
+                "item_id": "Z(c)",
+                "max_score": 4,
+                "score": 2
+              },
+              {
+                "item_id": "R",
+                "max_score": 6,
+                "score": 3
+              }
+            ]
+          }
+        },
+        {
+          "student_id": "neutral-1",
+          "grade": null
+        },
+        {
+          "student_id": "neutral-2",
+          "grade": {
+            "total_score": null,
+            "max_score": 10,
+            "items": [
+              {
+                "item_id": "Z(c)",
+                "max_score": 4,
+                "score": null
+              },
+              {
+                "item_id": "R",
+                "max_score": 6,
+                "score": 2
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "expected": {
+      "result_set_hash": "neutral-fixture",
+      "cohort_context": {
+        "unique_answer_sources": 3
+      },
+      "gradeos_class_report": {
+        "total_students": 3,
+        "scored_student_count": 1,
+        "average_score": 5.0,
+        "average_percentage": 50.0,
+        "pass_rate": 0.0,
+        "score_distribution": {
+          "A": 0,
+          "B": 0,
+          "C": 0,
+          "D": 1,
+          "E": 0
+        },
+        "weak_points": [
+          {
+            "point_id": "",
+            "description": "Item Z(c): A justified comparison.",
+            "mastery_ratio": 0.5
+          },
+          {
+            "point_id": "",
+            "description": "Item R: Follow the stated condition.",
+            "mastery_ratio": 0.5
+          }
+        ],
+        "strong_points": [],
+        "summary": "班级平均分 5.0，平均得分率 50.0%。 及格率 0.0%。 主要薄弱知识点：Item Z(c): A justified comparison.，Item R: Follow the stated condition.。"
+      },
+      "gradeos_global_logic_audit": {
+        "summary": "Global logic audit completed.",
+        "issue_count": 0,
+        "issues": [],
+        "score_distribution": {
+          "student_count": 1,
+          "min_total_score": 5.0,
+          "max_total_score": 5.0,
+          "average_total_score": 5.0,
+          "average_max_score": 10.0
+        },
+        "question_audits": [
+          {
+            "question_id": "R",
+            "student_count": 1,
+            "score_ratio_range": 0.0,
+            "missing_positive_evidence_count": 0,
+            "missing_student_count": 0,
+            "unknown_question_count": 0
+          },
+          {
+            "question_id": "Z(c)",
+            "student_count": 1,
+            "score_ratio_range": 0.0,
+            "missing_positive_evidence_count": 0,
+            "missing_student_count": 0,
+            "unknown_question_count": 0
+          }
+        ],
+        "point_audits": []
+      },
+      "gradeos_student_summaries": [
+        {
+          "student_id": "neutral-0",
+          "summary": {
+            "overall": "整体得分 5.0/10.0（50.0%）。 整体表现需重点提升。 薄弱点集中在：Item Z(c): A justified comparison.，Item R: Follow the stated condition.。",
+            "percentage": 50.0,
+            "knowledge_points": [
+              {
+                "question_id": "Z(c)",
+                "point_id": "",
+                "description": "Item Z(c): A justified comparison.",
+                "score": 2.0,
+                "max_score": 4.0,
+                "mastery_level": "weak",
+                "ratio": 0.5,
+                "evidence": "",
+                "rubric_reference": ""
+              },
+              {
+                "question_id": "R",
+                "point_id": "",
+                "description": "Item R: Follow the stated condition.",
+                "score": 3.0,
+                "max_score": 6.0,
+                "mastery_level": "weak",
+                "ratio": 0.5,
+                "evidence": "",
+                "rubric_reference": ""
+              }
+            ],
+            "improvement_suggestions": [
+              "建议复习：Item Z(c): A justified comparison.",
+              "建议复习：Item R: Follow the stated condition."
+            ]
+          }
+        },
+        {
+          "student_id": "neutral-1",
+          "summary": {
+            "overall": "评分暂不可用，证据或评分契约需要教师复核。",
+            "percentage": null,
+            "knowledge_points": [],
+            "improvement_suggestions": []
+          }
+        },
+        {
+          "student_id": "neutral-2",
+          "summary": {
+            "overall": "评分暂不可用，证据或评分契约需要教师复核。",
+            "percentage": null,
+            "knowledge_points": [],
+            "improvement_suggestions": []
+          }
+        }
+      ],
+      "harness_repeatability": {
+        "score_distribution": {
+          "5": 1
+        },
+        "mean": 5,
+        "population_sd": 0.0,
+        "constant_items": 0,
+        "item_count": 2,
+        "items": [
+          {
+            "item_id": "Z(c)",
+            "max_score": 4,
+            "score_distribution": {
+              "2": 1,
+              "None": 1
+            },
+            "mean_score_rate": 0.5,
+            "unknown_count": 1,
+            "varies": true,
+            "evidence_refs": [
+              "neutral-0/Z(c)",
+              "neutral-2/Z(c)"
+            ]
+          },
+          {
+            "item_id": "R",
+            "max_score": 6,
+            "score_distribution": {
+              "3": 1,
+              "2": 1
+            },
+            "mean_score_rate": 0.4166666666666667,
+            "unknown_count": 0,
+            "varies": true,
+            "evidence_refs": [
+              "neutral-0/R",
+              "neutral-2/R"
+            ]
+          }
+        ]
+      },
+      "coverage": {
+        "requested_records": 3,
+        "scored_records": 1,
+        "excluded_from_numeric_audit": [
+          "neutral-1",
+          "neutral-2"
+        ],
+        "granularity": "score-detail item; not internal M/A point",
+        "knowledge_mapping": "Unavailable. GradeOS knowledge_points here are item-score proxies, not validated topic mastery.",
+        "point_evidence_audit": "Not evaluated: no internal M/A ledger or literal evidence quotations supplied.",
+        "grade_bands": "GradeOS internal A>=85/B>=70/C>=60/D>=50/E<50; not official exam grades.",
+        "mastery_thresholds": "Class-report weak<0.60 and strong>=0.85 apply to item score rates only.",
+        "jev_error_taxonomy": "Not invoked; no classification was invented.",
+        "official_reference": "Not provided to this analysis or the reporting agent.",
+        "risk_calibration": "Not evaluated; statistical outliers are review prompts, not calibrated Risk."
+      }
+    }
+  },
+  {
+    "input": {
+      "result_set_hash": "neutral-fixture",
+      "cohort_context": {
+        "unique_answer_sources": 5
+      },
+      "rubric": {
+        "artifact": {
+          "items": [
+            {
+              "item_id": "Z(c)",
+              "criteria": "A justified comparison.",
+              "max_score": 4
+            },
+            {
+              "item_id": "R",
+              "criteria": "Follow the stated condition.",
+              "max_score": 6
+            }
+          ]
+        }
+      },
+      "records": [
+        {
+          "student_id": "neutral-0",
+          "grade": {
+            "total_score": 10,
+            "max_score": 10,
+            "items": [
+              {
+                "item_id": "Z(c)",
+                "max_score": 4,
+                "score": 4
+              },
+              {
+                "item_id": "R",
+                "max_score": 6,
+                "score": 6
+              }
+            ]
+          }
+        },
+        {
+          "student_id": "neutral-1",
+          "grade": {
+            "total_score": 10,
+            "max_score": 10,
+            "items": [
+              {
+                "item_id": "Z(c)",
+                "max_score": 4,
+                "score": 4
+              },
+              {
+                "item_id": "R",
+                "max_score": 6,
+                "score": 6
+              }
+            ]
+          }
+        },
+        {
+          "student_id": "neutral-2",
+          "grade": {
+            "total_score": 10,
+            "max_score": 10,
+            "items": [
+              {
+                "item_id": "Z(c)",
+                "max_score": 4,
+                "score": 4
+              },
+              {
+                "item_id": "R",
+                "max_score": 6,
+                "score": 6
+              }
+            ]
+          }
+        },
+        {
+          "student_id": "neutral-3",
+          "grade": {
+            "total_score": 10,
+            "max_score": 10,
+            "items": [
+              {
+                "item_id": "Z(c)",
+                "max_score": 4,
+                "score": 4
+              },
+              {
+                "item_id": "R",
+                "max_score": 6,
+                "score": 6
+              }
+            ]
+          }
+        },
+        {
+          "student_id": "neutral-4",
+          "grade": {
+            "total_score": 0,
+            "max_score": 10,
+            "items": [
+              {
+                "item_id": "Z(c)",
+                "max_score": 4,
+                "score": 0
+              },
+              {
+                "item_id": "R",
+                "max_score": 6,
+                "score": 0
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "expected": {
+      "result_set_hash": "neutral-fixture",
+      "cohort_context": {
+        "unique_answer_sources": 5
+      },
+      "gradeos_class_report": {
+        "total_students": 5,
+        "scored_student_count": 5,
+        "average_score": 8.0,
+        "average_percentage": 80.0,
+        "pass_rate": 0.8,
+        "score_distribution": {
+          "A": 4,
+          "B": 0,
+          "C": 0,
+          "D": 0,
+          "E": 1
+        },
+        "weak_points": [],
+        "strong_points": [],
+        "summary": "班级平均分 8.0，平均得分率 80.0%。 及格率 80.0%。"
+      },
+      "gradeos_global_logic_audit": {
+        "summary": "Global logic audit completed.",
+        "issue_count": 3,
+        "issues": [
+          {
+            "rule": "class_total_score_outliers",
+            "severity": "warning",
+            "message": "1 student total score(s) are more than 2 standard deviations from the class average."
+          },
+          {
+            "rule": "question_score_distribution_wide",
+            "severity": "info",
+            "question_id": "R",
+            "message": "Question R has a wide score ratio distribution across students.",
+            "score_ratio_range": 1.0
+          },
+          {
+            "rule": "question_score_distribution_wide",
+            "severity": "info",
+            "question_id": "Z(c)",
+            "message": "Question Z(c) has a wide score ratio distribution across students.",
+            "score_ratio_range": 1.0
+          }
+        ],
+        "score_distribution": {
+          "student_count": 5,
+          "min_total_score": 0.0,
+          "max_total_score": 10.0,
+          "average_total_score": 8.0,
+          "average_max_score": 10.0,
+          "stddev_total_score": 4.0,
+          "outlier_count": 1
+        },
+        "question_audits": [
+          {
+            "question_id": "R",
+            "student_count": 5,
+            "score_ratio_range": 1.0,
+            "missing_positive_evidence_count": 0,
+            "missing_student_count": 0,
+            "unknown_question_count": 0
+          },
+          {
+            "question_id": "Z(c)",
+            "student_count": 5,
+            "score_ratio_range": 1.0,
+            "missing_positive_evidence_count": 0,
+            "missing_student_count": 0,
+            "unknown_question_count": 0
+          }
+        ],
+        "point_audits": []
+      },
+      "gradeos_student_summaries": [
+        {
+          "student_id": "neutral-0",
+          "summary": {
+            "overall": "整体得分 10.0/10.0（100.0%）。 整体表现优秀。 暂无明显薄弱点。",
+            "percentage": 100.0,
+            "knowledge_points": [
+              {
+                "question_id": "Z(c)",
+                "point_id": "",
+                "description": "Item Z(c): A justified comparison.",
+                "score": 4.0,
+                "max_score": 4.0,
+                "mastery_level": "partial",
+                "ratio": 1.0,
+                "evidence": "",
+                "rubric_reference": ""
+              },
+              {
+                "question_id": "R",
+                "point_id": "",
+                "description": "Item R: Follow the stated condition.",
+                "score": 6.0,
+                "max_score": 6.0,
+                "mastery_level": "partial",
+                "ratio": 1.0,
+                "evidence": "",
+                "rubric_reference": ""
+              }
+            ],
+            "improvement_suggestions": []
+          }
+        },
+        {
+          "student_id": "neutral-1",
+          "summary": {
+            "overall": "整体得分 10.0/10.0（100.0%）。 整体表现优秀。 暂无明显薄弱点。",
+            "percentage": 100.0,
+            "knowledge_points": [
+              {
+                "question_id": "Z(c)",
+                "point_id": "",
+                "description": "Item Z(c): A justified comparison.",
+                "score": 4.0,
+                "max_score": 4.0,
+                "mastery_level": "partial",
+                "ratio": 1.0,
+                "evidence": "",
+                "rubric_reference": ""
+              },
+              {
+                "question_id": "R",
+                "point_id": "",
+                "description": "Item R: Follow the stated condition.",
+                "score": 6.0,
+                "max_score": 6.0,
+                "mastery_level": "partial",
+                "ratio": 1.0,
+                "evidence": "",
+                "rubric_reference": ""
+              }
+            ],
+            "improvement_suggestions": []
+          }
+        },
+        {
+          "student_id": "neutral-2",
+          "summary": {
+            "overall": "整体得分 10.0/10.0（100.0%）。 整体表现优秀。 暂无明显薄弱点。",
+            "percentage": 100.0,
+            "knowledge_points": [
+              {
+                "question_id": "Z(c)",
+                "point_id": "",
+                "description": "Item Z(c): A justified comparison.",
+                "score": 4.0,
+                "max_score": 4.0,
+                "mastery_level": "partial",
+                "ratio": 1.0,
+                "evidence": "",
+                "rubric_reference": ""
+              },
+              {
+                "question_id": "R",
+                "point_id": "",
+                "description": "Item R: Follow the stated condition.",
+                "score": 6.0,
+                "max_score": 6.0,
+                "mastery_level": "partial",
+                "ratio": 1.0,
+                "evidence": "",
+                "rubric_reference": ""
+              }
+            ],
+            "improvement_suggestions": []
+          }
+        },
+        {
+          "student_id": "neutral-3",
+          "summary": {
+            "overall": "整体得分 10.0/10.0（100.0%）。 整体表现优秀。 暂无明显薄弱点。",
+            "percentage": 100.0,
+            "knowledge_points": [
+              {
+                "question_id": "Z(c)",
+                "point_id": "",
+                "description": "Item Z(c): A justified comparison.",
+                "score": 4.0,
+                "max_score": 4.0,
+                "mastery_level": "partial",
+                "ratio": 1.0,
+                "evidence": "",
+                "rubric_reference": ""
+              },
+              {
+                "question_id": "R",
+                "point_id": "",
+                "description": "Item R: Follow the stated condition.",
+                "score": 6.0,
+                "max_score": 6.0,
+                "mastery_level": "partial",
+                "ratio": 1.0,
+                "evidence": "",
+                "rubric_reference": ""
+              }
+            ],
+            "improvement_suggestions": []
+          }
+        },
+        {
+          "student_id": "neutral-4",
+          "summary": {
+            "overall": "整体得分 0.0/10.0（0.0%）。 整体表现需重点提升。 薄弱点集中在：Item Z(c): A justified comparison.，Item R: Follow the stated condition.。",
+            "percentage": 0.0,
+            "knowledge_points": [
+              {
+                "question_id": "Z(c)",
+                "point_id": "",
+                "description": "Item Z(c): A justified comparison.",
+                "score": 0.0,
+                "max_score": 4.0,
+                "mastery_level": "weak",
+                "ratio": 0.0,
+                "evidence": "",
+                "rubric_reference": ""
+              },
+              {
+                "question_id": "R",
+                "point_id": "",
+                "description": "Item R: Follow the stated condition.",
+                "score": 0.0,
+                "max_score": 6.0,
+                "mastery_level": "weak",
+                "ratio": 0.0,
+                "evidence": "",
+                "rubric_reference": ""
+              }
+            ],
+            "improvement_suggestions": [
+              "建议复习：Item Z(c): A justified comparison.",
+              "建议复习：Item R: Follow the stated condition."
+            ]
+          }
+        }
+      ],
+      "harness_repeatability": {
+        "score_distribution": {
+          "10": 4,
+          "0": 1
+        },
+        "mean": 8,
+        "population_sd": 4.0,
+        "constant_items": 0,
+        "item_count": 2,
+        "items": [
+          {
+            "item_id": "Z(c)",
+            "max_score": 4,
+            "score_distribution": {
+              "4": 4,
+              "0": 1
+            },
+            "mean_score_rate": 0.8,
+            "unknown_count": 0,
+            "varies": true,
+            "evidence_refs": [
+              "neutral-0/Z(c)",
+              "neutral-1/Z(c)",
+              "neutral-2/Z(c)",
+              "neutral-3/Z(c)",
+              "neutral-4/Z(c)"
+            ]
+          },
+          {
+            "item_id": "R",
+            "max_score": 6,
+            "score_distribution": {
+              "6": 4,
+              "0": 1
+            },
+            "mean_score_rate": 0.7999999999999999,
+            "unknown_count": 0,
+            "varies": true,
+            "evidence_refs": [
+              "neutral-0/R",
+              "neutral-1/R",
+              "neutral-2/R",
+              "neutral-3/R",
+              "neutral-4/R"
+            ]
+          }
+        ]
+      },
+      "coverage": {
+        "requested_records": 5,
+        "scored_records": 5,
+        "excluded_from_numeric_audit": [],
+        "granularity": "score-detail item; not internal M/A point",
+        "knowledge_mapping": "Unavailable. GradeOS knowledge_points here are item-score proxies, not validated topic mastery.",
+        "point_evidence_audit": "Not evaluated: no internal M/A ledger or literal evidence quotations supplied.",
+        "grade_bands": "GradeOS internal A>=85/B>=70/C>=60/D>=50/E<50; not official exam grades.",
+        "mastery_thresholds": "Class-report weak<0.60 and strong>=0.85 apply to item score rates only.",
+        "jev_error_taxonomy": "Not invoked; no classification was invented.",
+        "official_reference": "Not provided to this analysis or the reporting agent.",
+        "risk_calibration": "Not evaluated; statistical outliers are review prompts, not calibrated Risk."
+      }
+    }
+  },
+  {
+    "input": {
+      "result_set_hash": "neutral-fixture",
+      "cohort_context": {
+        "unique_answer_sources": 5
+      },
+      "rubric": {
+        "artifact": {
+          "items": [
+            {
+              "item_id": "Z(c)",
+              "criteria": "A justified comparison.",
+              "max_score": 4
+            },
+            {
+              "item_id": "R",
+              "criteria": "Follow the stated condition.",
+              "max_score": 6
+            }
+          ]
+        }
+      },
+      "records": [
+        {
+          "student_id": "neutral-0",
+          "grade": {
+            "total_score": 0,
+            "max_score": 10,
+            "items": [
+              {
+                "item_id": "Z(c)",
+                "max_score": 4,
+                "score": 0
+              },
+              {
+                "item_id": "R",
+                "max_score": 6,
+                "score": 0
+              }
+            ]
+          }
+        },
+        {
+          "student_id": "neutral-1",
+          "grade": {
+            "total_score": 5,
+            "max_score": 10,
+            "items": [
+              {
+                "item_id": "Z(c)",
+                "max_score": 4,
+                "score": 1
+              },
+              {
+                "item_id": "R",
+                "max_score": 6,
+                "score": 4
+              }
+            ]
+          }
+        },
+        {
+          "student_id": "neutral-2",
+          "grade": {
+            "total_score": 6,
+            "max_score": 10,
+            "items": [
+              {
+                "item_id": "Z(c)",
+                "max_score": 4,
+                "score": 2
+              },
+              {
+                "item_id": "R",
+                "max_score": 6,
+                "score": 4
+              }
+            ]
+          }
+        },
+        {
+          "student_id": "neutral-3",
+          "grade": {
+            "total_score": 7,
+            "max_score": 10,
+            "items": [
+              {
+                "item_id": "Z(c)",
+                "max_score": 4,
+                "score": 3
+              },
+              {
+                "item_id": "R",
+                "max_score": 6,
+                "score": 4
+              }
+            ]
+          }
+        },
+        {
+          "student_id": "neutral-4",
+          "grade": {
+            "total_score": 9,
+            "max_score": 10,
+            "items": [
+              {
+                "item_id": "Z(c)",
+                "max_score": 4,
+                "score": 4
+              },
+              {
+                "item_id": "R",
+                "max_score": 6,
+                "score": 5
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "expected": {
+      "result_set_hash": "neutral-fixture",
+      "cohort_context": {
+        "unique_answer_sources": 5
+      },
+      "gradeos_class_report": {
+        "total_students": 5,
+        "scored_student_count": 5,
+        "average_score": 5.4,
+        "average_percentage": 54.0,
+        "pass_rate": 0.6,
+        "score_distribution": {
+          "A": 1,
+          "B": 1,
+          "C": 1,
+          "D": 1,
+          "E": 1
+        },
+        "weak_points": [
+          {
+            "point_id": "",
+            "description": "Item Z(c): A justified comparison.",
+            "mastery_ratio": 0.5
+          },
+          {
+            "point_id": "",
+            "description": "Item R: Follow the stated condition.",
+            "mastery_ratio": 0.5666666666666667
+          }
+        ],
+        "strong_points": [],
+        "summary": "班级平均分 5.4，平均得分率 54.0%。 及格率 60.0%。 主要薄弱知识点：Item Z(c): A justified comparison.，Item R: Follow the stated condition.。"
+      },
+      "gradeos_global_logic_audit": {
+        "summary": "Global logic audit completed.",
+        "issue_count": 1,
+        "issues": [
+          {
+            "rule": "question_score_distribution_wide",
+            "severity": "info",
+            "question_id": "Z(c)",
+            "message": "Question Z(c) has a wide score ratio distribution across students.",
+            "score_ratio_range": 1.0
+          }
+        ],
+        "score_distribution": {
+          "student_count": 5,
+          "min_total_score": 0.0,
+          "max_total_score": 9.0,
+          "average_total_score": 5.4,
+          "average_max_score": 10.0,
+          "stddev_total_score": 3.006659275674582,
+          "outlier_count": 0
+        },
+        "question_audits": [
+          {
+            "question_id": "R",
+            "student_count": 5,
+            "score_ratio_range": 0.8333333333333334,
+            "missing_positive_evidence_count": 0,
+            "missing_student_count": 0,
+            "unknown_question_count": 0
+          },
+          {
+            "question_id": "Z(c)",
+            "student_count": 5,
+            "score_ratio_range": 1.0,
+            "missing_positive_evidence_count": 0,
+            "missing_student_count": 0,
+            "unknown_question_count": 0
+          }
+        ],
+        "point_audits": []
+      },
+      "gradeos_student_summaries": [
+        {
+          "student_id": "neutral-0",
+          "summary": {
+            "overall": "整体得分 0.0/10.0（0.0%）。 整体表现需重点提升。 薄弱点集中在：Item Z(c): A justified comparison.，Item R: Follow the stated condition.。",
+            "percentage": 0.0,
+            "knowledge_points": [
+              {
+                "question_id": "Z(c)",
+                "point_id": "",
+                "description": "Item Z(c): A justified comparison.",
+                "score": 0.0,
+                "max_score": 4.0,
+                "mastery_level": "weak",
+                "ratio": 0.0,
+                "evidence": "",
+                "rubric_reference": ""
+              },
+              {
+                "question_id": "R",
+                "point_id": "",
+                "description": "Item R: Follow the stated condition.",
+                "score": 0.0,
+                "max_score": 6.0,
+                "mastery_level": "weak",
+                "ratio": 0.0,
+                "evidence": "",
+                "rubric_reference": ""
+              }
+            ],
+            "improvement_suggestions": [
+              "建议复习：Item Z(c): A justified comparison.",
+              "建议复习：Item R: Follow the stated condition."
+            ]
+          }
+        },
+        {
+          "student_id": "neutral-1",
+          "summary": {
+            "overall": "整体得分 5.0/10.0（50.0%）。 整体表现需重点提升。 薄弱点集中在：Item Z(c): A justified comparison.。",
+            "percentage": 50.0,
+            "knowledge_points": [
+              {
+                "question_id": "Z(c)",
+                "point_id": "",
+                "description": "Item Z(c): A justified comparison.",
+                "score": 1.0,
+                "max_score": 4.0,
+                "mastery_level": "weak",
+                "ratio": 0.25,
+                "evidence": "",
+                "rubric_reference": ""
+              },
+              {
+                "question_id": "R",
+                "point_id": "",
+                "description": "Item R: Follow the stated condition.",
+                "score": 4.0,
+                "max_score": 6.0,
+                "mastery_level": "partial",
+                "ratio": 0.6666666666666666,
+                "evidence": "",
+                "rubric_reference": ""
+              }
+            ],
+            "improvement_suggestions": [
+              "建议复习：Item Z(c): A justified comparison."
+            ]
+          }
+        },
+        {
+          "student_id": "neutral-2",
+          "summary": {
+            "overall": "整体得分 6.0/10.0（60.0%）。 整体达到及格水平。 薄弱点集中在：Item Z(c): A justified comparison.。",
+            "percentage": 60.0,
+            "knowledge_points": [
+              {
+                "question_id": "Z(c)",
+                "point_id": "",
+                "description": "Item Z(c): A justified comparison.",
+                "score": 2.0,
+                "max_score": 4.0,
+                "mastery_level": "weak",
+                "ratio": 0.5,
+                "evidence": "",
+                "rubric_reference": ""
+              },
+              {
+                "question_id": "R",
+                "point_id": "",
+                "description": "Item R: Follow the stated condition.",
+                "score": 4.0,
+                "max_score": 6.0,
+                "mastery_level": "partial",
+                "ratio": 0.6666666666666666,
+                "evidence": "",
+                "rubric_reference": ""
+              }
+            ],
+            "improvement_suggestions": [
+              "建议复习：Item Z(c): A justified comparison."
+            ]
+          }
+        },
+        {
+          "student_id": "neutral-3",
+          "summary": {
+            "overall": "整体得分 7.0/10.0（70.0%）。 整体表现良好。 暂无明显薄弱点。",
+            "percentage": 70.0,
+            "knowledge_points": [
+              {
+                "question_id": "Z(c)",
+                "point_id": "",
+                "description": "Item Z(c): A justified comparison.",
+                "score": 3.0,
+                "max_score": 4.0,
+                "mastery_level": "partial",
+                "ratio": 0.75,
+                "evidence": "",
+                "rubric_reference": ""
+              },
+              {
+                "question_id": "R",
+                "point_id": "",
+                "description": "Item R: Follow the stated condition.",
+                "score": 4.0,
+                "max_score": 6.0,
+                "mastery_level": "partial",
+                "ratio": 0.6666666666666666,
+                "evidence": "",
+                "rubric_reference": ""
+              }
+            ],
+            "improvement_suggestions": [
+              "建议复习：Item R: Follow the stated condition."
+            ]
+          }
+        },
+        {
+          "student_id": "neutral-4",
+          "summary": {
+            "overall": "整体得分 9.0/10.0（90.0%）。 整体表现优秀。 暂无明显薄弱点。",
+            "percentage": 90.0,
+            "knowledge_points": [
+              {
+                "question_id": "Z(c)",
+                "point_id": "",
+                "description": "Item Z(c): A justified comparison.",
+                "score": 4.0,
+                "max_score": 4.0,
+                "mastery_level": "partial",
+                "ratio": 1.0,
+                "evidence": "",
+                "rubric_reference": ""
+              },
+              {
+                "question_id": "R",
+                "point_id": "",
+                "description": "Item R: Follow the stated condition.",
+                "score": 5.0,
+                "max_score": 6.0,
+                "mastery_level": "partial",
+                "ratio": 0.8333333333333334,
+                "evidence": "",
+                "rubric_reference": ""
+              }
+            ],
+            "improvement_suggestions": []
+          }
+        }
+      ],
+      "harness_repeatability": {
+        "score_distribution": {
+          "0": 1,
+          "5": 1,
+          "6": 1,
+          "7": 1,
+          "9": 1
+        },
+        "mean": 5.4,
+        "population_sd": 3.006659275674582,
+        "constant_items": 0,
+        "item_count": 2,
+        "items": [
+          {
+            "item_id": "Z(c)",
+            "max_score": 4,
+            "score_distribution": {
+              "0": 1,
+              "1": 1,
+              "2": 1,
+              "3": 1,
+              "4": 1
+            },
+            "mean_score_rate": 0.5,
+            "unknown_count": 0,
+            "varies": true,
+            "evidence_refs": [
+              "neutral-0/Z(c)",
+              "neutral-1/Z(c)",
+              "neutral-2/Z(c)",
+              "neutral-3/Z(c)",
+              "neutral-4/Z(c)"
+            ]
+          },
+          {
+            "item_id": "R",
+            "max_score": 6,
+            "score_distribution": {
+              "0": 1,
+              "4": 3,
+              "5": 1
+            },
+            "mean_score_rate": 0.5666666666666667,
+            "unknown_count": 0,
+            "varies": true,
+            "evidence_refs": [
+              "neutral-0/R",
+              "neutral-1/R",
+              "neutral-2/R",
+              "neutral-3/R",
+              "neutral-4/R"
+            ]
+          }
+        ]
+      },
+      "coverage": {
+        "requested_records": 5,
+        "scored_records": 5,
+        "excluded_from_numeric_audit": [],
+        "granularity": "score-detail item; not internal M/A point",
+        "knowledge_mapping": "Unavailable. GradeOS knowledge_points here are item-score proxies, not validated topic mastery.",
+        "point_evidence_audit": "Not evaluated: no internal M/A ledger or literal evidence quotations supplied.",
+        "grade_bands": "GradeOS internal A>=85/B>=70/C>=60/D>=50/E<50; not official exam grades.",
+        "mastery_thresholds": "Class-report weak<0.60 and strong>=0.85 apply to item score rates only.",
+        "jev_error_taxonomy": "Not invoked; no classification was invented.",
+        "official_reference": "Not provided to this analysis or the reporting agent.",
+        "risk_calibration": "Not evaluated; statistical outliers are review prompts, not calibrated Risk."
+      }
+    }
+  }
+]

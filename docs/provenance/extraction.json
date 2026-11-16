@@ -1,0 +1,844 @@
+{
+  "source_repository": "https://github.com/QWERTYjc/GradeOS-old",
+  "source_head": "dc5f1bedf55858b2d73dda7aa4bb2931e5931945",
+  "source_dirty": true,
+  "date": "2026-11-16",
+  "source_kind": "working-tree snapshot, including uncommitted Pi prototype",
+  "files": [
+    {
+      "path": ".gitignore",
+      "source_path": "experiments/pi-grading/.gitignore",
+      "sha256": "cd18f579c2864b5cb27331b37a1a8dfceeb350ad3803054597f840143f48746b"
+    },
+    {
+      "path": "COHORT.md",
+      "source_path": "experiments/pi-grading/COHORT.md",
+      "sha256": "c7f67f5021cf58cebbacfbaba00e9b1ea5bb3b1b854bbdab61a50feaf4dfd39e"
+    },
+    {
+      "path": "INTERACTION.md",
+      "source_path": "experiments/pi-grading/INTERACTION.md",
+      "sha256": "3d46db2d608bbf99c9f3a08cd69afba0a7989eca61ce4354a928cc2ba081b6fd"
+    },
+    {
+      "path": "LICENSE",
+      "source_path": "experiments/pi-grading/LICENSE",
+      "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
+    },
+    {
+      "path": "README.md",
+      "source_path": "experiments/pi-grading/README.md",
+      "sha256": "0bfe7a21343711111a9787839435fd6923d1e6e7637628b66ed1954138227991"
+    },
+    {
+      "path": "THIRD_PARTY_LICENSES/Pi-MIT.txt",
+      "source_path": "experiments/pi-grading/THIRD_PARTY_LICENSES/Pi-MIT.txt",
+      "sha256": "4f6a1985796db5225e3b1e59972bd47e07a27a0748427cb3d3c8fbf39f9311f0"
+    },
+    {
+      "path": "WORKSPACE.md",
+      "source_path": "experiments/pi-grading/WORKSPACE.md",
+      "sha256": "902c09fd68cd3179a5cc2d6f0ebedf3747f3af9fe5355aff9fc52d5d493d5b78"
+    },
+    {
+      "path": "annotation_pdf.py",
+      "source_path": "experiments/pi-grading/annotation_pdf.py",
+      "sha256": "389ec54ffbe09df5bf0ba66f650f8be416ae0176d79c1c149cfe858ba3b866a2"
+    },
+    {
+      "path": "design-qa.md",
+      "source_path": "experiments/pi-grading/design-qa.md",
+      "sha256": "8f1965dc2fd743940f2e6bd40a5422a017b2eb8b03355b0f7e3d404f81b3beae"
+    },
+    {
+      "path": "evaluate.py",
+      "source_path": "experiments/pi-grading/evaluate.py",
+      "sha256": "d630d4d9102a075ab36c227870315e7a3aa8734da54ab1a35f680df183a9c90e"
+    },
+    {
+      "path": "gradeos_analysis.py",
+      "source_path": "experiments/pi-grading/gradeos_analysis.py",
+      "sha256": "8366108ddd82b10284ca87a009575528e9de2764a07e75766a5b51107dbb113b"
+    },
+    {
+      "path": "native_pages.py",
+      "source_path": "experiments/pi-grading/native_pages.py",
+      "sha256": "e1ccf3554dbe1e4428618189bdd9f8ba8bb1ef7edd0571bf1ca6008efcfdf3c0"
+    },
+    {
+      "path": "package-lock.json",
+      "source_path": "experiments/pi-grading/package-lock.json",
+      "sha256": "3fa73916e65f6bf64663b9e3506683bcf4a063f0b76e1d7fffc0921faee278a3"
+    },
+    {
+      "path": "package.json",
+      "source_path": "experiments/pi-grading/package.json",
+      "sha256": "37018cf555ecc083194fe54c6c4c3d5c559d14e803d072c6cff015c2d4d73ff0"
+    },
+    {
+      "path": "prepare.py",
+      "source_path": "experiments/pi-grading/prepare.py",
+      "sha256": "8ef3bb50ec3d1d3b5eb5dfee9ec93bc2d577ed5d033f162149180414b4d8cb93"
+    },
+    {
+      "path": "scripts/run-reference-audit-probe.mjs",
+      "source_path": "experiments/pi-grading/scripts/run-reference-audit-probe.mjs",
+      "sha256": "a8dd4e4fb8358b4ce5664dd32a4db4e9d06ed1726c3f08cf896e425200221604"
+    },
+    {
+      "path": "src/check-report-capacity.mjs",
+      "source_path": "experiments/pi-grading/src/check-report-capacity.mjs",
+      "sha256": "b1d7163e6a5e7f10bfbea4fc36678f23219805464892d1bbd91fbf9a0d009534"
+    },
+    {
+      "path": "src/cohort-core.mjs",
+      "source_path": "experiments/pi-grading/src/cohort-core.mjs",
+      "sha256": "7e0cf5f83b52c4ada7075a15107b8b6ed68aecd4251b5ee3332b91d3c6c10bf6"
+    },
+    {
+      "path": "src/cohort-progress.mjs",
+      "source_path": "experiments/pi-grading/src/cohort-progress.mjs",
+      "sha256": "a9288acda5dfc06c6cb9c62ac7e1e119ecb5811baf07a0508b1367131c2da0e2"
+    },
+    {
+      "path": "src/cohort-reporting.mjs",
+      "source_path": "experiments/pi-grading/src/cohort-reporting.mjs",
+      "sha256": "459cceca2e0d005d80028b82866515aaa09efc9903937979d9c797e3b90d00be"
+    },
+    {
+      "path": "src/cohort-runtime.mjs",
+      "source_path": "experiments/pi-grading/src/cohort-runtime.mjs",
+      "sha256": "eb98f12a190638e39da7cb4756963d2964ccbf7f595cc124094d53cc9c688945"
+    },
+    {
+      "path": "src/compact-feedback.mjs",
+      "source_path": "experiments/pi-grading/src/compact-feedback.mjs",
+      "sha256": "4146fd9e87bc9eaeb9683d9575455698859fe750c7dbd9e0b0545928e789e8b0"
+    },
+    {
+      "path": "src/compact-points.mjs",
+      "source_path": "experiments/pi-grading/src/compact-points.mjs",
+      "sha256": "7608c9a527e588c2aa1805d6d558be00486040387c8747967e228752741b7403"
+    },
+    {
+      "path": "src/core.mjs",
+      "source_path": "experiments/pi-grading/src/core.mjs",
+      "sha256": "0c0394aab7b566c098221330752864d6dba8041d8bed0b2d04b11ef84f38a7c0"
+    },
+    {
+      "path": "src/exception-probe-fixture.mjs",
+      "source_path": "experiments/pi-grading/src/exception-probe-fixture.mjs",
+      "sha256": "5b72c0ff523fa775fd855da5e8fd08c5d146de50eaacf1d2b10b5aad1d6a31a0"
+    },
+    {
+      "path": "src/exception-review.mjs",
+      "source_path": "experiments/pi-grading/src/exception-review.mjs",
+      "sha256": "177c33908c3b6c72c1fc0c0453f5b49c5135e2df9f222810c684f8693ccb1c29"
+    },
+    {
+      "path": "src/experiment-models.mjs",
+      "source_path": "experiments/pi-grading/src/experiment-models.mjs",
+      "sha256": "50b0d174c80a1eb4a1197ad2cbe3609e147b437852744ebb57c9261d9394a5ff"
+    },
+    {
+      "path": "src/focused-feedback.mjs",
+      "source_path": "experiments/pi-grading/src/focused-feedback.mjs",
+      "sha256": "278b7fff2d257a1c6cf79301328b6f7e58f165e1fa8a3c13c86aad2764ebea61"
+    },
+    {
+      "path": "src/full-credit-reasons.mjs",
+      "source_path": "experiments/pi-grading/src/full-credit-reasons.mjs",
+      "sha256": "2f2f270659ae6b7371b56f82d241a771469365b06b9ee7692d2cc2f660f578b6"
+    },
+    {
+      "path": "src/independent-source-review.mjs",
+      "source_path": "experiments/pi-grading/src/independent-source-review.mjs",
+      "sha256": "566f1d7071550065c955586dc75ffe5628ba27e0b407983eabc1172c2b79ed60"
+    },
+    {
+      "path": "src/inline-annotations.mjs",
+      "source_path": "experiments/pi-grading/src/inline-annotations.mjs",
+      "sha256": "3cd40a47963c4b9dcfd4809ebde8e44bdf68637afacfb313d98cfdddcc93dd1d"
+    },
+    {
+      "path": "src/input-context-estimate.mjs",
+      "source_path": "experiments/pi-grading/src/input-context-estimate.mjs",
+      "sha256": "f25b510f440cbf2bce0a6ea1193dffa39944625e0d18e5c1a3b324e6dbe61620"
+    },
+    {
+      "path": "src/local-observations.mjs",
+      "source_path": "experiments/pi-grading/src/local-observations.mjs",
+      "sha256": "c8238a4382a19f0f4f1fa383bc74f3398f31c21d461fb535249dcd675a7c1f7d"
+    },
+    {
+      "path": "src/main-grading-review.mjs",
+      "source_path": "experiments/pi-grading/src/main-grading-review.mjs",
+      "sha256": "4e2fc14cae86329b9efbc2bf196fa89a2a626fac7724254b81e3e0ce90a0ee9b"
+    },
+    {
+      "path": "src/marking-guide.mjs",
+      "source_path": "experiments/pi-grading/src/marking-guide.mjs",
+      "sha256": "f185c8f7c3accb51d4fed77e3113c1cdd53afd646c8c341bb98109da728c621d"
+    },
+    {
+      "path": "src/ms-review.mjs",
+      "source_path": "experiments/pi-grading/src/ms-review.mjs",
+      "sha256": "add9a00c243d14bdf4a727525ab06ffe183c103c32df879faceb30d782fb86f9"
+    },
+    {
+      "path": "src/point-evidence.mjs",
+      "source_path": "experiments/pi-grading/src/point-evidence.mjs",
+      "sha256": "25d7d5d0fa38b8d686a30bb88c501655286dcac273407afc511c213c0662e043"
+    },
+    {
+      "path": "src/probe-exception-review.mjs",
+      "source_path": "experiments/pi-grading/src/probe-exception-review.mjs",
+      "sha256": "3537fcf00cdef54981189610846105fa50d21503a4b91f36539e30f886cd017d"
+    },
+    {
+      "path": "src/probe-point-evidence.mjs",
+      "source_path": "experiments/pi-grading/src/probe-point-evidence.mjs",
+      "sha256": "87e4854d33afd25bf7b4ee034459a74ff43a077dd968df6a83c3d5cc53e7e68f"
+    },
+    {
+      "path": "src/render-report.mjs",
+      "source_path": "experiments/pi-grading/src/render-report.mjs",
+      "sha256": "0ddf601eb09f9e1e3e8549094a5d2e28b11b455b356ddff5f42d6b015e55c07f"
+    },
+    {
+      "path": "src/report-context.mjs",
+      "source_path": "experiments/pi-grading/src/report-context.mjs",
+      "sha256": "b56a345f98f50039b1c3602acdf83c9ac51bf0773b16b17650db4413bd27d5ba"
+    },
+    {
+      "path": "src/report-markdown.mjs",
+      "source_path": "experiments/pi-grading/src/report-markdown.mjs",
+      "sha256": "f846eaab932ed7e4e8a309763d1b6fcb832a18078bda6afbfe45f6101a6f3a29"
+    },
+    {
+      "path": "src/results-store.mjs",
+      "source_path": "experiments/pi-grading/src/results-store.mjs",
+      "sha256": "447d250c7689e2c135423a9d9e5e1131ee1792718e402730652c293956b7d206"
+    },
+    {
+      "path": "src/rubric-contract.mjs",
+      "source_path": "experiments/pi-grading/src/rubric-contract.mjs",
+      "sha256": "c938ba042daff125cfbf8a6bc1773643b1484cd8af3a500c8d3a7e087d2bbd20"
+    },
+    {
+      "path": "src/run-cohort.mjs",
+      "source_path": "experiments/pi-grading/src/run-cohort.mjs",
+      "sha256": "7d68f3b2bea05cb3fab718b08a4d7255ac0d65c753584a0263e8ed1876da03c8"
+    },
+    {
+      "path": "src/run-report.mjs",
+      "source_path": "experiments/pi-grading/src/run-report.mjs",
+      "sha256": "9175d027e72a848068ad8137ab39734af06114a84ae386e01f49d0a027662518"
+    },
+    {
+      "path": "src/run-student-feedback.mjs",
+      "source_path": "experiments/pi-grading/src/run-student-feedback.mjs",
+      "sha256": "71b2ab304e6307027e42cfdc42aebf80afda554eb7d5515d9697ad6fd7fbc31c"
+    },
+    {
+      "path": "src/run.mjs",
+      "source_path": "experiments/pi-grading/src/run.mjs",
+      "sha256": "177acea0eda13e2f440dba6d3a07590078a8dc5fd494352f638d670455b571c2"
+    },
+    {
+      "path": "src/scripted-grading.mjs",
+      "source_path": "experiments/pi-grading/src/scripted-grading.mjs",
+      "sha256": "524237091b30632b0da14143d442800b41a588d72faaaad5e276649989a81447"
+    },
+    {
+      "path": "src/shared-evidence.mjs",
+      "source_path": "experiments/pi-grading/src/shared-evidence.mjs",
+      "sha256": "1d204098c1e4b3e2794efcd675240b50661754799abf6b3688ec563a1c2b05ee"
+    },
+    {
+      "path": "src/single-pass-grading.mjs",
+      "source_path": "experiments/pi-grading/src/single-pass-grading.mjs",
+      "sha256": "585289ce3046711654d19613d05b42f7a11020f96c86d90e083e8fed2afe1eb9"
+    },
+    {
+      "path": "src/source-bound-feedback.mjs",
+      "source_path": "experiments/pi-grading/src/source-bound-feedback.mjs",
+      "sha256": "c093009d37accc7c3510f9d9c4dbe9d25e90af95f7f66e3a0ff8dc9ce46e9c92"
+    },
+    {
+      "path": "src/source-bound-report.mjs",
+      "source_path": "experiments/pi-grading/src/source-bound-report.mjs",
+      "sha256": "a442705d65b3b4606dfc9fef4bf1a85ca0af0c8fd44dd71abcb1cf98ee40410f"
+    },
+    {
+      "path": "src/source-permissions.mjs",
+      "source_path": "experiments/pi-grading/src/source-permissions.mjs",
+      "sha256": "221b24b392c35c0b2b42257efd7d69f14b7ce27784efeb543a5252227c525c7e"
+    },
+    {
+      "path": "src/student-feedback.mjs",
+      "source_path": "experiments/pi-grading/src/student-feedback.mjs",
+      "sha256": "3ad5c88f17796dc4aace9764888ae61c75900ddf2622d23e025c5ccde0159823"
+    },
+    {
+      "path": "src/student-report-markdown.mjs",
+      "source_path": "experiments/pi-grading/src/student-report-markdown.mjs",
+      "sha256": "5756ed1cd485b2bedd757007ee094ad452f337e501cae512b781af7338d4515d"
+    },
+    {
+      "path": "src/submission-contract.mjs",
+      "source_path": "experiments/pi-grading/src/submission-contract.mjs",
+      "sha256": "075dbf120e0b87c0fbd442dcbcd48c8fdc93111f74f32b55745558c0d04b6d4a"
+    },
+    {
+      "path": "src/teacher-interaction.mjs",
+      "source_path": "experiments/pi-grading/src/teacher-interaction.mjs",
+      "sha256": "bff7d60d8d92fc1d942cffa916c2b016a41519fc5d2f7f5691cf338925651e84"
+    },
+    {
+      "path": "src/workspace/adaptive-agents.mjs",
+      "source_path": "experiments/pi-grading/src/workspace/adaptive-agents.mjs",
+      "sha256": "14a5a2694cb11ea71425155423219d8fb02806fe5db6f8db001afe5a6ff787e7"
+    },
+    {
+      "path": "src/workspace/adaptive-contract.mjs",
+      "source_path": "experiments/pi-grading/src/workspace/adaptive-contract.mjs",
+      "sha256": "4ee28393f10e4b0c0f181f3c9a74b31a9c3b029e28fa547438e09e5fc1b44f4e"
+    },
+    {
+      "path": "src/workspace/adaptive-runtime.mjs",
+      "source_path": "experiments/pi-grading/src/workspace/adaptive-runtime.mjs",
+      "sha256": "007ab85a6f5671cd218da178ed512776d0849189381423477b42f36155edecff"
+    },
+    {
+      "path": "src/workspace/agent.mjs",
+      "source_path": "experiments/pi-grading/src/workspace/agent.mjs",
+      "sha256": "1ca50fe469be30c8349263b22c05aa7595383c5a4d84b0cc42ce4e6d7a19f448"
+    },
+    {
+      "path": "src/workspace/annotation-export.mjs",
+      "source_path": "experiments/pi-grading/src/workspace/annotation-export.mjs",
+      "sha256": "30ed3adeb165362a3572e44feba01911f4983cc78c54c4e73e1e34dd071d3967"
+    },
+    {
+      "path": "src/workspace/annotation-tools.mjs",
+      "source_path": "experiments/pi-grading/src/workspace/annotation-tools.mjs",
+      "sha256": "ef10f825d17ba9cce616c18ac08019d28e65f9faa8cdc19e363196e08db5841c"
+    },
+    {
+      "path": "src/workspace/canvas-context.mjs",
+      "source_path": "experiments/pi-grading/src/workspace/canvas-context.mjs",
+      "sha256": "cd5bdab92e0a8da2279f92b9bb681ad2e5b153bfaaccc70f6f8f76ad041b55dd"
+    },
+    {
+      "path": "src/workspace/chat.mjs",
+      "source_path": "experiments/pi-grading/src/workspace/chat.mjs",
+      "sha256": "d602c786c1d643e51f2b123f71725099f4134ef4bf2483bece664523ccda28b4"
+    },
+    {
+      "path": "src/workspace/documents.mjs",
+      "source_path": "experiments/pi-grading/src/workspace/documents.mjs",
+      "sha256": "bb425d414f2cd6ced20d4c2dcecb7918e810da9ad10fffcb16163fef211d2b92"
+    },
+    {
+      "path": "src/workspace/editable-documents.mjs",
+      "source_path": "experiments/pi-grading/src/workspace/editable-documents.mjs",
+      "sha256": "e176ed98e5bc6294e888dfacdefdc21ef862ff2bb8fdfbab4ea130c45f5e0fb2"
+    },
+    {
+      "path": "src/workspace/grading-progress.mjs",
+      "source_path": "experiments/pi-grading/src/workspace/grading-progress.mjs",
+      "sha256": "45087f8433f47ca75c2653304bcf89385f8ca6d121e9a82a1d2bf3964e6be48e"
+    },
+    {
+      "path": "src/workspace/grading-research.mjs",
+      "source_path": "experiments/pi-grading/src/workspace/grading-research.mjs",
+      "sha256": "24d27b84c14efe8e0406b4cd9ff8fb2880eb2db1238a4d0df8fb9b7bd3ca7ea9"
+    },
+    {
+      "path": "src/workspace/reference-arithmetic.mjs",
+      "source_path": "experiments/pi-grading/src/workspace/reference-arithmetic.mjs",
+      "sha256": "3be6c72b95e549c19533f58799c48a374a47ee5b53e5e5cfda6eaa74d7f24947"
+    },
+    {
+      "path": "src/workspace/reference-audit.mjs",
+      "source_path": "experiments/pi-grading/src/workspace/reference-audit.mjs",
+      "sha256": "41de8833e06b19ca7dbf3b17fe11ab6b19bdcb5c5ad29a78722d706f180b83bb"
+    },
+    {
+      "path": "src/workspace/runner.mjs",
+      "source_path": "experiments/pi-grading/src/workspace/runner.mjs",
+      "sha256": "bd3495bdd4b964f47ce95acec2dc50dce6568b32e9b6db353ecca615360996b3"
+    },
+    {
+      "path": "src/workspace/server.mjs",
+      "source_path": "experiments/pi-grading/src/workspace/server.mjs",
+      "sha256": "a562df8a7b0c9116c10d96d1b0c7c5cb120aa72c75aaa946f6c7db5517439ddb"
+    },
+    {
+      "path": "src/workspace/store.mjs",
+      "source_path": "experiments/pi-grading/src/workspace/store.mjs",
+      "sha256": "9f346b85fd64358eb0f245d111a3efb947c8e19af4d2ad5aef184e6592cb422a"
+    },
+    {
+      "path": "student_images.py",
+      "source_path": "experiments/pi-grading/student_images.py",
+      "sha256": "37703f9ecb55ac0dc46fe32db8b2fd3646ffdaed45f35524b62269b1a9213057"
+    },
+    {
+      "path": "student_ocr.swift",
+      "source_path": "experiments/pi-grading/student_ocr.swift",
+      "sha256": "f550afc4cdf4d50ffddd1af98213b778139253e05c65d4d3cc3e27c90b644119"
+    },
+    {
+      "path": "test/annotation-export.test.mjs",
+      "source_path": "experiments/pi-grading/test/annotation-export.test.mjs",
+      "sha256": "cbcf6151de41f4e0ddbfc62a1fc55fa82ab57760878fdf0c92150e457ed6a27a"
+    },
+    {
+      "path": "test/cohort-progress.test.mjs",
+      "source_path": "experiments/pi-grading/test/cohort-progress.test.mjs",
+      "sha256": "5236c7c026997cf68f0bdc6b866c43f38c5a04ebac75808e558d265b8f1b587e"
+    },
+    {
+      "path": "test/cohort.test.mjs",
+      "source_path": "experiments/pi-grading/test/cohort.test.mjs",
+      "sha256": "bf5fde3b7cd9daaf8505f250e1d9f2e8616f2eb0ae21ff6bbcb11889d64a93ec"
+    },
+    {
+      "path": "test/compact-points.test.mjs",
+      "source_path": "experiments/pi-grading/test/compact-points.test.mjs",
+      "sha256": "539f7b70f93bc5ce11e4e843ddd6d1cd0bcba4d9d0dfff80a2d8518887802444"
+    },
+    {
+      "path": "test/exception-review.test.mjs",
+      "source_path": "experiments/pi-grading/test/exception-review.test.mjs",
+      "sha256": "ac419b4e7096f0220879393bc2cf5fb200d5dcb6b07460d9da79db8b7e0d5b61"
+    },
+    {
+      "path": "test/experiment-models.test.mjs",
+      "source_path": "experiments/pi-grading/test/experiment-models.test.mjs",
+      "sha256": "d72c7c1de7e4b30b69a482ff1bc4efb1b9beacec5aa335964b5e975cea9d59e0"
+    },
+    {
+      "path": "test/focused-feedback.test.mjs",
+      "source_path": "experiments/pi-grading/test/focused-feedback.test.mjs",
+      "sha256": "10b96477236bf745484f6b4bffbafca478c3d538edd615d32ba18597c4f8e0a8"
+    },
+    {
+      "path": "test/full-credit-reasons.test.mjs",
+      "source_path": "experiments/pi-grading/test/full-credit-reasons.test.mjs",
+      "sha256": "42cc166f4d004dbde5b6b0930bfe8bfa280d25b580e1f4f28169c061636993b9"
+    },
+    {
+      "path": "test/grading-corrections.test.mjs",
+      "source_path": "experiments/pi-grading/test/grading-corrections.test.mjs",
+      "sha256": "aab1434d25cdddc1980b17b103a103e67b381293bf9acc0893447e55d8a6fc4f"
+    },
+    {
+      "path": "test/harness.test.mjs",
+      "source_path": "experiments/pi-grading/test/harness.test.mjs",
+      "sha256": "61456693dd65a780db3ecd738415078d9f5298d32348e98ddd8b0cffaa283f7c"
+    },
+    {
+      "path": "test/independent-source-review.test.mjs",
+      "source_path": "experiments/pi-grading/test/independent-source-review.test.mjs",
+      "sha256": "8578af2aa2686d44e925dfe11ab92367a9ce52bcee3efc15c76d66de464063cc"
+    },
+    {
+      "path": "test/inline-annotations.test.mjs",
+      "source_path": "experiments/pi-grading/test/inline-annotations.test.mjs",
+      "sha256": "ccaf19fcd06ee9744e7eb477e5e0ca0fac8d3af417725cc0796783de575d5208"
+    },
+    {
+      "path": "test/input-context-estimate.test.mjs",
+      "source_path": "experiments/pi-grading/test/input-context-estimate.test.mjs",
+      "sha256": "80188b124a70f30d53e1f55a9d65c68358a3f78d37e8a3b21498fc2486b0983b"
+    },
+    {
+      "path": "test/local-observations.test.mjs",
+      "source_path": "experiments/pi-grading/test/local-observations.test.mjs",
+      "sha256": "1e6592b196b4054779fa5b0f8d1d176b2bcc66539e3c09da971a972b7953fa19"
+    },
+    {
+      "path": "test/main-grading-review.test.mjs",
+      "source_path": "experiments/pi-grading/test/main-grading-review.test.mjs",
+      "sha256": "34eaa736d3cfd55dc886f46d5015e8fdcedf5b880049e7618f8ee2ccfc3d8664"
+    },
+    {
+      "path": "test/point-evidence.test.mjs",
+      "source_path": "experiments/pi-grading/test/point-evidence.test.mjs",
+      "sha256": "60951424f387dfa383fab59fb27288b9efa77e814ee6fcbc349609770253876b"
+    },
+    {
+      "path": "test/reason-budget.test.mjs",
+      "source_path": "experiments/pi-grading/test/reason-budget.test.mjs",
+      "sha256": "88664a189980159b2e676af85dcefe23d1640051a9258582c52ac506da0946a8"
+    },
+    {
+      "path": "test/report-context.test.mjs",
+      "source_path": "experiments/pi-grading/test/report-context.test.mjs",
+      "sha256": "a6fc2d57a1fd1a78f910d61e4e96efe3eaabbc8e27570bfe7c8540373e527ff8"
+    },
+    {
+      "path": "test/report-presentation.test.mjs",
+      "source_path": "experiments/pi-grading/test/report-presentation.test.mjs",
+      "sha256": "d9ada9062e7f65bd78f290e2a17bf01ebcc76102e893439cb89fd03c229d6c16"
+    },
+    {
+      "path": "test/reporting.test.mjs",
+      "source_path": "experiments/pi-grading/test/reporting.test.mjs",
+      "sha256": "df5448dacc0484518843f00959a06ecf13184ed8b1170343148e70ca30f3cfd9"
+    },
+    {
+      "path": "test/rubric-review.test.mjs",
+      "source_path": "experiments/pi-grading/test/rubric-review.test.mjs",
+      "sha256": "10c04171ac0b92df8fbe1166866551a2edd49b15544d0083a42298a3656b7719"
+    },
+    {
+      "path": "test/scripted-grading.test.mjs",
+      "source_path": "experiments/pi-grading/test/scripted-grading.test.mjs",
+      "sha256": "e59d5f534eda82e6b711bd9ff30a2ead86f5242c4d1ce61b3f80f57f664fc01e"
+    },
+    {
+      "path": "test/shared-evidence.test.mjs",
+      "source_path": "experiments/pi-grading/test/shared-evidence.test.mjs",
+      "sha256": "15375343fbd3147adf29a55fde523569b1b6faf972c5e9412f101d2c10491214"
+    },
+    {
+      "path": "test/single-pass-grading.test.mjs",
+      "source_path": "experiments/pi-grading/test/single-pass-grading.test.mjs",
+      "sha256": "20061ba49da7877459e0e0dd7419cce05ba72896280ae5679fcf26b726ed28e3"
+    },
+    {
+      "path": "test/source-bound-reports.test.mjs",
+      "source_path": "experiments/pi-grading/test/source-bound-reports.test.mjs",
+      "sha256": "ba46f1836b4d6ab757a8b9e9339d7e46558b89e2e5d4037d2934f9b7cfc57c1b"
+    },
+    {
+      "path": "test/source-permissions.test.mjs",
+      "source_path": "experiments/pi-grading/test/source-permissions.test.mjs",
+      "sha256": "2174a756e82f0edf9aba5350e59d3b9ca34f5e01d5a7c78a864d0435316bfdb5"
+    },
+    {
+      "path": "test/student-feedback.test.mjs",
+      "source_path": "experiments/pi-grading/test/student-feedback.test.mjs",
+      "sha256": "8d92d8f5c13d43405d7c816fc771bc3d39c026c73ce4331d542c82b2a7288b9b"
+    },
+    {
+      "path": "test/student-self-review.test.mjs",
+      "source_path": "experiments/pi-grading/test/student-self-review.test.mjs",
+      "sha256": "d6a4be09a94bb81e4c5a36189c1182c7183576225a09e62669ee370bfe2bcdb9"
+    },
+    {
+      "path": "test/submission-contract.test.mjs",
+      "source_path": "experiments/pi-grading/test/submission-contract.test.mjs",
+      "sha256": "3161f6afc42ea036f94873f7bd34e500a0127d6cb4733b2f61b7b12454e666ea"
+    },
+    {
+      "path": "test/test_annotation_pdf.py",
+      "source_path": "experiments/pi-grading/test/test_annotation_pdf.py",
+      "sha256": "7ec5bec85307a80d24a2ce6f27f54b66ebf0aff8a7611da262e8b54f1f594ba6"
+    },
+    {
+      "path": "test/test_evaluator.py",
+      "source_path": "experiments/pi-grading/test/test_evaluator.py",
+      "sha256": "84a5386c1f52f435e01e9d0f53767e07c90fa82a6c413875970dbe0d6b71773b"
+    },
+    {
+      "path": "test/test_gradeos_analysis.py",
+      "source_path": "experiments/pi-grading/test/test_gradeos_analysis.py",
+      "sha256": "86c6ec0481d9f1d0f0609f65ba1ed4640c36602526af8ec3bfb6803761666e32"
+    },
+    {
+      "path": "test/test_native_pages.py",
+      "source_path": "experiments/pi-grading/test/test_native_pages.py",
+      "sha256": "78a7946c1a9f33d44b65e527745a1e25d6e79752dee4aa3d35f0a8a749c35eb0"
+    },
+    {
+      "path": "test/test_student_images.py",
+      "source_path": "experiments/pi-grading/test/test_student_images.py",
+      "sha256": "4d2e905cf5921e26496b5a8d9373861f6921b3d2bce5f93c4b23b1b94f83aca7"
+    },
+    {
+      "path": "test/visual-evidence.test.mjs",
+      "source_path": "experiments/pi-grading/test/visual-evidence.test.mjs",
+      "sha256": "4a14604338e35f7ad4a2d207aa67b1954e3ddd8e6dd5ca3415c870f62c639fdc"
+    },
+    {
+      "path": "test/workspace-adaptive.test.mjs",
+      "source_path": "experiments/pi-grading/test/workspace-adaptive.test.mjs",
+      "sha256": "4163cfaca5f3c17775c788499ced529e573c222ebfe5ccbd47dfac87f872206b"
+    },
+    {
+      "path": "test/workspace-canvas.test.mjs",
+      "source_path": "experiments/pi-grading/test/workspace-canvas.test.mjs",
+      "sha256": "d4516fde066084ca7246d161498c2c1872d51cdf2ff2a7bfa6b2c0c31ff9e465"
+    },
+    {
+      "path": "test/workspace-documents.test.mjs",
+      "source_path": "experiments/pi-grading/test/workspace-documents.test.mjs",
+      "sha256": "5cc418da0a626d4b2a48b0bc8d5751dab4153ba836350044f5bd26d34d175a98"
+    },
+    {
+      "path": "test/workspace-feedback.test.mjs",
+      "source_path": "experiments/pi-grading/test/workspace-feedback.test.mjs",
+      "sha256": "e84767478ffe02b0b4dfa2b30d7f57a6ff2ba5fe86027f70154f19937e5a6f8a"
+    },
+    {
+      "path": "test/workspace-grading-annotations.test.mjs",
+      "source_path": "experiments/pi-grading/test/workspace-grading-annotations.test.mjs",
+      "sha256": "fef953d550a20af3f84d55ced4e3d89158f030c8a57f0be8bf059722c18ed993"
+    },
+    {
+      "path": "test/workspace-http.test.mjs",
+      "source_path": "experiments/pi-grading/test/workspace-http.test.mjs",
+      "sha256": "e7d5c19cd4dae3494856f75528b170019183bb92ee1b23a4f426744c805981c8"
+    },
+    {
+      "path": "test/workspace-lasso.test.mjs",
+      "source_path": "experiments/pi-grading/test/workspace-lasso.test.mjs",
+      "sha256": "787fd5e76c5807b0737352d7968f96f71147fd2a7af560ef64c42dc2c003e6aa"
+    },
+    {
+      "path": "test/workspace-markdown.test.mjs",
+      "source_path": "experiments/pi-grading/test/workspace-markdown.test.mjs",
+      "sha256": "f186174e7e2aa95082455b9430f7884b46fe363f9d3f16fe0f96cd4543999103"
+    },
+    {
+      "path": "test/workspace-progress.test.mjs",
+      "source_path": "experiments/pi-grading/test/workspace-progress.test.mjs",
+      "sha256": "6437d70498b118003b3b8b025064a7e382694cb567d6f30cbc78c9b2a9125bba"
+    },
+    {
+      "path": "test/workspace-reference-audit.test.mjs",
+      "source_path": "experiments/pi-grading/test/workspace-reference-audit.test.mjs",
+      "sha256": "dd4aa21053c3b01e26899dba61dd4c817ae173827d70e4902d4689d730c89d87"
+    },
+    {
+      "path": "test/workspace-requirements.test.mjs",
+      "source_path": "experiments/pi-grading/test/workspace-requirements.test.mjs",
+      "sha256": "3c4a2f0024fea1fd960dedd583a79f56f124859f4b738b7d2dbbc24e57baf33c"
+    },
+    {
+      "path": "test/workspace-rubric-reuse.test.mjs",
+      "source_path": "experiments/pi-grading/test/workspace-rubric-reuse.test.mjs",
+      "sha256": "f8c0f681ded5a478daf8cd9a3b5be53fd127a1dc249025e86cdaf251dcebe962"
+    },
+    {
+      "path": "test/workspace-runner.test.mjs",
+      "source_path": "experiments/pi-grading/test/workspace-runner.test.mjs",
+      "sha256": "e8d50fe51b16f9223e48581290b20b3ed4d98c0fd9d601b547c10db6b67efcc9"
+    },
+    {
+      "path": "test/workspace-task-flow.test.mjs",
+      "source_path": "experiments/pi-grading/test/workspace-task-flow.test.mjs",
+      "sha256": "99622ab6d7d5cd39fb873c490e8e580af3ea93e8b56fa0f0ec7e8775476fc23f"
+    },
+    {
+      "path": "test/workspace.test.mjs",
+      "source_path": "experiments/pi-grading/test/workspace.test.mjs",
+      "sha256": "679957e0cac1c5ce2fc9874abfec0228aa5adf09fc688c815867cfcfffe1ff6e"
+    },
+    {
+      "path": "web/app.mjs",
+      "source_path": "experiments/pi-grading/web/app.mjs",
+      "sha256": "f5e5369ae340ece69462a0638b86c26990071746666113514d6b51db12c68228"
+    },
+    {
+      "path": "web/assets/icons/LICENSE",
+      "source_path": "experiments/pi-grading/web/assets/icons/LICENSE",
+      "sha256": "5d367fb0a07340571542eb4ee8eb1add62d37b71bad6786a57c2e9a86bf76c70"
+    },
+    {
+      "path": "web/assets/icons/arrow-up.svg",
+      "source_path": "experiments/pi-grading/web/assets/icons/arrow-up.svg",
+      "sha256": "bc3aa218fab9866ba67a1249c3805dc5982d89ba4932813baa50a0936362490a"
+    },
+    {
+      "path": "web/assets/icons/check.svg",
+      "source_path": "experiments/pi-grading/web/assets/icons/check.svg",
+      "sha256": "2b1c9e5ee15de5cb5955c812fd508aaa7e40d8c292f7f7bf69dd4c96413310a5"
+    },
+    {
+      "path": "web/assets/icons/close.svg",
+      "source_path": "experiments/pi-grading/web/assets/icons/close.svg",
+      "sha256": "6b0f21782903045fd11076bb94d136f2c8d0d21823779a0a434e196bf5ed5133"
+    },
+    {
+      "path": "web/assets/icons/column-width.svg",
+      "source_path": "experiments/pi-grading/web/assets/icons/column-width.svg",
+      "sha256": "68c6eb623f066ff764017d18828be67d9832e3b2c6aafe70d85a170f8b7a8180"
+    },
+    {
+      "path": "web/assets/icons/down.svg",
+      "source_path": "experiments/pi-grading/web/assets/icons/down.svg",
+      "sha256": "d0d218df6dd3ddbcd8586229a2e293fd351d32e74aaf8303a4a1b2a3d0fd6629"
+    },
+    {
+      "path": "web/assets/icons/edit.svg",
+      "source_path": "experiments/pi-grading/web/assets/icons/edit.svg",
+      "sha256": "9b6df882378fad134414695c1211f99abd21072c7126bcb5d9a1700572623566"
+    },
+    {
+      "path": "web/assets/icons/file-text.svg",
+      "source_path": "experiments/pi-grading/web/assets/icons/file-text.svg",
+      "sha256": "a0e8f15338331351197eaab2a4f7ab22bef9b0bda7d67afe2f2798548bedd0f2"
+    },
+    {
+      "path": "web/assets/icons/form.svg",
+      "source_path": "experiments/pi-grading/web/assets/icons/form.svg",
+      "sha256": "3252178015a55c0bd778c55bf4fc5f6e6edee2e02d441d88895c7422974589fc"
+    },
+    {
+      "path": "web/assets/icons/history.svg",
+      "source_path": "experiments/pi-grading/web/assets/icons/history.svg",
+      "sha256": "56eaeb3fe4db0bbde0c7c109ead9829476c022e5032019208ccadddae10806af"
+    },
+    {
+      "path": "web/assets/icons/left.svg",
+      "source_path": "experiments/pi-grading/web/assets/icons/left.svg",
+      "sha256": "ed744f23a0aa42b83bea342c836fc14497fa7e8fa8f59313621e4c49295dc145"
+    },
+    {
+      "path": "web/assets/icons/message.svg",
+      "source_path": "experiments/pi-grading/web/assets/icons/message.svg",
+      "sha256": "dce11c2a9239499203adfcc40515e82504a2fb6d00088ea90fa56b7896b6a061"
+    },
+    {
+      "path": "web/assets/icons/minus.svg",
+      "source_path": "experiments/pi-grading/web/assets/icons/minus.svg",
+      "sha256": "dcd76a13ecd92e802ca894baae0f5b64c973709315f191640154fede705fd610"
+    },
+    {
+      "path": "web/assets/icons/pause.svg",
+      "source_path": "experiments/pi-grading/web/assets/icons/pause.svg",
+      "sha256": "9904d69bdfd00af7cfb84829fb2f1a56bcf7d109b6ce77b404dbf9f7e7d8deac"
+    },
+    {
+      "path": "web/assets/icons/play.svg",
+      "source_path": "experiments/pi-grading/web/assets/icons/play.svg",
+      "sha256": "f2464439c6cff7cefe8930e80074fd5cea7f4fb86ad560609c90b71c173945fd"
+    },
+    {
+      "path": "web/assets/icons/plus.svg",
+      "source_path": "experiments/pi-grading/web/assets/icons/plus.svg",
+      "sha256": "c9211e6e17be18565e916cd1e582f195135055df32ef980e3aed43809f2ee2ce"
+    },
+    {
+      "path": "web/assets/icons/right.svg",
+      "source_path": "experiments/pi-grading/web/assets/icons/right.svg",
+      "sha256": "aa7e7303aac50337b093dcf310b342de67a0073d09dd81b575ca5e455ee38f04"
+    },
+    {
+      "path": "web/assets/icons/select.svg",
+      "source_path": "experiments/pi-grading/web/assets/icons/select.svg",
+      "sha256": "cd582e823f5132a80bff47641305893d2068b74ce9ba92baf90067845a6fc455"
+    },
+    {
+      "path": "web/assets/icons/stop.svg",
+      "source_path": "experiments/pi-grading/web/assets/icons/stop.svg",
+      "sha256": "f40af7a2d162f8b2ef4f6a0e9bae2c7aa14f1dc7542e852e1d67b2709aba9214"
+    },
+    {
+      "path": "web/assets/icons/swap.svg",
+      "source_path": "experiments/pi-grading/web/assets/icons/swap.svg",
+      "sha256": "bea44fb2a491a65a72f466b8504942b729886c0230720c9691a847d76dfedfb3"
+    },
+    {
+      "path": "web/assets/icons/undo.svg",
+      "source_path": "experiments/pi-grading/web/assets/icons/undo.svg",
+      "sha256": "ef836233c952e5f884e05af763285a6047be66c6705870cfafccd5d613270f1c"
+    },
+    {
+      "path": "web/assets/icons/upload.svg",
+      "source_path": "experiments/pi-grading/web/assets/icons/upload.svg",
+      "sha256": "00e36e61ce57ab6c5bd1f9e2bee5fc5be4a4aa21347490e81e4c50205434b741"
+    },
+    {
+      "path": "web/assets/icons/zoom-in.svg",
+      "source_path": "experiments/pi-grading/web/assets/icons/zoom-in.svg",
+      "sha256": "bc6e5d2a3f915bae23a9e83f54bce47779091c3f02be05dda9587f1d57d69d3a"
+    },
+    {
+      "path": "web/canvas-app.mjs",
+      "source_path": "experiments/pi-grading/web/canvas-app.mjs",
+      "sha256": "151920ef1b634b364243746c8922c39b2d9bfdea90bb82b425fae7766782b6de"
+    },
+    {
+      "path": "web/canvas-selection.mjs",
+      "source_path": "experiments/pi-grading/web/canvas-selection.mjs",
+      "sha256": "d9c52a82552a1ec52ed04f021cd745ce32beef819e5cd815e77764ccd1be1ebb"
+    },
+    {
+      "path": "web/canvas-view.mjs",
+      "source_path": "experiments/pi-grading/web/canvas-view.mjs",
+      "sha256": "e98b8ca0e922ed6971097d7e660352901ce93eef4fed1bd84954569a2c4202b3"
+    },
+    {
+      "path": "web/canvas.css",
+      "source_path": "experiments/pi-grading/web/canvas.css",
+      "sha256": "d170c75ab604dfba267349bd023c8b902a309c147a4215d64d0a24a29d0b1242"
+    },
+    {
+      "path": "web/document-editor.mjs",
+      "source_path": "experiments/pi-grading/web/document-editor.mjs",
+      "sha256": "103b5edceaa0b4c2032bb6a548511d77163e18ab3b91f0ce1edc8ec0e6b9e46c"
+    },
+    {
+      "path": "web/grading-annotations.mjs",
+      "source_path": "experiments/pi-grading/web/grading-annotations.mjs",
+      "sha256": "c8b80258da3fc61e0fcc3f71ad19d4b6575003c5b0913ea3a65c90c594d66d6a"
+    },
+    {
+      "path": "web/index.html",
+      "source_path": "experiments/pi-grading/web/index.html",
+      "sha256": "c9301a713795911fc4da9a393a81154f77d5a083f78eb6683488c2a06f55a6dd"
+    },
+    {
+      "path": "web/materials.mjs",
+      "source_path": "experiments/pi-grading/web/materials.mjs",
+      "sha256": "443ccab6b8b072bc08ec39e3c7d703277f6326724cb6c8d39ef400c43704877c"
+    },
+    {
+      "path": "web/review.mjs",
+      "source_path": "experiments/pi-grading/web/review.mjs",
+      "sha256": "3a9eb0e685eadb69206ceb5a7904ca022aa3eb8c8d6511d4b35a74c6e31b580d"
+    },
+    {
+      "path": "web/style.css",
+      "source_path": "experiments/pi-grading/web/style.css",
+      "sha256": "2d2d08a08a1e3630e1dda60c2860f061f2ec101ca0c7042a6f3c6c961c7743e0"
+    },
+    {
+      "path": "web/tasks.mjs",
+      "source_path": "experiments/pi-grading/web/tasks.mjs",
+      "sha256": "dc6f10e3c4628f5dfbee68255643004f72a244cea88e8fcc90cef8c6d647d578"
+    },
+    {
+      "path": "web/ui.mjs",
+      "source_path": "experiments/pi-grading/web/ui.mjs",
+      "sha256": "0514f36f8b0b4ac87d681a3a3c535951fdc66d3f83e154a139f7255bb6c3e8dc"
+    },
+    {
+      "path": "web/workspace-canvas.css",
+      "source_path": "experiments/pi-grading/web/workspace-canvas.css",
+      "sha256": "f6bf83bd5ca0e9c0d606c13ce8f67b2c04d3f3181851ca5d6e88ac60036cb859"
+    },
+    {
+      "path": "web/workspace-canvas.mjs",
+      "source_path": "experiments/pi-grading/web/workspace-canvas.mjs",
+      "sha256": "b559779732ac70b9d4b02108f7aac48a95214fa01352da4512615514608e59ca"
+    },
+    {
+      "path": "workspace_crop.py",
+      "source_path": "experiments/pi-grading/workspace_crop.py",
+      "sha256": "2a5c50713ea7a1921f2ee8ed2d7c1f032c25f67b1453decff19db05733f50fef"
+    },
+    {
+      "path": "workspace_documents.py",
+      "source_path": "experiments/pi-grading/workspace_documents.py",
+      "sha256": "b00a2b28b510761b3fb22f32f002c550b2d578c843c287a810ac82cbfe19ecfb"
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "source_path": "backend/artifacts/medly_eval/maths_agreement_173_fixed_20260930_v2",
+  "source_plan_sha256": "0b7fecd0e61ec46e01a8fabf5bc826c7f341d15194f2960b0fdbcf8207954af9",
+  "input_count": 173,
+  "scope": "Existing GradeOS mathematics 173-answer development selection; not an unseen holdout or the full Medly corpus.",
+  "reference_status": "No separately bound examiner label file was found in this snapshot. No model predictions imported as labels.",
+  "copied": "Original questions, mark schemes, answer scans, diagram assets; generated PDFs and model outputs excluded."
+}

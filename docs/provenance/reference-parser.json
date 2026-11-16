@@ -1,0 +1,11 @@
+{
+  "source": ".codex/skills/gradeos-m2-grading-test/scripts/m2_reference_analysis.py",
+  "source_sha256": "d78007bdb80c9e001e630cb55581a2c7969ee2851b876fa4021711d918ad30b9",
+  "symbols": [
+    "_as_float",
+    "_reference_result_summary",
+    "_sum_items_by_question",
+    "_normalize_question_id",
+    "_question_sort_key"
+  ]
+}

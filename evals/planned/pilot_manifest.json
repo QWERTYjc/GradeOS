@@ -1,0 +1,31 @@
+{
+  "version": "grading-generalization-v1",
+  "dataset_id": "gradeos-generalization-pilot-24",
+  "purpose": "Pilot inventory only. Cases become evaluable only after authorized inputs and adjudicated references are attached outside Git.",
+  "cases": [
+    {"case_id":"real-math-structured-01","status":"planned","source_type":"deidentified_real","subject":"math","task_family":"structured_work","scoring_semantics":"point","language":"zh-Hant","challenge_tags":["handwriting"]},
+    {"case_id":"real-math-structured-02","status":"planned","source_type":"deidentified_real","subject":"math","task_family":"proof_reasoning","scoring_semantics":"point","language":"en","challenge_tags":["symbol_ambiguity"]},
+    {"case_id":"real-physics-01","status":"planned","source_type":"deidentified_real","subject":"physics","task_family":"structured_work","scoring_semantics":"point","language":"en","challenge_tags":["units"]},
+    {"case_id":"real-chemistry-01","status":"planned","source_type":"deidentified_real","subject":"chemistry","task_family":"exact_short_answer","scoring_semantics":"point","language":"en","challenge_tags":["chemical_symbols"]},
+    {"case_id":"real-biology-01","status":"planned","source_type":"deidentified_real","subject":"biology","task_family":"open_response","scoring_semantics":"point","language":"zh-Hant","challenge_tags":["scientific_explanation"]},
+    {"case_id":"real-zh-essay-01","status":"planned","source_type":"deidentified_real","subject":"chinese_language","task_family":"essay","scoring_semantics":"band","language":"zh-Hant","challenge_tags":["long_response"]},
+    {"case_id":"real-en-essay-01","status":"planned","source_type":"deidentified_real","subject":"english_language","task_family":"essay","scoring_semantics":"holistic","language":"en","challenge_tags":["long_response"]},
+    {"case_id":"real-history-01","status":"planned","source_type":"deidentified_real","subject":"history","task_family":"open_response","scoring_semantics":"band","language":"zh-Hant","challenge_tags":["source_based"]},
+    {"case_id":"real-geography-01","status":"planned","source_type":"deidentified_real","subject":"geography","task_family":"open_response","scoring_semantics":"point","language":"en","challenge_tags":["data_response"]},
+    {"case_id":"real-objective-01","status":"planned","source_type":"deidentified_real","subject":"mixed","task_family":"choice","scoring_semantics":"point","language":"bilingual","challenge_tags":["multiple_choice"]},
+    {"case_id":"real-cross-page-01","status":"planned","source_type":"deidentified_real","subject":"math","task_family":"structured_work","scoring_semantics":"point","language":"zh-Hant","challenge_tags":["cross_page"]},
+    {"case_id":"real-low-contrast-01","status":"planned","source_type":"deidentified_real","subject":"science","task_family":"open_response","scoring_semantics":"holistic","language":"bilingual","challenge_tags":["low_contrast"]},
+    {"case_id":"public-math-proof-01","status":"planned","source_type":"open_licensed","subject":"math","task_family":"proof_reasoning","scoring_semantics":"point","language":"en","challenge_tags":["alternative_route"]},
+    {"case_id":"public-physics-diagram-01","status":"planned","source_type":"open_licensed","subject":"physics","task_family":"diagram","scoring_semantics":"point","language":"en","challenge_tags":["diagram"]},
+    {"case_id":"public-chemistry-numeric-01","status":"planned","source_type":"open_licensed","subject":"chemistry","task_family":"exact_short_answer","scoring_semantics":"point","language":"en","challenge_tags":["numeric_tolerance"]},
+    {"case_id":"public-biology-explain-01","status":"planned","source_type":"open_licensed","subject":"biology","task_family":"open_response","scoring_semantics":"holistic","language":"en","challenge_tags":["scientific_explanation"]},
+    {"case_id":"public-zh-humanities-01","status":"planned","source_type":"open_licensed","subject":"humanities","task_family":"open_response","scoring_semantics":"band","language":"zh-Hant","challenge_tags":["source_based"]},
+    {"case_id":"public-en-essay-01","status":"planned","source_type":"open_licensed","subject":"english_language","task_family":"essay","scoring_semantics":"band","language":"en","challenge_tags":["descriptor_boundary"]},
+    {"case_id":"synthetic-blank-01","status":"planned","source_type":"synthetic","subject":"mixed","task_family":"choice","scoring_semantics":"point","language":"en","challenge_tags":["blank"]},
+    {"case_id":"synthetic-injection-01","status":"planned","source_type":"synthetic","subject":"mixed","task_family":"exact_short_answer","scoring_semantics":"point","language":"en","challenge_tags":["prompt_injection"]},
+    {"case_id":"synthetic-out-of-order-01","status":"planned","source_type":"synthetic","subject":"math","task_family":"structured_work","scoring_semantics":"point","language":"zh-Hant","challenge_tags":["out_of_order","inserted_page"]},
+    {"case_id":"synthetic-french-essay-01","status":"planned","source_type":"synthetic","subject":"history","task_family":"essay","scoring_semantics":"holistic","language":"fr","challenge_tags":["unknown_language"]},
+    {"case_id":"synthetic-element-b-01","status":"planned","source_type":"synthetic","subject":"chemistry","task_family":"exact_short_answer","scoring_semantics":"point","language":"en","challenge_tags":["not_choice_letter"]},
+    {"case_id":"synthetic-long-rubric-01","status":"planned","source_type":"synthetic","subject":"humanities","task_family":"open_response","scoring_semantics":"band","language":"bilingual","challenge_tags":["long_rubric","tail_condition"]}
+  ]
+}

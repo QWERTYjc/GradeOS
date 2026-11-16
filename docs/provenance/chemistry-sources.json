@@ -1,0 +1,29 @@
+[
+  {
+    "url": "https://www.hkeaa.edu.hk/DocLibrary/HKDSE/Subject_Information/chem/2023-Sample-CHEM-Level3-E-3318.pdf",
+    "sha256": "c65f90cd87f213f3d3f6caa5db28b5862b835f4a8052659f554cc5c1b6e68371",
+    "provenance": "official HKEAA",
+    "original_source_path": "backend/artifacts/dse_chemistry_20261113/sources/2023-level3.pdf",
+    "asset_path": "evals/fixtures/chemistry/sources/2023-level3.pdf",
+    "source_collection_note": "HKEAA; private local evaluation, not committed or redistributed",
+    "rights": "HKEAA; evaluation materials, not licensed under the repository code license"
+  },
+  {
+    "url": "https://src.dselib.com/chem/eng/2023/ans.pdf",
+    "sha256": "d4aab705314ad97a6b6414661b99a1fa874cba1069a978a52b0bef39fc2a5fd1",
+    "provenance": "third-party mirror of HKEAA paper",
+    "original_source_path": "backend/artifacts/dse_chemistry_20261113/sources/2023-marking.pdf",
+    "asset_path": "evals/fixtures/chemistry/sources/2023-marking.pdf",
+    "source_collection_note": "HKEAA; private local evaluation, not committed or redistributed",
+    "rights": "HKEAA; evaluation materials, not licensed under the repository code license"
+  },
+  {
+    "url": "https://src.dselib.com/chem/eng/2023/p1.pdf",
+    "sha256": "0ec97bbf930fedf5fcaadf5b07c63bec2711b36c07f0aad6a4585249770da4e0",
+    "provenance": "third-party mirror of HKEAA paper",
+    "original_source_path": "backend/artifacts/dse_chemistry_20261113/sources/2023-question-paper1.pdf",
+    "asset_path": "evals/fixtures/chemistry/sources/2023-question-paper1.pdf",
+    "source_collection_note": "HKEAA; private local evaluation, not committed or redistributed",
+    "rights": "HKEAA; evaluation materials, not licensed under the repository code license"
+  }
+]
