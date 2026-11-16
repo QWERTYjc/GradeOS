@@ -104,6 +104,57 @@ test('legacy determinant notation renders rows while ragged grids and code remai
   assert.match(markdown('det[x^20,2;3,x_12]'), /<msup><mi>x<\/mi><mn>20<\/mn><\/msup>/);
 });
 
+test('escaped determinant bars render square grids without changing evidence or table columns', () => {
+  const source = String.raw`## Evidence
+First \|3 5;u+2 7\|, then \|a_12,2,3;4,b^20,6;7,8,c\|.
+| Criterion | Evidence | Score |
+|---|---|---:|
+| P/m | \|p q;r s\| | 1 / 2 |`;
+  const html = verifySources(source);
+  assert.equal((html.match(/<mtable/g) ?? []).length, 3);
+  assert.equal((html.match(/<mo fence="true" stretchy="true">∣/g) ?? []).length, 6);
+  assert.equal((html.match(/<mtr/g) ?? []).length, 7);
+  assert.equal((html.match(/<td[ >]/g) ?? []).length, 3);
+  assert.equal(formulas(html).length, 3);
+  assert.doesNotMatch(html, /report-math-fallback/);
+  assert.match(html, /<mn>12<\/mn>/); assert.match(html, /<mn>20<\/mn>/);
+  for (const source of [String.raw`\|a b;c\|`, String.raw`\|a b;c d;e f\|`, String.raw`\|one two;three four\|`, String.raw`\|x\|`, '`\\|a b;c d\\|`', String.raw`$\|a b;c d\|$`]) {
+    assert.doesNotMatch(verifySources(source), /<mtable/);
+  }
+});
+
+test('determinant fractions include only their bounded denominator and preserve neighboring prose', () => {
+  const source = String.raw`x=\|3 5;u+2 7\|/(4(3)^2-2(3)+9); y=det[a,b;c,d]/7. Continue reviewing.`;
+  const html = verifySources(source);
+  assert.equal((html.match(/<mfrac/g) ?? []).length, 2);
+  assert.equal((html.match(/<mtable/g) ?? []).length, 2);
+  assert.doesNotMatch(html, /report-math-fallback/);
+  assert.equal(formulas(html)[0].raw, String.raw`\|3 5;u+2 7\|/(4(3)^2-2(3)+9)`);
+  assert.equal(formulas(html)[1].raw, 'det[a,b;c,d]/7');
+  for (const suffix of ['/(a+b', '/(ordinary text)', '/3x', '/(a/b)', '/(a^(b+c))']) {
+    const raw = 'det[a,b;c,d]' + suffix;
+    assert.equal(formulas(verifySources(raw))[0].raw, 'det[a,b;c,d]');
+  }
+});
+
+test('bare power chains nest rightward while explicit grouping, scripts and source remain unchanged', () => {
+  const examples = [
+    ["g''=3t(4t^2-5)e^-t^2<0", "g''=3t(4t^2-5)e^{-t^{2}}<0"],
+    ['y=a^b^3', 'y=a^{b^{3}}'],
+    ['y=a^-b^-c^12', 'y=a^{-b^{-c^{12}}}'],
+    ['y=2^3^4', 'y=2^{3^{4}}'],
+    ['y=x_i^20+(a^b)^2', 'y=x_i^{20}+(a^b)^2'],
+  ];
+  for (const [source, expected] of examples) {
+    assert.equal(mathParts(source)[0].value, expected);
+    assert.doesNotMatch(verifySources(source), /report-math-fallback/);
+  }
+  assert.equal(mathParts('$a^{-b}{}^2$')[0].value, 'a^{-b}{}^2');
+  assert.match(verifySources('$a^b^2$'), /report-math-fallback/);
+  assert.match(verifySources('`y=a^-b^2`'), /<code>y=a\^-b\^2<\/code>/);
+  assert.match(verifySources('y=x' + '^2'.repeat(1000)), /report-math-fallback/);
+});
+
 test('source positions survive collapsed evidence, CRLF, code, links and token-like input', () => {
   const source = ['## Evidence', 'Prefix \uE0000\uE001 and `x_i` [MS](#ms-page-2)', '<details>', '<summary>完整依据</summary>', '', String.raw`$\frac{1}{2}$，$\frac{1}{2}$`, '', '</details>', '## Next', String.raw`\[x_i^2\]`].join('\r\n');
   const html = verifySources(source);
