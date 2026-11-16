@@ -156,11 +156,11 @@ export class DocumentEditor {
     }
   }
   focusTarget(target) {
-    this.act('edit'); this.input.focus();
+    this.act('edit'); this.input.focus({ preventScroll: true });
     if (target.revision === this.document?.revision) {
       this.input.setSelectionRange(target.start, target.end);
-      const lines = this.input.value.slice(0, target.start).split('\n').length;
-      this.input.scrollTop = Math.max(0, lines * 25 - this.input.clientHeight / 3);
+      this.input.scrollTop = Math.max(0, this.sourceTop(target.start) - this.input.clientHeight / 3);
+      this.onLayout();
     } else this.toast(`这条注释引用 v${target.revision}，原文已保留，可在版本中对照。`);
   }
   annotationTop(target) {
@@ -183,11 +183,20 @@ export class DocumentEditor {
     }
     const start = target.revision === this.document.revision ? target.start : this.input.value.indexOf(target.quote);
     if (start < 0) return 60;
+    return this.sourceTop(start) + this.input.getBoundingClientRect().top - parent.top - this.input.scrollTop;
+  }
+  sourceTop(start) {
     const mirror = document.createElement('div'), computed = getComputedStyle(this.input);
-    for (const property of ['font', 'line-height', 'letter-spacing', 'padding', 'box-sizing', 'white-space', 'word-break', 'overflow-wrap', 'tab-size']) mirror.style.setProperty(property, computed.getPropertyValue(property));
-    Object.assign(mirror.style, { position: 'absolute', visibility: 'hidden', width: `${this.input.clientWidth}px`, left: '0', top: '0', pointerEvents: 'none' });
-    mirror.textContent = this.input.value.slice(0, start); const marker = document.createElement('span'); marker.textContent = this.input.value[start] || '·'; mirror.append(marker); this.root.append(mirror);
-    const top = marker.getBoundingClientRect().top - mirror.getBoundingClientRect().top + this.input.getBoundingClientRect().top - parent.top - this.input.scrollTop;
+    for (const property of ['font', 'line-height', 'letter-spacing', 'word-spacing', 'padding', 'white-space', 'word-break', 'overflow-wrap', 'tab-size', 'text-indent', 'text-transform', 'text-align', 'direction']) mirror.style.setProperty(property, computed.getPropertyValue(property));
+    Object.assign(mirror.style, { position: 'absolute', visibility: 'hidden', boxSizing: 'border-box', width: `${this.input.clientWidth}px`, left: '0', top: '0', pointerEvents: 'none' });
+    mirror.textContent = this.input.value.slice(0, start);
+    const marker = document.createElement('span'), character = String.fromCodePoint(this.input.value.codePointAt(start) ?? 0x200b);
+    marker.textContent = character;
+    // Include the rest of this line so a word wrapping across the marker has
+    // the same layout as the textarea. Later lines cannot affect its position.
+    const lineEnd = this.input.value.indexOf('\n', start);
+    mirror.append(marker, this.input.value.slice(start + character.length, lineEnd < 0 ? undefined : lineEnd)); this.root.append(mirror);
+    const top = marker.getBoundingClientRect().top - mirror.getBoundingClientRect().top;
     mirror.remove(); return top;
   }
   destroy() { this.destroyed = true; clearTimeout(this.timer); this.reader.destroy(); this.menu.hidden = true; this.controls.remove(); document.removeEventListener('selectionchange', this.selectionChanged); }
