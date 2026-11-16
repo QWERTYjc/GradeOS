@@ -6,7 +6,7 @@
 现已包含原材料导入、答卷分组、评分标准确认、Pi 批改、任务暂停/取消、人工复核、
 可编辑文档和 PDF 批注导出。单个 Node 服务直接提供静态页面，状态保存到本地文件。
 
-- Node 直接依赖只有 `@earendil-works/pi-agent-core` 和 `@earendil-works/pi-ai`，均锁定 1.5.2。
+- Agent 依赖 `@earendil-works/pi-agent-core` 和 `@earendil-works/pi-ai`，均锁定 1.5.2；报告排版使用本地 KaTeX 0.16.45。
 - Python 只负责 PDF、图像和确定性报告：Pillow、pypdf、ReportLab；另需 Poppler。
 - 评测材料由使用者在本地准备。
 - 可独立克隆、安装和运行，无需启动旧 GradeOS 服务或数据库。
@@ -29,6 +29,12 @@ npm start
 打开 <http://127.0.0.1:4173>。Linux 可用
 `sudo apt-get install poppler-utils fonts-wqy-zenhei` 安装 PDF 工具和中文批注字体。
 不需要前端构建步骤。PDF 工具默认使用本仓库 `.venv`，也支持 `PI_WORKSPACE_PYTHON`。
+
+报告支持分章目录、题号搜索、阅读位置记忆和全文阅读。分数、上下标、积分与矩阵在
+浏览器内排版，兼容已有报告的 LaTeX 和可明确识别的 Unicode/OCR 公式。渲染使用
+原生 MathML，无 CDN、额外字体下载或模型调用；需要支持 MathML 的现代浏览器。
+无法可靠排版的公式保留原文。编辑与 Markdown 下载保留完整评分依据和原始公式，
+选中公式添加注释或引用时绑定原文位置。显示变化不会改写已有分数或复核状态。
 
 无 key 时可以导入、查看和整理材料，运行所有离线测试。调用模型前，将 `.env.example`
 复制为 `.env`，仅填入自己的 `OPENROUTER_API_KEY`；可选搜索使用 `BRAVE_SEARCH_API_KEY`。

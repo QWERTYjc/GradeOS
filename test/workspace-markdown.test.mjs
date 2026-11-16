@@ -33,3 +33,21 @@ test('report item links and heading ids follow the same punctuation and case rul
   assert.match(result, /href="#rii"/); assert.match(result, /id="rii"/);
   assert.match(result, /id="源-乙"/);
 });
+
+test('repeated headings retain unique anchors across collapsed evidence and later chapters', () => {
+  const result = markdown('## 相同标题\n\n<details>\n<summary>依据</summary>\n\n### 相同标题\n\n</details>\n\n## 相同标题\n\n#### point\n\n#### point');
+  const ids = [...result.matchAll(/ id="([^"]+)"/g)].map(match => match[1]);
+  assert.equal(ids.length, new Set(ids).size);
+  assert.deepEqual(ids.slice(0, 3), ['相同标题', '相同标题-1', '相同标题-2']);
+  assert.ok(ids.includes('point-1'));
+});
+
+test('fenced examples remain literal and do not become chapters, disclosures or executable HTML', () => {
+  for (const fence of ['```', '~~~~']) {
+    const result = markdown(`## 正文\n\n${fence}md\n## 不是章节\n<details>\n<summary>不是按钮</summary>\n<script>example()</script>\n${fence}\n\n## 附录`);
+    assert.equal((result.match(/<h2 /g) ?? []).length, 2);
+    assert.match(result, /<pre><code>## 不是章节/);
+    assert.match(result, /&lt;script&gt;example/);
+    assert.doesNotMatch(result, /<details|<script/);
+  }
+});
