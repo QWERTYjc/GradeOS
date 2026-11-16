@@ -1,4 +1,6 @@
-import { escape as e, icon, markdown } from './ui.mjs';
+import { escape as e, icon } from './ui.mjs';
+import { DocumentReader } from './document-reader.mjs';
+import { sourceSelection } from './report-math.mjs';
 
 const button = (action, text, title = '') => `<button type="button" data-editor="${action}" ${title ? `title="${e(title)}"` : ''}>${text}</button>`;
 export class DocumentEditor {
@@ -8,6 +10,7 @@ export class DocumentEditor {
     root.innerHTML = `<div class="editor-controls"><span class="save-state" role="status">读取中…</span>${button('toggle-mode', '编辑', '直接编辑这份文档')}<details class="editor-more"><summary aria-label="文档更多操作">${icon('down')}</summary><div>${button('versions', '历史版本')}<a class="document-download" href="/api/documents/${id}?download" title="下载 Markdown">导出 Markdown</a></div></details></div><div class="editor-notice" hidden></div><div class="editor-content"><textarea class="document-input" aria-label="编辑文档" spellcheck="false" placeholder="在这里直接编辑…" hidden></textarea><article class="document-preview prose"></article></div><div class="text-selection-menu" role="toolbar" aria-label="所选文字操作" hidden>${button('comment', `${icon('message')}添加注释`)}${button('reference', `${icon('plus')}添加到对话`)}</div><div class="version-popover" hidden></div>`;
     this.controls = root.querySelector('.editor-controls');
     this.input = root.querySelector('textarea'); this.preview = root.querySelector('.document-preview');
+    this.reader = new DocumentReader(this.preview, { id, onLayout });
     this.menu = root.querySelector('.text-selection-menu'); this.notice = root.querySelector('.editor-notice');
     this.input.addEventListener('input', () => { this.changed(); });
     this.input.addEventListener('keydown', event => {
@@ -21,6 +24,12 @@ export class DocumentEditor {
     document.addEventListener('selectionchange', this.selectionChanged);
     this.input.addEventListener('pointerup', event => this.selection(event));
     this.preview.addEventListener('pointerup', event => this.selection(event));
+    this.preview.addEventListener('copy', event => {
+      const selection = window.getSelection();
+      if (!selection?.rangeCount || ![...this.preview.querySelectorAll('[data-math-source]')].some(node => selection.getRangeAt(0).intersectsNode(node))) return;
+      const target = sourceSelection(this.preview, selection, this.input.value);
+      if (target && event.clipboardData) { event.preventDefault(); event.clipboardData.setData('text/plain', target.quote); }
+    });
     for (const node of [this.input, this.preview]) node.addEventListener('scroll', () => { this.menu.hidden = true; this.onLayout(); }, { passive: true });
     const handleClick = event => {
       const link = event.target.closest('a[href^="#ms-page-"]');
@@ -44,7 +53,7 @@ export class DocumentEditor {
       this.input.value = draft?.body ?? document.body;
       this.dirty = this.input.value !== document.body;
       if (this.dirty && draft.revision !== document.revision) this.conflict = true;
-      this.preview.innerHTML = markdown(this.input.value); this.updateStatus();
+      this.reader.render(this.input.value); this.updateStatus();
       this.onLayout();
       if (this.dirty && !this.conflict) this.schedule();
     } finally { this.loading = false; }
@@ -96,8 +105,9 @@ export class DocumentEditor {
     else {
       const selection = window.getSelection(), quote = selection?.toString();
       if (!quote || !this.preview.contains(selection.anchorNode) || !this.preview.contains(selection.focusNode)) return;
-      start = this.input.value.indexOf(quote); end = start + quote.length;
-      if (start < 0 || this.input.value.indexOf(quote, start + 1) >= 0) { this.toast('这段文字包含格式或重复内容，请切到“编辑”后选取。'); return; }
+      const target = sourceSelection(this.preview, selection, this.input.value);
+      if (!target) { this.selected = null; this.menu.hidden = true; this.toast('这段文字包含格式或重复内容，请切到“编辑”后选取。'); return; }
+      ({ start, end } = target);
     }
     if (start === end) { this.menu.hidden = true; return; }
     this.selected = { start, end, quote: this.input.value.slice(start, end) };
@@ -116,8 +126,8 @@ export class DocumentEditor {
   async act(action) {
     if (action === 'toggle-mode') action = this.input.hidden ? 'edit' : 'preview';
     if (action === 'edit' || action === 'preview') {
-      this.input.hidden = action !== 'edit'; this.preview.hidden = action !== 'preview'; this.menu.hidden = true;
-      if (action === 'preview') this.preview.innerHTML = markdown(this.input.value);
+      this.input.hidden = action !== 'edit'; this.preview.hidden = action !== 'preview'; this.reader.shell.hidden = action !== 'preview'; this.menu.hidden = true;
+      if (action === 'preview') this.reader.render(this.input.value);
       this.controls.querySelector('[data-editor="toggle-mode"]').textContent = action === 'edit' ? '完成编辑' : '编辑';
       this.controls.querySelector('[data-editor="toggle-mode"]').setAttribute('aria-pressed', String(action === 'edit'));
       if (action === 'edit') this.input.focus({ preventScroll: true });
@@ -157,10 +167,15 @@ export class DocumentEditor {
     if (!this.document) return 60;
     const parent = this.root.getBoundingClientRect();
     if (!this.preview.hidden) {
+      if (target.revision === this.document.revision) {
+        const formula = [...this.preview.querySelectorAll('[data-math-source]')].find(node => target.start >= Number(node.dataset.sourceStart) && target.start < Number(node.dataset.sourceEnd));
+        if (formula) return formula.getClientRects().length ? formula.getBoundingClientRect().top - parent.top : null;
+      }
       const walker = document.createTreeWalker(this.preview, NodeFilter.SHOW_TEXT);
       while (walker.nextNode()) {
         const start = walker.currentNode.textContent.indexOf(target.quote);
         if (start < 0) continue;
+        if (!walker.currentNode.parentElement.getClientRects().length) return null;
         const range = document.createRange(); range.setStart(walker.currentNode, start); range.setEnd(walker.currentNode, start + 1);
         return range.getBoundingClientRect().top - parent.top;
       }
@@ -175,5 +190,5 @@ export class DocumentEditor {
     const top = marker.getBoundingClientRect().top - mirror.getBoundingClientRect().top + this.input.getBoundingClientRect().top - parent.top - this.input.scrollTop;
     mirror.remove(); return top;
   }
-  destroy() { this.destroyed = true; clearTimeout(this.timer); this.menu.hidden = true; this.controls.remove(); document.removeEventListener('selectionchange', this.selectionChanged); }
+  destroy() { this.destroyed = true; clearTimeout(this.timer); this.reader.destroy(); this.menu.hidden = true; this.controls.remove(); document.removeEventListener('selectionchange', this.selectionChanged); }
 }

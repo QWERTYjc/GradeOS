@@ -264,5 +264,6 @@ test('HTTP document editing, exact-version export and annotation persistence wor
   assert.equal((await mutate('/api/execution-mode', { mode: 'review', revision: automatic.result.revision }, 'PATCH')).result.executionMode, 'review');
   const loaded = await new WorkspaceStore(directory).init(); assert.equal(loaded.state.annotations.length, 1); assert.equal(loaded.state.documents[0].history.length, 2);
   assert.equal(resolveReferences(loaded.state, [{ annotationId }])[0].comment, updated.result.annotation.text);
-  for (const file of ['workspace-canvas.mjs', 'workspace-canvas.css', 'document-editor.mjs']) assert.equal((await fetch(`${base}/${file}`)).status, 200);
+  assert.equal((await fetch(`${base}/node_modules/katex/package.json`)).status, 404);
+  for (const file of ['workspace-canvas.mjs', 'workspace-canvas.css', 'document-editor.mjs', 'document-reader.mjs', 'document-reader.css', 'report-math.mjs', 'math-text-parser.mjs', 'node_modules/katex/dist/katex.mjs']) assert.equal((await fetch(`${base}/${file}`)).status, 200);
 });
