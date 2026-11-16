@@ -545,6 +545,13 @@ const formatNamedOcrWords = (value)=>value.replace(OCR_NAMED_WORD_RE, (_match, p
         ].includes(name) ? `arc${name.slice(1)}` : name;
         return `${prefix}\\${command}`;
     });
+// Bare OCR powers associate to the right: a^-b^2 means a^{-(b^2)}.
+// Explicit TeX bypasses OCR formatting; its grouping remains authoritative.
+const groupBarePowerChains = (value)=>value.replace(/\^[+\-]?(?:\d+(?:\.\d+)?|[A-Za-z])(?:\^[+\-]?(?:\d+(?:\.\d+)?|[A-Za-z]))+/g,
+    (chain)=>{
+        const powers = chain.slice(1).split('^');
+        return powers.length > MAX_OCR_GROUP_DEPTH ? chain : `^{${powers.reduceRight((power, base)=>`${base}^{${power}}`)}}`;
+    });
 const formatOcrMath = (raw)=>{
     if (!isWithinOcrFormattingBudget(raw)) return null;
     const explicitCommands = [];
@@ -570,7 +577,7 @@ const formatOcrMath = (raw)=>{
         cursor = commandEnd;
     }
     const restoreCommands = (value)=>explicitCommands.reduce((restored, command, index)=>restored.replace(`\uE000${index}\uE001`, command), value);
-    const withFractions = formatSlashFractions(commandProtected);
+    const withFractions = formatSlashFractions(groupBarePowerChains(commandProtected));
     const withRoots = formatSquareRoots(withFractions);
     const withNamedWords = formatNamedOcrWords(withRoots);
     return restoreCommands(withNamedWords.replace(/([_^])\(([^()\n]+)\)/g, '$1{$2}').replace(/([_^])([+\-]?(?:\d+(?:\.\d+)?|[A-Za-z]))/g, (match, operator, script)=>script.length > 1 ? `${operator}{${script}}` : match).replace(/\s*(?:->|→)\s*/g, '\\to ').replace(/(^|[^A-Za-z\\])(arcsin|arccos|arctan|asin|acos|atan|sin|cos|tan|ln|log)([A-Za-z])(?=$|[^A-Za-z])/g, (_match, prefix, name, argument)=>{
