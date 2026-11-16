@@ -3,19 +3,37 @@ import { splitMathText } from './math-text-parser.mjs';
 
 const escape = value => String(value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
 
-// Older reports also use the unambiguous det[a,b;c,d] / det[a b;c d]
-// notation. Only rectangular, square grids of simple scalar expressions qualify.
+// Older reports use det[a,b;c,d], det[a b;c d] and Markdown-escaped
+// \|a b;c d\|. Only square grids of simple scalar expressions qualify.
 // TeX segments, code, ragged grids and prose are never reinterpreted as matrices.
 function determinantParts(source) {
   const parts = []; let cursor = 0;
-  for (const match of source.matchAll(/(?<![\w\\])det\[([^\[\]\n]{1,2048})\]/g)) {
-    const rows = match[1].split(';').map(row => row.trim().split(row.includes(',') ? /\s*,\s*/ : /\s+/));
+  for (const match of source.matchAll(/(?<![\w\\])(?:det\[([^\[\]\n]{1,2048})\]|\\\|([^|\n]{1,2048})\\\|)/g)) {
+    if (match.index < cursor) continue;
+    const rows = (match[1] ?? match[2]).split(';').map(row => row.trim().split(row.includes(',') ? /\s*,\s*/ : /\s+/));
     if (rows.length < 2 || rows.length > 12 || rows.some(row => row.length !== rows.length)) continue;
     if (rows.some(row => row.some(cell => !/^[+\-−]?(?:\d+(?:\.\d+)?|[A-Za-z])(?:[_^](?:\d+|[A-Za-z]))?(?:[+\-−*/](?:\d+(?:\.\d+)?|[A-Za-z])(?:[_^](?:\d+|[A-Za-z]))?)*$/.test(cell)))) continue;
     if (match.index > cursor) parts.push({ type: 'text', value: source.slice(cursor, match.index) });
-    const cellText = cell => cell.replace(/([_^])(\d+)/g, '$1{$2}');
-    parts.push({ type: 'math', raw: match[0], display: false, value: `\\begin{vmatrix}${rows.map(row => row.map(cellText).join(' & ')).join(' \\\\ ')}\\end{vmatrix}` });
+    const cellText = cell => cell.replace(/([_^])([+\-]?\d+)/g, '$1{$2}');
+    let value = `\\begin{vmatrix}${rows.map(row => row.map(cellText).join(' & ')).join(' \\\\ ')}\\end{vmatrix}`;
     cursor = match.index + match[0].length;
+    // Keep an adjacent, explicitly bounded scalar denominator with the grid.
+    // Unbalanced groups or non-scalar text stay outside the formula untouched.
+    if (source[cursor] === '/') {
+      const tail = source.slice(cursor + 1, cursor + 2049);
+      let end = 0, depth = 0;
+      if (tail[0] === '(') {
+        for (let i = 0; i < tail.length && tail[i] !== '\n'; i++) {
+          if (tail[i] === '(') depth++;
+          if (tail[i] === ')' && --depth === 0) { end = i + 1; break; }
+        }
+      } else end = /^\d+(?:\.\d+)?(?!\w|\.\d)/.exec(tail)?.[0].length ?? 0;
+      const denominator = tail.slice(tail[0] === '(' ? 1 : 0, tail[0] === '(' ? end - 1 : end);
+      if (end && /^[\dA-Za-z()+\-*.\s^_]+$/.test(denominator) && !/[A-Za-z]{2}|[_^](?![+\-]?\d+|[A-Za-z])/.test(denominator)) {
+        value = `\\dfrac{${value}}{${cellText(denominator)}}`; cursor += 1 + end;
+      }
+    }
+    parts.push({ type: 'math', raw: source.slice(match.index, cursor), display: false, value });
   }
   if (cursor < source.length) parts.push({ type: 'text', value: source.slice(cursor) });
   return parts;
@@ -69,11 +87,12 @@ export function renderMath(segment, start) {
   try {
     if (segment.value.length > 8192) throw Error('Formula too long');
     let blocked = false;
+    // Native MathML needs explicit stretching for fences such as the ∣ operator.
     const html = katex.renderToString(segment.value, {
       displayMode: segment.display, output: 'mathml', throwOnError: true,
       strict: code => code === 'unicodeTextInMathMode' ? 'ignore' : 'error',
       trust: () => { blocked = true; return false; }, maxExpand: 256, maxSize: 12, macros: {},
-    });
+    }).replace(/<mo fence="true">/g, '<mo fence="true" stretchy="true">');
     if (blocked) throw Error('Unsupported command');
     return `<span class="report-math${segment.display ? ' report-math-display' : ''}" ${source} title="${escape(segment.raw)}">${html}</span>`;
   } catch {
