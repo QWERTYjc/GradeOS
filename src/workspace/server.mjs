@@ -174,10 +174,11 @@ export async function createWorkspaceServer({ directory, port = 4173, model = 'o
         return send(res, 200, state());
       }
       fail(req.method === 'GET' || req.method === 'HEAD', '方法不支持。', 405);
-      const files = new Set(['index.html', 'app.mjs', 'ui.mjs', 'materials.mjs', 'tasks.mjs', 'review.mjs', 'style.css', 'canvas-app.mjs', 'canvas-view.mjs', 'canvas-selection.mjs', 'canvas.css', 'workspace-canvas.mjs', 'document-editor.mjs', 'workspace-canvas.css']);
+      const files = new Set(['index.html', 'app.mjs', 'ui.mjs', 'materials.mjs', 'tasks.mjs', 'review.mjs', 'style.css', 'canvas-app.mjs', 'canvas-view.mjs', 'canvas-selection.mjs', 'canvas.css', 'workspace-canvas.mjs', 'document-editor.mjs', 'workspace-canvas.css', 'document-reader.mjs', 'document-reader.css', 'report-math.mjs', 'math-text-parser.mjs']);
       const relative = url.pathname === '/' ? 'index.html' : url.pathname.slice(1);
       let file;
       if (relative === 'grading-annotations.mjs') file = join(experimentRoot, 'web/grading-annotations.mjs');
+      else if (relative === 'node_modules/katex/dist/katex.mjs') file = join(experimentRoot, relative);
       else if (files.has(relative)) file = join(experimentRoot, 'web', relative);
       else if (/^assets\/icons\/(down|swap|undo|upload|plus|edit|form|message|left|right|column-width|zoom-in|file-text|close|arrow-up|pause|play|stop|select|history|check|minus)\.svg$/.test(relative)) file = join(experimentRoot, 'web', relative);
       else throw Object.assign(new Error('页面不存在。'), { status: 404 });

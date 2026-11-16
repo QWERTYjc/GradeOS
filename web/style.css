@@ -26,3 +26,10 @@
 .form .research-option{display:flex;flex-direction:row;align-items:center;gap:10px}.form .research-option input{width:16px;height:16px;min-height:0;margin:0;flex:none}.material-upload,.upload-choices{flex-wrap:wrap}
 
 .record-uncertainties{margin:12px 0;padding:10px 12px;border-left:3px solid #bc873d;background:#fffaf1;color:#725223;font-size:12px;line-height:1.7}.record-uncertainties ul{margin:4px 0 0;padding-left:18px}.record-uncertainties li{white-space:pre-wrap;overflow-wrap:anywhere}
+/* Native MathML: one local KaTeX module, no CDN, font downloads or build step. */
+.report-math{display:inline-block;max-width:100%;vertical-align:middle;overflow-x:auto;overflow-y:hidden;white-space:nowrap;line-height:normal;padding:3px 1px;scrollbar-width:thin;scrollbar-color:#cfd8e4 transparent}
+.report-math math{font-family:math;font-size:1.08em;white-space:normal}
+.report-math-display{display:block;margin:16px 0;padding:16px 12px;border-left:2px solid #dbe5f1;background:#f8fafc;border-radius:2px 8px 8px 2px;overscroll-behavior-x:contain}
+.report-math-display math{margin:auto;width:max-content;max-width:none}
+.prose code.report-math-fallback,.report-math-fallback{white-space:pre-wrap;overflow-wrap:anywhere;color:inherit;background:#f5f6f8;font-size:.92em;border-bottom:1px dotted #9aa7b7}
+.report-table .report-math{vertical-align:middle}

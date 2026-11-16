@@ -206,7 +206,8 @@ export class WorkspaceCanvas {
     else {
       let previousTop = 40;
       for (const node of pins.children) {
-        const row = rows.find(row => row.id === node.dataset.pin), top = panel.editor?.annotationTop(row.target) ?? 60;
+        const row = rows.find(row => row.id === node.dataset.pin), top = panel.editor ? panel.editor.annotationTop(row.target) : 60;
+        if (top === null) { node.hidden = true; continue; }
         node.hidden = top < 35 || top > panel.root.querySelector('.pane-content').clientHeight - 30;
         node.style.top = `${Math.max(previousTop, top)}px`; previousTop = Math.max(previousTop, top) + 30;
       }
