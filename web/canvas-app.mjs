@@ -1,15 +1,18 @@
-import { uncertaintyView, escape as e, icon, button as b, iconButton as ib, pageById, latestReview, recordScoreText, recordBasisText } from './ui.mjs';
+import { escape as e, icon, button as b, iconButton as ib, pageById, recordScoreText } from './ui.mjs';
 import { materialView, equalGroups, movedGroups } from './materials.mjs';
 import { taskForm, taskFormInput, refreshTaskSetup, submitTaskSetup, artifactContent } from './tasks.mjs';
 import { documents, questions, pendingRecords, allRecords, header, toolbar, historyView, statusView, contextChips, questionView, workflowView } from './canvas-view.mjs';
 import { WorkspaceCanvas } from './workspace-canvas.mjs';
 import { findGradingAnnotation } from './grading-annotations.mjs';
+import { resultTasks, resultContext, resultsOutline, recordDetail, reviewForRecord } from './results-view.mjs';
 
 const app = document.querySelector('#app'), dialog = document.querySelector('#dialog'), uploadInput = document.querySelector('#upload-input');
 const ctx = { state: null, token: '', selected: new Set(), selections: [], references: [], mode: 'browse', zoom: 1, pageId: null,
   scopeAll: true,
   command: '', undo: [], sorting: false, materialRole: 'student', busy: false, historyOpen: false,
-  targetTaskId: null, questionId: null, peekQuestionId: null, seenQuestions: new Set(), uploadRole: 'student' };
+  targetTaskId: null, questionId: null, peekQuestionId: null, seenQuestions: new Set(), uploadRole: 'student',
+  resultsOpen: false, resultTaskId: null, resultGroupId: null, resultRecordId: null, resultFilter: 'all', resultReport: null, resultOutline: false };
+const reviewDrafts = new Map();
 let surface, modalTaskId, modalSelections = [], dragPage, toastTimer, pendingFiles, sending = false, reviewRecord = null;
 const toast = message => {
   const node = document.querySelector('#toast'); node.textContent = message; node.classList.add('visible');
@@ -44,12 +47,12 @@ async function request(path, body = {}, method = 'POST') {
   setState(result); render(); return result;
 }
 function frame() {
-  app.innerHTML = `<header class="canvas-header" id="workspace-header"></header><main class="canvas-workspace" aria-label="材料画布"><section class="workflow-stage" id="workflow-stage" aria-label="当前批改阶段" hidden></section><div class="canvas-toolbar" id="canvas-toolbar"></div><div class="multi-canvas" id="multi-canvas"></div></main>
-    <aside class="question-peek" id="question-peek" aria-label="待确认问题" hidden></aside><aside class="record-panel" id="record-panel" aria-label="评分审阅" hidden></aside>
+  app.innerHTML = `<header class="canvas-header" id="workspace-header"></header><main class="canvas-workspace" aria-label="材料画布"><section class="workflow-stage" id="workflow-stage" aria-label="当前批改阶段" hidden></section><div class="canvas-toolbar" id="canvas-toolbar"></div><div class="canvas-stage"><aside class="results-outline" id="results-outline" aria-label="批改题目导航" hidden></aside><div class="multi-canvas" id="multi-canvas"></div><aside class="record-panel" id="record-panel" aria-label="评分审阅" hidden></aside></div></main>
+    <aside class="question-peek" id="question-peek" aria-label="待确认问题" hidden></aside>
     <section class="conversation-panel" id="conversation-panel" aria-label="对话与处理过程" hidden></section><div class="collaboration-dock"><div class="agent-status" id="agent-status" aria-live="polite"></div>
       <form id="composer" class="composer"><div class="composer-context" id="composer-context"></div><textarea id="composer-input" name="goal" rows="1" maxlength="8000" aria-label="补充批改要求或提问" placeholder="补充批改要求，或针对材料提问…"></textarea>
       <div class="composer-toolbar"><div class="composer-left">${ib('upload', '添加材料', 'plus')}${b('scope', '全部答卷', { className: 'scope-button', attrs: 'id="scope-button" title="对话涉及的答卷"' })}</div><div class="composer-right"><span class="composer-agent">GradeOS <span>Pi</span></span><button type="submit" class="send-button" id="send-button" aria-label="发送要求">${icon('arrow-up')}</button></div></div></form></div>`;
-  surface = new WorkspaceCanvas(document.querySelector('#multi-canvas'), { request, getState: () => ctx.state, onReference: addReference, toast, onChange: renderWorkflow, onReview: showRecord });
+  surface = new WorkspaceCanvas(document.querySelector('#multi-canvas'), { request, getState: () => ctx.state, onReference: addReference, toast, onChange: renderWorkflow, onReview: id => showRecord(id).catch(error => toast(error.message)) });
   const input = document.querySelector('#composer-input');
   input.addEventListener('input', () => { ctx.command = input.value; resizeInput(); updateSend(); });
   input.addEventListener('keydown', event => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); if (!document.querySelector('#send-button').disabled) input.form.requestSubmit(); } });
@@ -82,6 +85,12 @@ function renderHistory() {
 function renderWorkflow() {
   const workflow = document.querySelector('#workflow-stage'); html(workflow, workflowView(ctx, surface?.panels || [])); workflow.hidden = !workflow.innerHTML;
 }
+function renderResults() {
+  app.classList.toggle('results-open', ctx.resultsOpen);
+  app.classList.toggle('result-outline-open', ctx.resultsOpen && ctx.resultOutline);
+  const outline = document.querySelector('#results-outline'); outline.hidden = !ctx.resultsOpen || Boolean(ctx.resultReport);
+  if (ctx.resultsOpen) html(outline, resultsOutline(ctx));
+}
 function alignmentGuide() {
   const guides = (ctx.state.documents || []).filter(doc => doc.proposalId && !doc.approvals.length && ctx.state.tasks.some(task => task.id === doc.taskId && task.status === 'running'));
   if (ctx.targetTaskId) return guides.find(doc => doc.taskId === ctx.targetTaskId);
@@ -92,6 +101,7 @@ function alignmentGuide() {
 function render() {
   if (!ctx.state) return;
   app.classList.toggle('conversation-open', ctx.historyOpen);
+  renderResults();
   html(document.querySelector('#workspace-header'), header(ctx));
   html(document.querySelector('#canvas-toolbar'), toolbar(ctx));
   const hasMaterials = ctx.state.pages.length > 0 || ctx.state.documents.length > 0;
@@ -101,7 +111,7 @@ function render() {
   renderWorkflow();
   html(document.querySelector('#composer-context'), contextChips(ctx));
   const aligning = alignmentGuide();
-  document.querySelector('#composer-input').placeholder = ctx.questionId ? '回复这一处问题…' : ctx.selections.length || ctx.references.length ? '针对引用内容，说说你的要求…' : aligning ? '和 Agent 对齐这次的评分要求…' : ctx.targetTaskId ? '给当前批改补充说明…' : '补充批改要求，或针对材料提问…';
+  document.querySelector('#composer-input').placeholder = ctx.questionId ? '回复这一处问题…' : ctx.recordContextId ? '针对这个评分点，写下你的问题…' : ctx.selections.length || ctx.references.length ? '针对引用内容，说说你的要求…' : aligning ? '和 Agent 对齐这次的评分要求…' : ctx.targetTaskId ? '给当前批改补充说明…' : ctx.resultsOpen ? '针对答卷提问，或圈选原卷补充说明…' : '补充批改要求，或针对材料提问…';
   document.querySelector('#scope-button').innerHTML = `${ctx.scopeAll ? '全部答卷' : ctx.selected.size ? `${ctx.selected.size} 份答卷` : '仅评分标准'}${icon('down')}`;
   html(document.querySelector('#agent-status'), statusView(ctx));
   const peek = document.querySelector('#question-peek'); html(peek, questionView(ctx)); peek.hidden = !peek.innerHTML;
@@ -127,15 +137,62 @@ function reviewList(taskId = null) {
   const records = taskId ? allRecords(ctx.state).filter(row => row.taskId === taskId) : pendingRecords(ctx.state);
   openDialog(taskId ? '评分记录' : '需要你确认', `${(ctx.state.documents || []).filter(doc => doc.proposalId && !doc.approvals.length && ctx.state.tasks.some(task => task.id === doc.taskId && task.status === 'running')).map(doc => `<div class="guide-inbox"><span>${e(doc.title)} · 等待编辑与确认</span>${b('open-document', '打开文档', { attrs: `data-id="${e(doc.id)}"` })}</div>`).join('')}${questions(ctx.state).map(question => `<button class="review-list-row" data-action="open-question" data-id="${e(question.id)}"><span class="amber-dot"></span><span>${e(question.question)}</span>${icon('right')}</button>`).join('')}${records.map(record => `<button class="review-list-row" data-action="open-record" data-id="${e(record.id)}"><span><strong>${e(record.student)} · ${e(record.itemId)} ${e(record.pointId || '')}</strong><small>${e(record.reason)}</small></span><span class="review-score">${e(recordScoreText(record))}${record.uncertainties?.length ? '<small>有待核实项</small>' : ''}</span>${icon('right')}</button>`).join('') || '<p class="muted">当前没有待处理评分。</p>'}${!taskId ? `<details class="all-records"><summary>全部评分记录</summary>${allRecords(ctx.state).map(record => b('open-record', `${e(record.student)} · ${e(record.itemId)} ${e(record.pointId || '')}`, { className: 'record-link', attrs: `data-id="${e(record.id)}"` })).join('')}</details>` : ''}`, 'review-drawer');
 }
-function showRecord(id) {
-  const record = allRecords(ctx.state).find(row => row.id === id); if (!record) return;
-  reviewRecord = record; closeDialog(); ctx.peekQuestionId = null;
-  showPage(record.studentPageIds[0] || record.schemePageIds[0]);
-  const review = latestReview(ctx.state, record.id), current = review ? review.score : record.score;
-  const panel = document.querySelector('#record-panel'); panel.hidden = false;
-  panel.innerHTML = `<div class="peek-heading"><strong>${e(record.student)} · ${e(record.itemId)} ${e(record.pointId || '')}</strong>${ib('close-record', '关闭审阅', 'close')}</div><p class="record-original">${record.disposition === 'feedback_only' ? '原始反馈' : '原始评分'} <strong>${e(recordScoreText(record))}</strong></p>${recordBasisText(record) ? `<p class="muted">${e(recordBasisText(record))}</p>` : ''}<p class="record-reason">${e(record.reason)}</p>${uncertaintyView(record)}${record.sourceText ? `<details><summary>评分条文</summary><p>${e(record.sourceText)}</p></details>` : ''}<div class="record-sources">${record.studentPageIds.map((id, index) => b('event-page', `答卷 · 第 ${pageById(ctx.state, id)?.sourcePage ?? index + 1} 页 ↗`, { attrs: `data-id="${e(id)}"`, className: 'source-link' })).join('')}${record.schemePageIds.map((id, index) => b('event-page', `MS · 第 ${pageById(ctx.state, id)?.sourcePage ?? index + 1} 页 ↗`, { attrs: `data-id="${e(id)}"`, className: 'source-link' })).join('')}${(record.questionPageIds || []).map(id => b('event-page', `题目 · 第 ${pageById(ctx.state, id)?.sourcePage} 页 ↗`, { attrs: `data-id="${e(id)}"`, className: 'source-link' })).join('')}</div>
-    <form id="canvas-review-form"><label>老师复核<select name="score"><option value="null" ${current === null ? 'selected' : ''}>${record.disposition === 'feedback_only' ? '确认定性反馈（不赋分）' : '保留待定'}</option>${record.allowedAwards.map(score => `<option value="${score}" ${score === current ? 'selected' : ''}>${score} 分</option>`).join('')}</select></label><textarea name="reason" rows="2" required maxlength="4000" aria-label="复核理由" placeholder="写下复核依据…">${e(review?.reason || '')}</textarea><div class="peek-actions">${b('ask-record', '问 GradeOS', { className: 'quiet' })}<button type="submit" class="primary">保存复核</button></div></form>${review ? '<p class="muted">已保存老师复核，原始评分保留。</p>' : ''}`;
+function captureReviewDraft() {
+  const form = document.querySelector('#canvas-review-form');
+  if (!reviewRecord || !form) return;
+  const data = new FormData(form), value = data.get('score');
+  const review = reviewForRecord(ctx.state, reviewRecord.taskId, reviewRecord), score = value === 'null' ? null : Number(value), reason = String(data.get('reason'));
+  const key = `${reviewRecord.taskId}:${reviewRecord.id}:${reviewRecord.originalHash}`;
+  if (score === (review ? review.score : reviewRecord.score) && reason === (review?.reason || '')) reviewDrafts.delete(key);
+  else reviewDrafts.set(key, { score, reason });
 }
+function closeRecord() {
+  captureReviewDraft(); document.querySelector('#record-panel').hidden = true; reviewRecord = null;
+}
+async function showRecord(id) {
+  const record = allRecords(ctx.state).find(row => row.id === id); if (!record) return;
+  captureReviewDraft(); reviewRecord = record; closeDialog(); ctx.peekQuestionId = null;
+  ctx.resultTaskId = record.taskId; ctx.resultGroupId = record.groupId; ctx.resultRecordId = id;
+  ctx.resultReport = null; ctx.resultOutline = false;
+  if (ctx.state.groups.some(group => group.id === record.groupId)) { ctx.scopeAll = false; ctx.selected = new Set([record.groupId]); }
+  if (ctx.recordContextId !== id) ctx.recordContextId = null;
+  const panel = document.querySelector('#record-panel'); panel.hidden = false;
+  panel.innerHTML = recordDetail(ctx, record, reviewDrafts.get(`${record.taskId}:${record.id}:${record.originalHash}`));
+  panel.scrollTop = 0; render();
+  document.querySelector('.result-question[aria-current]')?.scrollIntoView({ block: 'nearest' });
+  await surface.revealRecord(record, record.taskId);
+}
+async function openResults(taskId = null, groupId = null) {
+  closeDialog(); closeRecord(); ctx.resultsOpen = true; ctx.historyOpen = false;
+  ctx.resultTaskId = taskId || ctx.resultTaskId; ctx.resultGroupId = groupId || ctx.resultGroupId;
+  const { task, group, items } = resultContext(ctx);
+  if (!task) { ctx.resultsOpen = false; render(); return; }
+  ctx.resultTaskId = task.id; ctx.resultGroupId = group?.id; ctx.resultFilter = 'all'; ctx.resultReport = null;
+  render();
+  const record = task.records.find(row => row.id === ctx.resultRecordId && row.groupId === group?.id) || items[0]?.records[0];
+  if (record) await showRecord(record.id);
+  else {
+    ctx.resultRecordId = null;
+    const artifact = task.artifacts.find(row => row.groupId === group?.id) || task.artifacts.find(row => !row.groupId);
+    if (artifact) { await openArtifact(task.id, artifact.id, false); ctx.resultReport = artifact.id; }
+    else if (group?.pageIds[0]) await surface.showSource(group.pageIds[0]);
+    render();
+  }
+}
+async function stepResult(delta) {
+  const { filtered } = resultContext(ctx);
+  const index = filtered.findIndex(item => item.records.some(row => row.id === ctx.resultRecordId));
+  if (filtered[index + delta]) await showRecord(filtered[index + delta].records[0].id);
+}
+async function openArtifact(taskId, artifactId, beside = true) {
+  const artifact = ctx.state.tasks.find(task => task.id === taskId)?.artifacts.find(row => row.id === artifactId);
+  if (!artifact) return;
+  if (typeof artifact.body !== 'string') { openDialog(artifact.title, artifactContent(artifact), 'artifact-dialog'); return; }
+  const result = await request('/api/documents', { artifactId, taskId });
+  ctx.historyOpen = false; closeRecord();
+  await surface.showDocument(result.document.id, beside && surface.panels.length < 2); render();
+}
+
 async function upload(files) {
   if (!files?.length || ctx.busy) return;
   ctx.busy = true; updateSend(); renderWorkflow(); const role = ctx.uploadRole;
@@ -169,7 +226,16 @@ async function submitMessage() {
 }
 const actions = {
   'close-dialog': closeDialog, materials: openMaterials, scope: openMaterials,
-  history: () => { ctx.historyOpen = !ctx.historyOpen; render(); },
+  history: () => { ctx.historyOpen = !ctx.historyOpen; if (ctx.historyOpen) closeRecord(); render(); },
+  results: element => openResults(element.dataset.id),
+  'leave-results': () => { closeRecord(); ctx.resultsOpen = false; ctx.resultOutline = false; render(); },
+  'result-outline': () => { ctx.resultOutline = !ctx.resultOutline; if (ctx.resultOutline) closeRecord(); renderResults(); renderWorkflow(); },
+  'result-filter': async element => { ctx.resultFilter = element.dataset.id; const { filtered } = resultContext(ctx); renderResults(); if (filtered.length) await showRecord((filtered.find(item => item.records.some(row => row.id === ctx.resultRecordId)) || filtered[0]).records[0].id); else closeRecord(); },
+  'result-question': element => { const item = resultContext(ctx).items.find(row => row.id === element.dataset.id); if (item) return showRecord(item.records[0].id); },
+  'result-source': () => { const { task, items } = resultContext(ctx); const record = task?.records.find(row => row.id === ctx.resultRecordId) || items[0]?.records[0]; if (record) return showRecord(record.id); },
+  'result-report': async element => { await openArtifact(element.dataset.task, element.dataset.id, false); ctx.resultReport = element.dataset.id; render(); },
+  'record-source': element => surface.showSource(element.dataset.id),
+  'previous-result': () => stepResult(-1), 'next-result': () => stepResult(1),
   upload: () => openDialog('添加材料', `<div class="upload-choices">${b('upload-student', '上传答卷', { className: 'primary', symbol: 'upload' })}${b('upload-scheme', '上传评分标准', { className: 'outline', symbol: 'file-text' })}${b('upload-question', '上传题目', { className: 'outline', symbol: 'file-text' })}${b('upload-document', '导入文本文件', { className: 'quiet' })}${b('new-document', '新建文档', { className: 'quiet' })}</div><p class="muted">PDF、PNG 或 JPEG · 单个文件最多 40 MB</p>`),
   'upload-student': () => { ctx.uploadRole = 'student'; uploadInput.accept = '.pdf,.png,.jpg,.jpeg'; return pendingFiles ? upload(pendingFiles) : uploadInput.click(); },
   'upload-scheme': () => { ctx.uploadRole = 'scheme'; uploadInput.accept = '.pdf,.png,.jpg,.jpeg'; return pendingFiles ? upload(pendingFiles) : uploadInput.click(); },
@@ -205,18 +271,21 @@ const actions = {
   'cancel-task': element => request(`/api/tasks/${element.dataset.id}/cancel`), 'stop-chat': () => request('/api/chat/cancel'),
   'target-task': element => { ctx.targetTaskId = element.dataset.id; ctx.questionId = null; ctx.historyOpen = false; render(); document.querySelector('#composer-input').focus(); },
   'clear-target': () => { ctx.targetTaskId = null; ctx.questionId = null; render(); },
-  reviews: () => reviewList(), 'task-reviews': element => reviewList(element.dataset.id),
+  'clear-record-context': () => { ctx.recordContextId = null; render(); },
+  reviews: () => reviewList(), 'task-reviews': element => openResults(element.dataset.id),
   'open-question': element => { closeDialog(); ctx.peekQuestionId = element.dataset.id; const question = questions(ctx.state).find(row => row.id === element.dataset.id); showPage(question.references.find(ref => ref.pageId)?.pageId); render(); },
   'dismiss-question': () => { ctx.peekQuestionId = null; render(); },
   'reply-question': element => { const question = questions(ctx.state).find(row => row.id === element.dataset.id); ctx.questionId = question.id; ctx.targetTaskId = question.taskId; ctx.historyOpen = false; render(); document.querySelector('#composer-input').focus(); },
-  'open-record': element => showRecord(element.dataset.id), 'close-record': () => { document.querySelector('#record-panel').hidden = true; reviewRecord = null; },
-  'ask-record': () => { ctx.recordContextId = reviewRecord.id; ctx.scopeAll = false; ctx.selected = new Set([reviewRecord.groupId]); ctx.targetTaskId = null; ctx.questionId = null; document.querySelector('#record-panel').hidden = true; render(); document.querySelector('#composer-input').focus(); },
+  'open-record': element => showRecord(element.dataset.id), 'close-record': closeRecord,
+  'ask-record': () => { ctx.recordContextId = reviewRecord.id; ctx.scopeAll = false; ctx.selected = new Set([reviewRecord.groupId]); ctx.targetTaskId = null; ctx.questionId = null; closeRecord(); render(); document.querySelector('#composer-input').focus(); },
   'complete-review': element => request(`/api/tasks/${element.dataset.id}/review-complete`),
-  artifact: async element => { const artifact = ctx.state.tasks.find(task => task.id === element.dataset.task)?.artifacts.find(row => row.id === element.dataset.id); if (!artifact) return; if (typeof artifact.body === 'string') { const result = await request('/api/documents', { artifactId: artifact.id, taskId: element.dataset.task }); ctx.historyOpen = false; await surface.showDocument(result.document.id, surface.panels.length < 2); render(); } else openDialog(artifact.title, artifactContent(artifact), 'artifact-dialog'); },
+  artifact: element => openArtifact(element.dataset.task, element.dataset.id),
 };
 function pageStep(step) { const doc = documents(ctx.state).find(doc => doc.pageIds.includes(ctx.pageId)); if (doc) showPage(doc.pageIds[doc.pageIds.indexOf(ctx.pageId) + step]); }
 document.addEventListener('click', event => { const element = event.target.closest('[data-action]'); if (element && !element.disabled && actions[element.dataset.action]) Promise.resolve().then(() => actions[element.dataset.action](element)).catch(error => toast(error.message)); });
 document.addEventListener('change', event => {
+  if (event.target.id === 'result-task') openResults(event.target.value).catch(error => toast(error.message));
+  if (event.target.id === 'result-group') openResults(ctx.resultTaskId, event.target.value).catch(error => toast(error.message));
   if (event.target.closest('#task-form')) refreshTaskSetup(event.target.closest('#task-form'), ctx.state);
   if (event.target.id === 'document-picker') showPage(documents(ctx.state).find(doc => doc.id === event.target.value)?.pageIds[0]);
   if (event.target.matches('[data-group]')) { ctx.scopeAll = false; const id = event.target.dataset.group; event.target.checked ? ctx.selected.add(id) : ctx.selected.delete(id); render(); }
@@ -240,7 +309,16 @@ document.addEventListener('submit', event => {
         closeDialog(); ctx.historyOpen = !startGrading; ctx.targetTaskId = null; render();
       } finally { delete form.dataset.submitting; if (form.isConnected) refreshTaskSetup(form, ctx.state); }
     }
-    if (form.id === 'canvas-review-form') { const value = data.get('score'); await request('/api/reviews', { taskId: reviewRecord.taskId, recordId: reviewRecord.id, originalHash: reviewRecord.originalHash, score: value === 'null' ? null : Number(value), reason: String(data.get('reason')) }); showRecord(reviewRecord.id); toast('复核已保存，原始评分保留。'); }
+    if (form.id === 'canvas-review-form') {
+      const value = data.get('score'), record = reviewRecord;
+      form.dataset.submitting = 'true'; form.querySelector('[type="submit"]').disabled = true;
+      try {
+        await request('/api/reviews', { taskId: record.taskId, recordId: record.id, originalHash: record.originalHash, score: value === 'null' ? null : Number(value), reason: String(data.get('reason')) });
+        reviewDrafts.delete(`${record.taskId}:${record.id}:${record.originalHash}`);
+        if (reviewRecord?.id === record.id) { reviewRecord = null; await showRecord(record.id); }
+        toast('复核已保存，原始评分保留。');
+      } finally { delete form.dataset.submitting; form.querySelector('[type="submit"]').disabled = false; }
+    }
   }).catch(error => toast(error.message));
 });
 document.addEventListener('dragstart', event => { const tile = event.target.closest('[data-page-id]'); if (tile && ctx.sorting) { dragPage = tile.dataset.pageId; event.dataTransfer.setData('text/plain', dragPage); } });
@@ -251,4 +329,7 @@ for (const [name, delta] of [['page-left', -1], ['page-right', 1]]) actions[name
 let polling = false;
 window.addEventListener('resize', () => { if (ctx.state && document.querySelector('#composer')) render(); });
 setInterval(async () => { if (document.hidden || polling || sending || ctx.busy) return; polling = true; try { const before = JSON.stringify([ctx.state?.revision, ctx.state?.chat, ctx.state?.liveTasks]); await refresh(); if (JSON.stringify([ctx.state.revision, ctx.state.chat, ctx.state.liveTasks]) !== before) render(); } catch { /* Keep the canvas and unsent input intact during reconnects. */ } finally { polling = false; } }, 900);
-try { await refresh(); frame(); render(); } catch (error) { app.innerHTML = `<section class="empty"><h1>工作区暂时无法打开</h1><p>${e(error.message)}</p><a href="/">重新加载</a></section>`; }
+try {
+  await refresh(); frame(); render();
+  if (resultTasks(ctx.state).length && !ctx.state.tasks.some(task => ['running', 'draft'].includes(task.status))) await openResults();
+} catch (error) { app.innerHTML = `<section class="empty"><h1>工作区暂时无法打开</h1><p>${e(error.message)}</p><a href="/">重新加载</a></section>`; }
