@@ -47,7 +47,8 @@ export function gradingAnnotations(state, taskId, groupId, pageId = null) {
     const scoreLabel = recordScoreText(record, score);
     const originalScoreLabel = recordScoreText(record);
     const basisLabel = recordBasisText(record);
-    const tone = score == null || (record.reviewRequired && !review) ? 'review' : record.maximum != null && score === record.maximum ? 'credit' : 'deduction';
+    const pendingReview = Boolean(record.reviewRequired && !review);
+    const tone = score == null || pendingReview ? 'review' : record.maximum != null && score === record.maximum ? 'credit' : 'deduction';
     const hasIssue = Array.isArray(record.uncertainties)
       ? record.uncertainties.length > 0 || (score == null && record.disposition !== 'feedback_only')
       : tone !== 'credit';
@@ -68,7 +69,7 @@ export function gradingAnnotations(state, taskId, groupId, pageId = null) {
       id: `grading-${record.id}-${review?.id || 'original'}`, source: 'grading', taskId, groupId,
       recordId: record.id, originalHash: record.originalHash, reviewId: review?.id || null,
       index: index + 1, itemId: record.itemId, disposition: record.disposition, label, score, maximum: record.maximum, originalScore: record.score,
-      pointId:record.pointId,awardType:record.awardType,mark:record.disposition==='feedback_only'?{text:'评语',tone:'review',type:''}:compactGradingMark({score,maximum:record.maximum,pointId:record.pointId,awardType:record.awardType}),
+      pointId:record.pointId,awardType:record.awardType,pendingReview,mark:record.disposition==='feedback_only'?{text:'评语',tone:'review',type:''}:compactGradingMark({score:pendingReview?null:score,maximum:record.maximum,pointId:record.pointId,awardType:record.awardType}),
       scoreLabel, originalScoreLabel, tone, hasIssue, status, reason, evidence: record.evidence, sourceText: record.sourceText,
       review, guide, text, studentPageIds, schemePageIds, questionPageIds, basisLabel, uncertainties: record.uncertainties || [], location: located ? 'region' : 'page',
       locationOrigin:anchor?'on-demand':located?'inline-grading':null, annotationStatus:record.annotationStatus,
