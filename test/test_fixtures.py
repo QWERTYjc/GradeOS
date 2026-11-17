@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from pypdf import PdfWriter, PdfReader
 
-from evals.fixture_inputs import fixture_directory, input_documents, prepare, sha
+from evals.fixture_inputs import input_documents, prepare, sha
 from evals.fixture_evaluation import evaluate
 
 
