@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {gradingResult,totalText,resultDocument,resultMarkdown} from '../web/grading-result.mjs';
 import {gradingSymbol,layoutGradingSymbols,occupancyMask,inkFree} from '../web/annotation-layout.mjs';
+import {annotationExportPacket} from '../src/workspace/annotation-export.mjs';
 
 function fixture(){
  const page={id:'p',sha256:'frozen-page',sourcePage:7},group={id:'s',label:'Student',pageIds:['p']};
@@ -42,4 +43,19 @@ test('integrated reports retain qualitative feedback, interrupted state and the 
  const html=resultDocument(model,state.pages),md=resultMarkdown(model,state.pages);
  assert.match(html,/report-math/);assert.match(html,/仅显示已保存结果/);assert.doesNotMatch(md,/定性反馈 分/);
  assert.equal(gradingSymbol(model.rows[0]),null);assert.equal(model.rows[0].mark.text,'评语');
+});
+
+test('required review keeps numeric proposals pending in browser and PDF until a matching review',()=>{
+ for(const score of [0,1]){
+  const state=fixture(),record=state.tasks[0].records[0];record.score=score;record.reviewRequired=true;
+  const before=structuredClone(record);
+  state.reviews.push({id:'stale',taskId:'t',recordId:'m',originalHash:'older-grade',score,reason:'Stale'});
+  let row=gradingResult(state,'t','s').rows[0],note=annotationExportPacket(state,'t','s').pages[0].notes[0];
+  assert.equal(row.score,score);assert.equal(row.mark.text,'?M');assert.equal(row.mark.tone,'review');
+  assert.equal(gradingSymbol(row).kind,'review');assert.equal(note.symbol.kind,'review');assert.equal(note.mark.text,'?M');
+  state.reviews.push({id:'confirmed',taskId:'t',recordId:'m',originalHash:record.originalHash,score,reason:'Confirmed'});
+  row=gradingResult(state,'t','s').rows[0];note=annotationExportPacket(state,'t','s').pages[0].notes[0];
+  assert.equal(row.mark.text,score?'1M':'×M');assert.equal(gradingSymbol(row).kind,score?'check':'cross');
+  assert.equal(note.symbol.kind,score?'check':'cross');assert.deepEqual(record,before);
+ }
 });
