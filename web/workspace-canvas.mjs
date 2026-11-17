@@ -100,6 +100,31 @@ export class WorkspaceCanvas {
     if (panel.editor?.dirty) await panel.editor.save();
     Object.assign(panel, { pageId: null, documentId }); this.closeNote(); this.update();
   }
+  async showSource(pageId, besideDocument = true) {
+    if (!this.getState().pages.some(page => page.id === pageId)) return;
+    const source = documents(this.getState()).find(row => row.pageIds.includes(pageId));
+    const panel = this.panels.find(row => source?.pageIds.includes(row.pageId)) || this.panels.find(row => row.pageId);
+    if (panel) this.activeId = panel.id;
+    await this.showPage(pageId, besideDocument && !panel && this.panels.length > 0 && this.panels.length < 4);
+  }
+  async revealRecord(record, taskId) {
+    const note = gradingAnnotations(this.getState(), taskId, record.groupId).find(row => row.recordId === record.id);
+    if (!note?.target) { this.toast('这条记录的原卷无法定位，请检查材料是否已调整。'); return; }
+    await this.showSource(note.target.pageId, false);
+    const panel = this.panels.find(row => row.pageId === note.target.pageId);
+    if (!panel) return;
+    panel.gradingTaskId = taskId; panel.gradingMode = 'all';
+    for (const row of this.panels) row.selectedRecordId = row === panel ? record.id : null;
+    this.update();
+    const image = panel.root.querySelector('.canvas-paper>img');
+    if (image) await image.decode().catch(() => {});
+    // Only validated evidence rectangles determine a scroll target. Page-only
+    // citations open the page without suggesting a precise location.
+    const scroll = panel.root.querySelector('.pane-page-scroll'), paper = panel.root.querySelector('.canvas-paper');
+    if (!scroll || !paper || panel.pageId !== note.target.pageId || panel.selectedRecordId !== record.id) return;
+    const top = note.location === 'region' ? Math.min(...note.regions.map(region => region.rect.y)) * paper.getBoundingClientRect().height : 0;
+    scroll.scrollTo({ top: Math.max(0, top - scroll.clientHeight * .25), behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
+  }
   setMode(mode) { this.panels.forEach(panel => panel.selection?.cancel()); this.closeNote(); this.mode = this.mode === mode ? 'browse' : mode; this.update(); }
   annotations(panel) {
     return [...(this.getState().annotations || []).filter(row => !row.archivedAt && (panel.documentId ? row.target.documentId === panel.documentId : row.target.pageId === panel.pageId)),
@@ -186,7 +211,7 @@ export class WorkspaceCanvas {
     const rows = this.annotations(panel), pins = panel.root.querySelector(panel.documentId ? '.document-annotations' : '.annotation-pins');
     if (!pins) return;
     const content = rows.map((row, index) => row.source === 'grading'
-      ? `<div class="annotation-pin grading-pin ${row.tone}" data-pin="${e(row.id)}"><button type="button" class="grading-marker" aria-label="查看评分批注 ${e(row.label)}，${e(row.scoreLabel)}" title="${e(row.label)} · ${e(row.status)} · 点击展开页边批注" data-pane-action="note" data-id="${e(row.id)}"><span>${e(row.label.replace(' · ', ' '))}</span><small>${e(row.scoreLabel)}</small></button></div>`
+      ? `<div class="annotation-pin grading-pin ${row.tone} ${row.recordId === panel.selectedRecordId ? 'selected-grading-pin' : ''}" data-pin="${e(row.id)}"><button type="button" class="grading-marker" aria-label="查看评分批注 ${e(row.label)}，${e(row.scoreLabel)}" title="${e(row.label)} · ${e(row.status)} · 点击展开页边批注" data-pane-action="note" data-id="${e(row.id)}"><span>${e(row.label.replace(' · ', ' '))}</span><small>${e(row.scoreLabel)}</small></button></div>`
       : `<div class="annotation-pin ${row.pending ? 'pending' : ''}" data-pin="${e(row.id)}"><button type="button" class="${panel.documentId ? 'annotation-marker' : 'annotation-target'}" aria-label="${row.pending ? '添加' : '查看'}注释 ${index + 1}" data-pane-action="note" data-id="${e(row.id)}" ${panel.documentId ? 'title="查看文字注释"' : ''}>${panel.documentId ? icon('message') : ''}</button><button type="button" class="annotation-remove" data-pane-action="remove-note" data-id="${e(row.id)}" aria-label="移除注释 ${index + 1}" title="移除这处圈注">×</button></div>`).join('');
     if (panel.pinsHTML !== content) { pins.innerHTML = content; panel.pinsHTML = content; }
     let gradingIndex = 0, previousGradingTop = -12;

@@ -1,5 +1,6 @@
 import { escape as e, icon, button as b, iconButton as ib, markdown, statuses, latestReview } from './ui.mjs';
 import { progressMetrics } from './tasks.mjs';
+import { resultTasks, resultsBar } from './results-view.mjs';
 
 export const documents = state => [...state.schemes.map(row => ({ ...row, role: 'scheme' })), ...(state.questions || []).map(row => ({ ...row, role: 'question' })), ...state.groups.map(row => ({ ...row, role: 'student' }))];
 export const questions = state => state.tasks.filter(task => task.status === 'running').flatMap(task => (task.interaction?.questions || []).filter(row => row.status === 'open').map(row => ({ ...row, taskId: task.id })));
@@ -21,8 +22,10 @@ export function gradingStage(state, task) {
   return guide ? 'align' : 'prepare';
 }
 export function workflowView(ctx, panels = []) {
+  if (ctx.resultsOpen) return resultsBar(ctx);
   const task = ['running', 'draft', 'needs_review'].map(status => ctx.state.tasks.findLast(row => row.kind === 'grade' && row.status === status)).find(Boolean);
-  if (!task && !ctx.state.groups.length && (ctx.state.pages.length || ctx.state.documents?.length))
+  if (!task && resultTasks(ctx.state).length) return `<div class="workflow-copy"><h1>继续查看批改结果</h1><p>原卷批注、逐题依据与报告已保存在工作区。</p></div><div class="workflow-action">${b('results', '查看结果', { className: 'primary' })}${b('manual-task', '开始新批改', { className: 'quiet', disabled: !ctx.state.groups.length })}</div>`;
+  if (!task && !ctx.state.groups.length && ctx.state.pages.length)
     return `<div class="workflow-copy"><div class="workflow-path" aria-label="批改流程"><span aria-current="step">准备材料</span><i>›</i><span>开始批改</span><i>›</i><span>查看结果</span></div><h1>接着添加学生答卷</h1><p>已上传的材料会保留在这里。</p></div><div class="workflow-action">${b('upload-student', '上传答卷', { className: 'primary', disabled: ctx.busy })}</div>`;
   const standalone = !task && ctx.state.documents?.find(row => row.kind === 'marking_guide' && panels.some(panel => panel.documentId === row.id));
   if (!task && !standalone) {
@@ -46,17 +49,17 @@ export function workflowView(ctx, panels = []) {
   if (stage === 'draft') action = b('edit-task', '继续批改设置', { className: 'primary', attrs: attr(task.id) });
   if (stage === 'align' && !automatic) action = opened ? b('approve-guide', `确认并批改 ${task.groupIds.length} 份`, { className: 'primary', attrs: attr(guide.id), disabled: Boolean(ctx.state.chat) }) : b('open-document', '查看评分实施', { className: 'primary', attrs: attr(guide.id) });
   if (stage === 'grading' && guide) action = b('open-document', '查看采用的说明', { className: 'workflow-secondary', attrs: attr(guide.id) });
-  if (stage === 'review') action = b('task-reviews', '打开审阅', { className: 'primary', attrs: attr(task.id) });
+  if (stage === 'review') action = b('results', '查看批改结果', { className: 'primary', attrs: attr(task.id) });
   return `<div class="workflow-copy"><div class="workflow-path" aria-label="批改阶段">${['准备材料', '开始批改', '查看结果'].map((label, index) => `<span ${index === active ? 'aria-current="step"' : ''}>${label}</span>`).join('<i>›</i>')}${task ? `<small>${task.groupIds.length} 份 · ${modeLabel(task.executionMode)}</small>` : ''}</div><h1>${titles[stage]}</h1><p>${descriptions[stage]}</p></div><div class="workflow-action">${action}</div>`;
 }
 
 export function header(ctx) {
   const pending = questions(ctx.state).length + pendingRecords(ctx.state).length + (ctx.state.documents || []).filter(doc => doc.proposalId && !doc.approvals.length && ctx.state.tasks.some(task => task.id === doc.taskId && task.status === 'running' && task.executionMode !== 'auto')).length;
   return `<div class="brand-line"><a class="canvas-wordmark" href="/">GradeOS</a><span class="header-divider"></span>${b('rename-project', e(ctx.state.title), { className: 'project-name' })}<span class="pi-label">Pi</span></div>
-    <div class="header-actions">${b('materials', `材料 <span class="count">${ctx.state.pages.length}</span>`, { className: 'quiet' })}${b('reviews', pending ? `<span class="amber-dot"></span>待确认 ${pending}` : '审阅', { className: pending ? 'review-count' : 'quiet' })}${ib('history', '对话与任务记录', 'history')}</div>`;
+    <div class="header-actions">${b('materials', `材料 <span class="count">${ctx.state.pages.length}</span>`, { className: 'quiet' })}${resultTasks(ctx.state).length ? b('results', '批改结果', { className: ctx.resultsOpen ? 'header-result-active' : 'quiet', attrs: `aria-pressed="${Boolean(ctx.resultsOpen)}"` }) : ''}${b('reviews', pending ? `<span class="amber-dot"></span>待确认 ${pending}` : '审阅', { className: pending ? 'review-count' : 'quiet' })}${ib('history', '对话与任务记录', 'history')}</div>`;
 }
 export function toolbar(ctx) {
-  return `<span class="workspace-hint">材料与评分说明</span><div class="canvas-tools" role="group" aria-label="画布工具">${b('browse', '阅读', { className: ctx.mode === 'browse' ? 'tool active' : 'tool' })}${b('lasso', `${lassoIcon}套索`, { className: ctx.mode === 'lasso' ? 'tool active' : 'tool', attrs: `aria-pressed="${ctx.mode === 'lasso'}" title="沿内容自由画一圈，松手后点击选区"` })}${b('rectangle', `${icon('select')}框选`, { className: ctx.mode === 'rectangle' ? 'tool active' : 'tool' })}</div>${b('new-document', `${icon('plus')}文档`, { className: 'compare-action new-document-action' })}${b('compare', `${icon('column-width')}并排`, { className: 'compare-action', attrs: 'aria-label="并排打开文档"' })}`;
+  return `<span class="workspace-hint">${ctx.resultsOpen ? '点击题号查看原卷与依据' : '材料与评分说明'}</span><div class="canvas-tools" role="group" aria-label="画布工具">${b('browse', '阅读', { className: ctx.mode === 'browse' ? 'tool active' : 'tool' })}${b('lasso', `${lassoIcon}套索`, { className: ctx.mode === 'lasso' ? 'tool active' : 'tool', attrs: `aria-pressed="${ctx.mode === 'lasso'}" title="沿内容自由画一圈，松手后点击选区"` })}${b('rectangle', `${icon('select')}框选`, { className: ctx.mode === 'rectangle' ? 'tool active' : 'tool' })}</div>${b('new-document', `${icon('plus')}文档`, { className: 'compare-action new-document-action' })}${b('compare', `${icon('column-width')}并排`, { className: 'compare-action', attrs: 'aria-label="并排打开文档"' })}`;
 }
 
 function eventsView(events) {
@@ -97,12 +100,14 @@ export function statusView(ctx) {
   const guide = (ctx.state.documents || []).find(doc => doc.proposalId && !doc.approvals.length && ctx.state.tasks.some(task => task.id === doc.taskId && task.status === 'running'));
   if (guide) return b('open-document', `<span class="amber-dot"></span>${ctx.state.tasks.find(row => row.id === guide.taskId)?.executionMode === 'auto' ? '正在采用评分实施说明' : '可以在这里和 Agent 对齐评分要求'}${icon('right')}`, { className: 'status-label guide-ready', attrs: attr(guide.id) });
   if (task) return `${b('history', `<span class="working-dot ${task.interaction?.paused ? 'still' : ''}"></span>${e(task.interaction?.paused ? '暂停已请求，当前调用结束后暂停' : task.progress?.phase || '正在处理')}${task.kind === 'grade' && gradingStage(ctx.state, task) === 'grading' ? `<span class="muted">${task.progress?.completed || 0}/${task.groupIds.length}</span>` : ''}${icon('down')}`, { className: 'status-label' })}${task.kind === 'grade' ? ib(task.interaction?.paused ? 'resume-task' : 'pause-task', task.interaction?.paused ? '继续任务' : '暂停后续处理', task.interaction?.paused ? 'play' : 'pause', attr(task.id)) : ''}`;
+  if (ctx.resultsOpen) return b('history', `${icon('history')}查看这次的批改过程${icon('down')}`, { className: 'status-label' });
   const last = ctx.state.conversation.filter(row => row.role === 'assistant').at(-1);
   return last ? b('history', `${icon('message')}<span class="reply-preview">${e(last.text.slice(0, 70))}</span>${icon('down')}`, { className: 'status-label latest-reply' }) : '';
 }
 export function contextChips(ctx) {
   const question = questions(ctx.state).find(row => row.id === ctx.questionId), task = ctx.state.tasks.find(task => task.id === ctx.targetTaskId && task.status === 'running');
-  return `${(ctx.references || []).map((ref, index) => `<span class="reference-chip">${b('reference-location', `${icon(ref.annotationId ? 'message' : 'file-text')}${e(ref.target.kind === 'text' ? `${ref.target.title} · 文字` : `${ref.target.role === 'scheme' ? 'MS' : '答卷'} · 第 ${ref.target.sourcePage} 页`)}${ref.annotationId ? ' · 注释' : ''}`, { attrs: attr(index) })}${ib('remove-reference', '移除引用', 'close', attr(index))}</span>`).join('')}${question || task ? b('clear-target', `${e(question ? '回复待确认问题' : `补充 · ${task.title}`)}${icon('close')}`, { className: 'reference-chip target-chip' }) : ''}${ctx.selections.map(selection => `<span class="reference-chip">${b('selection-page', `${icon('file-text')}${e(selection.role === 'scheme' ? 'MS' : selection.fileName)} · 第 ${selection.sourcePage} 页`, { attrs: attr(selection.id) })}${ib('remove-selection', '移除圈选引用', 'close', attr(selection.id))}</span>`).join('')}`;
+  const record = allRecords(ctx.state).find(row => row.id === ctx.recordContextId);
+  return `${record ? `<span class="reference-chip">${b('open-record', `第 ${e(record.itemId)} 题 · ${e(record.pointId?.toUpperCase() || '评分')}`, { attrs: attr(record.id) })}${ib('clear-record-context', '移除评分点引用', 'close')}</span>` : ''}${(ctx.references || []).map((ref, index) => `<span class="reference-chip">${b('reference-location', `${icon(ref.annotationId ? 'message' : 'file-text')}${e(ref.target.kind === 'text' ? `${ref.target.title} · 文字` : `${ref.target.role === 'scheme' ? 'MS' : '答卷'} · 第 ${ref.target.sourcePage} 页`)}${ref.annotationId ? ' · 注释' : ''}`, { attrs: attr(index) })}${ib('remove-reference', '移除引用', 'close', attr(index))}</span>`).join('')}${question || task ? b('clear-target', `${e(question ? '回复待确认问题' : `补充 · ${task.title}`)}${icon('close')}`, { className: 'reference-chip target-chip' }) : ''}${ctx.selections.map(selection => `<span class="reference-chip">${b('selection-page', `${icon('file-text')}${e(selection.role === 'scheme' ? 'MS' : selection.fileName)} · 第 ${selection.sourcePage} 页`, { attrs: attr(selection.id) })}${ib('remove-selection', '移除圈选引用', 'close', attr(selection.id))}</span>`).join('')}`;
 }
 export function questionView(ctx) {
   const question = questions(ctx.state).find(row => row.id === ctx.peekQuestionId);

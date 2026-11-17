@@ -174,7 +174,7 @@ export async function createWorkspaceServer({ directory, port = 4173, model = 'o
         return send(res, 200, state());
       }
       fail(req.method === 'GET' || req.method === 'HEAD', '方法不支持。', 405);
-      const files = new Set(['index.html', 'app.mjs', 'ui.mjs', 'materials.mjs', 'tasks.mjs', 'review.mjs', 'style.css', 'canvas-app.mjs', 'canvas-view.mjs', 'canvas-selection.mjs', 'canvas.css', 'workspace-canvas.mjs', 'document-editor.mjs', 'workspace-canvas.css', 'document-reader.mjs', 'document-reader.css', 'report-math.mjs', 'math-text-parser.mjs']);
+      const files = new Set(['index.html', 'app.mjs', 'ui.mjs', 'materials.mjs', 'tasks.mjs', 'review.mjs', 'style.css', 'canvas-app.mjs', 'canvas-view.mjs', 'canvas-selection.mjs', 'canvas.css', 'workspace-canvas.mjs', 'document-editor.mjs', 'workspace-canvas.css', 'document-reader.mjs', 'document-reader.css', 'report-math.mjs', 'math-text-parser.mjs', 'results-view.mjs', 'results.css']);
       const relative = url.pathname === '/' ? 'index.html' : url.pathname.slice(1);
       let file;
       if (relative === 'grading-annotations.mjs') file = join(experimentRoot, 'web/grading-annotations.mjs');
