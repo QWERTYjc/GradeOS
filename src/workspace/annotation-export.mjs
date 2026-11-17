@@ -39,6 +39,7 @@ export function annotationExportPacket(state, taskId, groupId) {
   // Records without a trustworthy page still appear in the export; never invent
   // a bounding box or silently omit a comment because localization is absent.
   const unplaced=all.filter(note=>!note.studentPageIds.length).map(note=>({id:`G${note.index}`,label:note.label,score:note.scoreLabel,tone:note.tone,
+    mark:note.mark,
     evidence:note.evidence||'',condition:note.sourceText||'',reason:note.review?.reason||note.reason,
     reviewed:Boolean(note.review),uncertainties:note.review?[]:note.uncertainties,regions:[],location:'unlocated'}));
   for(const note of unplaced)note.summary=pointCommentContent(note).map(part=>part.text).join(' ');
