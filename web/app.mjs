@@ -1,3 +1,4 @@
+document.documentElement.classList.toggle('embedded-grading', new URLSearchParams(location.search).has('embedded'));
 import { escape as e, icon, button, iconButton, pageById, markdown } from './ui.mjs';
 import { materialView, equalGroups, movedGroups } from './materials.mjs';
 import { taskView, taskForm, taskFormInput, refreshTaskSetup, artifactContent } from './tasks.mjs';
@@ -57,7 +58,7 @@ function render() {
   const tabs = [['materials', '材料'], ['tasks', '任务'], ['review', '审阅']];
   app.innerHTML = `<header class="app-header"><div class="brand-line"><a class="wordmark" href="#materials" aria-label="GradeOS 材料工作区">Grade<span>OS</span></a><span class="header-divider"></span>${button('rename-project', e(ctx.state.title), { className: 'project-name', attrs: 'title="修改作业名称"' })}</div>
     <nav aria-label="工作区">${tabs.map(([tab, label]) => `<button data-action="tab" data-tab="${tab}" class="nav-tab ${ctx.tab === tab ? 'active' : ''}" aria-current="${ctx.tab === tab ? 'page' : 'false'}">${label}</button>`).join('')}</nav>
-    <div class="header-actions">${ctx.tab === 'materials' ? button('upload', '上传', { className: 'outline', symbol: 'plus' }) : ctx.tab === 'tasks' ? button('task-list', '全部任务', { className: 'text-button blue' }) : ''}${button('settings', 'Pi 实验版', { className: 'edition muted' })}</div></header>
+    <div class="header-actions">${ctx.tab === 'materials' ? button('upload', '上传', { className: 'outline', symbol: 'plus' }) : ctx.tab === 'tasks' ? button('task-list', '全部任务', { className: 'text-button blue' }) : ''}${button('settings', 'GradeOS', { className: 'edition muted' })}</div></header>
     <main class="${ctx.tab === 'materials' ? 'with-dock' : ''}">${ctx.tab === 'materials' ? materialView(ctx) : ctx.tab === 'tasks' ? taskView(ctx) : reviewView(ctx)}</main>`;
 }
 function openDialog(title, content, className = '') {

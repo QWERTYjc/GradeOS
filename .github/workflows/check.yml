@@ -22,4 +22,4 @@ jobs:
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: uv sync --locked
       - run: npm run doctor
-      - run: npm run check
+      - run: npm run check:public
