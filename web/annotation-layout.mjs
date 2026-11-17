@@ -12,7 +12,7 @@ export function compactGradingMark({score,maximum,pointId,awardType}={}) {
 export function gradingSymbol(note) {
   if(note.disposition==='feedback_only')return null;
   if(note.symbol)return note.symbol;
-  const kind=note.score==null?'review':note.score===0?'cross':note.maximum!=null&&note.score<note.maximum?'partial':'check';
+  const kind=note.pendingReview||note.score==null?'review':note.score===0?'cross':note.maximum!=null&&note.score<note.maximum?'partial':'check';
   const paths={check:[[[2,10],[7,15],[18,3]]],cross:[[[5,5],[15,15]],[[15,5],[5,15]]],
     partial:[[[2,9],[6,13],[15,3]],[[12,17],[18,17]]],
     review:[[[5,6],[6,3],[10,2],[14,4],[14,7],[10,10],[10,12]],[[10,16],[10,16.2]]]};
