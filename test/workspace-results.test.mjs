@@ -95,7 +95,7 @@ test('results assets are served with executable module types without contacting 
   const app = await createWorkspaceServer({ directory, port: 0, configured: () => false, agent: () => assert.fail('Reading results must not call a model') });
   t.after(() => app.close());
   const base = `http://127.0.0.1:${app.server.address().port}`;
-  for (const [path, type] of [['results-view.mjs', 'text/javascript'], ['results.css', 'text/css'], ['grading-annotations.mjs', 'text/javascript']]) {
+  for (const [path, type] of [['results-view.mjs', 'text/javascript'], ['results.css', 'text/css'], ['grading-annotations.mjs', 'text/javascript'], ['annotation-layout.mjs','text/javascript'], ['annotation-card.mjs','text/javascript'], ['grading-result.mjs','text/javascript'], ['page-stream.mjs','text/javascript']]) {
     const response = await fetch(`${base}/${path}`);
     assert.equal(response.status, 200); assert.match(response.headers.get('content-type'), new RegExp(type));
     assert.ok((await response.text()).length > 100);
