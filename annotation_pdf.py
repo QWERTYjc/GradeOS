@@ -59,7 +59,9 @@ def formatted_text(text):
             kind = next_kind
         run.append(unicodedata.normalize('NFKC', char) if kind else char)
     flush()
-    return ''.join(parts)
+    # WQY (the supported Linux CJK font) has no checkmark glyph. PDF's standard
+    # ZapfDingbats supplies it without an extra font installation.
+    return ''.join(parts).replace('✓', '<font name="ZapfDingbats">✓</font>')
 
 
 def paragraphs(note, style, title_style):
@@ -170,7 +172,9 @@ def add_score_overview(writer, packet, font):
         if summary.get('guide'):
             drawing.drawRightString(pw - 44, ph - 121, f"评分实施.md v{summary['guide']['revision']}")
         drawing.setFont(font, 9)
-        drawing.drawString(44, ph - 142, '✓ 得分步骤   × 失分步骤   勾带短线：部分得分   ? 待确认')
+        legend = Paragraph(formatted_text('✓ 得分步骤   × 失分步骤   勾带短线：部分得分   ? 待确认'),
+                           ParagraphStyle('legend', fontName=font, fontSize=9, leading=11))
+        legend.wrap(pw - 88, 30); legend.drawOn(drawing, 44, ph - 144)
         drawing.drawString(44, ph - 159, '具体分值以本表及逐项记录为准；数字 PDF 可点击简短理由查看完整依据。')
         y = table_top
         drawing.setFont(font, 10); drawing.setFillColor(colors.HexColor('#596878'))

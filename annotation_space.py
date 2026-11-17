@@ -48,7 +48,7 @@ def comment_glyph_widths(notes, font):
         decomposition = unicodedata.decomposition(char)
         value = unicodedata.normalize('NFKC', char) if decomposition.startswith(('<super>', '<sub>')) else char
         # Unscaled super/subscript advances conservatively reserve enough room.
-        widths[char] = pdfmetrics.stringWidth(value, font, 1)
+        widths[char] = pdfmetrics.stringWidth(value, 'ZapfDingbats' if char == '✓' else font, 1)
     return widths
 
 

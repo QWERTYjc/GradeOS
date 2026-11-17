@@ -134,6 +134,7 @@ class AnnotationPdfTests(unittest.TestCase):
 
     def test_math_glyphs_preserve_super_and_subscript_without_missing_font_glyphs(self):
         self.assertEqual(formatted_text('eᵃ + x² + uₖ < 3'), 'e<super>a</super> + x<super>2</super> + u<sub>k</sub> &lt; 3')
+        self.assertIn('name="ZapfDingbats"', formatted_text('✓ Correct result'))
 
     def test_native_image_context_uses_its_own_pdf_transform(self):
         rect = {'x': .25, 'y': .25, 'width': .5, 'height': .5}
