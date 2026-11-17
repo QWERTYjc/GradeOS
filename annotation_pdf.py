@@ -25,7 +25,8 @@ COLORS = {'credit': '#23845b', 'deduction': '#c64545', 'review': '#a47824', 'tea
 
 def register_font():
     candidates = [Path('/System/Library/Fonts/Supplemental/Arial Unicode.ttf'),
-                  Path('/usr/share/fonts/truetype/noto/NotoSansSC-Regular.ttf')]
+                  Path('/usr/share/fonts/truetype/noto/NotoSansSC-Regular.ttf'),
+                  Path('/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc')]
     for path in candidates:
         if path.is_file():
             pdfmetrics.registerFont(TTFont('GradeOS', str(path)))
