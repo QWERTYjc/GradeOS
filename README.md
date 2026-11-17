@@ -1,6 +1,6 @@
 # GradeOS
 
-以 **Pi Agent** 为核心的轻量批改工作台，作为原 GradeOS 的后续替代基础。
+**GradeOS** 是本地优先的智能工作台。一个侧栏连接通用任务、批改、文件、Skills、任务与本地账号设置。
 原系统保存在 [GradeOS-old](https://github.com/QWERTYjc/GradeOS-old)。
 
 现已包含原材料导入、答卷分组、评分标准确认、Pi 批改、任务暂停/取消、人工复核、
@@ -8,8 +8,23 @@
 
 - Agent 依赖 `@earendil-works/pi-agent-core` 和 `@earendil-works/pi-ai`，均锁定 1.5.2；报告排版使用本地 KaTeX 0.16.45。
 - Python 只负责 PDF、图像和确定性报告：Pillow、pypdf、ReportLab；另需 Poppler。
-- 自带 M2、化学卷与 Medly 173 份数学答题源资料；参考分数仅供独立事后评测。
+- 公开代码包不包含考试、答卷或数据集素材；研究环境中的私有评测资产单独保留。
 - 可独立克隆、安装和运行，无需启动旧 GradeOS 服务或数据库。
+
+## 系统界面
+
+- **工作台**：独立对话、文件引用、真实模型执行和成果画布。
+- **批改**：沿用现有材料导入、评分确认、批改和复核流程。
+- **文件**：统一查找工作台文件和批改产出，以固定版本继续处理，编辑另存新版本。
+- **Skills**：教辅、HTML 演示文稿、CSV 数据和代码文本；支持导入 SKILL.md 并显式启用。
+- **任务与设置**：后台任务状态、停止任务、本地显示名称、存储位置、模型连接与减少动效。
+
+通用助手只能读取本工作区文件和批改产出、保存文件；不会自动获得其他对话或批改全量上下文。
+文件保存在数据目录的 `files/<id>/v<revision>/`，对话和引用快照在 `system.json`。
+只有调用模型时，相关上下文才会发送至已配置的服务。本地存储不代表模型推理离线。
+
+当前使用本地服务和浏览器；未打包原生桌面安装器。演示文稿为 HTML、表格为 CSV，
+尚无原生 PPTX/XLSX 编辑、终端执行、云账号登录或跨设备同步。官网独立规划。
 
 ## 安装与启动
 
@@ -40,9 +55,9 @@ npm start
 复制为 `.env`，仅填入自己的 `OPENROUTER_API_KEY`；可选搜索使用 `BRAVE_SEARCH_API_KEY`。
 服务启动前加载该文件，key 不发送给浏览器。旧仓库的 `.env` 不会被复制或读取。
 
-## 立即查看 M2
+## 可选私有 M2 评测资产
 
-在第一次导入前使用一个新目录：
+以下命令仅适用于已经自行取得授权并安装私有评测材料的环境；公开代码包不附带这些材料。在第一次导入前使用一个新目录：
 
 ```sh
 npm run fixtures:workspace -- --fixture m2 --data .workspace-m2
@@ -53,13 +68,13 @@ npm start -- --data .workspace-m2
 批改启动和复核沿用工作台流程。不要同时开启两个服务写入同一个工作台目录。
 
 ```sh
-npm run check
+npm run check:public
 npm run fixtures:prepare -- --fixture m2 --output runs/m2-input
 node src/run.mjs --input runs/m2-input --output runs/m2-preflight
 npm run medly:prepare -- --answer maths_0001 --output runs/medly-0001
 ```
 
-`check` 运行 Node/Python 测试与全部资产校验，`preflight` 只生成计划。
+`check:public` 运行 Node/Python 离线测试；`check` 额外校验私有评测资产，`preflight` 只生成计划。
 真正的 CLI 模型执行需要显式添加 `--execute`，使用新输出目录并提供 key；预算和模型
 选项仍由原 Pi harness 控制。CLI cohort 的可选本地 Vision OCR 使用 `grade:cohort:macos`，
 普通 `grade:cohort` 可以跨平台运行。工作台在 macOS 上仍自动使用本地 OCR。
@@ -82,4 +97,6 @@ npm run medly:prepare -- --answer maths_0001 --output runs/medly-0001
 仍在后续范围。离线检查不表示 M2 实际批改通过，也不证明通用准确率或生产切换就绪。
 
 代码沿用原项目 GPL-3.0，Pi、KaTeX 和图标的 MIT 声明保留。考试及数据集资料各自保留原权利，
-不适用代码许可证；本仓库保持私有。渲染图、模型轨迹、工作台、依赖和密钥都不提交。
+不适用代码许可证；这些资料不进入公开代码包。渲染图、模型轨迹、工作台、依赖和密钥都不提交。
+
+开源导出范围与历史数据边界见 [公开发布说明](docs/PUBLIC_RELEASE.md)。

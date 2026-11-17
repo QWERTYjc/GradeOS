@@ -7,6 +7,7 @@ import { timingSafeEqual, randomBytes } from 'node:crypto';
 import { WorkspaceStore, fail, replacePartition, taskDraft, saveReview, publicState, executionMode } from './store.mjs';
 import { importUpload, experimentRoot } from './documents.mjs';
 import { runWorkspaceAgent } from './agent.mjs';
+import { SystemService } from './system-service.mjs';
 import { WorkspaceRunner } from './runner.mjs';
 import { WorkspaceChat } from './chat.mjs';
 import { addDocument, readDocument, saveDocument, addAnnotation, updateAnnotation } from './editable-documents.mjs';
@@ -19,10 +20,11 @@ const readBody = async (req, limit) => {
   for await (const chunk of req) { size += chunk.length; fail(size <= limit, '文件或请求过大。', 413); chunks.push(chunk); }
   return Buffer.concat(chunks);
 };
-export async function createWorkspaceServer({ directory, port = 4173, model = 'openai/gpt-6.1-terra', cap = 2, rubricPath = null, agent = runWorkspaceAgent, configured = () => Boolean(process.env.OPENROUTER_API_KEY) } = {}) {
+export async function createWorkspaceServer({ directory, port = 4173, model = 'openai/gpt-6.1-terra', cap = 2, rubricPath = null, agent = runWorkspaceAgent, systemAgent, configured = () => Boolean(process.env.OPENROUTER_API_KEY) } = {}) {
   const store = await new WorkspaceStore(directory || join(experimentRoot, '.workspace')).init();
   const runner = new WorkspaceRunner(store, { model, cap, agent, rubricPath });
   const chat = new WorkspaceChat(store, { agent, model, configured });
+  const system = await new SystemService(store, { model, cap, configured, agent: systemAgent }).init();
   const token = randomBytes(32).toString('hex');
   let planning = false;
   const state = () => publicState(store.snapshot(), configured(), { planning: planning || Boolean(chat.active), chat: chat.snapshot(),
@@ -32,7 +34,7 @@ export async function createWorkspaceServer({ directory, port = 4173, model = 'o
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'no-referrer');
-    res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
+    res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob:; font-src 'self'; connect-src 'self'; frame-src 'self' blob:; frame-ancestors 'self'; base-uri 'none'; form-action 'self'");
     try {
       const address = server.address();
       const actualPort = typeof address === 'object' ? address.port : port;
@@ -45,6 +47,10 @@ export async function createWorkspaceServer({ directory, port = 4173, model = 'o
         const submitted = Buffer.from(String(req.headers['x-workspace-token'] || ''));
         fail(submitted.length === token.length && timingSafeEqual(submitted, Buffer.from(token)), '请刷新工作区后重试。', 403);
         fail(!req.headers.origin || req.headers.origin === `http://${req.headers.host}`, '来源无效。', 403);
+      }
+      if (url.pathname.startsWith('/api/system/')) {
+        const body = ['GET', 'HEAD'].includes(req.method) ? null : JSON.parse((await readBody(req, 3 * 1024 * 1024)).toString() || '{}');
+        return await system.route({ req, url, body, send, res });
       }
       if (req.method === 'GET' && /^\/api\/tasks\/[^/]+\/result\.md$/.test(url.pathname)) {
         const snapshot=store.snapshot(),result=gradingResult(snapshot,url.pathname.split('/')[3],url.searchParams.get('groupId'));
@@ -183,7 +189,8 @@ export async function createWorkspaceServer({ directory, port = 4173, model = 'o
       }
       fail(req.method === 'GET' || req.method === 'HEAD', '方法不支持。', 405);
       const files = new Set(['index.html', 'app.mjs', 'ui.mjs', 'materials.mjs', 'tasks.mjs', 'review.mjs', 'style.css', 'canvas-app.mjs', 'canvas-view.mjs', 'canvas-selection.mjs', 'canvas.css', 'workspace-canvas.mjs', 'document-editor.mjs', 'workspace-canvas.css', 'document-reader.mjs', 'document-reader.css', 'report-math.mjs', 'math-text-parser.mjs', 'results-view.mjs', 'results.css']);
-      const relative = url.pathname === '/' ? 'index.html' : url.pathname.slice(1);
+      for (const file of ['system.html', 'system-app.mjs', 'system-view.mjs', 'system.css']) files.add(file);
+      const relative = url.pathname === '/' ? 'system.html' : url.pathname === '/grading' ? 'index.html' : url.pathname.slice(1);
       let file;
       if (['grading-annotations.mjs','annotation-layout.mjs','annotation-card.mjs','grading-result.mjs','page-stream.mjs'].includes(relative)) file = join(experimentRoot, 'web', relative);
       else if (relative === 'node_modules/katex/dist/katex.mjs') file = join(experimentRoot, relative);
@@ -199,9 +206,9 @@ export async function createWorkspaceServer({ directory, port = 4173, model = 'o
     }
   });
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', resolve); });
-  try { await runner.recover(); await chat.recover(); }
+  try { await runner.recover(); await chat.recover(); await system.store.recover(); }
   catch (error) { await new Promise(resolve => server.close(resolve)); throw error; }
-  return { server, store, runner, chat, close: async () => { await chat.close(); await runner.close(); await new Promise(resolve => server.close(resolve)); } };
+  return { server, store, runner, chat, system, close: async () => { await system.close(); await chat.close(); await runner.close(); await new Promise(resolve => server.close(resolve)); } };
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
@@ -210,6 +217,6 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   const port = Number(values.port), cap = Number(values.cap);
   fail(Number.isInteger(port) && port >= 0 && port <= 65535 && Number.isFinite(cap) && cap > 0 && cap <= 5, '端口或费用上限无效。');
   const app = await createWorkspaceServer({ port, directory: values.data ? resolve(values.data) : undefined, rubricPath: values.rubric ? resolve(values.rubric) : null, model: values.model, cap });
-  console.log(`GradeOS Pi workspace: http://127.0.0.1:${app.server.address().port}`);
+  console.log(`GradeOS workspace: http://127.0.0.1:${app.server.address().port}`);
   for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, async () => { await app.close(); process.exit(0); });
 }

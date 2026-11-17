@@ -22,7 +22,9 @@
     "fixtures:workspace": "node scripts/import-fixture.mjs",
     "check": "npm test && npm run test:python && npm run fixtures:check",
     "grade:cohort:macos": "node src/run-cohort.mjs --scripted --model openai/gpt-6-luna --grading-reasoning medium --annotation-grid --inline-annotations --local-ocr",
-    "medly:prepare": "node scripts/python.mjs scripts/medly.py"
+    "medly:prepare": "node scripts/python.mjs scripts/medly.py",
+    "check:public": "npm test && npm run test:python",
+    "export:public": "node scripts/export-public.mjs"
   },
   "dependencies": {
     "@earendil-works/pi-agent-core": "1.5.2",

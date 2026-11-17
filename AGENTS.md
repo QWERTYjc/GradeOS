@@ -1,4 +1,4 @@
-# GradeOS Pi
+# GradeOS
 
 This is the standalone successor foundation extracted from GradeOS's Pi prototype.
 Keep one Node ESM service, a static browser UI, local durable files, and small Python PDF helpers.
@@ -29,5 +29,7 @@ No offline check or single-paper pass proves general accuracy or readiness to re
 Protect unrelated work. Keep source provenance and third-party licenses. Tests should cover
 meaningful behavior, including unavailable scores and source/evidence ownership.
 Never commit credentials, .env files, workspaces, generated pages, model transcripts, or runs.
-Bundled examination materials retain their original rights and are for this private repository's
-evaluation workflow; the code license does not license the papers. Keep the repository private.
+Examination materials retain their original rights; the code license does not license the papers.
+Public source exports must exclude evals/fixtures/** and evals/medly/**, local workspaces and all
+Git history containing private research data. The current research history stays private until its
+data disposition is explicitly resolved. Use npm run check:public for code-only snapshots.

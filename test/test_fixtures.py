@@ -7,11 +7,12 @@ from unittest.mock import patch
 
 from pypdf import PdfWriter, PdfReader
 
-from evals.fixture_inputs import fixture_directory, input_documents, prepare, sha
+from evals.fixture_inputs import ROOT, fixture_directory, input_documents, prepare, sha
 from evals.fixture_evaluation import evaluate, reference
 
 
 class FixtureTests(unittest.TestCase):
+    @unittest.skipUnless((ROOT / 'm2/input.json').exists(), 'Private M2 evaluation materials are not bundled')
     def test_official_m2_items_are_read_from_preserved_pdf(self):
         fixture = fixture_directory('m2')
         ref = reference(fixture)
@@ -37,6 +38,7 @@ class FixtureTests(unittest.TestCase):
                 (run / 'summary.json').write_text('{"status":"incomplete"}')
                 self.assertEqual(evaluate(run, Path('missing-reference'))['labels_loaded'], False)
 
+    @unittest.skipUnless((ROOT / 'm2/input.json').exists(), 'Private M2 evaluation materials are not bundled')
     def test_posthoc_compensating_errors_fail_even_when_total_matches(self):
         fixture = fixture_directory('m2')
         rows = reference(fixture)['items']
