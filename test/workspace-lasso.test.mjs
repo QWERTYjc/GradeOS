@@ -3,6 +3,21 @@ import assert from 'node:assert/strict';
 import { bindSelection, hitSelection, selectionBounds } from '../web/canvas-selection.mjs';
 import { WorkspaceCanvas } from '../web/workspace-canvas.mjs';
 
+test('editable document comments render without a source-page parent', () => {
+  const workspace = Object.create(WorkspaceCanvas.prototype);
+  const marker = { dataset: { pin: 'text-note' }, style: {}, classList: { toggle() {} },
+    querySelector: () => ({ setAttribute() {} }) };
+  const pins = { children: [marker] };
+  const root = { querySelector: name => name === '.document-annotations' ? pins : name === '.pane-content' ? { clientHeight: 600 } : null,
+    querySelectorAll: () => [] };
+  const panel = { documentId: 'guide', root, editor: { annotationTop: () => 100 } };
+  workspace.annotations = () => [{ id: 'text-note', target: { documentId: 'guide', start: 0, end: 12 } }];
+  workspace.renderPins(panel);
+  assert.equal(marker.hidden, false);
+  assert.equal(marker.style.top, '100px');
+  assert.match(pins.innerHTML, /annotation-marker/);
+});
+
 function canvasFixture(t, { mode = 'lasso', selections = [], scale = 1 } = {}) {
   const priorWindow = globalThis.window, priorObserver = globalThis.ResizeObserver;
   globalThis.window = { devicePixelRatio: 2 };
@@ -87,9 +102,11 @@ test('a cancelled, secondary-pointer, or straight-line gesture cannot leave a bo
   assert.equal(f.created.length, 0);
 });
 
-test('dismissing a comment retains its draft and clears active selection', () => {
+test('dismissing a comment retains its draft and clears active selection', t => {
+  const previousDocument=globalThis.document;globalThis.document={body:{classList:{remove(){}}}};
+  t.after(()=>{globalThis.document=previousDocument;});
   const panel = {}, workspace = Object.create(WorkspaceCanvas.prototype);
-  Object.assign(workspace, { note: { row: { id: 'one' }, panel }, noteDrafts: new Map(), panels: [panel],
+  Object.assign(workspace, { root:{classList:{remove(){}}}, note: { row: { id: 'one' }, panel }, noteDrafts: new Map(), panels: [panel],
     popover: { hidden: false, querySelector: () => ({ value: 'A draft that has not been saved' }) }, renderPins() {} });
   workspace.closeNote();
   assert.equal(workspace.noteDrafts.get('one'), 'A draft that has not been saved');

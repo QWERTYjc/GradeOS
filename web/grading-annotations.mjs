@@ -1,4 +1,5 @@
 import { recordScoreText, recordBasisText } from './ui.mjs';
+import {compactGradingMark} from './annotation-layout.mjs';
 
 export const validAnnotationRect = rect => Boolean(rect && ['x','y','width','height'].every(key=>Number.isFinite(rect[key]))
   && rect.x>=0 && rect.y>=0 && rect.width>0 && rect.height>0
@@ -66,13 +67,15 @@ export function gradingAnnotations(state, taskId, groupId, pageId = null) {
     return {
       id: `grading-${record.id}-${review?.id || 'original'}`, source: 'grading', taskId, groupId,
       recordId: record.id, originalHash: record.originalHash, reviewId: review?.id || null,
-      index: index + 1, label, score, maximum: record.maximum, originalScore: record.score,
+      index: index + 1, itemId: record.itemId, disposition: record.disposition, label, score, maximum: record.maximum, originalScore: record.score,
+      pointId:record.pointId,awardType:record.awardType,mark:record.disposition==='feedback_only'?{text:'评语',tone:'review',type:''}:compactGradingMark({score,maximum:record.maximum,pointId:record.pointId,awardType:record.awardType}),
       scoreLabel, originalScoreLabel, tone, hasIssue, status, reason, evidence: record.evidence, sourceText: record.sourceText,
       review, guide, text, studentPageIds, schemePageIds, questionPageIds, basisLabel, uncertainties: record.uncertainties || [], location: located ? 'region' : 'page',
       locationOrigin:anchor?'on-demand':located?'inline-grading':null, annotationStatus:record.annotationStatus,
       // A page-level comment references the whole original page, never a blank
       // crop of the margin marker. The marker is a display affordance only.
-      target, regions:rectangles.map(rect=>({...target,rect})),
+      locationNote:!located?'已关联到本页，尚未定位具体笔迹。':record.annotationStatus==='partial'?'部分引用区域未能定位，当前仅显示已匹配的框。':'',annotationIssues:record.annotationIssues||[],
+      target, regions:rectangles.map((rect,index)=>({...target,rect,...(!anchor&&inlineRegions[index]?.precision==='ocr-regions'?{precision:'ocr-regions',regionId:inlineRegions[index].regionId,regionManifestHash:inlineRegions[index].regionManifestHash}:{})})),
     };
   }).filter(row => !pageId || row.studentPageIds.includes(pageId));
 }

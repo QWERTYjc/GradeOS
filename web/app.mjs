@@ -7,7 +7,7 @@ import { reviewView, reviewItems } from './review.mjs';
 // Avoid breaking another local grading run when the shared static files change.
 const canvasAvailable = await fetch('/api/state').then(response => response.json()).then(state => Object.hasOwn(state, 'documents')).catch(() => false);
 if (canvasAvailable) {
-  for (const href of ['/canvas.css', '/workspace-canvas.css', '/document-reader.css']) {
+  for (const href of ['/canvas.css', '/workspace-canvas.css', '/document-reader.css', '/results.css']) {
     const stylesheet = document.createElement('link'); stylesheet.rel = 'stylesheet'; stylesheet.href = href;
     await new Promise((resolve, reject) => { stylesheet.onload = resolve; stylesheet.onerror = reject; document.head.append(stylesheet); });
   }

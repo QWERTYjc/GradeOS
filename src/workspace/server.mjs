@@ -11,6 +11,7 @@ import { WorkspaceRunner } from './runner.mjs';
 import { WorkspaceChat } from './chat.mjs';
 import { addDocument, readDocument, saveDocument, addAnnotation, updateAnnotation } from './editable-documents.mjs';
 import { exportAnnotatedPdf } from './annotation-export.mjs';
+import {gradingResult,resultMarkdown} from '../../web/grading-result.mjs';
 
 const mime = { '.html': 'text/html; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.png': 'image/png', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.woff': 'font/woff', '.ttf': 'font/ttf' };
 const readBody = async (req, limit) => {
@@ -39,10 +40,17 @@ export async function createWorkspaceServer({ directory, port = 4173, model = 'o
       fail(allowedHosts.includes(req.headers.host), '主机无效。', 403);
       fail(!req.headers['sec-fetch-site'] || ['same-origin', 'none'].includes(req.headers['sec-fetch-site']), '请从本地工作区打开。', 403);
       const url = new URL(req.url, `http://${req.headers.host}`);
+      if(req.method==='GET'&&url.pathname==='/favicon.ico'){res.writeHead(204);res.end();return;}
       if (!['GET', 'HEAD'].includes(req.method)) {
         const submitted = Buffer.from(String(req.headers['x-workspace-token'] || ''));
         fail(submitted.length === token.length && timingSafeEqual(submitted, Buffer.from(token)), '请刷新工作区后重试。', 403);
         fail(!req.headers.origin || req.headers.origin === `http://${req.headers.host}`, '来源无效。', 403);
+      }
+      if (req.method === 'GET' && /^\/api\/tasks\/[^/]+\/result\.md$/.test(url.pathname)) {
+        const snapshot=store.snapshot(),result=gradingResult(snapshot,url.pathname.split('/')[3],url.searchParams.get('groupId'));
+        fail(result,'这份答卷还没有可导出的评分结果。',404);
+        const body=resultMarkdown(result,snapshot.pages);
+        res.writeHead(200,{'Content-Type':'text/markdown; charset=utf-8','Content-Disposition':`attachment; filename*=UTF-8''${encodeURIComponent('评分结果.md')}`});res.end(body);return;
       }
       if (req.method === 'GET' && url.pathname === '/api/state') return send(res, 200, { ...state(), token });
       if(req.method==='GET'&&/^\/api\/tasks\/[\w-]+\/annotated\.pdf$/.test(url.pathname)) {
@@ -174,10 +182,10 @@ export async function createWorkspaceServer({ directory, port = 4173, model = 'o
         return send(res, 200, state());
       }
       fail(req.method === 'GET' || req.method === 'HEAD', '方法不支持。', 405);
-      const files = new Set(['index.html', 'app.mjs', 'ui.mjs', 'materials.mjs', 'tasks.mjs', 'review.mjs', 'style.css', 'canvas-app.mjs', 'canvas-view.mjs', 'canvas-selection.mjs', 'canvas.css', 'workspace-canvas.mjs', 'document-editor.mjs', 'workspace-canvas.css', 'document-reader.mjs', 'document-reader.css', 'report-math.mjs', 'math-text-parser.mjs']);
+      const files = new Set(['index.html', 'app.mjs', 'ui.mjs', 'materials.mjs', 'tasks.mjs', 'review.mjs', 'style.css', 'canvas-app.mjs', 'canvas-view.mjs', 'canvas-selection.mjs', 'canvas.css', 'workspace-canvas.mjs', 'document-editor.mjs', 'workspace-canvas.css', 'document-reader.mjs', 'document-reader.css', 'report-math.mjs', 'math-text-parser.mjs', 'results-view.mjs', 'results.css']);
       const relative = url.pathname === '/' ? 'index.html' : url.pathname.slice(1);
       let file;
-      if (relative === 'grading-annotations.mjs') file = join(experimentRoot, 'web/grading-annotations.mjs');
+      if (['grading-annotations.mjs','annotation-layout.mjs','annotation-card.mjs','grading-result.mjs','page-stream.mjs'].includes(relative)) file = join(experimentRoot, 'web', relative);
       else if (relative === 'node_modules/katex/dist/katex.mjs') file = join(experimentRoot, relative);
       else if (files.has(relative)) file = join(experimentRoot, 'web', relative);
       else if (/^assets\/icons\/(down|swap|undo|upload|plus|edit|form|message|left|right|column-width|zoom-in|file-text|close|arrow-up|pause|play|stop|select|history|check|minus)\.svg$/.test(relative)) file = join(experimentRoot, 'web', relative);
