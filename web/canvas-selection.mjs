@@ -11,7 +11,7 @@ export function selectionBounds(points) {
 // Hit the actual freehand region, including a small screen-space allowance at its edge.
 export function hitSelection(point, selections, bounds, tolerance = 6) {
   const [px, py] = point.map((value, index) => value * (index ? bounds.height : bounds.width));
-  return selections.findLast(selection => {
+  const hits=selections.filter(selection => {
     const { x, y, width, height } = selection.rect;
     const polygon = selection.shape === 'lasso' ? selection.points : [[x, y], [x + width, y], [x + width, y + height], [x, y + height]];
     let inside = false;
@@ -25,10 +25,13 @@ export function hitSelection(point, selections, bounds, tolerance = 6) {
     }
     return inside;
   });
+  // A narrow step inside a broader result is the more specific target. Manual
+  // circles retain their existing topmost priority; scoring points stay distinct.
+  return hits.findLast(selection=>!selection.generated)||hits.sort((a,b)=>a.rect.width*a.rect.height-b.rect.width*b.rect.height)[0];
 }
 
-export function bindSelection(canvas, { getPage, getMode, getSelections, onSelect, getActiveId = () => null,
-  onActivate = () => {}, onHover = () => {}, onInvalid = () => {} }) {
+export function bindSelection(canvas, { getPage, getMode, getSelections, onSelect, getActiveId = () => null,getHoveredId = () => null,
+  onActivate = () => {}, onHover = () => {}, onInvalid = () => {}, onLayout = () => {} }) {
   const context = canvas.getContext('2d'); let gesture = null, hovered = null;
   const selections = () => getSelections().filter(selection => selection.pageId === getPage()?.id);
   const draw = () => {
@@ -42,11 +45,20 @@ export function bindSelection(canvas, { getPage, getMode, getSelections, onSelec
     if (gesture) visible.push({ shape: gesture.mode, points: gesture.points, rect: selectionBounds(gesture.points), live: true });
     for (const selection of visible) {
       const active = (selection.annotationId || selection.id) === getActiveId();
+      const hoverId=getHoveredId()||hovered;
+      const highlighted=hoverId?(selection.annotationId||selection.id)===hoverId:active;
+      if(selection.generated&&!highlighted)continue;
       context.beginPath(); context.lineWidth = 1.5; context.lineCap = 'round'; context.lineJoin = 'round';
       context.setLineDash(selection.generated ? [] : [5, 4]);
-      context.strokeStyle = active || selection.live ? '#3976ba' : selection.generated
-        ? ({credit:'#48836a',deduction:'#b86a4c',review:'#a78a3d'}[selection.tone]||'#7899c1') : '#7899c1';
-      context.globalAlpha = selection.generated && !active ? .65 : 1;
+      context.strokeStyle = selection.generated
+        ? ({credit:'#23845b',deduction:'#c64545',review:'#a47824'}[selection.tone]||'#7899c1') : active||selection.live?'#3976ba':'#7899c1';
+      context.globalAlpha=1;
+      if(selection.generated&&selection.shape!=='lasso') {
+        const r=selection.rect,x=r.x*width,y=r.y*height,w=r.width*width,h=r.height*height;
+        context.lineWidth=active?2:1.5;context.roundRect(x,y,w,h,Math.min(4,w/4,h/4));
+        context.fillStyle={credit:'rgba(35,132,91,.09)',deduction:'rgba(198,69,69,.09)',review:'rgba(164,120,36,.09)'}[selection.tone]||'rgba(57,118,186,.06)';context.fill();
+        context.stroke();context.globalAlpha=1;continue;
+      }
       if (selection.shape === 'lasso') {
         selection.points.forEach(([x, y], index) => index ? context.lineTo(x * width, y * height) : context.moveTo(x * width, y * height));
         // Keep the moving stroke open. Closing every frame creates a distracting moving chord.
@@ -59,7 +71,7 @@ export function bindSelection(canvas, { getPage, getMode, getSelections, onSelec
   };
   const point = (event, bounds = canvas.getBoundingClientRect()) => normalizedPoint(event.clientX, event.clientY, bounds);
   const hit = event => hitSelection(point(event), selections(), canvas.getBoundingClientRect());
-  const hover = selection => { const id = selection?.annotationId || selection?.id || null; if (hovered !== id) { hovered = id; onHover(id); } };
+  const hover = selection => { const id = selection?.annotationId || selection?.id || null; if (hovered !== id) { hovered = id; onHover(id);draw(); } };
   const down = event => {
     if (event.button !== 0 || event.isPrimary === false || gesture || !getPage() || getMode() === 'browse') return;
     event.preventDefault();
@@ -111,6 +123,6 @@ export function bindSelection(canvas, { getPage, getMode, getSelections, onSelec
   const leave = () => { if (!gesture) hover(null); };
   const handlers = { pointerdown: down, pointermove: move, pointerup: up, pointercancel: cancel, lostpointercapture: cancel, click, pointerleave: leave };
   for (const [name, handler] of Object.entries(handlers)) canvas.addEventListener(name, handler);
-  const observer = new ResizeObserver(draw); observer.observe(canvas); draw();
+  const observer = new ResizeObserver(()=>{draw();onLayout();}); observer.observe(canvas); draw();
   return { draw, cancel, destroy() { observer.disconnect(); for (const [name, handler] of Object.entries(handlers)) canvas.removeEventListener(name, handler); cancel(); } };
 }
