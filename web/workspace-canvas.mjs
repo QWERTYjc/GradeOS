@@ -1,5 +1,5 @@
 import { escape as e, icon } from './ui.mjs';
-import { documents } from './canvas-view.mjs';
+import { documents, needsGradingMaterials } from './canvas-view.mjs';
 import { bindSelection } from './canvas-selection.mjs';
 import { DocumentEditor } from './document-editor.mjs';
 import { annotationBatches, gradingAnnotations, findGradingAnnotation } from './grading-annotations.mjs';
@@ -14,6 +14,11 @@ export class WorkspaceCanvas {
     Object.assign(this, { root, request, getState, onReference, toast, onChange, onReview, onResultDocument });
     this.panels = []; this.pending = []; this.noteDrafts = new Map(); this.mode = 'browse'; this.key = `gradeos-layout:${location.port}`;
     root.innerHTML = '<div class="workspace-panels"></div><div class="annotation-popover" role="dialog" aria-label="批注详情" tabindex="-1" hidden></div>';
+    this.intake = document.createElement('div');
+    this.intake.className = 'intake-surface';
+    this.intake.innerHTML = `<section class="canvas-empty material-intake"><div class="intake-path" aria-label="批改流程"><span aria-current="step">1 · 准备材料</span><span>2 · 开始批改</span><span>3 · 查看结果</span></div><h1>先放入这次的答卷</h1><p>上传学生答卷即可继续，题目和 MS 都可选。</p><div class="intake-cards"><button data-action="upload-student" class="intake-student">${icon('upload')}<span><strong>上传答卷</strong><small>支持多份答卷，可在上传后调整划分</small></span><span class="intake-add">${icon('plus')}</span></button><button data-action="upload-question" class="intake-optional">${icon('file-text')}<span><strong>添加题目</strong><small>可选</small></span>${icon('plus')}</button><button data-action="upload-scheme" class="intake-optional">${icon('file-text')}<span><strong>添加 MS</strong><small>可选</small></span>${icon('plus')}</button></div><small class="intake-formats">PDF、PNG、JPEG · 单个文件最多 40 MB</small><button type="button" data-action="read-documents" class="quiet" hidden>阅读已有文档</button></section>`;
+    root.prepend(this.intake);
+    this.readDocuments = false;
     this.grid = root.querySelector('.workspace-panels'); this.popover = root.querySelector('.annotation-popover');
     this.popover.addEventListener('click', event => {
       const action = event.target.closest('[data-note-action]')?.dataset.noteAction;
@@ -93,15 +98,21 @@ export class WorkspaceCanvas {
   update() {
     const state = this.getState();
     if (this.note?.row.source === 'grading' && !findGradingAnnotation(state, this.note.row.id, this.note.row.target.pageId)) this.closeNote();
+    const hasDocuments = Boolean(state.documents?.length);
+    const showIntake = needsGradingMaterials(state) && (!hasDocuments || !this.readDocuments);
+    this.intake.hidden = !showIntake;
+    this.grid.hidden = showIntake;
+    this.root.classList.toggle('is-empty', showIntake);
+    this.intake.querySelector('[data-action="read-documents"]').hidden = !hasDocuments;
+    if (showIntake) {
+      this.onChange();
+      return;
+    }
     if (!this.panels.length) {
       const restored = (this.restore || []).filter(row => state.pages.some(page => page.id === row.pageId) || state.documents?.some(doc => doc.id === row.documentId)||gradingResult(state,row.resultTaskId,row.resultGroupId)).slice(0, 4);
       this.restore = null;
       for (const item of restored) this.add(item, false);
       if (!this.panels.length && (state.pages.length || state.documents?.length)) this.add({ pageId: state.schemes[0]?.pageIds[0] || state.questions?.[0]?.pageIds[0] || state.groups[0]?.pageIds[0], documentId: !state.pages.length ? state.documents[0]?.id : null }, false);
-    }
-    this.root.classList.toggle('is-empty', !this.panels.length);
-    if (!this.panels.length) {
-      this.grid.innerHTML = `<section class="canvas-empty material-intake"><div class="intake-path" aria-label="批改流程"><span aria-current="step">1 · 准备材料</span><span>2 · 开始批改</span><span>3 · 查看结果</span></div><h1>先放入这次的答卷</h1><p>上传学生答卷即可继续，题目和 MS 都可选。</p><div class="intake-cards"><button data-action="upload-student" class="intake-student">${icon('upload')}<span><strong>上传答卷</strong><small>支持多份答卷，可在上传后调整划分</small></span><span class="intake-add">${icon('plus')}</span></button><button data-action="upload-question" class="intake-optional">${icon('file-text')}<span><strong>添加题目</strong><small>可选</small></span>${icon('plus')}</button><button data-action="upload-scheme" class="intake-optional">${icon('file-text')}<span><strong>添加 MS</strong><small>可选</small></span>${icon('plus')}</button></div><small class="intake-formats">PDF、PNG、JPEG · 单个文件最多 40 MB</small></section>`;
     }
     for (const panel of this.panels) this.renderPanel(panel);
     this.grid.dataset.count = this.panels.length; this.persist(); this.onChange();
@@ -150,8 +161,9 @@ export class WorkspaceCanvas {
     Object.assign(panel, { pageId, documentId: null,resultTaskId:null,resultGroupId:null }); this.closeNote(); this.update();
   }
   async showDocument(documentId, beside = false) {
+    this.readDocuments = true;
     const existing = this.panels.find(row => row.documentId === documentId);
-    if (existing) { this.activeId = existing.id; existing.root.scrollIntoView({ block: 'nearest', inline: 'nearest' }); return; }
+    if (existing) { if (!this.intake.hidden) this.update(); this.activeId = existing.id; existing.root.scrollIntoView({ block: 'nearest', inline: 'nearest' }); return; }
     const panel = this.panels.find(row => row.id === this.activeId) || this.panels[0];
     if (beside || !panel) { this.add({ documentId }); return; }
     if (panel.editor?.dirty) await panel.editor.save();

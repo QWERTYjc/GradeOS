@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { emptyState } from '../src/workspace/store.mjs';
 import { createWorkspaceServer } from '../src/workspace/server.mjs';
 import { questionRows, resultTasks, resultContext, resultsBar, recordDetail } from '../web/results-view.mjs';
-import { workflowView } from '../web/canvas-view.mjs';
+import { needsGradingMaterials, workflowView } from '../web/canvas-view.mjs';
 
 function fixture() {
   const state = emptyState();
@@ -63,6 +63,21 @@ test('result selection survives finished tasks and labels saved partial results 
   assert.equal(resultContext({ state, resultGroupId: 'b' }).items.length, 1);
   assert.deepEqual(resultContext({ state, resultGroupId: 'a', resultFilter: 'deduction' }).filtered.map(row => row.id), ['1']);
   assert.deepEqual(resultContext({ state, resultGroupId: 'a', resultFilter: 'pending' }).filtered.map(row => row.id), ['2', '3']);
+});
+
+test('archived documents allow fresh grading intake while active batches and saved results keep their workflow', () => {
+  const state = emptyState();
+  state.documents = [{ id: 'notes', kind: 'document' }];
+  assert.equal(needsGradingMaterials(state), true);
+  for (const status of ['draft', 'running', 'needs_review']) {
+    state.tasks = [{ kind: 'grade', status }];
+    assert.equal(needsGradingMaterials(state), false);
+  }
+  state.tasks = [{ kind: 'grade', status: 'completed', artifacts: [{ id: 'report' }] }];
+  assert.equal(needsGradingMaterials(state), false);
+  state.tasks = [];
+  state.pages = [{ id: 'source' }];
+  assert.equal(needsGradingMaterials(state), false);
 });
 
 test('report-only workspaces remain readable instead of asking for unrelated student uploads', () => {

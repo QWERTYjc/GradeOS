@@ -94,7 +94,9 @@
     margin-inline: auto;
   }
 }
-.is-empty .workspace-panels{display:flex;background:transparent;overflow:auto}
+.intake-surface:not([hidden]){display:flex;height:100%;overflow:auto}
+.intake-surface [data-action="read-documents"]{color:var(--workbench-accent);font-size:13px}
+.canvas-toolbar .workspace-hint button{display:inline-flex;align-items:center;gap:5px;color:var(--workbench-accent)}
 
 /* Editing and saved state share the file heading instead of adding another toolbar. */
 .pane-editor-tools{flex:none}
@@ -190,6 +192,9 @@
   .workflow-action button{font-size:11px;min-height:31px;padding:6px 10px}
   .canvas-toolbar{height:40px;min-height:40px;padding:0 4px;gap:6px}
   .canvas-toolbar .workspace-hint{display:none}
+  .canvas-toolbar:has([data-action="prepare-materials"]){height:auto;flex-wrap:wrap;padding-block:4px}
+  .canvas-toolbar .workspace-hint:has([data-action="prepare-materials"]){display:block;flex-basis:100%}
+  .canvas-toolbar .workspace-hint button{min-height:32px}
   .canvas-toolbar .canvas-tools{margin-right:auto;display:flex;gap:2px}
   .canvas-toolbar .tool{font-size:10px;padding:5px 7px}
   .canvas-toolbar .compare-action{font-size:10px;padding:4px 6px;gap:4px}

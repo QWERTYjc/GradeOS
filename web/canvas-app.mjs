@@ -1,7 +1,7 @@
 import { escape as e, icon, button as b, iconButton as ib, pageById, recordScoreText } from './ui.mjs';
 import { materialView, equalGroups, movedGroups } from './materials.mjs';
 import { taskForm, taskFormInput, refreshTaskSetup, submitTaskSetup, artifactContent } from './tasks.mjs';
-import { documents, questions, pendingRecords, allRecords, header, toolbar, historyView, statusView, contextChips, questionView, workflowView } from './canvas-view.mjs';
+import { documents, questions, pendingRecords, allRecords, header, toolbar, historyView, statusView, contextChips, questionView, workflowView, needsGradingMaterials } from './canvas-view.mjs';
 import { WorkspaceCanvas } from './workspace-canvas.mjs';
 import { findGradingAnnotation } from './grading-annotations.mjs';
 import { resultTasks, resultContext, resultsOutline, recordDetail, reviewForRecord } from './results-view.mjs';
@@ -84,7 +84,14 @@ function renderHistory() {
   const next = node.querySelector('#conversation-scroll'); next.scrollTop = atEnd ? next.scrollHeight : oldTop;
 }
 function renderWorkflow() {
-  const workflow = document.querySelector('#workflow-stage'); html(workflow, workflowView(ctx, surface?.panels || [])); workflow.hidden = !workflow.innerHTML;
+  const intake = surface && !surface.intake.hidden;
+  const toolbarNode = document.querySelector('#canvas-toolbar');
+  html(toolbarNode, toolbar(ctx, needsGradingMaterials(ctx.state)));
+  toolbarNode.hidden = intake;
+  document.querySelector('.collaboration-dock').hidden = intake;
+  const workflow = document.querySelector('#workflow-stage');
+  html(workflow, intake ? '' : workflowView(ctx, surface?.panels || []));
+  workflow.hidden = !workflow.innerHTML;
 }
 function renderResults() {
   app.classList.toggle('results-open', ctx.resultsOpen);
@@ -104,12 +111,7 @@ function render() {
   app.classList.toggle('conversation-open', ctx.historyOpen);
   renderResults();
   html(document.querySelector('#workspace-header'), header(ctx));
-  html(document.querySelector('#canvas-toolbar'), toolbar(ctx));
-  const hasMaterials = ctx.state.pages.length > 0 || ctx.state.documents.length > 0;
-  document.querySelector('#canvas-toolbar').hidden = !hasMaterials;
-  document.querySelector('.collaboration-dock').hidden = !hasMaterials;
   surface.update();
-  renderWorkflow();
   html(document.querySelector('#composer-context'), contextChips(ctx));
   const aligning = alignmentGuide();
   document.querySelector('#composer-input').placeholder = ctx.questionId ? '回复这一处问题…' : ctx.recordContextId ? '针对这个评分点，写下你的问题…' : ctx.selections.length || ctx.references.length ? '针对引用内容，说说你的要求…' : aligning ? '和 Agent 对齐这次的评分要求…' : ctx.targetTaskId ? '给当前批改补充说明…' : ctx.resultsOpen ? '针对答卷提问，或圈选原卷补充说明…' : '补充批改要求，或针对材料提问…';
@@ -227,6 +229,8 @@ async function submitMessage() {
   } finally { sending = false; updateSend(); }
 }
 const actions = {
+  'read-documents': () => { surface.readDocuments = true; render(); document.querySelector('.workspace-pane select')?.focus(); },
+  'prepare-materials': () => { surface.readDocuments = false; surface.closeNote(); render(); surface.intake.querySelector('[data-action="upload-student"]').focus(); },
   'close-dialog': closeDialog, materials: openMaterials, scope: openMaterials,
   history: () => { ctx.historyOpen = !ctx.historyOpen; if (ctx.historyOpen) closeRecord(); render(); },
   results: element => openResults(element.dataset.id),

@@ -21,6 +21,10 @@ export function gradingStage(state, task) {
   if (guide?.approvals.length) return 'grading';
   return guide ? 'align' : 'prepare';
 }
+export function needsGradingMaterials(state) {
+  return !state.pages.length && !state.chat && !resultTasks(state).length &&
+    !state.tasks.some(task => task.kind === 'grade' && ['draft', 'running', 'needs_review'].includes(task.status));
+}
 export function workflowView(ctx, panels = []) {
   if (ctx.resultsOpen) return resultsBar(ctx);
   const task = ['running', 'draft', 'needs_review'].map(status => ctx.state.tasks.findLast(row => row.kind === 'grade' && row.status === status)).find(Boolean);
@@ -58,12 +62,12 @@ export function header(ctx) {
   return `<div class="brand-line"><a class="canvas-wordmark" href="/" target="_top">Grade<span>OS</span></a><span class="header-divider"></span>${b('rename-project', e(ctx.state.title), { className: 'project-name' })}</div>
     <div class="header-actions">${b('materials', `材料 <span class="count">${ctx.state.pages.length}</span>`, { className: 'quiet' })}${resultTasks(ctx.state).length ? b('results', '批改结果', { className: ctx.resultsOpen ? 'header-result-active' : 'quiet', attrs: `aria-pressed="${Boolean(ctx.resultsOpen)}"` }) : ''}${b('reviews', pending ? `<span class="amber-dot"></span>待确认 ${pending}` : '审阅', { className: pending ? 'review-count' : 'quiet' })}${ib('history', '对话与任务记录', 'history')}<a class="quiet" href="/#files" target="_top">工作区文件</a></div>`;
 }
-export function toolbar(ctx) {
+export function toolbar(ctx, needsMaterials = false) {
   const tool = (mode, label, title = '') => b(mode, label, {
     className: ctx.mode === mode ? 'tool active' : 'tool',
     attrs: `aria-pressed="${ctx.mode === mode}"${title ? ` title="${title}"` : ''}`,
   });
-  return `<span class="workspace-hint">${ctx.resultsOpen ? '点击题号查看原卷与依据' : '材料与评分说明'}</span><div class="canvas-tools" role="group" aria-label="画布工具">${tool('browse', '阅读')}${tool('lasso', `${lassoIcon}套索`, '沿内容自由画一圈，松手后点击选区')}${tool('rectangle', `${icon('select')}框选`)}</div>${b('new-document', `${icon('plus')}文档`, { className: 'compare-action new-document-action' })}${b('compare', `${icon('column-width')}并排`, { className: 'compare-action', attrs: 'aria-label="并排打开文档"' })}`;
+  return `<span class="workspace-hint">${needsMaterials ? b('prepare-materials', '返回准备材料', { className: 'quiet', symbol: 'left' }) : ctx.resultsOpen ? '点击题号查看原卷与依据' : '材料与评分说明'}</span><div class="canvas-tools" role="group" aria-label="画布工具">${tool('browse', '阅读')}${tool('lasso', `${lassoIcon}套索`, '沿内容自由画一圈，松手后点击选区')}${tool('rectangle', `${icon('select')}框选`)}</div>${b('new-document', `${icon('plus')}文档`, { className: 'compare-action new-document-action' })}${b('compare', `${icon('column-width')}并排`, { className: 'compare-action', attrs: 'aria-label="并排打开文档"' })}`;
 }
 
 function eventsView(events) {
