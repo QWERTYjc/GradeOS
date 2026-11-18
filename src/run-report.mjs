@@ -52,14 +52,14 @@ for (const name of ['analytics.py','gradeos_analysis.py']) gradeosHashes[name] =
 await freezeJson(output, 'plan.json', { mode: 'reporting-only replay of previously committed Pi student results',
   created_at: new Date().toISOString(), source, source_summary_sha256: digest(await readFile(resolve(source,'summary.json'))),
   model, reasoning: 'low', prompt_hash: digest(REPORTING_INSTRUCTIONS), source_hashes: hashes, gradeos_source_hashes: gradeosHashes,
-  cap_usd: cap, max_requests: 24, max_output_tokens: 4096, network_retries: 0, new_grading_calls: 0, new_ms_compilation_calls: 0,
+  cap_usd: cap, max_requests: 24, output_policy:'model/context capacity and available task funds', network_retries: 0, new_grading_calls: 0, new_ms_compilation_calls: 0,
   result_set_hash: store.sealed.result_set_hash, rubric_hash: rubric.hash, students: studentIds,
   provider: { only: ['openai'], allow_fallbacks: false, require_parameters: true, data_collection: 'deny' },
   labels_in_model_context: false, previous_grading_cost_usd: sourceSummary.provider_reported_cost_usd });
 if (!values.execute) { console.log(JSON.stringify({ status: 'preflight_only', records: studentIds.length, output })); process.exit(0); }
 if (values.env) process.loadEnvFile(resolve(values.env));
 if (!process.env.OPENROUTER_API_KEY) throw Error('OpenRouter credential missing');
-const controller = new AbortController(); const runtime = createRuntime({ models, model, output, cap, controller, maxRequests: 24, maxOutputTokens: 4096 });
+const controller = new AbortController(); const runtime = createRuntime({ models, model, output, cap, controller, maxRequests: 24 });
 process.once('SIGINT', () => controller.abort(Error('User cancellation')));
 const io = await runtime.io('main', () => 'reporting');
 const reporting = createReporting({ store, output, getRubric: () => rubric, ensureSealed: async () => store.sealed,

@@ -116,7 +116,9 @@ export async function runScriptedGrading({ runtime, output, frozen, guide, schem
     source_contract:'Unchanged frozen rubric and exact approved guide; selected originals retain visual dependencies, source uncertainties and general rules.',
     student_pages:'Complete original answer content once; no separate locator or model review.' });
   const started = Date.now();
+  runtime.allocateStudentBudgets([...students.keys()],{reserveCoordinator:false});
   await registry.dispatch([...students.keys()], concurrency ?? students.size, async id => {
+    try {
     const io = await runtime.io(`student-${id}`, () => 'student_grading');
     const student = students.get(id), start = Date.now(); let failure = null;
     await io.log({ type: 'student_task_start', student_id: id, rubric_hash: frozen.hash });
@@ -154,6 +156,7 @@ export async function runScriptedGrading({ runtime, output, frozen, guide, schem
     await freezeJson(io.directory, 'summary.json', summary);
     await io.log({ type: 'student_task_terminal', ...summary, requests: undefined });
     return summary;
+    } finally { runtime.finishStudentBudget(id); }
   }, runtime.signal);
   const rows = [...registry.rows.values()];
   await freezeJson(output, 'cohort.json', { rubric_hash: frozen.hash, students: rows });

@@ -19,6 +19,7 @@ Keep the existing context; do not request the entire MS again or rewrite the com
 Check every source page including general instructions, continuations and alternative routes. Reconstruct the item inventory from the source;
 look for omissions, invented rules, mistranscribed formulae, scope errors, lost dependencies, follow-through, partial credit and equivalent methods.
 Check each point's source_text, value, allowed_awards and condition against the image; never authorize intermediate awards absent source support. Alternative routes must not be added together.
+Check award scope in BOTH directions, not only route totals: every necessary clause in condition must be authorized for that specific award, and every explicit qualification of that award must survive. A later worked step is not automatically required for an earlier method/choice mark. Preserve explicit joint conditions, linked later notes and cross-line/page scopes; do not infer the boundary from spacing or the next mark label alone. Correct unsupported added clauses and missing clauses, or retain uncertainty when the source does not resolve the boundary.
 Each route lists a complete path to the item's source maximum; shared points may appear in multiple routes.
 depends_on expresses only unconditional full-credit prerequisites within that route; conditional dependencies belong in condition.
 Do not force source semantics into a guessed point split. Keep uncertainty and require source images where spatial or ambiguous information matters.

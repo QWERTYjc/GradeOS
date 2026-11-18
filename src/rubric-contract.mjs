@@ -1,6 +1,8 @@
 import { digest, SUBMIT_SCHEMA } from './core.mjs';
 
 export const MS_SOURCE_RELATIONS = `Source layout carries rules: trace brackets, dashed links, merged cells and continuation notes to the exact steps and award they qualify; do not attach a remark to the nearest answer by proximity alone.
+Each point requires only the act and qualifications the source assigns to THAT award. Subsequent demonstration, calculation, limits or conclusions do not become requirements of an earlier method/choice point merely because they follow it, precede the next mark label, or are mathematically needed later. Trace the actual award span, not just the next labelled row.
+Conversely, retain explicit joint requirements and later notes qualifying that award, including brackets or merged cells spanning several lines/pages. Do not mechanically stop at the first line or mark label. Ambiguous scope stays uncertain; proximity alone cannot prove either independence or conjunction.
 Preserve the linked steps AND their qualifying remark in source_text. An either/any-one permission is OR only within that award's condition: keep every permitted alternative, award the shared point once, and leave neighboring independent answer/method points unchanged. A both/all requirement remains AND; a choice of route is not permission to combine credits across routes.
 Keep shared points under the same point_id across routes. Do not infer depends_on from row order or membership in a shared group; only source-supported unconditional prerequisites belong there.
 If the link, scope or allocation cannot be resolved from the source, retain the ambiguity in uncertainties, set requires_source_image with the affected pages and a reason, and request review instead of inventing a narrower or broader rule.`;
@@ -30,12 +32,12 @@ const routeFields = {route_id:'id',point_ids:'points',description:'description'}
 const aliasSchema = (schema,fields) => objectSchema(Object.fromEntries(Object.entries(fields).map(([key,alias])=>[alias,schema.properties[key]])));
 const compactItem = aliasSchema(ITEM_SCHEMA,itemFields);
 compactItem.properties.points={...ITEM_SCHEMA.properties.scoring_points,items:aliasSchema(ITEM_SCHEMA.properties.scoring_points.items,pointFields)};
-compactItem.properties.points.items.properties.condition={anyOf:[str,{type:"null"}],description:"Use null only to reference source verbatim when it already states the complete criterion; otherwise write the full condition."};
+compactItem.properties.points.items.properties.condition={anyOf:[{type:"null"},str],description:"Prefer null to reference the complete source criterion verbatim; write a separate condition only when needed to express its source-supported scope. Never omit a qualification to enable this reference."};
 compactItem.properties.routes={...ITEM_SCHEMA.properties.routes,items:aliasSchema(ITEM_SCHEMA.properties.routes.items,routeFields)};
 export const MS_WRITE_SCHEMA = objectSchema({items:{type:'array',minItems:1,items:compactItem}});
 export const MS_WRITE_PROMPT = `write_rubric_items uses short keys only to reduce repeated field names; the host restores the full canonical rubric without inferring values.
-Item keys: q=question_id, id=item_id, max=max_score, criteria, pages=source_pages, related=related_item_ids, visual=requires_source_image, why=image_reason, uncertainties, points=scoring_points, routes.
-Point keys: id=point_id, max=max_score, awards=allowed_awards, type=award_type, condition, depends=depends_on, source=source_text, pages=source_pages. condition=null explicitly copies source verbatim ONLY when source already expresses the complete criterion, including method, justification, alternatives, qualifications and follow-through. It never means missing or uncertain. Otherwise keep the full separate condition; do not omit a required step merely because a final answer is present.
+Item keys: q=printed parent question identifier, id=separately scored item identifier, max=max_score, criteria, pages=source_pages, related=related_item_ids, visual=requires_source_image, why=image_reason, uncertainties, points=scoring_points, routes. Keep the parent and subpart identities distinct when the source distinguishes them.
+Point keys: id=point_id, max=max_score, awards=allowed_awards, type=award_type, condition, depends=depends_on, source=source_text, pages=source_pages. Write the faithful award-bearing source and its linked qualifications once. Prefer condition=null when that source already expresses the complete criterion: the host copies it verbatim. Do not also paraphrase the same criterion merely to fill both fields. This reference preserves method, justification, alternatives, qualifications and follow-through; it never means missing or uncertain. When source alone does not express the full scoped rule, retain a complete separate condition. Never shorten the source, drop a required step or merge a later award to make this reference possible.
 Route keys: id=route_id, points=point_ids, description. All keys are required, including explicit empty arrays/strings and false. Keep the entire source condition, faithful original wording, page ownership, allowed awards, dependencies, alternatives and uncertainty. Do not substitute an answer summary. Review corrections use the full field names in their own schema.`;
 function expandFields(value,fields) {
   if(!value||typeof value!=='object'||Array.isArray(value)||Object.keys(value).length!==Object.keys(fields).length||Object.values(fields).some(alias=>!Object.hasOwn(value,alias)))throw Error('Incomplete or unknown MS write fields');
@@ -139,6 +141,16 @@ Object.assign(POINT_SUBMIT_SCHEMA.properties.items.items.properties, {
   }) },
 });
 POINT_SUBMIT_SCHEMA.properties.items.items.required.push('selected_route', 'point_decisions');
+
+// Lossless presentation only: the frozen artifact remains the scoring authority.
+export function studentRubricText(artifact){
+  return 'Omitted source_text is identical to condition. Omitted depends_on, related_item_ids and uncertainties are empty arrays. All nonempty source conditions, exceptions and dependencies are retained.\n'+
+    JSON.stringify(artifact,function(key,value){
+      if(key==='source_text'&&value===this.condition)return undefined;
+      if(['depends_on','related_item_ids','uncertainties'].includes(key)&&Array.isArray(value)&&value.length===0)return undefined;
+      return value;
+    });
+}
 
 export function validatePointDecisions(row, item, student) {
   const route = item.routes.find(r => r.route_id === row.selected_route);

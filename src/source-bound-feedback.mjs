@@ -35,6 +35,25 @@ export function feedbackFacts(grade,frozen){
     return {item,rule,pairs,concise:concise.has(item.item_id),focus:needsFocus.length?needsFocus:pairs};
   });
 }
+
+// Reporting selects existing facts; it does not need another model to judge them.
+export function selectSavedFeedback(grade,frozen){
+  const facts=feedbackFacts(grade,frozen),items={},strengths=[],priorities=[];
+  for(const f of facts){
+    const review=f.item.review_required||f.item.score===null||f.rule.uncertainties.length>0||
+      frozen.artifact.unresolved_notes.length>0||(grade.source_issues??[]).some(x=>x.item_id===f.item.item_id);
+    const point=(f.focus.find(x=>x.point.score===null)??f.focus[0]).point;
+    if(!f.concise){
+      const inspect=review||point.relation==='exception'||point.relation==='uncertain';
+      items[f.item.item_id]={point_id:point.point_id,action:inspect?'inspect_source':point.relation==='met'?'verify_result':'reconstruct',review:inspect?'source_check':'none'};
+      if(priorities.length<3&&(f.item.score!==f.item.max_score||inspect))priorities.push({item_id:f.item.item_id,point_id:point.point_id});
+    }
+    const credited=f.pairs.find(x=>x.point.score>0&&x.point.relation==='met');
+    if(strengths.length<3&&!review&&credited&&(!items[f.item.item_id]||items[f.item.item_id].review==='none'))
+      strengths.push({item_id:f.item.item_id,point_id:credited.point.point_id});
+  }
+  return {strengths,priorities,items,additional_items:[]};
+}
 function actionIds(point,review){
   if(point.score===null)return ['inspect_source'];
   return [...(point.score>0&&point.relation==='met'?['verify_result']:[]),'reconstruct','check_scope','complete_evidence',...(review?['inspect_source']:[])];
@@ -115,7 +134,7 @@ export function expandSourceBoundFeedback(raw,grade,frozen){
       if(row.action==='inspect_source'&&!review)throw Error('Source inspection must retain a review recommendation');
       source_focus[f.item.item_id]=sourceFocus(f,row.point_id,frozen);
       next_step=PRACTICE_ACTIONS[row.action].action;
-      if(row.review!=='none')review_reason=(f.item.review_required||f.item.score===null?'保留原记录的复核要求：':'反馈模型建议核查，尚未独立确认问题：')+(row.review==='source_check'?'核对所选评分点的MS条件与适用范围。':'核对所选评分点的原始作答证据。');
+      if(row.review!=='none')review_reason=(f.item.review_required||f.item.score===null?'保留原记录的复核要求：':'反馈建议核查，尚未独立确认问题：')+(row.review==='source_check'?'核对所选评分点的MS条件与适用范围。':'核对所选评分点的原始作答证据。');
     }else{
       if(!f.concise)throw Error('Missing required point feedback');
       assessment='本题记录为满分，所选评分路线的各点均已获分。复习时可用下方评分条件检查关键步骤是否完整。';

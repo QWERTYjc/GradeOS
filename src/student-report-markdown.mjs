@@ -50,7 +50,13 @@ export function renderStudentFeedback(id, grade, frozen, feedback, sourcePath) {
     ...(flagged.length ? table(['题目', '当前分数', '核查事项'], flagged.map(item => [itemLink(item.item_id), `${score(item.score)} / ${item.max_score}`,
       text(byId.get(item.item_id)?.review_reason || (item.score == null ? '分数待定，需核对原卷证据及适用条件。' : '原批改标记需复核。'))])) : []));
   for (const note of grade.review_notes ?? []) lines.push(`- **原批改备注**：${text(note)}`);
-  for (const issue of grade.source_issues ?? []) lines.push(`- **来源疑点 ${text(issue.item_id ?? '')}**：${text(issue.description ?? issue.reason ?? JSON.stringify(issue))}`);
+  for (const issue of grade.source_issues ?? []) {
+    const location = [issue.scheme_pages?.length ? `MS 第 ${pages(issue.scheme_pages)} 页` : '',
+      issue.point_ids?.length ? `评分点 ${issue.point_ids.map(text).join('、')}` : ''].filter(Boolean).join('；');
+    lines.push(`- **来源疑点 ${text(issue.item_id ?? '')}**${location ? `（${location}）` : ''}：${text(issue.observation ?? issue.description ?? issue.reason ?? '详细内容见原始批改记录。')}`);
+    if (issue.impact) lines.push('', `  **对判分的影响**：${text(issue.impact)}`);
+    if (issue.blocks_award) lines.push('', '  **待核实**：该疑点影响相关评分点的判定，保留待定状态供教师确认。');
+  }
   lines.push('', '### 得分概览', '', `${grade.items.length} 个小项中，${incomplete.length} 项存在未获分部分${unknown ? `，${unknown} 项分数待定` : ''}。点击题号可查看该题反馈与完整依据。`, '',
     ...table(['题目', '得分', '阅读提示'], grade.items.map(item => [itemLink(item.item_id), `${score(item.score)} / ${item.max_score}`, state(item)])),
     '---', '', '## 逐题反馈', '',

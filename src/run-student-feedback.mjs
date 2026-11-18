@@ -56,7 +56,7 @@ await freezeJson(output, 'plan.json', { mode: 'feedback-only frozen-result repla
   feedback_mode:mode,student_cache_namespace:studentCacheNamespace,
   prompt_sha256: digest(compact?COMPACT_FEEDBACK_PROMPT:FEEDBACK_PROMPT), schema_sha256: digest(compact?COMPACT_FEEDBACK_SCHEMA:FEEDBACK_SCHEMA), model, reasoning: 'low',
   provider: { only: ['openai'], allow_fallbacks: false, require_parameters: true, data_collection: 'deny' },
-  cap_usd: cap, concurrency, max_requests: ids.length * 2, max_output_tokens: compact?4096:8192, network_retries: 0,
+  cap_usd: cap, concurrency, max_requests: ids.length * 2, output_policy:'model/context capacity and available task funds', network_retries: 0,
   new_grading_calls: 0, new_ms_calls: 0, source_images_supplied: 0, official_labels_supplied: false,
   question: 'Complete source-bound summaries and item feedback; no score or grading-accuracy change claimed' });
 if (!values.execute) { console.log(JSON.stringify({ status: 'preflight_only', output, students: ids.length, eligible: grades.size })); process.exit(0); }
@@ -64,13 +64,16 @@ if (values.env) process.loadEnvFile(resolve(values.env));
 if (!process.env.OPENROUTER_API_KEY) throw Error('OpenRouter credential missing');
 const controller = new AbortController();
 process.once('SIGINT', () => controller.abort(Error('User cancellation')));
-const runtime = createRuntime({ models, model, output, cap, controller, maxRequests: ids.length * 2, maxOutputTokens: compact?4096:8192,studentCacheNamespace });
+const runtime = createRuntime({ models, model, output, cap, controller, maxRequests: ids.length * 2,studentCacheNamespace });
 const started = Date.now(); let failure = null;
 try {
+  runtime.allocateStudentBudgets(ids,{reserveCoordinator:false});
   await registry.dispatch(ids, concurrency ?? ids.length, async id => {
+    try {
     if (!grades.has(id)) return { status: 'failed', failure: 'Original grading unavailable; no feedback invented' };
-    return runStudentFeedback({ runtime, model, id, grade: grades.get(id), frozen,mode,
+    return await runStudentFeedback({ runtime, model, id, grade: grades.get(id), frozen,mode,
       sourcePath: bindings.find(row => row.student_id === id).grading_path });
+    } finally { runtime.finishStudentBudget(id); }
   }, controller.signal);
 } catch (error) { failure = error.message; }
 finally {

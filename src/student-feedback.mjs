@@ -7,7 +7,7 @@ import { writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { COMPACT_FEEDBACK_SCHEMA, COMPACT_FEEDBACK_PROMPT, compactFeedbackPacket, expandCompactFeedback } from './compact-feedback.mjs';
 import {FOCUSED_FEEDBACK_SCHEMA, FOCUSED_FEEDBACK_PROMPT, focusedFeedbackPacket, expandFocusedFeedback, conciseFeedbackIds, namedFeedbackSchema, NAMED_FEEDBACK_PROMPT, expandNamedFeedback} from './focused-feedback.mjs';
-import {sourceBoundFeedbackSchema,SOURCE_BOUND_FEEDBACK_PROMPT,sourceBoundFeedbackPacket,expandSourceBoundFeedback} from './source-bound-feedback.mjs';
+import {sourceBoundFeedbackSchema,SOURCE_BOUND_FEEDBACK_PROMPT,sourceBoundFeedbackPacket,expandSourceBoundFeedback,selectSavedFeedback} from './source-bound-feedback.mjs';
 
 const obj = properties => ({ type: 'object', properties, required: Object.keys(properties), additionalProperties: false });
 const text = maxLength => ({ type: 'string', minLength: 1, maxLength });
@@ -131,6 +131,22 @@ export function createFeedbackAgent({ model, streamFn, grade, frozen, persist, l
 export async function runStudentFeedback({ runtime, model, id, grade, frozen, sourcePath, mode='detailed-v1' }) {
   const io = await runtime.io(`feedback-${id}`, () => 'student_feedback');
   const started = Date.now(); let failure = null;
+  if(mode==='source-bound-v5'){
+    const raw=selectSavedFeedback(grade,frozen),grounded=expandSourceBoundFeedback(raw,grade,frozen);
+    const {model_submission_hash,...metadata}=grounded.metadata;
+    const feedback={...validateFeedback(grounded.feedback,grade,frozen),version:5,...metadata,
+      generation_mode:'deterministic-source-bound-v5',selection_hash:digest(raw),
+      basis:'Immutable award facts and exact MS source targets; deterministic selection in source order; no new grading'};
+    await freezeJson(io.directory,'feedback.json',feedback);
+    await writeFile(resolve(io.directory,'REPORT.zh-CN.md'),renderStudentFeedback(id,grade,frozen,feedback,sourcePath),{flag:'wx'});
+    const summary={student_id:id,mode:feedback.generation_mode,status:'submitted',failure:null,
+      elapsed_seconds:(Date.now()-started)/1000,...runtime.totals([]),requests:[],
+      feedback_path:resolve(io.directory,'feedback.json'),feedback_sha256:digest(JSON.stringify(feedback,null,2)+'\n'),
+      report_path:resolve(io.directory,'REPORT.zh-CN.md'),grade_hash:digest(grade),rubric_hash:frozen.hash,
+      new_grading_calls:0,new_image_reads:0,recommended_review_items:feedback.items.filter(x=>x.review_recommended).map(x=>x.item_id)};
+    await freezeJson(io.directory,'summary.json',summary);
+    return summary;
+  }
   const child = createFeedbackAgent({ model, streamFn: io.streamFn, grade, frozen, mode, log: io.log, persist: async feedback => {
     await freezeJson(io.directory, 'feedback.json', feedback);
     await writeFile(resolve(io.directory, 'REPORT.zh-CN.md'), renderStudentFeedback(id, grade, frozen, feedback, sourcePath), { flag: 'wx' });

@@ -1,12 +1,17 @@
 import { digest } from './core.mjs';
 import { checkPages, objectSchema } from './rubric-contract.mjs';
 
+export function requiredMsPages(frozen) {
+  return [...new Set(frozen.artifact.items.filter(item => item.requires_source_image)
+    .flatMap(item => item.source_pages))].sort((a, b) => a - b);
+}
+
 export function rubricOverview(frozen) {
   return {rubric_hash:frozen.hash,source_sha256:frozen.artifact.source_sha256,
     general_instructions:frozen.artifact.general_instructions,unresolved_notes:frozen.artifact.unresolved_notes,
     items:frozen.artifact.items.map(({item_id,question_id,max_score,source_pages,requires_source_image,image_reason,uncertainties,related_item_ids})=>
       ({item_id,question_id,max_score,source_pages,requires_source_image,image_reason,uncertainties,related_item_ids})),
-    required_ms_pages:[...new Set(frozen.artifact.items.filter(i=>i.requires_source_image).flatMap(i=>i.source_pages))].sort((a,b)=>a-b),
+    required_ms_pages:requiredMsPages(frozen),
     authority:'Navigation only. Students receive the complete immutable rubric; inspect selected source or saved point evidence for full conditions.'};
 }
 

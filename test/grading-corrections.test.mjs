@@ -46,9 +46,13 @@ test('stale hashes, unknown IDs, duplicate IDs, missing metadata and foreign fie
     const c=patch(f.raw,[fixedItem(f.raw)]);mutate(c);assert.throws(()=>mergeGradingCorrection(pending,c,f.frozen));assert.equal(digest(f.raw),before);
   }
 });
-test('actual Pi local correction keeps complete related sources, evidence and only relevant bound images',async()=>{
-  for(const ids of [['Main','Prior','Earlier','Unrelated'],['题目','先前','更早','无关'],['R.iii','K','J','Unrelated prose']]){
+test('actual Pi local correction keeps complete related sources and only bound images for lists, numbers and ranges',async()=>{
+  for(const [index,ids] of [['Main','Prior','Earlier','Unrelated'],['题目','先前','更早','无关'],['R.iii','K','J','Unrelated prose']].entries()){
     const f=fixture(ids);let turn=0,saved,submitted;const contexts=[];
+    for(const row of f.raw.items)for(const point of row.p){
+      if(index===1)point[3]=point[3][0];
+      if(index===2)point[3]=point[3][0]===3?'2-3':point[3].join(',');
+    }
     const ctl=makeAgent(f,(context,options)=>{
       contexts.push(structuredClone(context));turn++;
       if(turn===1){assert.equal(options.gradingCorrectionRequest,undefined);return call('submit_grading',f.raw);}
@@ -62,15 +66,22 @@ test('actual Pi local correction keeps complete related sources, evidence and on
     assert.deepEqual(submitted.items.slice(1),f.raw.items.slice(1));assert.equal(saved.items[0].point_decisions[0].reason,fixedItem(f.raw).p[0][5]);
   }
 });
-test('incomplete first submissions fail the declared whole-ledger contract before becoming correction batches',async()=>{
-  const f=fixture();f.raw.items.forEach(i=>i.review=false);const partial={...structuredClone(f.raw),items:[f.raw.items[0]]};let turn=0,saved;
-  const ctl=makeAgent(f,context=>{
-    turn++;if(turn===1)return call('submit_grading',partial);
-    assert.match(JSON.stringify(context),/items|at least/);assert.equal(checkpoint(context),undefined);
-    assert.ok(getCurrentTools(context.messages).some(t=>t.name==='submit_grading'));
-    return call('submit_grading',f.raw);
-  },{persist:async g=>saved=g});
-  await ctl.agent.prompt(await ctl.initialPrompt([2]));assert.equal(turn,2,ctl.agent.state.errorMessage);assert.equal(saved.items.length,4);assert.equal(saved.total_score,8);
+test('partial proposals retain stable tools across metadata-only and missing-item corrections; only complete merged ledgers save',async()=>{
+  for(const ids of [['Main','Prior','Earlier','Unrelated'],['条甲','条乙','条丙','条丁']]){
+    const f=fixture(ids);f.raw.items.forEach(i=>i.review=false);const partial={...structuredClone(f.raw),items:[f.raw.items[0]]};let turn=0,saved,correctionTools;
+    const ctl=makeAgent(f,context=>{
+      turn++;if(turn===1)return call('submit_grading',partial);
+      assert.equal(saved,undefined);assert.match(JSON.stringify(context),/Draft retained, not accepted/);
+      assert.ok(getCurrentTools(context.messages).some(t=>t.name==='correct_grading'));
+      if(turn===2){correctionTools=structuredClone(getCurrentTools(context.messages));return call('correct_grading',patch(partial,[]));}
+      assert.deepEqual(getCurrentTools(context.messages),correctionTools);
+      if(turn===3)return call('correct_grading',patch(partial,[f.raw.items[1]]));
+      const merged=mergeGradingCorrection({raw:partial},patch(partial,[f.raw.items[1]]),f.frozen);
+      return call('correct_grading',patch(merged,f.raw.items.slice(2)));
+    },{persist:async g=>saved=g});
+    await ctl.agent.prompt(await ctl.initialPrompt([2]));assert.equal(turn,4,ctl.agent.state.errorMessage);assert.equal(saved.items.length,4);assert.equal(saved.total_score,8);
+    for(const item of f.raw.items)assert.equal(saved.items.find(i=>i.item_id===item.id).point_decisions[0].evidence,item.p[0][2]);
+  }
 });
 test('whole-ledger schemas bind only identities and coverage; transformed, partial-credit and unknown judgments remain available',()=>{
   for(const ids of [['Alpha','Beta','Gamma','Other'],['条甲','条乙','待查','无关'],['Archive.ii','Section-B','Document-X','Other prose']]){
@@ -80,15 +91,15 @@ test('whole-ledger schemas bind only identities and coverage; transformed, parti
       const raw=structuredClone(f.raw);raw.items.reverse();raw.items[0].review=review;raw.items[0].p[0][1]=score;raw.items[0].p[0][4]=state;
       validate(raw);
     }
-    for(const mutate of [r=>r.items.pop(),r=>r.items.push(r.items[0]),r=>r.items[0].id='Foreign']){
+    for(const mutate of [r=>r.items=[],r=>r.items.push(r.items[0]),r=>r.items[0].id='Foreign']){
       const raw=structuredClone(f.raw);mutate(raw);assert.throws(()=>validate(raw));
     }
     assert.equal(digest(COMPACT_POINTS_SCHEMA),before);
     const local=gradingCorrectionSchema(schema);assert.equal(local.properties.items.minItems,0);
     const tools=GRADING_CORRECTION_TOOLS.map(name=>({name,description:'Tool',parameters:name==='correct_grading'?local:{type:'object',properties:{submission_hash:{type:'string'}}}}));
-    const bound=gradingCorrectionTools(tools,digest(f.raw),ids.slice(1)).find(t=>t.name==='correct_grading');
+    const bound=gradingCorrectionTools(tools).find(t=>t.name==='correct_grading');
     const check=args=>validateToolArguments(bound,{name:bound.name,type:'toolCall',id:'fix',arguments:args});
-    assert.throws(()=>check(patch(f.raw,[f.raw.items[1]])));check(patch(f.raw,f.raw.items.slice(1)));
+    check(patch(f.raw,[]));check(patch(f.raw,[f.raw.items[1]]));check(patch(f.raw,f.raw.items.slice(1)));
   }
 });
 test('non-reason contradictions support local changed judgments; unrelated records stay untouched',async()=>{
@@ -111,11 +122,12 @@ test('stale correction leaves the current draft available; original images outsi
   const f=fixture();let turn=0,saved;const ctl=makeAgent(f,context=>{
     turn++;if(turn===1)return call('submit_grading',f.raw);
     if(turn===2)return call('correct_grading',{...patch(f.raw,[fixedItem(f.raw)]),submission_hash:'0'.repeat(64)});
-    if(turn===3)return call('read_ms_pages',{pages:[4]});
-    if(turn===4){assert.ok(images(context).includes('scheme-original-4'));return call('read_student_pages',{pages:[6],question:'Inspect the original heading of the supplemental page.'});}
+    if(turn===3){assert.equal(saved,undefined);assert.match(JSON.stringify(context),/No matching pending grading submission/);assert.equal(checkpoint(context).submission_hash,digest(f.raw));return call('reopen_grading',{submission_hash:'0'.repeat(64),reason:'Try an obsolete draft identity.'});}
+    if(turn===4){assert.equal(saved,undefined);assert.equal(checkpoint(context).submission_hash,digest(f.raw));return call('read_ms_pages',{pages:[4]});}
+    if(turn===5){assert.ok(images(context).includes('scheme-original-4'));return call('read_student_pages',{pages:[6],question:'Inspect the original heading of the supplemental page.'});}
     assert.ok(images(context).includes('student-original-6'));return call('correct_grading',patch(f.raw,[fixedItem(f.raw)]));
   },{persist:async g=>saved=g});
-  await ctl.agent.prompt(await ctl.initialPrompt([2]));assert.equal(turn,5,ctl.agent.state.errorMessage);assert.deepEqual(saved.source_image_pages_delivered,[2,4]);
+  await ctl.agent.prompt(await ctl.initialPrompt([2]));assert.equal(turn,6,ctl.agent.state.errorMessage);assert.deepEqual(saved.source_image_pages_delivered,[2,4]);
 });
 test('rejected item corrections advance the draft hash; accepted results cannot be amended',async()=>{
   const f=fixture();let turn=0,saved;const bad=fixedItem(f.raw);bad.p[0][1]=3;const merged=mergeGradingCorrection({raw:f.raw},patch(f.raw,[bad]),f.frozen);
@@ -147,15 +159,31 @@ test('global notes require review metadata while unrelated full-credit reasons r
   await ctl.agent.prompt(await ctl.initialPrompt([2]));assert.equal(turn,2,ctl.agent.state.errorMessage);assert.equal(saved.status,'review_required');assert.equal(saved.total_score,8);
   assert.ok(saved.items.every(i=>i.point_decisions[0].reason_encoding==='explicit_full_credit_attestation'));
 });
-test('actual Sol wire carries a hash-bound local schema and unchanged image tool access without an API call',async()=>{
-  const f=fixture();let turn=0;const contexts=[];
-  const ctl=makeAgent(f,(context,options)=>{contexts.push({context:structuredClone(context),options});turn++;return turn===1?call('submit_grading',f.raw):call('correct_grading',patch(f.raw,[fixedItem(f.raw)]));});
-  await ctl.agent.prompt(await ctl.initialPrompt([2]));const {context,options}=contexts[1];let wire;
-  const result=await models.streamSimple(model,context,{apiKey:'local-test-only',maxRetries:0,reasoning:'low',onPayload:p=>{wire=requireGradingCorrectionTool(p,options.gradingCorrectionRequest);throw Error('Offline serialization only');}}).result();
-  assert.equal(result.stopReason,'error');assert.equal(wire.tool_choice,'required');assert.deepEqual(wire.tools.map(t=>t.function.name).sort(),GRADING_CORRECTION_TOOLS.toSorted());
-  const tool=wire.tools.find(t=>t.function.name==='correct_grading').function;assert.deepEqual(tool.parameters.properties.submission_hash.enum,[digest(f.raw)]);
-  validateToolArguments({name:tool.name,parameters:tool.parameters},{name:tool.name,type:'toolCall',id:'check',arguments:patch(f.raw,[fixedItem(f.raw)])});
-  assert.deepEqual(gradingCorrectionSchema(COMPACT_POINTS_SCHEMA).properties.items.minItems,0);
+test('Terra and Luna wire tools stay identical across draft hashes while checkpoints advance and host validation remains authoritative',async()=>{
+  const f=fixture();let turn=0;const contexts=[];const bad=fixedItem(f.raw);bad.p[0][1]=3;
+  const merged=mergeGradingCorrection({raw:f.raw},patch(f.raw,[bad]),f.frozen);
+  const ctl=makeAgent(f,(context,options)=>{
+    contexts.push({context:structuredClone(context),options});turn++;
+    return turn===1?call('submit_grading',f.raw):turn===2?call('correct_grading',patch(f.raw,[bad])):call('correct_grading',patch(merged,[fixedItem(f.raw)]));
+  });
+  await ctl.agent.prompt(await ctl.initialPrompt([2]));assert.equal(turn,3,ctl.agent.state.errorMessage);
+  assert.notEqual(checkpoint(contexts[1].context).submission_hash,checkpoint(contexts[2].context).submission_hash);
+  for(const id of ['openai/gpt-6.1-terra','openai/gpt-6-luna']){
+    const wires=[];
+    for(const {context,options} of contexts.slice(1)){
+      const result=await models.streamSimple(models.getModel('openrouter',id),context,{apiKey:'local-test-only',maxRetries:0,reasoning:'low',onPayload:p=>{wires.push(requireGradingCorrectionTool(p,options.gradingCorrectionRequest));throw Error('Offline serialization only');}}).result();
+      assert.equal(result.stopReason,'error');
+    }
+    assert.deepEqual(wires[0].tools,wires[1].tools);
+    for(const wire of wires){
+      assert.equal(wire.tool_choice,'auto');assert.deepEqual(wire.tools.map(t=>t.function.name).sort(),GRADING_CORRECTION_TOOLS.toSorted());
+      assert.equal(JSON.stringify(wire.tools).includes(digest(f.raw)),false);assert.equal(JSON.stringify(wire.tools).includes(digest(merged)),false);
+      const tool=wire.tools.find(t=>t.function.name==='correct_grading').function;
+      assert.deepEqual(tool.parameters.properties.submission_hash,{type:'string',minLength:64,maxLength:64});
+      validateToolArguments({name:tool.name,parameters:tool.parameters},{name:tool.name,type:'toolCall',id:'check',arguments:patch(f.raw,[fixedItem(f.raw)])});
+      assert.throws(()=>mergeGradingCorrection({raw:merged},patch(f.raw,[fixedItem(f.raw)]),f.frozen),/No matching/);
+    }
+  }
 });
 test('truncated local correction cannot save a partial or inferred result',async()=>{
   const f=fixture();let turn=0,saved;const ctl=makeAgent(f,()=>[],{persist:async g=>saved=g,streamFn:()=>{

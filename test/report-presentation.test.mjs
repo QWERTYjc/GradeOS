@@ -9,6 +9,9 @@ import { markdown } from '../web/ui.mjs';
 test('student presentation preserves the complete ledger, source rules, null and review even with a neutral feedback layer', () => {
   const { primary: grade, frozen } = exceptionProbeFixture();
   grade.items[0].score = null; grade.total_score = null;
+  grade.source_issues = [{ item_id: grade.items[0].item_id, point_ids: ['source-point'],
+    scheme_pages: [2, 3], observation: 'Source condition has two possible readings.',
+    impact: 'The final award remains uncertain.', blocks_award: true, rubric_hash: 'internal-source-binding' }];
   const before = digest({ grade, frozen });
   const feedback = { grade_hash: digest(grade), rubric_hash: frozen.hash, version: 5,
     summary: '本次总分待定。先核对来源，再按评分条件复做。', strengths: [], priorities: [],
@@ -17,6 +20,11 @@ test('student presentation preserves the complete ledger, source rules, null and
   assert.match(body, /\*\*待定 \/ 18\*\*/);
   assert.match(body, /\| \[Oak-input\].*待定 \/ 1/);
   assert.match(body, /原批改标记需复核/);
+  assert.match(body, /MS 第 2、3 页；评分点 source-point/);
+  assert.match(body, /Source condition has two possible readings\./);
+  assert.match(body, /对判分的影响.*The final award remains uncertain\./);
+  assert.match(body, /保留待定状态供教师确认/);
+  assert.doesNotMatch(body, /"blocks_award"|"observation"|internal-source-binding/);
   assert.ok(!body.split('## 学习总结')[0].includes('opaque-owner-id'));
   for (const item of grade.items) {
     assert.ok(body.includes(item.reason));

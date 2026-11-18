@@ -12,6 +12,7 @@ import { WorkspaceRunner } from './runner.mjs';
 import { WorkspaceChat } from './chat.mjs';
 import { addDocument, readDocument, saveDocument, addAnnotation, updateAnnotation } from './editable-documents.mjs';
 import { exportAnnotatedPdf } from './annotation-export.mjs';
+import { DEFAULT_MAIN_MODEL_ID } from '../experiment-models.mjs';
 import {gradingResult,resultMarkdown} from '../../web/grading-result.mjs';
 
 const mime = { '.html': 'text/html; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.png': 'image/png', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.woff': 'font/woff', '.ttf': 'font/ttf' };
@@ -20,7 +21,7 @@ const readBody = async (req, limit) => {
   for await (const chunk of req) { size += chunk.length; fail(size <= limit, '文件或请求过大。', 413); chunks.push(chunk); }
   return Buffer.concat(chunks);
 };
-export async function createWorkspaceServer({ directory, port = 4173, model = 'openai/gpt-6.1-terra', cap = 2, rubricPath = null, agent = runWorkspaceAgent, systemAgent, configured = () => Boolean(process.env.OPENROUTER_API_KEY) } = {}) {
+export async function createWorkspaceServer({ directory, port = 4173, model = DEFAULT_MAIN_MODEL_ID, cap = 2, rubricPath = null, agent = runWorkspaceAgent, systemAgent, configured = () => Boolean(process.env.OPENROUTER_API_KEY) } = {}) {
   const store = await new WorkspaceStore(directory || join(experimentRoot, '.workspace')).init();
   const runner = new WorkspaceRunner(store, { model, cap, agent, rubricPath });
   const chat = new WorkspaceChat(store, { agent, model, configured });
@@ -212,7 +213,7 @@ export async function createWorkspaceServer({ directory, port = 4173, model = 'o
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const { values } = parseArgs({ options: { port: { type: 'string', default: '4173' }, data: { type: 'string' }, env: { type: 'string' }, rubric: { type: 'string' }, model: { type: 'string', default: 'openai/gpt-6.1-terra' }, cap: { type: 'string', default: '2' } } });
+  const { values } = parseArgs({ options: { port: { type: 'string', default: '4173' }, data: { type: 'string' }, env: { type: 'string' }, rubric: { type: 'string' }, model: { type: 'string', default: DEFAULT_MAIN_MODEL_ID }, cap: { type: 'string', default: '2' } } });
   if (values.env) process.loadEnvFile(resolve(values.env));
   const port = Number(values.port), cap = Number(values.cap);
   fail(Number.isInteger(port) && port >= 0 && port <= 65535 && Number.isFinite(cap) && cap > 0 && cap <= 5, '端口或费用上限无效。');

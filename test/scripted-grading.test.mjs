@@ -119,7 +119,7 @@ test('scripted grading delivers complete pages in order and binds cross-page evi
     const imageVariants={mode:'source_grid',documents:{neutral:{pages:variants}}};
     const answer={sha256:'complete-answer',pages};
     let calls=0,images,labels;
-    const runtime={budget:{requests:[]},totals:()=>({admitted_requests:0}),
+    const runtime={allocateStudentBudgets:()=>{},finishStudentBudget:()=>{},budget:{requests:[]},totals:()=>({admitted_requests:0}),
       io:async name=>{
         const directory=join(dir,name);await mkdir(directory);
         return {directory,log:async()=>{},attach:()=>()=>{},streamFn:(_model,context)=>{

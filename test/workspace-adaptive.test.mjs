@@ -41,10 +41,10 @@ const models = createModels(); models.setProvider(openrouterProvider());
 const model = models.getModel('openrouter', 'openai/gpt-6.1-terra');
 const toolCall = (name, args) => ({ type: 'toolCall', id: crypto.randomUUID(), name, arguments: args });
 function stream(next) {
-  return (_model, context) => {
-    const content = next(context);
+  return (selectedModel, context) => {
+    const content = next(context, selectedModel);
     const result = createAssistantMessageEventStream();
-    const message = { role: 'assistant', content, api: model.api, provider: model.provider, model: model.id, timestamp: Date.now(),
+    const message = { role: 'assistant', content, api: selectedModel.api, provider: selectedModel.provider, model: selectedModel.id, timestamp: Date.now(),
       stopReason: content.some(part => part.type === 'toolCall') ? 'toolUse' : 'stop', usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } } };
     queueMicrotask(() => result.push({ type: 'done', reason: message.stopReason, message })); return result;
   };
@@ -225,8 +225,9 @@ test('adaptive runtime persists adopted guide, original records and provisional 
   const runner = new WorkspaceRunner(store); runner.active.set(f.task.id, entry);
   let mainStep = 0, studentStep = 0;
   const localModels = createModels(); localModels.setProvider(openrouterProvider());
-  localModels.streamSimple = stream(context => {
+  localModels.streamSimple = stream((context, selectedModel) => {
     const main = context.systemPrompt?.includes('main GradeOS') || context.messages.some(row => row.role === 'system' && JSON.stringify(row).includes('main GradeOS'));
+    assert.equal(selectedModel.id, main ? 'openai/gpt-6.1-terra' : 'openai/gpt-6-luna');
     const system = context.systemPrompt || JSON.stringify(context.messages.find(row => row.role === 'system'));
     if (system.includes('independently establish reference solutions')) {
       assert.doesNotMatch(JSON.stringify(context.messages), /用中文反馈/);
@@ -261,6 +262,9 @@ test('adaptive runtime persists adopted guide, original records and provisional 
   assert.equal(store.state.documents.find(row => row.kind === 'marking_guide').approvals[0].method, 'automatic');
   assert.match(store.state.documents.find(row => row.kind === 'marking_guide').body, /本批已核对的补充要求/);
   assert.equal(JSON.parse(await readFile(join(input.output, 'summary.json'), 'utf8')).status, 'submitted');
+  const runPlan = JSON.parse(await readFile(join(input.output, 'adaptive-run.json'), 'utf8'));
+  assert.equal(runPlan.model, 'openai/gpt-6.1-terra');
+  assert.equal(runPlan.workerModel, 'openai/gpt-6-luna');
   assert.equal((await new WorkspaceStore(directory).init()).state.tasks[0].records.length, 1);
 });
 

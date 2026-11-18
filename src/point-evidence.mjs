@@ -1,6 +1,7 @@
 import { objectSchema, checkPages, validatePointDecisions } from './rubric-contract.mjs';
 
 export const VISUAL_EVIDENCE_PROMPT = `Read the student's visible work literally before comparing it with the MS. Do not complete a missing or ambiguous digit, sign, label or step from the expected answer, and do not propagate a guessed reading into later evidence.
+Before claiming an item has no work, locate its complete answer region, including the bottom of the page and any continuation. Page citations are navigation clues, not search boundaries. Distinguish genuinely blank work from a missed region, illegible work, crossed-out work and a visible but incorrect attempt; handwriting alone never earns credit. Do not borrow evidence from a neighbouring item.
 Before an award or deduction that depends on an uncertain visual distinction, compare the actual marks and their repeated occurrences on the relevant answer page. If the reading is still unresolved and page tools are available, call read_student_pages for only those original pages with a specific visual question; inspect the returned images in the next model turn before deciding. "Not clearly readable" does not establish "absent" or "incorrect".
 If one targeted reinspection cannot resolve the reading, or page tools are unavailable, keep the affected point uncertain with null and review rather than guessing either credit or zero. State the unresolved readings briefly in the evidence/reason. Clearly readable incorrect work still follows the ordinary MS rules; clear pages need no reassurance reread.`;
 

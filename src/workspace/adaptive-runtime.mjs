@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { createModels } from '@earendil-works/pi-ai';
 import { openrouterProvider } from '@earendil-works/pi-ai/providers/openrouter';
 import { createRuntime, freezeJson } from '../cohort-runtime.mjs';
-import { experimentModel, experimentProvider } from '../experiment-models.mjs';
+import { experimentModel, experimentProvider, DEFAULT_WORKER_MODEL_ID } from '../experiment-models.mjs';
 import { TeacherInteraction } from '../teacher-interaction.mjs';
 import { digest } from '../core.mjs';
 import { createGradingResearch } from './grading-research.mjs';
@@ -56,9 +56,11 @@ export async function runAdaptiveGrading({ store, task, input, entry, runner, mo
     students: new Map(task.groups.map(group => [group.id, group.pageIds.map(id => task.pages.find(page => page.id === id))])) }).init();
   if (!models) { models = createModels(); models.setProvider(openrouterProvider()); }
   const model = experimentModel(models, runner.model);
+  const workerModel = experimentModel(models, DEFAULT_WORKER_MODEL_ID);
   const runtime = createRuntime({ models, model, output: input.output, cap: runner.cap, controller: entry.controller,
-    maxRequests: 128, deadlineMs: 900000, maxOutputTokens: 16000, structuredOutput: false,
-    studentCacheNamespace: task.id, provider: experimentProvider(runner.model), interaction });
+    maxRequests: 128, deadlineMs: 900000, structuredOutput: false,
+    studentCacheNamespace: task.id, provider: experimentProvider(runner.model),
+    workerModel, workerProvider: experimentProvider(workerModel.id), interaction });
   const research = createGradingResearch({ enabled: task.allowWebSearch, signal: entry.controller.signal,
     persist: event => appendFile(join(input.output, 'research.jsonl'), JSON.stringify(event) + '\n', { mode: 0o600 }) });
   const readPage = async page => {
@@ -90,7 +92,7 @@ export async function runAdaptiveGrading({ store, task, input, entry, runner, mo
   }, 500);
   const io = await runtime.io('main', () => coordinator?.getPlan() ? 'adaptive_coordination' : 'adaptive_preparation');
   try {
-    await freezeJson(input.output, 'adaptive-run.json', { version: 1, taskId: task.id, model: runner.model, provider: runtime.provider,
+    await freezeJson(input.output, 'adaptive-run.json', { version: 1, taskId: task.id, model: runner.model, workerModel: workerModel.id, provider: runtime.provider,
       sourcePages: task.pages.map(({ id, role, sha256 }) => ({ id, role, sha256 })), groupIds: task.groupIds,
       gradingContext: task.gradingContext, teacherGoal: task.goal, supplementalInstructions: task.supplementalInstructions, executionMode: task.executionMode, cap: runner.cap,
       researchAvailable: research.available, labelsInModelContext: false, referenceVerification: 'isolated-task-derivation-and-source-audit-v1' });
@@ -102,14 +104,14 @@ export async function runAdaptiveGrading({ store, task, input, entry, runner, mo
         const number = ++auditNumber;
         const derivationIO = await runtime.io(`reference-derivation-${number}`, () => 'adaptive_reference_derivation', { isolated: true });
         await freezeJson(derivationIO.directory, 'task-only-input.json', taskOnlyInput(candidate));
-        const deriver = createReferenceDeriver({ model, streamFn: derivationIO.streamFn, candidate, log: derivationIO.log });
+        const deriver = createReferenceDeriver({ model: workerModel, streamFn: derivationIO.streamFn, candidate, log: derivationIO.log });
         const detachDeriver = derivationIO.attach(deriver.agent);
         try { await runtime.run(deriver.agent, deriver.prompt, derivationIO.directory); }
         finally { detachDeriver(); }
         const derivation = deriver.getResult(); fail(derivation, '独立推导未提交完整结果，不能发布未经核验的数值标准。');
         await freezeJson(derivationIO.directory, 'derivation.json', derivation);
         const reviewIO = await runtime.io(`reference-review-${number}`, () => 'adaptive_reference_review', { isolated: true });
-        const reviewer = createReferenceReviewer({ model, streamFn: reviewIO.streamFn, candidate, derivation, pages: task.pages, readPage, log: reviewIO.log });
+        const reviewer = createReferenceReviewer({ model: workerModel, streamFn: reviewIO.streamFn, candidate, derivation, pages: task.pages, readPage, log: reviewIO.log });
         const detachReviewer = reviewIO.attach(reviewer.agent);
         try { await runtime.run(reviewer.agent, reviewer.prompt, reviewIO.directory); }
         finally { detachReviewer(); }
@@ -125,9 +127,11 @@ export async function runAdaptiveGrading({ store, task, input, entry, runner, mo
       },
       publishGuide: frozen => interaction.publishGuide({ hash: frozen.hash, artifact: { source_sha256: frozen.sourceHash } }, frozen.plan.implementation, { body: adaptiveGuideMarkdown(frozen) }),
       executeStudent: async (groupId, frozen, guide, competencies) => {
+        runtime.allocateStudentBudgets(task.groups.map(group=>group.id));
+        try {
         const group = task.groups.find(group => group.id === groupId);
         const childIO = await runtime.io(`student-${groupId}`, () => 'adaptive_student');
-        const child = createAdaptiveStudent({ model, streamFn: childIO.streamFn, task, group, frozen, competencies, readPage, log: childIO.log,
+        const child = createAdaptiveStudent({ model: workerModel, streamFn: childIO.streamFn, task, group, frozen, competencies, readPage, log: childIO.log,
           save: async grade => {
             entry.controller.signal.throwIfAborted();
             await freezeJson(childIO.directory, 'grading.json', grade);
@@ -145,6 +149,7 @@ export async function runAdaptiveGrading({ store, task, input, entry, runner, mo
         finally { detach(); }
         fail(child.getResult(), '本份答卷没有提交完整结果。');
         return { status: 'submitted', reviewRequired: child.getResult().reviewRequired };
+        } finally { runtime.finishStudentBudget(groupId); }
       } });
     const detach = io.attach(coordinator.agent);
     try { await runtime.run(coordinator.agent, coordinator.prompt, io.directory); }

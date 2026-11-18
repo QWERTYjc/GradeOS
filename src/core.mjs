@@ -146,17 +146,40 @@ export class Budget {
     if(scopeCap!==null&&(!Number.isFinite(scopeCap)||scopeCap<=0))throw Error('Invalid per-student budget');
     this.scopeCap=scopeCap;
     this.requests = []; this.chargedOrReserved = 0;
+    this.scopes = new Map();
+  }
+  scopeUsed(scope) { return this.requests.filter(r=>r.budget_scope===scope).reduce((sum,r)=>sum+(r.cost_usd??r.reserve_usd),0); }
+  allocateScopes(ids) {
+    if(!ids.length||new Set(ids).size!==ids.length||ids.some(id=>typeof id!=='string'||!id))throw Error('Invalid budget scopes');
+    if(this.scopes.size) {
+      if(ids.length!==this.scopes.size||ids.some(id=>!this.scopes.has(id)))throw Error('Budget scopes already allocated');
+      return;
+    }
+    const share=Math.max(0,this.available())/ids.length;
+    for(const id of ids)this.scopes.set(id,{limit:Math.min(share,id==='main'?Infinity:this.scopeCap??Infinity),closed:false});
+  }
+  closeScope(id) { const scope=this.scopes.get(id);if(scope)scope.closed=true; }
+  available(id) {
+    const scope=this.scopes.get(id);
+    if(scope?.closed)return 0;
+    const held=[...this.scopes].filter(([other,s])=>other!==id&&!s.closed)
+      .reduce((sum,[other,s])=>sum+Math.max(0,s.limit-this.scopeUsed(other)),0);
+    return Math.max(0,Math.min(this.cap-this.chargedOrReserved-held,
+      id&&id!=='main'&&this.scopeCap!==null?this.scopeCap-this.scopeUsed(id):Infinity));
   }
   admit(reserve, metadata) {
     if (!Number.isFinite(reserve) || reserve < 0) throw Error('Invalid cost reservation');
     if (Date.now() >= this.deadline) throw Error('Deadline limit reached before provider request');
-    if (this.requests.length >= this.maxRequests) throw Error('Request count limit reached before provider request');
-    if(this.scopeCap!==null&&metadata.budget_scope) {
+    if (this.maxRequests !== null && this.requests.length >= this.maxRequests) throw Error('Request count limit reached before provider request');
+    if(this.scopeCap!==null&&metadata.budget_scope&&metadata.budget_scope!=='main') {
       const used=this.requests.filter(row=>row.budget_scope===metadata.budget_scope)
         .reduce((sum,row)=>sum+(row.status==='provider_reported'?row.cost_usd:row.reserve_usd),0);
       if(used+reserve>this.scopeCap)throw Object.assign(new Error(`Per-student budget: request exceeds $${this.scopeCap.toFixed(2)}; not sent to provider`),{code:'STUDENT_BUDGET_LIMIT'});
     }
     if (this.chargedOrReserved + reserve > this.cap) throw Error('Budget reservation limit: requested reserve exceeds available budget');
+    if(reserve>this.available(metadata.budget_scope))throw Object.assign(new Error('Budget reservation limit: sibling task funds are reserved'),metadata.budget_scope?{code:'STUDENT_BUDGET_LIMIT'}:{});
+    const scope=this.scopes.get(metadata.budget_scope);
+    if(scope)scope.limit=Math.max(scope.limit,this.scopeUsed(metadata.budget_scope)+reserve);
     const row = { number: this.requests.length + 1, ...metadata, reserve_usd: reserve, status: 'unknown', started_at: new Date().toISOString() };
     this.requests.push(row); this.chargedOrReserved += reserve; return row;
   }

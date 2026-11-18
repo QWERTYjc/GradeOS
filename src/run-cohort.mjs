@@ -10,7 +10,8 @@ import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import { digest, parseStudentBudget } from './core.mjs';
 import { createCoordinator, createStudentAgent, StudentRegistry, validateFrozenRubric, parseConcurrency, MAIN_PROMPT, REPLAY_MAIN_PROMPT, studentPromptForProtocol } from './cohort-core.mjs';
-import { createRuntime, freezeJson, readImage } from './cohort-runtime.mjs';
+import { createRuntime, freezeJson, readImage, readImageRegion, schemeOverviewReader } from './cohort-runtime.mjs';
+import { requiredMsPages } from './report-context.mjs';
 import { ResultsStore } from './results-store.mjs';
 import { createReporting, REPORTING_INSTRUCTIONS, ECONOMY_REPORTING_INSTRUCTIONS, LEAN_REPORTING_INSTRUCTIONS } from './cohort-reporting.mjs';
 import { EVIDENCE_PROTOCOL_PROMPT, EVIDENCE_SUBMIT_SCHEMA } from './point-evidence.mjs';
@@ -26,8 +27,8 @@ import {BRIEF_REASON_STYLE,compactPromptForReasons} from './full-credit-reasons.
 import {runIndependentSourceReview,SOURCE_REVIEW_PROMPT,SOURCE_REVIEW_SCHEMA} from './independent-source-review.mjs';
 import {PERMISSION_SUBMIT_SCHEMA,sourcePermissionPrompt} from './source-permissions.mjs';
 import {CohortProgress} from './cohort-progress.mjs';
-import {experimentModel, experimentProvider} from './experiment-models.mjs';
-import {GRADING_CORRECTION_OUTPUT_POLICY,STUDENT_SELF_REVIEW_PROMPT} from './submission-contract.mjs';
+import {experimentModel, experimentProvider, DEFAULT_MAIN_MODEL_ID, DEFAULT_WORKER_MODEL_ID} from './experiment-models.mjs';
+import {GRADING_CORRECTION_OUTPUT_POLICY,STUDENT_SELF_REVIEW_PROMPT,localReadingPrompt} from './submission-contract.mjs';
 import {SOURCE_BOUND_FEEDBACK_PROMPT,sourceBoundFeedbackSchema} from './source-bound-feedback.mjs';
 import {sourceBoundReportingInstructions,SOURCE_BOUND_REPORT_SCHEMA} from './source-bound-report.mjs';
 import { TeacherInteraction } from './teacher-interaction.mjs';
@@ -37,13 +38,13 @@ import { singlePassSchema, singlePassPrompt } from './single-pass-grading.mjs';
 const { values } = parseArgs({ options: {
   manifest: { type: 'string' }, output: { type: 'string' }, env: { type: 'string' },
   execute: { type: 'boolean', default: false }, cap: { type: 'string', default: '2' },
-  concurrency: { type: 'string' }, model: { type: 'string', default: 'openai/gpt-6.1-terra' },
+  concurrency: { type: 'string' }, model: { type: 'string', default: DEFAULT_MAIN_MODEL_ID },
   'worker-model': { type: 'string' },
   scripted: { type: 'boolean', default: false },
   'student-cap': { type:'string',default:'0.01' },
   'approved-guide': { type: 'string' },
   'cold-cache-namespace': { type: 'string' },
-  'max-requests': { type: 'string', default: '120' },
+  'max-requests': { type: 'string' },
   rubric: { type: 'string' },
   'interaction-dir': { type: 'string' },
   'student-protocol': { type: 'string' },
@@ -53,6 +54,7 @@ const { values } = parseArgs({ options: {
   'economy-reporting': { type:'boolean',default:false },
   'lean-reports': {type:'boolean',default:false},
   'trim-white-margins': {type:'boolean',default:false},
+  'initial-image-max-side': {type:'string'},
   'annotation-grid': {type:'boolean',default:false},
   'grading-reasoning': {type:'string',default:'low'},
   'all-ms-images': {type:'boolean',default:false},
@@ -79,10 +81,8 @@ const studentCacheNamespace = values['isolate-student-cache'] ? randomUUID() : n
 const economy=values['economy-reporting'],lean=values['lean-reports'];
 if(lean&&!economy)throw Error('Lean reports require economy reporting');
 const feedbackMode=lean?'source-bound-v5':economy?'compact-v2':'detailed-v1';
-const maxRequests = Number(values['max-requests']);
 if (!Number.isFinite(cap) || cap <= 0 || cap > 5) throw Error('Invalid cohort limits');
 const studentCapUsd=parseStudentBudget(values['student-cap'],cap);
-if (!Number.isInteger(maxRequests) || maxRequests < 1 || maxRequests > 512) throw Error('Invalid aggregate request limit');
 new StudentRegistry(input.students.map(x => x.id), concurrency);
 const scheme = await loadDocument(input.scheme_input, 'scheme');
 const students = new Map(await Promise.all(input.students.map(async x => [x.id, await loadDocument(x.input, 'student')])));
@@ -100,6 +100,9 @@ const studentProtocol=values['student-protocol'] ?? (values.scripted?'evidence-v
 if (!['legacy','evidence-v3','evidence-v4','evidence-v5'].includes(studentProtocol)) throw Error('Invalid student protocol');
 const pointProtocol=studentProtocol!=='legacy';
 const studentSelfReviewEnabled=studentProtocol==='evidence-v4'&&!values.scripted&&!values['source-permission-review'];
+const requestLimit = values['max-requests'] ?? (studentSelfReviewEnabled ? 'unlimited' : '120');
+const maxRequests = requestLimit === 'unlimited' ? null : Number(requestLimit);
+if (maxRequests !== null && (!Number.isInteger(maxRequests) || maxRequests < 1 || maxRequests > 512)) throw Error('Invalid aggregate request limit');
 const inlineAnnotations=values['inline-annotations'];
 const scripted=values.scripted;
 const annotationGrid=values['annotation-grid'],gradingReasoning=values['grading-reasoning'];
@@ -121,17 +124,19 @@ if(sourcePermissionReview)pointPrompt=sourcePermissionPrompt(pointPrompt);
 if(inlineAnnotations)pointPrompt=inlineAnnotationPrompt(pointPrompt);
 const basePointSchema=sourcePermissionReview?PERMISSION_SUBMIT_SCHEMA:studentProtocol==='evidence-v5'?SHARED_EVIDENCE_SCHEMA:studentProtocol==='evidence-v4'?COMPACT_POINTS_SCHEMA:EVIDENCE_SUBMIT_SCHEMA;
 const pointSchema=scripted&&reusedRubric?singlePassSchema({frozen:reusedRubric,student:students.values().next().value,inlineAnnotations,annotationGrid}):inlineAnnotations?inlineAnnotationSchema(basePointSchema):basePointSchema;
-if(values['trim-white-margins']&&!['evidence-v4','evidence-v5'].includes(studentProtocol))throw Error('Source-tracked image variants require evidence-v4 or evidence-v5');
+const initialImageMaxSide=values['initial-image-max-side']===undefined?null:Number(values['initial-image-max-side']);
+if(initialImageMaxSide!==null&&(!Number.isSafeInteger(initialImageMaxSide)||initialImageMaxSide<=0||annotationGrid||inlineAnnotations))throw Error('Initial image max side must be a positive integer; annotation geometry requires native images');
+if((values['trim-white-margins']||initialImageMaxSide!==null)&&!['evidence-v4','evidence-v5'].includes(studentProtocol))throw Error('Source-tracked image variants require evidence-v4 or evidence-v5');
 const models = createModels(); models.setProvider(openrouterProvider());
 const model = experimentModel(models, values.model);
 const provider = experimentProvider(model.id);
-const workerModel = experimentModel(models, values['worker-model'] ?? (scripted?'openai/gpt-6-luna':values.model));
+const workerModel = experimentModel(models, values['worker-model'] ?? DEFAULT_WORKER_MODEL_ID);
 const workerProvider = experimentProvider(workerModel.id);
 await mkdir(output, { recursive: false });
 let imageVariants=null;const preparationStarted=Date.now();
-if(values['trim-white-margins']||annotationGrid){
+if(values['trim-white-margins']||annotationGrid||initialImageMaxSide!==null){
   await freezeJson(output,'student-image-input.json',Object.fromEntries(students));
-  await promisify(execFile)(pythonExecutable(),[resolve(root,'student_images.py'),'--documents',resolve(output,'student-image-input.json'),'--output',resolve(output,'student-image-variants'),...(annotationGrid?['--grid']:[])],
+  await promisify(execFile)(pythonExecutable(),[resolve(root,'student_images.py'),'--documents',resolve(output,'student-image-input.json'),'--output',resolve(output,'student-image-variants'),...(annotationGrid?['--grid']:[]),...(initialImageMaxSide!==null?['--max-side',String(initialImageMaxSide)]:[])],
     {cwd:root,env:{PATH:process.env.PATH},timeout:60000,maxBuffer:1024*1024});
   imageVariants=JSON.parse(await readFile(resolve(output,'student-image-variants/manifest.json'),'utf8'));
   for(const [id,document] of students){
@@ -139,11 +144,13 @@ if(values['trim-white-margins']||annotationGrid){
     if(variant?.sha256!==document.sha256||variant.pages.length!==document.pages.length||new Set(variant.pages.map(p=>p.page)).size!==document.pages.length)throw Error('Image variant source coverage mismatch');
     for(const page of variant.pages){
       const original=document.pages.find(p=>p.page===page.page);
-      if(!original||page.original_sha256!==original.sha256||!page.pixel_identity_verified)throw Error('Image variant source binding mismatch');
+      if(!original||page.original_sha256!==original.sha256||!(initialImageMaxSide!==null?page.source_binding_verified&&page.mode==='resized_overview'&&page.max_side===initialImageMaxSide&&page.size.every(n=>Number.isSafeInteger(n)&&n>0&&n<=initialImageMaxSide):page.pixel_identity_verified))throw Error('Image variant source binding mismatch');
       if(!page.absolute_path.startsWith(resolve(output,'student-image-variants')+sep)||digest(await readFile(page.absolute_path))!==page.sha256)throw Error('Image variant bytes mismatch');
     }
   }
 }
+const cropOnlyReview=studentSelfReviewEnabled&&imageVariants?.mode==='resized_overview';
+const readInitialSchemeImage=cropOnlyReview?schemeOverviewReader(resolve(output,'student-image-variants'),initialImageMaxSide):null;
 const imagePreparationSeconds=imageVariants?(Date.now()-preparationStarted)/1000:0;
 const opticalStarted=Date.now();let localObservations=null;
 if(values['local-ocr']) {
@@ -164,13 +171,11 @@ sourceHashes['src/scripted-grading.mjs']=digest(await readFile(resolve(root,'src
 sourceHashes['src/single-pass-grading.mjs']=digest(await readFile(resolve(root,'src/single-pass-grading.mjs')));
 for(const path of ['src/local-observations.mjs','student_ocr.swift'])sourceHashes[path]=digest(await readFile(resolve(root,path)));
 if (values['interaction-dir']) for (const path of ['src/teacher-interaction.mjs','src/marking-guide.mjs','src/workspace/editable-documents.mjs', 'src/workspace/canvas-context.mjs', 'src/workspace/documents.mjs', 'src/workspace/store.mjs', 'workspace_crop.py']) sourceHashes[path] = digest(await readFile(resolve(root, path)));
-for (const path of ['src/core.mjs', 'src/rubric-contract.mjs', 'src/point-evidence.mjs', 'src/compact-points.mjs', 'src/shared-evidence.mjs', 'src/full-credit-reasons.mjs', 'src/source-permissions.mjs', 'src/independent-source-review.mjs', 'student_images.py', 'src/report-context.mjs', 'src/ms-review.mjs', 'src/exception-review.mjs', 'src/cohort-core.mjs', 'src/cohort-runtime.mjs', 'src/input-context-estimate.mjs', 'src/submission-contract.mjs', 'src/teacher-interaction.mjs','src/marking-guide.mjs','src/workspace/editable-documents.mjs', 'src/experiment-models.mjs', 'src/cohort-progress.mjs', 'src/run-cohort.mjs', 'src/student-feedback.mjs', 'src/source-bound-feedback.mjs', 'src/source-bound-report.mjs', 'src/compact-feedback.mjs', 'src/focused-feedback.mjs', 'src/results-store.mjs', 'src/cohort-reporting.mjs', 'src/report-markdown.mjs', 'analytics.py', 'src/python.mjs', 'gradeos_analysis.py', 'package-lock.json']) sourceHashes[path] = digest(await readFile(resolve(root, path)));
-const phaseOutputLimits = { student_self_review: 8192, ms_compilation: 24000, ms_verification: 20000, student_grading: scripted || gradingReasoning === 'high' ? 20000 : 16000, exception_review:4096, source_permission_review:12000 };
-if(economy)Object.assign(phaseOutputLimits,{student_feedback:4096,coordination:4096,reporting:4096});
+for (const path of ['src/core.mjs', 'src/rubric-contract.mjs', 'src/point-evidence.mjs', 'src/compact-points.mjs', 'src/shared-evidence.mjs', 'src/full-credit-reasons.mjs', 'src/source-permissions.mjs', 'src/independent-source-review.mjs', 'student_images.py', 'src/report-context.mjs', 'src/ms-review.mjs', 'src/exception-review.mjs', 'src/cohort-core.mjs', 'src/cohort-runtime.mjs', 'src/input-context-estimate.mjs', 'src/output-budget.mjs', 'src/student-report-markdown.mjs', 'src/submission-contract.mjs', 'src/teacher-interaction.mjs','src/marking-guide.mjs','src/workspace/editable-documents.mjs', 'src/experiment-models.mjs', 'src/cohort-progress.mjs', 'src/run-cohort.mjs', 'src/student-feedback.mjs', 'src/source-bound-feedback.mjs', 'src/source-bound-report.mjs', 'src/compact-feedback.mjs', 'src/focused-feedback.mjs', 'src/results-store.mjs', 'src/cohort-reporting.mjs', 'src/report-markdown.mjs', 'analytics.py', 'src/python.mjs', 'gradeos_analysis.py', 'package-lock.json']) sourceHashes[path] = digest(await readFile(resolve(root, path)));
 const plan = { version: 2, mode: reusedRubric ? 'frozen-rubric replay' : 'full-cold fixture with shared MS compilation', created_at: new Date().toISOString(),
-  source_hashes: sourceHashes, model, economy_reporting:economy, lean_reports:lean, feedback_mode:feedbackMode, main_prompt_hash: digest([reusedRubric ? REPLAY_MAIN_PROMPT : MAIN_PROMPT, lean?sourceBoundReportingInstructions(LEAN_REPORTING_INSTRUCTIONS):economy?ECONOMY_REPORTING_INSTRUCTIONS:REPORTING_INSTRUCTIONS].join('\n\n')), student_prompt_hash: digest(studentPromptForProtocol(studentProtocol)+(studentSelfReviewEnabled?'\n\n'+STUDENT_SELF_REVIEW_PROMPT:'')+(pointProtocol?'\n\n'+pointPrompt:'')), student_protocol:studentProtocol, point_reason_style:reasonStyle, source_permission_review:sourcePermissionReview?{enabled:true,scope:'every primary non-full/null and positive exception independently reviewed',prompt_hash:digest(SOURCE_REVIEW_PROMPT),schema_hash:digest(SOURCE_REVIEW_SCHEMA)}:false, evidence_schema_hash:pointProtocol?digest(pointSchema):null, rubric_reuse: rubricReuse,
+  source_hashes: sourceHashes, model, economy_reporting:economy, lean_reports:lean, feedback_mode:feedbackMode, main_prompt_hash: digest([reusedRubric ? REPLAY_MAIN_PROMPT : MAIN_PROMPT, lean?sourceBoundReportingInstructions(LEAN_REPORTING_INSTRUCTIONS):economy?ECONOMY_REPORTING_INSTRUCTIONS:REPORTING_INSTRUCTIONS].join('\n\n')), student_prompt_hash: digest(studentPromptForProtocol(studentProtocol,studentSelfReviewEnabled)+(!scripted&&pointProtocol&&!inlineAnnotations?'\n'+localReadingPrompt(cropOnlyReview):'')+(pointProtocol?'\n\n'+pointPrompt:'')), student_protocol:studentProtocol, point_reason_style:reasonStyle, source_permission_review:sourcePermissionReview?{enabled:true,scope:'every primary non-full/null and positive exception independently reviewed',prompt_hash:digest(SOURCE_REVIEW_PROMPT),schema_hash:digest(SOURCE_REVIEW_SCHEMA)}:false, evidence_schema_hash:pointProtocol?digest(pointSchema):null, rubric_reuse: rubricReuse,
   ms_review: 'The main coordinator reviews its saved candidate in the same conversation, retaining original MS images and compilation history until review is submitted; no separate MS reviewer session or duplicate image/candidate packet',
-  ms_write: {protocol:'named-source-reference-v2',batching:'model plans complete-item batches within the actual output-token allowance; no fixed item-count limit',output_tokens:phaseOutputLimits.ms_compilation,semantics:'Named fields; null condition explicitly copies complete source text. Canonical fields and validation unchanged.'},
+  ms_write: {protocol:'named-source-reference-v2',batching:'model plans complete-item batches within model capacity and task budget; no phase token quota',semantics:'Named fields; null condition explicitly copies complete source text. Canonical fields and validation unchanged.'},
   ms_review_prompt_hash: digest(MS_REVIEW_PROMPT), ms_review_schema_hash: digest(MS_REVIEW_SCHEMA),
   student_self_review:studentSelfReviewEnabled?{mode:'same student agent and conversation',scope:'all items and points including ordinary full credit; local revisions before final persistence',prompt_hash:digest(STUDENT_SELF_REVIEW_PROMPT),independent:false}:false,
   exception_review:{enabled:pointProtocol&&!sourcePermissionReview&&!studentSelfReviewEnabled,prompt_hash:digest(EXCEPTION_REVIEW_PROMPT),schema_hash:digest(EXCEPTION_REVIEW_SCHEMA),
@@ -181,7 +186,7 @@ const plan = { version: 2, mode: reusedRubric ? 'frozen-rubric replay' : 'full-c
   source_bound_reporting:lean?{schema_hash:digest(SOURCE_BOUND_REPORT_SCHEMA),authority:'Host renders exact score facts and full source targets; model chooses references and practice actions only; no new score or causal/solution prose'}:false,
   feedback_schema_hash_kind:lean?'generator; exact grade-bound schema frozen in feedback/input-contract.json':'static schema',
   submission_contract:{feedback_tool_choice:'named submit_student_feedback only',validation_context:'diagnostics without duplicate rejected arguments; full transcript preserved',local_grading_correction:'hash-bound complete-item amendments, all grading checks repeated',
-    grading_correction_output:GRADING_CORRECTION_OUTPUT_POLICY,grading_correction_tools:'required choice among local item amendments, original-page reads and full-context reopen; merged ledger fully validated',
+    grading_correction_output:GRADING_CORRECTION_OUTPUT_POLICY,grading_correction_tools:'model choice among local item amendments, original-page reads and full-context reopen; merged ledger fully validated',
     grading_correction_context:'request-only checkpoint: complete affected/related items, original general rules, rejected local ledgers, bound relevant images and subsequent tool turns; ambiguous bindings or prior interactive instructions retain full context',
     full_grading_restore:'reopen_grading restores original history and normal output allowance; all rejected drafts can receive local corrections; reservation uses projected wire'},
   scheme, students: Object.fromEntries(students), cap_usd: cap, host_concurrency_limit: concurrency,
@@ -190,13 +195,13 @@ const plan = { version: 2, mode: reusedRubric ? 'frozen-rubric replay' : 'full-c
   preparation_elapsed_seconds:imagePreparationSeconds+opticalPreparationSeconds,
   student_cache_namespace: studentCacheNamespace,
   cache_experiment: studentCacheNamespace ? 'Unique first-user namespace per student/feedback lane, after shared system/MS prefix; same namespace across turns. Verify actual cache receipts.' : 'Provider automatic caching without artificial input isolation',
-  max_requests: maxRequests, max_output_tokens: 12000, phase_output_limits: phaseOutputLimits, deadline_seconds: 900, reasoning: 'low', grading_reasoning:gradingReasoning, temperature: null, seed: null,
+  max_requests: maxRequests, output_policy:'model/context capacity and available task funds; no phase or correction token quota', deadline_seconds: 900, reasoning: 'low', grading_reasoning:gradingReasoning, temperature: null, seed: null,
   provider, model_roles: {main:{model,provider,phases:['ms_compilation','ms_verification','coordination','reporting']},
     worker:{model:workerModel,provider:workerProvider,phases:['student_grading','student_self_review','exception_review','source_permission_review','student_feedback']}},
   network_retries: 0, attempts_per_student: 1, labels_in_model_context: false,
   teacher_interaction: Boolean(values['interaction-dir']),
-  image_policy: pointProtocol?'Host supplies the entire own answer book once in the first request, satisfying page delivery; parent selects MS pages. Answer reinspection requires a concrete visual question; source images remain available on demand.':'Parent chooses initial source pages; child reads answers through tools; visual requirements gate submission.',
-  initial_student_image_variant:imageVariants?{mode:imageVariants.mode,manifest_sha256:digest(await readFile(resolve(output,'student-image-variants/manifest.json'))),pixel_reduction_fraction:imageVariants.pixel_reduction_fraction,preparation_elapsed_seconds:imagePreparationSeconds}:null,
+  image_policy: cropOnlyReview?'All initial answer and selected MS pages share one maximum side. Self-review inherits those images and can request native local crops of either source.':pointProtocol?'Host supplies the entire own answer book once in the first request, satisfying page delivery; parent selects MS pages. Answer reinspection requires a concrete visual question; source images remain available on demand.':'Parent chooses initial source pages; child reads answers through tools; visual requirements gate submission.',
+  initial_student_image_variant:imageVariants?{mode:imageVariants.mode,max_side:imageVariants.max_side,manifest_sha256:digest(await readFile(resolve(output,'student-image-variants/manifest.json'))),pixel_reduction_fraction:imageVariants.pixel_reduction_fraction,preparation_elapsed_seconds:imagePreparationSeconds}:null,
   context_policy: 'Main preserves the compilation prefix through MS self-review, then receives frozen rubric navigation; scoped source views remain available. Student/exception/feedback sessions stay isolated. Delivered result batches and point/image views can be checkpointed with source-bound notes; context retains score/null/review/source issues and immutable refs.',
   comparison: 'Count declared tasks and actual executions separately; duplicated answer books measure repeatability, not a diverse student population.' };
 if(scripted)Object.assign(plan,{execution:'scripted-single-pass',student_cap_usd:studentCapUsd,reporting:'Deterministic scripts from immutable grading records; zero model calls',
@@ -206,6 +211,7 @@ if(scripted)Object.assign(plan,{execution:'scripted-single-pass',student_cap_usd
   cold_cache_namespace:values['cold-cache-namespace']??null,approved_guide:replayGuide?{hash:replayGuide.hash,revision:replayGuide.revision}:null,
   image_policy:values['all-ms-images']?'All MS and student pages attached once':'With an adopted guide and verified source compilation, retain visual/unresolved/general-rule MS images; otherwise all MS. Complete student book once; exact selected pages in grading-input-policy.json.',
   attempts_per_student:1,model_roles:{main:{model,provider,phases:reusedRubric?[]:['ms_compilation','ms_verification']},worker:{model:workerModel,provider:workerProvider,phases:['student_grading']}}});
+if(lean&&!scripted)plan.student_feedback='Deterministic source-bound feedback from saved points; zero model calls';
 await freezeJson(output, 'plan.json', plan);
 await mkdir(resolve(output, 'source-files'));
 for (const path of Object.keys(sourceHashes)) { const target = resolve(output, 'source-files', path); await mkdir(dirname(target), {recursive:true}); await writeFile(target, await readFile(resolve(root,path)), {flag:'wx'}); }
@@ -229,7 +235,7 @@ await progress.start();
 const controller = new AbortController();
 const interaction = values['interaction-dir'] ? await new TeacherInteraction(resolve(values['interaction-dir']), { signal: controller.signal,
   schemePages: scheme.pages, students: new Map([...students].map(([id, document]) => [id, document.pages])) }).init() : null;
-const runtime = createRuntime({ models, model, workerModel, output, cap, controller, maxRequests, studentCacheNamespace, phaseOutputLimits, progress, interaction, structuredOutput:values.json,provider,workerProvider,
+const runtime = createRuntime({ models, model, workerModel, output, cap, controller, maxRequests, studentCacheNamespace, progress, interaction, structuredOutput:values.json,provider,workerProvider,
   singlePassGrading:scripted,coldCacheNamespace:values['cold-cache-namespace']??null,studentCapUsd:scripted?studentCapUsd:null });
 process.once('SIGINT', () => {void progress.cancelRequested();controller.abort(Error('User cancellation'));});
 if(scripted) {
@@ -289,7 +295,6 @@ const reporting = createReporting({ store, output, log: mainIO.log, signal: cont
   },
 });
 coordinator = createCoordinator({ model, streamFn: mainIO.streamFn, scheme, studentIds: [...students.keys()], concurrencyLimit: concurrency,
-  msCompilationOutputTokens:phaseOutputLimits.ms_compilation,
   readImage, log: mainIO.log, signal: controller.signal, reusedRubric, reporting,
   publishMarkingGuide: interaction ? async (frozen, implementation) => {
     const approved = await interaction.publishGuide(frozen, implementation);
@@ -313,10 +318,16 @@ coordinator = createCoordinator({ model, streamFn: mainIO.streamFn, scheme, stud
   },
   persistCohort: result => freezeJson(output, 'cohort.json', result),
   executeStudent: async (id, frozen, seedPages, markingGuide) => {
+    if (studentSelfReviewEnabled) {
+      seedPages = [...new Set([...seedPages, ...requiredMsPages(frozen)])];
+    }
+    runtime.allocateStudentBudgets([...students.keys()]);
+    try {
     let child,primaryFinished=null;
     const io = await runtime.io(`student-${id}`, () => child?.getPhase()??'student_grading'); const childStarted = Date.now(); let failure = null;
     await io.log({ type: 'student_task_start', student_id: id, started_at: new Date(childStarted).toISOString(), rubric_hash: frozen.hash });
-    child = createStudentAgent({ model:workerModel, streamFn: io.streamFn, frozen, scheme, student: students.get(id), readImage,
+    child = createStudentAgent({ model:workerModel, streamFn: io.streamFn, frozen, scheme, student: students.get(id), readImage, readInitialSchemeImage,
+      readSourceRegion:(page,region,options)=>readImageRegion(page,region,io.directory,options),
       ...(imageVariants?{readInitialStudentImage:page=>readImage(imageVariants.documents[id].pages.find(p=>p.page===page.page)),initialStudentImageMode:imageVariants.mode,initialStudentGeometry:imageVariants.documents[id].pages}:{}),
       inlineAnnotations,gradingReasoning,
       log: io.log, protocol:studentProtocol, reasonStyle, sourcePermissionReview, selfReview:studentSelfReviewEnabled,
@@ -368,6 +379,7 @@ coordinator = createCoordinator({ model, streamFn: mainIO.streamFn, scheme, stud
       result_path: resolve(io.directory, 'grading.json'), failure: summary.failure, provider_reported_cost_usd: summary.provider_reported_cost_usd,
       feedback_status: feedback?.status ?? 'unavailable', feedback_report_path: feedback?.report_path ?? null };
 
+    } finally { runtime.finishStudentBudget(id); }
   },
 });
 const unsubscribe = mainIO.attach(coordinator.agent);

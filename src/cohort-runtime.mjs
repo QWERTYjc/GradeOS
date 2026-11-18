@@ -1,8 +1,13 @@
 import { readFile, writeFile, mkdir, rename, appendFile, open } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { pythonExecutable } from './python.mjs';
 import { Budget, digest, wireEstimate } from './core.mjs';
 import { inputContextSnapshot, inputContextReceipt, inputContextEstimate } from './input-context-estimate.mjs';
-import {requireFeedbackSubmission,requestOutputLimit,requireGradingCorrectionTool} from './submission-contract.mjs';
+import {requireFeedbackSubmission,validateCorrectionRequest,requireGradingCorrectionTool} from './submission-contract.mjs';
+import {outputBudget} from './output-budget.mjs';
 
 export const redactImages = value => JSON.parse(JSON.stringify(value, (key, data) => {
   if ((key === 'data' && typeof data === 'string' && data.length > 1000) ||
@@ -22,6 +27,33 @@ export async function readImage(page) {
   if (digest(bytes) !== page.sha256) throw Error('Image changed after manifest freeze');
   return { type: 'image', mimeType: 'image/png', data: bytes.toString('base64') };
 }
+async function readSourceView(page, args, path) {
+  const {stdout}=await promisify(execFile)(pythonExecutable(),[fileURLToPath(new URL('../student_images.py',import.meta.url)),
+    '--source',page.absolute_path,'--sha256',page.sha256,...args],
+    {encoding:'buffer',maxBuffer:32*1024*1024,timeout:60000});
+  await writeFile(path,stdout);
+  return {type:'image',mimeType:'image/png',data:stdout.toString('base64')};
+}
+export async function readImageRegion(page, region, directory, {frame,localOnly=false}={}) {
+  if(!Array.isArray(region)||region.length!==4||!region.every(Number.isSafeInteger)
+    ||region[0]<0||region[1]<0||region[2]<=0||region[3]<=0||region[0]+region[2]>1000||region[1]+region[3]>1000)throw Error('Invalid original-page region');
+  const path=resolve(directory,`source-region-${digest(frame?[page.sha256,region,frame]:[page.sha256,region])}.png`);
+  return readSourceView(page,['--region',...region.map(String),...(frame?['--frame',...frame.map(String)]:[]),...(localOnly?['--local-only']:[])],path);
+}
+
+export function schemeOverviewReader(directory,maxSide) {
+  const pending=new Map();
+  return page=>{
+    const key=page.sha256;
+    if(!pending.has(key)){
+      const path=resolve(directory,`ms-${maxSide}-${key}.png`);
+      pending.set(key,readSourceView(page,['--max-side',String(maxSide)],path).catch(error=>{
+        pending.delete(key);throw error;
+      }));
+    }
+    return pending.get(key);
+  };
+}
 
 export function isolateStudentCache(payload, scope) {
   if (!scope || !/^[A-Za-z0-9/_-]{1,160}$/.test(scope)) throw Error('Invalid student cache namespace');
@@ -34,8 +66,8 @@ export function isolateStudentCache(payload, scope) {
   return payload;
 }
 
-export function createRuntime({ models, model, output, cap, controller, maxRequests = 60, deadlineMs = 900000, maxOutputTokens = 12000, studentCacheNamespace = null, phaseOutputLimits = {}, progress = null, interaction = null, structuredOutput = true, provider = { only: ['openai'], allow_fallbacks: false, require_parameters: true, data_collection: 'deny' }, workerModel = model, workerProvider = provider, singlePassGrading = false, coldCacheNamespace = null, studentCapUsd = null }) {
-  if (!Number.isInteger(maxOutputTokens) || maxOutputTokens < 1) throw Error('Invalid output token budget');
+export function createRuntime({ models, model, output, cap, controller, maxRequests = 60, deadlineMs = 900000, maxOutputTokens = null, studentCacheNamespace = null, progress = null, interaction = null, structuredOutput = true, provider = { only: ['openai'], allow_fallbacks: false, require_parameters: true, data_collection: 'deny' }, workerModel = model, workerProvider = provider, singlePassGrading = false, coldCacheNamespace = null, studentCapUsd = null }) {
+  if (maxOutputTokens!==null&&(!Number.isInteger(maxOutputTokens) || maxOutputTokens < 1)) throw Error('Invalid explicit output token allowance');
   const budget = new Budget({ cap, maxRequests, deadlineMs, scopeCap:studentCapUsd });
   const active = new Set();
   const isolatedAgents = new WeakSet();
@@ -58,10 +90,10 @@ export function createRuntime({ models, model, output, cap, controller, maxReque
     const streamFn = (selectedModel, context, options) => {
       if (selectedModel.id !== laneModel.id || selectedModel.provider !== laneModel.provider) throw Error('Agent model differs from the declared lane model');
       const {gradingCorrectionRequest,...providerOptions}=options??{};
-      const requestPhase = phase(); const normalLimit = phaseOutputLimits[requestPhase] ?? maxOutputTokens;
-      const outputLimit = requestOutputLimit(normalLimit,requestPhase,lane,gradingCorrectionRequest);
+      const requestPhase = phase();
+      validateCorrectionRequest(requestPhase,lane,gradingCorrectionRequest);
       return models.streamSimple(selectedModel, context, {
-      ...providerOptions, apiKey: process.env.OPENROUTER_API_KEY, maxRetries: 0, maxTokens: outputLimit, timeoutMs: singlePassGrading ? 240000 : 180000,
+      ...providerOptions, apiKey: process.env.OPENROUTER_API_KEY, maxRetries: 0, maxTokens: maxOutputTokens??laneModel.maxTokens, timeoutMs: singlePassGrading ? 240000 : 180000,
       signal: options?.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal,
       onPayload: async payload => {
         await interaction?.beforeRequest(lane);
@@ -93,23 +125,29 @@ export function createRuntime({ models, model, output, cap, controller, maxReque
         requireGradingCorrectionTool(payload, gradingCorrectionRequest);
         const cacheScope = studentCacheNamespace && /^(student|feedback|exception|source-review)-/.test(lane) ? `${studentCacheNamespace}/${lane}` : null;
         if (cacheScope) isolateStudentCache(payload, cacheScope);
+        // Keep high detail for every phase, including source reinspection.
+        // Original source files do not require provider detail="original".
         for (const message of payload.messages) for (const part of Array.isArray(message.content) ? message.content : []) {
-          if (part.type === 'image_url') part.image_url.detail = laneModel.id === 'openai/gpt-6-luna' ? 'original' : 'high';
+          if (part.type === 'image_url') part.image_url.detail = 'high';
         }
         const estimate = wireEstimate(payload);
         const inputSnapshot = inputContextSnapshot(payload, estimate);
         const inputContext = inputContextEstimate(inputSnapshot, estimate, previousInputReceipt);
         const tier=(laneModel.cost.tiers??[]).filter(t=>inputContext.upperBound>t.inputTokensAbove).at(-1)??laneModel.cost;
-        const reservation = {input_usd:inputContext.upperBound*Math.max(tier.input,tier.cacheWrite??0)/1e6,output_usd:outputLimit*tier.output/1e6};
-        const reserve = reservation.input_usd+reservation.output_usd;
-        const metadata={lane,phase:requestPhase,...(singlePassGrading&&requestPhase==='student_grading'?{budget_scope:lane,student_cap_usd:studentCapUsd}:{}),configured_model:laneModel.id,configured_provider:laneProvider,max_output_tokens:outputLimit,normal_max_output_tokens:normalLimit,
+        const studentScope=/^(student|feedback|exception|source-review)-/.test(lane)?lane.replace(/^(feedback|exception|source-review)-/,'student-'):undefined;
+        const scope=budget.scopes.has(lane)?lane:studentScope&&(budget.scopes.has(studentScope)||singlePassGrading)?studentScope:undefined;
+        let reserve=null;
+        const metadata={lane,phase:requestPhase,...(scope?{budget_scope:scope,student_cap_usd:studentCapUsd}:{}),configured_model:laneModel.id,configured_provider:laneProvider,
           request_kind:gradingCorrectionRequest?.kind??'normal',grading_correction:gradingCorrectionRequest??null,
-          reservation,student_cache_scope:cacheScope,...estimate,cost_input_token_reserve:inputContext.upperBound,input_context_estimate:inputContext};
+          student_cache_scope:cacheScope,...estimate,cost_input_token_reserve:inputContext.upperBound,input_context_estimate:inputContext};
         try {
-          if (inputContext.upperBound + outputLimit >= laneModel.contextWindow) throw Error('Conservative reservation exceeds model context window');
+          const allowance=outputBudget({model:laneModel,payload,inputTokens:inputContext.upperBound,prices:tier,available:budget.available(scope),requestedLimit:maxOutputTokens});
+          const {reservation}=allowance;reserve=reservation.input_usd+reservation.output_usd;
+          Object.assign(metadata,wireEstimate(payload),{max_output_tokens:allowance.tokens,output_allowance:allowance,reservation});
           current = budget.admit(reserve,metadata);
           currentInputSnapshot = inputSnapshot;
         } catch (error) {
+          if(scope?.startsWith('student-')&&error.code==='OUTPUT_BUDGET_LIMIT')error.code='STUDENT_BUDGET_LIMIT';
           const rejection={...metadata,reason:error.message,reserve_usd:reserve,cap_usd:budget.cap,
             charged_or_reserved_usd:budget.chargedOrReserved,available_usd:budget.cap-budget.chargedOrReserved,
             admitted_requests:budget.requests.length,max_requests:budget.maxRequests,deadline:budget.deadline};
@@ -187,5 +225,7 @@ export function createRuntime({ models, model, output, cap, controller, maxReque
     unknown_cost_requests: requests.filter(x => x.status === 'unknown').length,
     charged_or_reserved_usd: requests.reduce((n, x) => n + (x.cost_usd ?? x.reserve_usd), 0),
   });
-  return { io, run, budget, provider, log, totals, close: () => clearTimeout(timer), active, signal: controller.signal };
+  return { io, run, budget, provider, log, totals, close: () => clearTimeout(timer), active, signal: controller.signal,
+    allocateStudentBudgets:(ids,{reserveCoordinator=true}={})=>budget.allocateScopes([...(reserveCoordinator&&ids.length>1?['main']:[]),...ids.map(id=>`student-${id}`)]),
+    finishStudentBudget:id=>budget.closeScope(`student-${id}`) };
 }
