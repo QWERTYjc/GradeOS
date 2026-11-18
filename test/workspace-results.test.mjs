@@ -77,7 +77,7 @@ test('archived documents allow fresh grading intake while active batches and sav
   assert.equal(needsGradingMaterials(state), false);
   state.tasks = [];
   state.pages = [{ id: 'source' }];
-  assert.equal(needsGradingMaterials(state), false);
+  assert.equal(needsGradingMaterials(state), true);
 });
 
 test('report-only workspaces remain readable instead of asking for unrelated student uploads', () => {
@@ -115,4 +115,27 @@ test('results assets are served with executable module types without contacting 
     assert.equal(response.status, 200); assert.match(response.headers.get('content-type'), new RegExp(type));
     assert.ok((await response.text()).length > 100);
   }
+});
+
+test('library preserves frozen student ownership, deduplicates editable reports and keeps loose documents separate', async () => {
+  const { librarySections } = await import('../web/grading-library.mjs');
+  const task = { id: 't', title: '批次', groups: [{ id: 'a', label: '甲' }, { id: 'b', label: '乙' }],
+    artifacts: [{ id: 'personal', groupId: 'a', title: '同名' }, { id: 'unknown', title: '甲' }], records: [{ groupId: 'b' }] };
+  const sections = librarySections({ tasks: [task], documents: [
+    { taskId: 't', artifactId: 'personal', title: '已编辑', id: 'edited' },
+    { id: 'old', title: '甲', folder: '讲评' }, { id: 'loose', title: '甲' }] });
+  const batch = sections.find(section => section.title === '批次');
+  assert.deepEqual(batch.rows.map(row => [row.id, row.groupLabel]), [['edited','甲'], ['unknown',null], ['b','乙']]);
+  assert.deepEqual(sections.filter(section => section !== batch).map(section => section.title), ['讲评','未关联批次']);
+});
+
+test('regrouping noncontiguous pages preserves unique ownership and original target order', async () => {
+  const { assignPages } = await import('../web/materials.mjs');
+  const groups = [{ id: 'a', pageIds: ['1','2'] }, { id: 'b', pageIds: ['3','4'] }];
+  const assigned = assignPages(groups, new Set(['1','3']), 'b', '');
+  assert.deepEqual(assigned.map(group => group.pageIds), [['2'],['3','4','1']]);
+  const split = assignPages(groups, new Set(['1','2','4']), '', '丙');
+  assert.deepEqual(split.map(group => group.pageIds), [['3'],['1','2','4']]);
+  assert.equal(split[1].label, '丙');
+  assert.throws(() => assignPages(groups, new Set(['stale']), '', ''));
 });

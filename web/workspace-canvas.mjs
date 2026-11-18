@@ -16,7 +16,6 @@ export class WorkspaceCanvas {
     root.innerHTML = '<div class="workspace-panels"></div><div class="annotation-popover" role="dialog" aria-label="批注详情" tabindex="-1" hidden></div>';
     this.intake = document.createElement('div');
     this.intake.className = 'intake-surface';
-    this.intake.innerHTML = `<section class="canvas-empty material-intake"><div class="intake-path" aria-label="批改流程"><span aria-current="step">1 · 准备材料</span><span>2 · 开始批改</span><span>3 · 查看结果</span></div><h1>先放入这次的答卷</h1><p>上传学生答卷即可继续，题目和 MS 都可选。</p><div class="intake-cards"><button data-action="upload-student" class="intake-student">${icon('upload')}<span><strong>上传答卷</strong><small>支持多份答卷，可在上传后调整划分</small></span><span class="intake-add">${icon('plus')}</span></button><button data-action="upload-question" class="intake-optional">${icon('file-text')}<span><strong>添加题目</strong><small>可选</small></span>${icon('plus')}</button><button data-action="upload-scheme" class="intake-optional">${icon('file-text')}<span><strong>添加 MS</strong><small>可选</small></span>${icon('plus')}</button></div><small class="intake-formats">PDF、PNG、JPEG · 单个文件最多 40 MB</small><button type="button" data-action="read-documents" class="quiet" hidden>阅读已有文档</button></section>`;
     root.prepend(this.intake);
     this.readDocuments = false;
     this.grid = root.querySelector('.workspace-panels'); this.popover = root.querySelector('.annotation-popover');
@@ -98,12 +97,10 @@ export class WorkspaceCanvas {
   update() {
     const state = this.getState();
     if (this.note?.row.source === 'grading' && !findGradingAnnotation(state, this.note.row.id, this.note.row.target.pageId)) this.closeNote();
-    const hasDocuments = Boolean(state.documents?.length);
-    const showIntake = needsGradingMaterials(state) && (!hasDocuments || !this.readDocuments);
+    const showIntake = !this.readDocuments && (this.prepareBatch || needsGradingMaterials(state));
     this.intake.hidden = !showIntake;
     this.grid.hidden = showIntake;
     this.root.classList.toggle('is-empty', showIntake);
-    this.intake.querySelector('[data-action="read-documents"]').hidden = !hasDocuments;
     if (showIntake) {
       this.onChange();
       return;

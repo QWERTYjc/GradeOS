@@ -94,7 +94,7 @@ export async function createWorkspaceServer({ directory, port = 4173, model = DE
               const existing = snapshot.documents.find(row => row.artifactId === artifact.id && row.taskId === task.id);
               if (existing) return readDocument(snapshot, existing.id);
               const added = addDocument(snapshot, { title: artifact.title, body: artifact.body, taskId: task.id,
-                sourcePageIds: [...task.groups.flatMap(group => group.pageIds), ...(task.scheme?.pageIds || []), ...(task.question?.pageIds || [])] }, 'agent');
+                sourcePageIds: [...task.groups.filter(group => !artifact.groupId || group.id === artifact.groupId).flatMap(group => group.pageIds), ...(task.scheme?.pageIds || []), ...(task.question?.pageIds || [])] }, 'agent');
               snapshot.documents.find(row => row.id === added.id).artifactId = artifact.id; return added;
             }
             const scheme = body.schemeId ? snapshot.schemes.find(row => row.id === body.schemeId) : null;
@@ -121,6 +121,16 @@ export async function createWorkspaceServer({ directory, port = 4173, model = DE
           chat.cancel();
         } else if (req.method === 'POST' && /^\/api\/tasks\/[\w-]+\/(pause|resume|note|answer)$/.test(url.pathname)) {
           await runner.control(url.pathname.split('/')[3], url.pathname.split('/')[4], body);
+        } else if (req.method === 'PATCH' && url.pathname === '/api/document-folder') {
+          await store.mutate(body.revision, snapshot => {
+            fail(typeof body.folder === 'string' && body.folder.trim().length <= 80, '分类名称最多 80 字。');
+            fail(Array.isArray(body.documentIds) && body.documentIds.length > 0, '请选择需要归类的文档。');
+            for (const id of body.documentIds) {
+              const doc = snapshot.documents.find(row => row.id === id);
+              fail(doc && !doc.taskId, '仅可整理未关联批次的文档。');
+              doc.folder = body.folder.trim();
+            }
+          });
         } else if (req.method === 'PATCH' && url.pathname === '/api/materials') {
           await store.mutate(body.revision, snapshot => replacePartition(snapshot, body.groups));
         } else if (req.method === 'PATCH' && url.pathname === '/api/execution-mode') {
@@ -189,7 +199,7 @@ export async function createWorkspaceServer({ directory, port = 4173, model = DE
         return send(res, 200, state());
       }
       fail(req.method === 'GET' || req.method === 'HEAD', '方法不支持。', 405);
-      const files = new Set(['index.html', 'app.mjs', 'ui.mjs', 'materials.mjs', 'tasks.mjs', 'review.mjs', 'style.css', 'canvas-app.mjs', 'canvas-view.mjs', 'canvas-selection.mjs', 'canvas.css', 'workspace-canvas.mjs', 'document-editor.mjs', 'workspace-canvas.css', 'document-reader.mjs', 'document-reader.css', 'report-math.mjs', 'math-text-parser.mjs', 'results-view.mjs', 'results.css']);
+      const files = new Set(['index.html', 'app.mjs', 'ui.mjs', 'materials.mjs', 'grading-library.mjs', 'tasks.mjs', 'review.mjs', 'style.css', 'canvas-app.mjs', 'canvas-view.mjs', 'canvas-selection.mjs', 'canvas.css', 'workspace-canvas.mjs', 'document-editor.mjs', 'workspace-canvas.css', 'document-reader.mjs', 'document-reader.css', 'report-math.mjs', 'math-text-parser.mjs', 'results-view.mjs', 'results.css']);
       for (const file of ['system.html', 'system-app.mjs', 'system-view.mjs', 'system.css']) files.add(file);
       const relative = url.pathname === '/' ? 'system.html' : url.pathname === '/grading' ? 'index.html' : url.pathname.slice(1);
       let file;

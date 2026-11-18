@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { fail, id, now } from './store.mjs';
 import { digest } from '../core.mjs';
 import { readDocument } from './editable-documents.mjs';
+import { outputScope } from '../../web/grading-library.mjs';
 import { gradingResult, resultMarkdown } from '../../web/grading-result.mjs';
 
 export const BUILTIN_SKILLS = [
@@ -44,18 +45,22 @@ export class SystemStore {
     const state = this.grading.snapshot();
     const files = this.state.files.map(publicFile);
     this.gradingBodies = new Map();
-    for (const doc of state.documents || []) files.push({ id: `document:${doc.id}`, title: doc.title, kind: 'document', origin: 'grading', revision: doc.revision, hash: doc.hash, updatedAt: doc.updatedAt, taskId: doc.taskId, versionCount: doc.history.length, status: doc.approvals?.length ? 'confirmed' : 'draft' });
+    for (const doc of state.documents || []) {
+      const task = state.tasks.find(task => task.id === doc.taskId);
+      const artifact = task?.artifacts?.find(artifact => artifact.id === doc.artifactId);
+      files.push({ id: `document:${doc.id}`, title: doc.title, kind: 'document', origin: 'grading', revision: doc.revision, hash: doc.hash, updatedAt: doc.updatedAt, ...outputScope(task, artifact, doc.kind), folder: doc.folder || null, versionCount: doc.history.length, status: doc.approvals?.length ? 'confirmed' : 'draft' });
+    }
     for (const task of state.tasks) {
       for (const artifact of task.artifacts || []) if (typeof artifact.body === 'string' && !state.documents.some(doc => doc.taskId === task.id && doc.artifactId === artifact.id)) {
         const fileId = `artifact:${task.id}:${artifact.id}`;
-        files.push({ id: fileId, title: artifact.title || '批改报告', kind: 'document', origin: 'grading', taskId: task.id, revision: 1, hash: digest(artifact.body), updatedAt: task.completedAt || task.createdAt, status: task.status });
+        files.push({ id: fileId, title: artifact.title || '批改报告', kind: 'document', origin: 'grading', ...outputScope(task, artifact), revision: 1, hash: digest(artifact.body), updatedAt: task.completedAt || task.createdAt, status: task.status });
         this.gradingBodies.set(fileId, artifact.body);
       }
       for (const group of task.groups || []) {
         const result = gradingResult(state, task.id, group.id);
         if (!result) continue;
         const body = resultMarkdown(result, state.pages);
-        files.push({ id: `result:${task.id}:${group.id}`, title: `${group.label || '答卷'} · 评分结果.md`, kind: 'document', origin: 'grading', taskId: task.id, revision: 1, hash: digest(body), updatedAt: task.completedAt || task.createdAt, status: task.status });
+        files.push({ id: `result:${task.id}:${group.id}`, title: `${group.label || '答卷'} · 评分结果.md`, kind: 'document', origin: 'grading', ...outputScope(task, { groupId: group.id }), category: '评分明细', revision: 1, hash: digest(body), updatedAt: task.completedAt || task.createdAt, status: task.status });
         this.gradingBodies.set(`result:${task.id}:${group.id}`, body);
       }
     }

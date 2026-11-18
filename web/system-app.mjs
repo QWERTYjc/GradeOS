@@ -1,4 +1,4 @@
-import { e, glyph, button, shell, home, filesPage, skillsPage, tasksPage, settingsPage, fileUrl, refMeta, date, status, markdown } from './system-view.mjs';
+import { e, glyph, button, shell, home, filesPage, skillsPage, tasksPage, settingsPage, fileUrl, refMeta, fileScope, date, status, markdown } from './system-view.mjs';
 
 const app = document.querySelector('#system-app'), dialog = document.querySelector('#system-dialog');
 const ctx = { state: null, grading: null, route: 'home', threadId: null, thread: null, file: null, refs: [], skillId: null, draft: '', sending: false, query: '', filter: 'all', slide: 1, slideCount: 0 };
@@ -52,7 +52,7 @@ function showHistory() {
   openDialog('历史对话', ctx.state.threads.length ? `<div class="menu-list">${[...ctx.state.threads].reverse().map(thread => button('thread', `<span>${e(thread.title)}</span><small>${date(thread.updatedAt)}</small>`, `data-id="${e(thread.id)}"`)).join('')}</div>` : '<p class="muted">还没有对话。发送任务后会自动保存在本机。</p>');
 }
 function addReference(file) { if (ctx.refs.length >= 8) throw Error('最多引用 8 个文件。'); if (!ctx.refs.some(ref => ref.id === file.id && ref.hash === file.hash)) ctx.refs.push(refMeta(file)); persistDraft(); }
-function sources() { openDialog('引用工作区文件', `<p class="muted">引用固定版本；新的批改结果不会替换当前引用。</p><div class="menu-list">${ctx.state.files.length ? ctx.state.files.map(file => button('reference', `<span>${e(file.title)}</span><small>v${file.revision} · ${status(file.status)}</small>`, `data-id="${e(file.id)}"`)).join('') : '<p>还没有可引用的文件。</p>'}</div>`); }
+function sources() { openDialog('引用工作区文件', `<p class="muted">引用固定版本；新的批改结果不会替换当前引用。</p><div class="menu-list">${ctx.state.files.length ? ctx.state.files.map(file => button('reference', `<span>${e(file.title)}</span><small>${e(fileScope(file))} · v${file.revision} · ${status(file.status)}</small>`, `data-id="${e(file.id)}"`)).join('') : '<p>还没有可引用的文件。</p>'}</div>`); }
 async function upload(files) {
   for (const file of files) {
     if (file.size > 2 * 1024 * 1024) throw Error(`${file.name} 超过 2 MB。`);

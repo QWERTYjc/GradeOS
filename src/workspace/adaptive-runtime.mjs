@@ -140,7 +140,7 @@ export async function runAdaptiveGrading({ store, task, input, entry, runner, mo
               entry.controller.signal.throwIfAborted();
               const row = state.tasks.find(row => row.id === task.id);
               row.records.push(...adaptiveRecords(task, group, grade, frozen));
-              const artifact = { id: id(), title: `${group.label} · 批改结果`, body };
+              const artifact = { id: id(), groupId: group.id, title: `${group.label} · 批改结果`, body };
               row.artifacts.push(artifact); row.progress.completed++;
             });
           } });

@@ -22,13 +22,13 @@ export function gradingStage(state, task) {
   return guide ? 'align' : 'prepare';
 }
 export function needsGradingMaterials(state) {
-  return !state.pages.length && !state.chat && !resultTasks(state).length &&
+  return !state.chat && !resultTasks(state).length &&
     !state.tasks.some(task => task.kind === 'grade' && ['draft', 'running', 'needs_review'].includes(task.status));
 }
 export function workflowView(ctx, panels = []) {
   if (ctx.resultsOpen) return resultsBar(ctx);
   const task = ['running', 'draft', 'needs_review'].map(status => ctx.state.tasks.findLast(row => row.kind === 'grade' && row.status === status)).find(Boolean);
-  if (!task && resultTasks(ctx.state).length) return `<div class="workflow-copy"><h1>继续查看批改结果</h1><p>原卷批注、逐题依据与报告已保存在工作区。</p></div><div class="workflow-action">${b('results', '查看结果', { className: 'primary' })}${b('manual-task', '开始新批改', { className: 'quiet', disabled: !ctx.state.groups.length })}</div>`;
+  if (!task && resultTasks(ctx.state).length) return `<div class="workflow-copy"><h1>继续查看批改结果</h1><p>原卷批注、逐题依据与报告已保存在工作区。</p></div><div class="workflow-action">${b('results', '查看结果', { className: 'primary' })}${b('prepare-materials', '开始新批改', { className: 'quiet' })}</div>`;
   if (!task && !ctx.state.groups.length && ctx.state.pages.length)
     return `<div class="workflow-copy"><div class="workflow-path" aria-label="批改流程"><span aria-current="step">准备材料</span><i>›</i><span>开始批改</span><i>›</i><span>查看结果</span></div><h1>接着添加学生答卷</h1><p>已上传的材料会保留在这里。</p></div><div class="workflow-action">${b('upload-student', '上传答卷', { className: 'primary', disabled: ctx.busy })}</div>`;
   const standalone = !task && ctx.state.documents?.find(row => row.kind === 'marking_guide' && panels.some(panel => panel.documentId === row.id));
@@ -60,7 +60,7 @@ export function workflowView(ctx, panels = []) {
 export function header(ctx) {
   const pending = questions(ctx.state).length + pendingRecords(ctx.state).length + (ctx.state.documents || []).filter(doc => doc.proposalId && !doc.approvals.length && ctx.state.tasks.some(task => task.id === doc.taskId && task.status === 'running' && task.executionMode !== 'auto')).length;
   return `<div class="brand-line"><a class="canvas-wordmark" href="/" target="_top">Grade<span>OS</span></a><span class="header-divider"></span>${b('rename-project', e(ctx.state.title), { className: 'project-name' })}</div>
-    <div class="header-actions">${b('materials', `材料 <span class="count">${ctx.state.pages.length}</span>`, { className: 'quiet' })}${resultTasks(ctx.state).length ? b('results', '批改结果', { className: ctx.resultsOpen ? 'header-result-active' : 'quiet', attrs: `aria-pressed="${Boolean(ctx.resultsOpen)}"` }) : ''}${b('reviews', pending ? `<span class="amber-dot"></span>待确认 ${pending}` : '审阅', { className: pending ? 'review-count' : 'quiet' })}${ib('history', '对话与任务记录', 'history')}<a class="quiet" href="/#files" target="_top">工作区文件</a></div>`;
+    <div class="header-actions">${ctx.resultsOpen && !ctx.state.tasks.some(task => task.status === 'running') ? b('prepare-materials', '新批改', { className: 'quiet' }) : ''}${b('materials', `材料 <span class="count">${ctx.state.pages.length}</span>`, { className: 'quiet' })}${resultTasks(ctx.state).length ? b('results', '批改结果', { className: ctx.resultsOpen ? 'header-result-active' : 'quiet', attrs: `aria-pressed="${Boolean(ctx.resultsOpen)}"` }) : ''}${b('reviews', pending ? `<span class="amber-dot"></span>待确认 ${pending}` : '审阅', { className: pending ? 'review-count' : 'quiet' })}${ib('history', '对话与任务记录', 'history')}<a class="quiet" href="/#files" target="_top">工作区文件</a></div>`;
 }
 export function toolbar(ctx, needsMaterials = false) {
   const tool = (mode, label, title = '') => b(mode, label, {

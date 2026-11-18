@@ -428,3 +428,54 @@
   .canvas-header .brand-line{flex:auto}
   .canvas-header .header-actions .icon-button{margin-left:auto}
 }
+
+/* Desktop grading intake and the page partition editor. */
+.intake-surface .grading-intake{width:min(920px,100%);margin:0 auto;padding:22px 30px 38px;text-align:left;min-width:0;color:var(--ink)}
+.grading-intake h1{font-size:22px;font-weight:620;margin:26px 0 18px}
+.grading-intake h2,.intake-library h2{font-size:15px;font-weight:600;margin:0 0 10px}
+.intake-steps{display:flex;gap:24px;list-style:none;padding:0 0 15px;margin:0;border-bottom:1px solid #dee4ec;color:var(--muted);font-size:12px}
+.intake-steps li{display:flex;align-items:center;gap:7px}
+.intake-steps li span{border:1px solid #cdd5e0;border-radius:50%;width:20px;height:20px;display:grid;place-items:center;font-size:11px}
+.intake-steps [aria-current]{color:var(--blue);font-weight:600}
+.intake-steps [aria-current] span{background:var(--blue);border-color:var(--blue);color:white}
+.upload-pair{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+.upload-slot>button{width:100%;display:grid;justify-items:center;gap:6px;padding:16px;border:1px dashed #afbdd0;border-radius:8px;background:#fafbfd}
+.upload-slot>button:hover{border-color:var(--blue);background:var(--blue-tint)}
+.upload-slot strong{font-size:13px}
+.upload-slot small,.upload-extras,.intake-library small,.intake-library p{font-size:12px;color:var(--muted)}
+.upload-extras,.grading-intake footer{display:flex;justify-content:space-between;align-items:center;gap:12px;margin:12px 0;flex-wrap:wrap}
+.upload-extras button{color:var(--blue);font-size:12px}
+.grading-intake footer{padding:12px 0;justify-content:flex-end}
+.grading-intake footer button:first-child:not(:last-child){margin-right:auto}
+.intake-library{border-top:1px solid #dce2e9;padding-top:16px;margin-top:12px}
+.intake-library h3{font-size:12px;font-weight:500;color:var(--muted);margin:12px 0 4px}
+.intake-library button{width:100%;min-height:34px;gap:10px;text-align:left;border-bottom:1px solid #edf0f4;border-radius:0;padding:5px 6px;justify-content:flex-start}
+.intake-library button:hover{background:#f4f7fb}
+.intake-library button span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.intake-library summary{font-size:12px;color:var(--blue);cursor:pointer;padding:9px 4px}
+.grading-intake .content{width:100%;margin:0;padding:0}
+.grading-intake .section-toolbar{margin:0 0 10px;gap:8px;flex-wrap:wrap}
+.grading-intake .title-line h1{font-size:15px;margin:0}
+.grading-intake .toolbar-actions{flex-wrap:wrap;gap:8px}
+.grading-intake .toolbar-actions button,.grading-intake .toolbar-actions summary{font-size:12px}
+.grading-intake .answer-group{border:1px solid #dce2e9;border-radius:7px;padding:10px 12px;margin-bottom:14px}
+.grading-intake .group-heading{font-size:13px;margin:0 0 8px}
+.grading-intake .page-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(84px,1fr));gap:8px;padding:0}
+.grading-intake .page-tile{position:relative;min-width:0}
+.grading-intake .page-image{height:112px;background:#f5f7fa}
+.grading-intake .page-image img{object-fit:contain}
+.grading-intake .page-tools{min-height:18px}
+.grading-intake .page-tools button{font-size:10px;padding:1px 3px}
+.pick-page{position:absolute;z-index:2;top:2px;left:2px;cursor:pointer;padding:2px;background:white;border-radius:3px;line-height:1}
+.pick-page input{margin:0;accent-color:var(--blue)}
+.grading-intake .task-setup{max-width:700px}
+.intake-preview-dialog{max-width:90vw}
+.intake-preview{display:block;max-width:100%;max-height:70vh;object-fit:contain;margin:auto}
+@media(max-width:640px){.intake-surface .grading-intake{padding:16px}.upload-pair{gap:8px}.intake-steps{gap:12px}.intake-library button{font-size:12px}.intake-library button small{max-width:40%}.grading-intake .page-grid{grid-template-columns:repeat(auto-fill,minmax(75px,1fr))}}
+.library-heading{display:flex;justify-content:space-between;align-items:baseline;gap:12px}
+.intake-library .library-heading button{width:auto;min-height:26px;border:0;color:var(--blue);font-size:12px}
+#folder-form .scope-picker{max-height:50vh;overflow:auto}
+.grading-intake:has(.groups)>footer{position:sticky;bottom:0;background:white;border-top:1px solid #dce2e9;z-index:3}
+.original-page{display:block;text-overflow:ellipsis;overflow:hidden;white-space:nowrap;color:var(--muted);font-size:10px;line-height:18px}
+.grading-intake .page-tools{bottom:20px}
+@media(max-width:760px){.grading-intake .page-tools{bottom:auto}}

@@ -79,3 +79,25 @@ test('HTML preview is sandboxed and cannot execute scripts or request remote con
   assert.ok(!preview.headers.get('content-security-policy').includes('allow-scripts'));
   const download = await request(`/files/${file.id}?download=1`); assert.match(download.headers.get('content-disposition'), /^attachment;/); assert.equal(await download.text(), body);
 });
+
+test('opening a personal report preserves its frozen owner and excludes other student pages from its sources', async t => {
+  const { app, base } = await setup(t);
+  await app.store.mutate(null, state => {
+    state.groups = [{ id: 'a', label: '后来重分的答卷', pageIds: ['later'] }];
+    state.tasks.push({ id: 't', kind: 'grade', title: '练习', status: 'completed', records: [], groupIds: ['a', 'b'],
+      groups: [{ id: 'a', label: '甲', pageIds: ['p1'] }, { id: 'b', label: '乙', pageIds: ['p2'] }],
+      scheme: { pageIds: ['shared'] }, artifacts: [{ id: 'r', groupId: 'a', title: '反馈', body: '仅供合成测试' }] });
+  });
+  const file = app.system.store.catalog()[0];
+  assert.deepEqual([file.groupId, file.groupLabel, file.taskTitle], ['a', '甲', '练习']);
+  const { token } = await (await fetch(base + '/api/state')).json();
+  const response = await fetch(base + '/api/documents', { method: 'POST', headers: { 'X-Workspace-Token': token, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ taskId: 't', artifactId: 'r' }) });
+  assert.equal(response.status, 201);
+  const { document } = await response.json();
+  assert.deepEqual(document.sourcePageIds, ['p1', 'shared']);
+  const catalog = app.system.store.catalog();
+  assert.equal(catalog.length, 1);
+  const edited = app.system.store.readFile(catalog[0].id);
+  assert.deepEqual([edited.groupId, edited.groupLabel, edited.category], ['a','甲','个人报告']);
+});
