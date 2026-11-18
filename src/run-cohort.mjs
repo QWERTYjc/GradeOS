@@ -16,7 +16,8 @@ import { requiredMsPages } from './report-context.mjs';
 import { ResultsStore } from './results-store.mjs';
 import { createReporting, REPORTING_INSTRUCTIONS, ECONOMY_REPORTING_INSTRUCTIONS, LEAN_REPORTING_INSTRUCTIONS } from './cohort-reporting.mjs';
 import { EVIDENCE_PROTOCOL_PROMPT, EVIDENCE_SUBMIT_SCHEMA } from './point-evidence.mjs';
-import { inlineAnnotationSchema, inlineAnnotationPrompt } from './inline-annotations.mjs';
+import { prepareAnnotationPages } from './local-annotation-pages.mjs';
+import { LUNA_PAGE_SIDE } from './luna-annotation-budget.mjs';
 import { MS_REVIEW_PROMPT, MS_REVIEW_SCHEMA } from './ms-review.mjs';
 import { runExceptionReview, exceptionRequests, EXCEPTION_REVIEW_PROMPT, EXCEPTION_REVIEW_SCHEMA } from './exception-review.mjs';
 import { runStudentFeedback, FEEDBACK_PROMPT, FEEDBACK_SCHEMA } from './student-feedback.mjs';
@@ -56,7 +57,7 @@ const { values } = parseArgs({ options: {
   'lean-reports': {type:'boolean',default:false},
   'trim-white-margins': {type:'boolean',default:false},
   'initial-image-max-side': {type:'string'},
-  'annotation-grid': {type:'boolean',default:false},
+  'annotation-grid': {type:'boolean',default:false}, // Existing CLI alias for local region annotations.
   'main-reasoning': {type:'string'},
   'worker-reasoning': {type:'string'},
   'grading-reasoning': {type:'string',default:'low'},
@@ -85,7 +86,7 @@ const economy=values['economy-reporting'],lean=values['lean-reports'];
 if(lean&&!economy)throw Error('Lean reports require economy reporting');
 const feedbackMode=lean?'source-bound-v5':economy?'compact-v2':'detailed-v1';
 if (!Number.isFinite(cap) || cap <= 0 || cap > 5) throw Error('Invalid cohort limits');
-const studentCapUsd=parseStudentBudget(values['student-cap'],cap);
+const requestedStudentCap = parseStudentBudget(values['student-cap'], cap);
 new StudentRegistry(input.students.map(x => x.id), concurrency);
 const scheme = await loadDocument(input.scheme_input, 'scheme');
 const students = new Map(await Promise.all(input.students.map(async x => [x.id, await loadDocument(x.input, 'student')])));
@@ -106,15 +107,15 @@ const studentSelfReviewEnabled=studentProtocol==='evidence-v4'&&!values.scripted
 const requestLimit = values['max-requests'] ?? (studentSelfReviewEnabled ? 'unlimited' : '120');
 const maxRequests = requestLimit === 'unlimited' ? null : Number(requestLimit);
 if (maxRequests !== null && (!Number.isInteger(maxRequests) || maxRequests < 1 || maxRequests > 512)) throw Error('Invalid aggregate request limit');
-const inlineAnnotations=values['inline-annotations'];
+const inlineAnnotations=values['inline-annotations'] || values['annotation-grid'];
 const scripted=values.scripted;
 // A cold workspace batch must finish source compilation and a full answer-book request.
 const deadlineSeconds = scripted && values['interaction-dir'] && !reusedRubric && scheme.pages.length > MS_PAGES_PER_TURN
   ? 1800 : 900;
 const mainEffort=values['main-reasoning'],workerEffort=values['worker-reasoning'];
-const annotationGrid=values['annotation-grid'],gradingReasoning=workerEffort === 'on' ? 'low' : workerEffort ?? values['grading-reasoning'];
-if(values['local-ocr']&&(!scripted||process.platform!=='darwin'))throw Error('Local optical hints require scripted grading on macOS');
-if(annotationGrid&&!scripted)throw Error('Spatial ruler requires scripted grading');
+const gradingReasoning=workerEffort === 'on' ? 'low' : workerEffort ?? values['grading-reasoning'];
+if (inlineAnnotations && (!scripted || values['trim-white-margins'])) throw Error('Local region annotations require single-pass grading of complete pages');
+if (values['local-ocr'] && !scripted) throw Error('Local OCR requires scripted grading');
 if(!['off','low','medium','high','xhigh','max'].includes(gradingReasoning))throw Error('Unsupported grading reasoning level');
 if(scripted&&studentProtocol!=='evidence-v4')throw Error('Scripted execution requires evidence-v4');
 if(values['approved-guide']&&(!scripted||!reusedRubric||values['interaction-dir']))throw Error('Approved guide replay requires scripted frozen rubric without live interaction');
@@ -128,11 +129,10 @@ if(scripted&&sourcePermissionReview)throw Error('Scripted execution defers unres
 if(sourcePermissionReview&&studentProtocol!=='evidence-v4')throw Error('Source-permission review requires evidence-v4');
 let pointPrompt=studentProtocol==='evidence-v5'?SHARED_EVIDENCE_PROMPT:studentProtocol==='evidence-v4'?compactPromptForReasons(reasonStyle):EVIDENCE_PROTOCOL_PROMPT;
 if(sourcePermissionReview)pointPrompt=sourcePermissionPrompt(pointPrompt);
-if(inlineAnnotations)pointPrompt=inlineAnnotationPrompt(pointPrompt);
 const basePointSchema=sourcePermissionReview?PERMISSION_SUBMIT_SCHEMA:studentProtocol==='evidence-v5'?SHARED_EVIDENCE_SCHEMA:studentProtocol==='evidence-v4'?COMPACT_POINTS_SCHEMA:EVIDENCE_SUBMIT_SCHEMA;
-const pointSchema=scripted&&reusedRubric?singlePassSchema({frozen:reusedRubric,student:students.values().next().value,inlineAnnotations,annotationGrid}):inlineAnnotations?inlineAnnotationSchema(basePointSchema):basePointSchema;
+
 const initialImageMaxSide=values['initial-image-max-side']===undefined?null:Number(values['initial-image-max-side']);
-if(initialImageMaxSide!==null&&(!Number.isSafeInteger(initialImageMaxSide)||initialImageMaxSide<=0||annotationGrid||inlineAnnotations))throw Error('Initial image max side must be a positive integer; annotation geometry requires native images');
+if(initialImageMaxSide!==null&&(!Number.isSafeInteger(initialImageMaxSide)||initialImageMaxSide<=0||inlineAnnotations))throw Error('Initial image max side must be a positive integer; annotation geometry requires native images');
 if((values['trim-white-margins']||initialImageMaxSide!==null)&&!['evidence-v4','evidence-v5'].includes(studentProtocol))throw Error('Source-tracked image variants require evidence-v4 or evidence-v5');
 const models = createModels(); models.setProvider(openrouterProvider());
 const model = experimentModel(models, values.model);
@@ -143,10 +143,20 @@ for (const [roleModel, effort] of [[model,mainEffort],[workerModel,workerEffort]
   if (effort !== undefined && !gradingModel(roleModel.id)?.efforts.includes(effort)) throw Error('Unsupported reasoning setting for ' + roleModel.id);
 }
 await mkdir(output, { recursive: false });
-let imageVariants=null;const preparationStarted=Date.now();
-if(values['trim-white-margins']||annotationGrid||initialImageMaxSide!==null){
+const economicalLuna = inlineAnnotations && workerModel.id === 'openai/gpt-6-luna';
+const pointSchema=scripted&&reusedRubric?singlePassSchema({frozen:reusedRubric,student:students.values().next().value,inlineAnnotations,compact:economicalLuna}):basePointSchema;
+const studentCapUsd = economicalLuna ? Math.min(.01, requestedStudentCap) : requestedStudentCap;
+const preparationStarted = Date.now();
+let imageVariants = null, localObservations = null, regionCatalog = null;
+if (inlineAnnotations) {
+  const prepared = await prepareAnnotationPages({ students, output, maxSide: economicalLuna ? LUNA_PAGE_SIDE : 0 });
+  imageVariants = prepared.variants;
+  localObservations = prepared.observations;
+  regionCatalog = prepared.catalog;
+}
+if(values['trim-white-margins']||initialImageMaxSide!==null){
   await freezeJson(output,'student-image-input.json',Object.fromEntries(students));
-  await promisify(execFile)(pythonExecutable(),[resolve(root,'scripts/python/student_images.py'),'--documents',resolve(output,'student-image-input.json'),'--output',resolve(output,'student-image-variants'),...(annotationGrid?['--grid']:[]),...(initialImageMaxSide!==null?['--max-side',String(initialImageMaxSide)]:[])],
+  await promisify(execFile)(pythonExecutable(),[resolve(root,'scripts/python/student_images.py'),'--documents',resolve(output,'student-image-input.json'),'--output',resolve(output,'student-image-variants'),...(initialImageMaxSide!==null?['--max-side',String(initialImageMaxSide)]:[])],
     {cwd:root,env:{PATH:process.env.PATH},timeout:60000,maxBuffer:1024*1024});
   imageVariants=JSON.parse(await readFile(resolve(output,'student-image-variants/manifest.json'),'utf8'));
   for(const [id,document] of students){
@@ -162,8 +172,8 @@ if(values['trim-white-margins']||annotationGrid||initialImageMaxSide!==null){
 const cropOnlyReview=studentSelfReviewEnabled&&imageVariants?.mode==='resized_overview';
 const readInitialSchemeImage=cropOnlyReview?schemeOverviewReader(resolve(output,'student-image-variants'),initialImageMaxSide):null;
 const imagePreparationSeconds=imageVariants?(Date.now()-preparationStarted)/1000:0;
-const opticalStarted=Date.now();let localObservations=null;
-if(values['local-ocr']) {
+const opticalStarted=Date.now();
+if(values['local-ocr'] && !inlineAnnotations && process.platform==='darwin') {
   await freezeJson(output,'local-observation-input.json',Object.fromEntries(students));
   await promisify(execFile)('xcrun',['swift',resolve(root,'scripts/macos/student_ocr.swift'),resolve(output,'local-observation-input.json'),resolve(output,'student-local-observations.json')],
     {cwd:root,env:{PATH:process.env.PATH},timeout:120000,maxBuffer:1024*1024});
@@ -181,7 +191,7 @@ sourceHashes['src/flash-grading.mjs'] = digest(await readFile(resolve(root, 'src
 sourceHashes['web/grading-models.mjs'] = digest(await readFile(resolve(root, 'web/grading-models.mjs')));
 sourceHashes['src/scripted-grading.mjs']=digest(await readFile(resolve(root,'src/scripted-grading.mjs')));
 sourceHashes['src/single-pass-grading.mjs']=digest(await readFile(resolve(root,'src/single-pass-grading.mjs')));
-for(const path of ['src/local-observations.mjs','scripts/macos/student_ocr.swift'])sourceHashes[path]=digest(await readFile(resolve(root,path)));
+for(const path of ['src/local-observations.mjs','scripts/macos/student_ocr.swift','src/local-annotation-pages.mjs','src/ocr-regions.mjs','src/ocr-reference-alignment.mjs','src/luna-annotation-budget.mjs','src/guide-wire.mjs','scripts/python/local_text_regions.py','scripts/python/student_region_geometry.py','scripts/python/student_region_images.py'])sourceHashes[path]=digest(await readFile(resolve(root,path)));
 if (values['interaction-dir']) for (const path of ['src/teacher-interaction.mjs','src/marking-guide.mjs','src/workspace/editable-documents.mjs', 'src/workspace/canvas-context.mjs', 'src/workspace/documents.mjs', 'src/workspace/store.mjs', 'scripts/python/workspace_crop.py']) sourceHashes[path] = digest(await readFile(resolve(root, path)));
 for (const path of ['src/core.mjs', 'src/rubric-contract.mjs', 'src/point-evidence.mjs', 'src/compact-points.mjs', 'src/shared-evidence.mjs', 'src/full-credit-reasons.mjs', 'src/source-permissions.mjs', 'src/independent-source-review.mjs', 'scripts/python/student_images.py', 'src/report-context.mjs', 'src/ms-review.mjs', 'src/exception-review.mjs', 'src/cohort-core.mjs', 'src/cohort-runtime.mjs', 'src/input-context-estimate.mjs', 'src/output-budget.mjs', 'src/student-report-markdown.mjs', 'src/submission-contract.mjs', 'src/teacher-interaction.mjs','src/marking-guide.mjs','src/workspace/editable-documents.mjs', 'src/experiment-models.mjs', 'src/cohort-progress.mjs', 'src/run-cohort.mjs', 'src/student-feedback.mjs', 'src/source-bound-feedback.mjs', 'src/source-bound-report.mjs', 'src/compact-feedback.mjs', 'src/focused-feedback.mjs', 'src/results-store.mjs', 'src/cohort-reporting.mjs', 'src/report-markdown.mjs', 'scripts/python/analytics.py', 'src/python.mjs', 'scripts/python/gradeos_analysis.py', 'package-lock.json']) sourceHashes[path] = digest(await readFile(resolve(root, path)));
 const plan = { version: 2, mode: reusedRubric ? 'frozen-rubric replay' : 'full-cold fixture with shared MS compilation', created_at: new Date().toISOString(),
@@ -202,8 +212,10 @@ const plan = { version: 2, mode: reusedRubric ? 'frozen-rubric replay' : 'full-c
     grading_correction_context:'request-only checkpoint: complete affected/related items, original general rules, rejected local ledgers, bound relevant images and subsequent tool turns; ambiguous bindings or prior interactive instructions retain full context',
     full_grading_restore:'reopen_grading restores original history and normal output allowance; all rejected drafts can receive local corrections; reservation uses projected wire'},
   scheme, students: Object.fromEntries(students), cap_usd: cap, host_concurrency_limit: concurrency,
-  inline_annotations: inlineAnnotations ? { version:annotationGrid?2:1, grid:annotationGrid?'10 columns by 40 rows; original page':'1000', frames:'iN initial image; oN delivered original reinspection', max_regions_per_point:annotationGrid?12:3, invalid_policy:'annotation fallback only; no grade mutation or annotation-only retry' } : false,
-  local_optical_hints:localObservations?{engine:localObservations.engine,network_requests:0,preparation_elapsed_seconds:opticalPreparationSeconds,authority:'Optical guesses only; original images and unchanged source criteria remain authoritative',sha256:digest(await readFile(resolve(output,'student-local-observations.json')))}:null,
+  inline_annotations: inlineAnnotations ? { version:3, regions:'local OCR region IDs', invalid_policy:'leave location unresolved; preserve grading' } : false,
+  local_region_catalog: regionCatalog ? { sha256: digest(regionCatalog), engine: regionCatalog.engine, network_requests: 0,
+    count: Object.values(regionCatalog.documents).flatMap(doc => doc.pages).reduce((n, p) => n + p.regions.length, 0) } : null,
+  local_optical_hints:localObservations?{engine:localObservations.engine,network_requests:0,preparation_elapsed_seconds:opticalPreparationSeconds,authority:'Optical guesses only; original images and unchanged source criteria remain authoritative',sha256:digest(localObservations)}:null,
   preparation_elapsed_seconds:imagePreparationSeconds+opticalPreparationSeconds,
   student_cache_namespace: studentCacheNamespace,
   cache_experiment: studentCacheNamespace ? 'Unique first-user namespace per student/feedback lane, after shared system/MS prefix; same namespace across turns. Verify actual cache receipts.' : 'Provider automatic caching without artificial input isolation',
@@ -217,7 +229,7 @@ const plan = { version: 2, mode: reusedRubric ? 'frozen-rubric replay' : 'full-c
   context_policy: 'Main preserves the compilation prefix through MS self-review, then receives frozen rubric navigation; scoped source views remain available. Student/exception/feedback sessions stay isolated. Delivered result batches and point/image views can be checkpointed with source-bound notes; context retains score/null/review/source issues and immutable refs.',
   comparison: 'Count declared tasks and actual executions separately; duplicated answer books measure repeatability, not a diverse student population.' };
 if(scripted)Object.assign(plan,{execution:'scripted-single-pass',student_cap_usd:studentCapUsd,reporting:'Deterministic scripts from immutable grading records; zero model calls',
-  student_prompt_hash:digest(singlePassPrompt({inlineAnnotations,annotationGrid})),point_wire_protocol:annotationGrid?'fixed-observed-ink-grid-v3':'fixed-observed-ink-v3',
+  student_prompt_hash:digest(singlePassPrompt({inlineAnnotations,compact:economicalLuna})),point_wire_protocol:economicalLuna?'compact-ocr-point-fields':inlineAnnotations?'fixed-observed-ink-local-regions':'fixed-observed-ink-v3',
   student_feedback:'Exact saved evidence and reasons; deterministic rendering; zero model calls',
   exception_review:{enabled:false,policy:'Positive exception proposals withheld as null pending teacher review; raw primary preserved'},
   cold_cache_namespace:values['cold-cache-namespace']??null,approved_guide:replayGuide?{hash:replayGuide.hash,revision:replayGuide.revision}:null,
@@ -248,7 +260,7 @@ const controller = new AbortController();
 const interaction = values['interaction-dir'] ? await new TeacherInteraction(resolve(values['interaction-dir']), { signal: controller.signal,
   schemePages: scheme.pages, students: new Map([...students].map(([id, document]) => [id, document.pages])) }).init() : null;
 const runtime = createRuntime({ models, model, workerModel, output, cap, controller, maxRequests, studentCacheNamespace, progress, interaction, structuredOutput:values.json,provider,workerProvider,mainEffort,workerEffort,
-  deadlineMs:deadlineSeconds*1000,singlePassGrading:scripted,coldCacheNamespace:values['cold-cache-namespace']??null,studentCapUsd:scripted?studentCapUsd:null });
+  deadlineMs:deadlineSeconds*1000,singlePassGrading:scripted,economicalLuna,coldCacheNamespace:values['cold-cache-namespace']??null,studentCapUsd:scripted?studentCapUsd:null });
 process.once('SIGINT', () => {void progress.cancelRequested();controller.abort(Error('User cancellation'));});
 if(scripted) {
   const started=Date.now();let frozen=reusedRubric,guide=replayGuide,result=null,failure=null;
@@ -287,7 +299,7 @@ if(scripted) {
       admission_cap_exceeded:runtime.budget.chargedOrReserved>cap};
     await freezeJson(output,'summary.json',summary);
     await progress.finish(summary,{cancelled:controller.signal.aborted});
-    console.log(JSON.stringify({status:summary.status,output,cost_usd:summary.provider_reported_cost_usd,failure}));
+    console.log(JSON.stringify({status:summary.status,output,cost_usd:summary.unknown_cost_requests ? null : summary.provider_reported_cost_usd,unknown_cost_requests:summary.unknown_cost_requests,failure}));
     if(summary.status!=='submitted')process.exitCode=2;
   }
 } else {

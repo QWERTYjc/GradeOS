@@ -109,14 +109,16 @@ test('scripted grading delivers complete pages in order and binds cross-page evi
     const pages=[],variants=[];
     for(const page of [1,2,3]) {
       const bytes=`complete-page-${page}`,path=join(dir,`page-${page}.png`);
-      const gridBytes=`complete-grid-page-${page}`,gridPath=join(dir,`grid-${page}.png`);
-      await writeFile(path,bytes);await writeFile(gridPath,gridBytes);
+      const variantBytes=`complete-labelled-page-${page}`,variantPath=join(dir,`labelled-${page}.png`);
+      await writeFile(path,bytes);await writeFile(variantPath,variantBytes);
       pages.push({page,sha256:digest(bytes),absolute_path:path});
-      variants.push({page,absolute_path:gridPath,sha256:digest(gridBytes),original_sha256:digest(bytes),
-        size:[1064,1436],source_rect_in_image:[64,36,1064,1436],pixel_identity_verified:true,
-        original_size:[1000,1400],grid:{columns:10,rows:40,version:'source-grid-v1'}});
+      variants.push({page,absolute_path:variantPath,sha256:digest(variantBytes),original_sha256:digest(bytes),
+        original_size:[1000,1400],content_size:[1000,1400],size:[1064,1400],source_rect_in_image:[32,0,1032,1400],
+        region_manifest_sha256:'e'.repeat(64),source_coverage_verified:true,overlay:'local-ocr-regions-v1',
+        regions:[{id:`i${page}.r1`,rect:{x:.1,y:.2,width:.3,height:.02}}]});
+
     }
-    const imageVariants={mode:'source_grid',documents:{neutral:{pages:variants}}};
+    const imageVariants={mode:'source_regions',documents:{neutral:{pages:variants}}};
     const answer={sha256:'complete-answer',pages};
     let calls=0,images,labels;
     const runtime={allocateStudentBudgets:()=>{},finishStudentBudget:()=>{},budget:{requests:[]},totals:()=>({admitted_requests:0}),
@@ -127,8 +129,8 @@ test('scripted grading delivers complete pages in order and binds cross-page evi
           const content=context.messages.flatMap(m=>Array.isArray(m.content)?m.content:[]);
           images=content.filter(p=>p.type==='image');
           labels=content.filter(p=>p.type==='text'&&p.text.startsWith('student physical PDF page')).map(p=>p.text);
-          const submission=structuredClone(raw);
-          submission.observations.Genre.type={p:[1,3],l:['i1.I38:J40','i3.A1:C3'],t:'a personal\nletter'};
+          const submission={items:[{id:'Genre',route:'r',review:false,p:[{id:'type',p:[1,3],l:['i1.r1','i3.r1'],
+            t:'a personal\nletter',s:1,j:'m',r:'='}]}],review_notes:[],source_issues:[]};
           const stream=createAssistantMessageEventStream();
           queueMicrotask(()=>stream.push({type:'done',reason:'toolUse',message:{role:'assistant',timestamp:Date.now(),
             api:model.api,provider:model.provider,model:model.id,stopReason:'toolUse',
@@ -139,7 +141,7 @@ test('scripted grading delivers complete pages in order and binds cross-page evi
       },run:async(agent,prompt)=>agent.prompt(prompt)};
     const result=await runScriptedGrading({runtime,output:dir,frozen,guide,scheme,students:new Map([['neutral',answer]]),model,imageVariants,inlineAnnotations:true});
     assert.equal(result.status,'submitted');assert.equal(calls,1);
-    assert.deepEqual(images.map(p=>Buffer.from(p.data,'base64').toString()),[1,2,3].map(p=>`complete-grid-page-${p}`));
+    assert.deepEqual(images.map(p=>Buffer.from(p.data,'base64').toString()),[1,2,3].map(p=>`complete-labelled-page-${p}`));
     assert.deepEqual(labels,[1,2,3].map(p=>`student physical PDF page ${p}; annotation frame i${p}`));
     const grade=JSON.parse(await readFile(join(dir,'student-neutral/grading.json')));
     assert.deepEqual(grade.student_pages_delivered,[1,2,3]);

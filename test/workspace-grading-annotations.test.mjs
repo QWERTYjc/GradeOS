@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { gradingAnnotations, annotationBatches, findGradingAnnotation } from '../web/grading-annotations.mjs';
 import { resolveReferences } from '../src/workspace/editable-documents.mjs';
 import { publicState, emptyState } from '../src/workspace/store.mjs';
-import { annotationTools, saveGradingAnchors } from '../src/workspace/annotation-tools.mjs';
+import { annotationTools } from '../src/workspace/annotation-tools.mjs';
 
 function fixture() {
   const pages = ['a', 'b', 'c', 'ms'].map(id => ({ id, sha256: `hash-${id}`, role: id === 'ms' ? 'scheme' : 'student', sourcePage: id === 'b' ? 2 : 1, fileName: `${id}.pdf`, active: true }));
@@ -110,42 +110,15 @@ test('missing location stays unplaced and cross-scope page IDs cannot become inv
   assert.throws(() => resolveReferences(state, [{ annotationId: note.id }], ['student']), /引用内容不存在/);
 });
 
-test('precise placement only outputs compact coordinates after both the original page and evidence were delivered', async () => {
-  const state = fixture(), original = structuredClone(state.tasks[0].records), delivered = new Set(), pendingDelivery = new Set();
-  const tools = annotationTools({ state, selectedIds: ['student'], delivered, pendingDelivery, save: anchors => saveGradingAnchors(state, anchors) });
-  const [read, place] = tools, input = { taskId: 't1', pageId: 'a', marks: [[1, .2, .3, .4, .05]] };
-  await assert.rejects(place.execute('', input), /完整原页/);
-  delivered.add('annotation-page:a');
-  await assert.rejects(place.execute('', input), /评分依据/);
-  const result = await read.execute('', input);
-  assert.deepEqual(JSON.parse(result.content[0].text), [{ n: 1, point: '1a · M1', evidence: 'x=2' }]);
-  await assert.rejects(place.execute('', input), /评分依据/, 'Tool output must reach the agent before it can place that evidence');
-  for (const key of pendingDelivery) delivered.add(key);
-  await place.execute('', input);
-  await place.execute('', input);
-  assert.equal(state.gradingAnchors.length, 1, 'Repeated placement replaces an anchor instead of duplicating comments');
-  const note = gradingAnnotations(state, 't1', 'student', 'a')[0];
-  assert.equal(note.location, 'region');
-  assert.deepEqual(note.target.rect, { x: .2, y: .3, width: .4, height: .05 });
-  assert.equal(gradingAnnotations(state, 't1', 'student', 'b')[0].location, 'page');
-  assert.deepEqual(state.tasks[0].records, original);
-  const snapshot = structuredClone(state.gradingAnchors);
-  await assert.rejects(place.execute('', { ...input, marks: [[1, .9, .3, .4, .05]] }), /区域无效/);
-  await assert.rejects(place.execute('', { ...input, pageId: 'c' }), /范围/);
-  assert.deepEqual(state.gradingAnchors, snapshot);
-  state.tasks[0].records[0].originalHash = 'new-result';
-  assert.equal(gradingAnnotations(state, 't1', 'student', 'a')[0].location, 'page');
+test('the assistant can read saved evidence in scope and has no coordinate-writing tool', async () => {
+  const state=fixture(), before=structuredClone(state);
+  const tools=annotationTools({state, selectedIds:['student']});
+  assert.deepEqual(tools.map(tool=>tool.name),['read_annotation_points']);
+  const result=await tools[0].execute('',{taskId:'t1', pageId:'a'});
+  assert.deepEqual(JSON.parse(result.content[0].text),[{n:1,point:'1a · M1',evidence:'x=2',regionIds:[]}]);
+  await assert.rejects(tools[0].execute('',{taskId:'t1',pageId:'c'}),/范围/);
+  assert.deepEqual(state,before);
 });
-
-test('anchor save is atomic and rejects a stale grading snapshot', () => {
-  const state = fixture();
-  const note = gradingAnnotations(state, 't1', 'student')[0];
-  const anchor = { taskId: 't1', groupId: 'student', recordId: 'r1', originalHash: note.originalHash, target: note.target };
-  assert.throws(() => saveGradingAnchors(state, [anchor, { ...anchor, originalHash: 'changed' }]), /已改变/);
-  assert.equal(state.gradingAnchors, undefined);
-  assert.throws(() => saveGradingAnchors(state, [{ ...anchor, target: { ...anchor.target, pageHash: 'wrong' } }]), /原页已改变/);
-});
-
 
 test('specific doubts survive annotation projection and render as escaped review notes', () => {
   const state = fixture(), record = state.tasks[0].records[0];

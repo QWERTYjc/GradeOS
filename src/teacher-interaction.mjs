@@ -5,6 +5,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { readSelectionImage } from './workspace/canvas-context.mjs';
 import { createInitialSystemMessage, toToolDeclaration } from '@earendil-works/pi-ai';
 import { markingGuideMarkdown, validateGuideApproval } from './marking-guide.mjs';
+import { guideWireText } from './guide-wire.mjs';
 import { digest } from './core.mjs';
 
 export const readJSON = async (path, fallback = null) => { try { return JSON.parse(await readFile(path, 'utf8')); } catch (error) { if (error.code === 'ENOENT') return fallback; throw error; } };
@@ -160,8 +161,12 @@ export class TeacherInteraction {
     return { teacher: note.text, sourceSelections: (note.selections || []).filter(target => allowed.has(target.pageId)),
       documentReferences: (note.references || []).filter(ref => ref.target.kind === 'text' ? ref.target.sourcePageIds.every(id => allowed.has(id)) : allowed.has(ref.target.pageId)), applyTo: note.groupIds || [] };
   }
-  attach(agent, lane, { interactiveTools = true, singlePass = false } = {}) {
+  attach(agent, lane, { interactiveTools = true, singlePass = false, guideRubric = null } = {}) {
     this.agents.set(agent, lane);
+    if (singlePass && guideRubric) {
+      this.guideRubrics ||= new WeakMap();
+      this.guideRubrics.set(agent, guideRubric);
+    }
     this.singlePassAgents ||= new WeakSet();
     if(singlePass)this.singlePassAgents.add(agent);else this.singlePassAgents.delete(agent);
     if (lane === 'main' && interactiveTools) {
@@ -246,7 +251,9 @@ export class TeacherInteraction {
     if (!answered.length && !notes.length && !guide && !requirementText) return prompt;
     for (const note of notes) this.queued?.get(agent)?.add(note.id);
     const original = typeof prompt === 'string' ? { role: 'user', timestamp: Date.now(), content: [{ type: 'text', text: prompt }] } : prompt;
-    const teacherContext={ role: 'user', timestamp: Date.now(), content: [{ type: 'text', text: `${requirementText}\nRecorded teacher source clarifications (original source and fixed award bounds still apply):\n${JSON.stringify(answered.map(row => ({ question: row.question, answer: row.answer, references: row.references, selections: row.selections, documentReferences: row.documentReferences })))}\n${notes.map(note => `[teacher-note:${note.id}]\n${JSON.stringify(this.noteContext(lane, note))}`).join('\n')}${guide ? `\n${guide.method === 'automatic' ? 'Teacher-authorized automatic-mode' : 'Teacher-confirmed'} execution document v${guide.revision}, hash ${guide.hash}:\n${guide.body}\nApply this document. If it conflicts with source meaning or fixed award bounds, retain unresolved judgments for teacher review; never silently override the source.` : ''}` }] };
+    const guideRubric = this.guideRubrics?.get(agent);
+    if (guide && guideRubric && guide.rubricHash !== guideRubric.hash) throw Error('Approved guide and rubric differ');
+    const teacherContext={ role: 'user', timestamp: Date.now(), content: [{ type: 'text', text: `${requirementText}\nRecorded teacher source clarifications (original source and fixed award bounds still apply):\n${JSON.stringify(answered.map(row => ({ question: row.question, answer: row.answer, references: row.references, selections: row.selections, documentReferences: row.documentReferences })))}\n${notes.map(note => `[teacher-note:${note.id}]\n${JSON.stringify(this.noteContext(lane, note))}`).join('\n')}${guide && guideRubric ? '\n' + guideWireText(guide, guideRubric) : guide ? `\n${guide.method === 'automatic' ? 'Teacher-authorized automatic-mode' : 'Teacher-confirmed'} execution document v${guide.revision}, hash ${guide.hash}:\n${guide.body}\nApply this document. If it conflicts with source meaning or fixed award bounds, retain unresolved judgments for teacher review; never silently override the source.` : ''}` }] };
     const messages=Array.isArray(original)?original:[original];
     return this.singlePassAgents?.has(agent)?[...messages,teacherContext]:[teacherContext,...messages];
   }

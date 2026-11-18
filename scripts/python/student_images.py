@@ -7,38 +7,7 @@ import sys
 import io
 import math
 from pathlib import Path
-from PIL import Image, ImageChops, ImageDraw, ImageFont
-
-
-def source_grid(image, columns=10, rows=40):
-    """Add only an external ruler. Every source pixel remains at native scale.
-
-    Cells are neutral spatial references, not OCR, handwriting detection or
-    score evidence. A model selects cells; the host maps them to original pixels.
-    """
-    if image.mode != 'RGB':
-        raise ValueError('Source grid requires prepared RGB pages')
-    left, top = 64, 36
-    shown = Image.new('RGB', (image.width + left, image.height + top), 'white')
-    shown.paste(image, (left, top))
-    draw = ImageDraw.Draw(shown)
-    font = ImageFont.load_default(size=min(20, max(10, image.height // rows - 8)))
-    for column in range(columns):
-        x = left + (column + .5) * image.width / columns
-        draw.text((x, 14), chr(65 + column), anchor='mm', font=font, fill='#174ea6')
-        draw.line((left + column * image.width / columns, 25,
-                   left + column * image.width / columns, top - 1), fill='#879bbb')
-    for row in range(rows):
-        y1 = top + row * image.height / rows
-        y2 = top + (row + 1) * image.height / rows
-        if row % 2 == 0:
-            draw.rectangle((0, y1, left - 1, y2 - 1), fill='#eef3fa')
-        draw.text((28, (y1 + y2) / 2), str(row + 1), anchor='mm', font=font, fill='#174ea6')
-        draw.line((47, y1, left - 1, y1), fill='#879bbb')
-    box = (left, top, left + image.width, top + image.height)
-    if shown.crop(box).tobytes() != image.tobytes():
-        raise ValueError('Grid altered original pixels')
-    return shown, box, {'columns': columns, 'rows': rows, 'version': 'source-grid-v1'}
+from PIL import Image, ImageChops
 
 
 def exact_white_crop(image, padding=8):
@@ -96,7 +65,6 @@ def main():
     parser.add_argument('--region', type=int, nargs=4)
     parser.add_argument('--frame', type=int, nargs=4)
     parser.add_argument('--local-only', action='store_true')
-    parser.add_argument('--grid', action='store_true')
     parser.add_argument('--max-side', type=int)
     args = parser.parse_args(); started = time.monotonic()
     if args.source:
@@ -114,9 +82,9 @@ def main():
         return
     if not args.documents or not args.output:
         parser.error('--documents and --output are required for initial views')
-    if args.max_side is not None and (args.max_side <= 0 or args.grid):
-        parser.error('--max-side must be positive and cannot be combined with --grid')
-    mode = 'resized_overview' if args.max_side else 'source_grid' if args.grid else 'exact_white_margin_trim'
+    if args.max_side is not None and args.max_side <= 0:
+        parser.error('--max-side must be positive')
+    mode = 'resized_overview' if args.max_side else 'exact_white_margin_trim'
     docs = json.loads(args.documents.read_text()); args.output.mkdir(exist_ok=False)
     outputs = {}; cache = {}; source_pixels = 0; retained_pixels = 0
     for student_id, doc in docs.items():
@@ -129,10 +97,7 @@ def main():
             if original_hash not in cache:
                 with Image.open(page['absolute_path']) as image:
                     image.load()
-                    if args.grid:
-                        cropped, box, grid = source_grid(image)
-                    else:
-                        cropped, box = exact_white_crop(image); grid = None
+                    cropped, box = exact_white_crop(image)
                     native_size = cropped.size
                     if args.max_side:
                         cropped = resize_overview(cropped, args.max_side)
@@ -147,8 +112,7 @@ def main():
                         'size':list(cropped.size), 'bbox':list(box),
                         'pixel_identity_verified':cropped.size == native_size,
                         'source_binding_verified':True, 'mode':mode,
-                        **({'max_side':args.max_side} if args.max_side else {}),
-                        **({'grid':grid, 'source_rect_in_image':list(box)} if args.grid else {})}
+                        **({'max_side':args.max_side} if args.max_side else {})}
             record = {**cache[original_hash], 'page':page['page'], 'source_document_sha256':doc['sha256']}
             pages.append(record)
             source_pixels += record['original_size'][0] * record['original_size'][1]
@@ -158,7 +122,7 @@ def main():
               'retained_pixels':retained_pixels, 'pixel_reduction_fraction':1-retained_pixels/source_pixels,
               'elapsed_seconds':time.monotonic()-started,
               'mode':mode, 'max_side':args.max_side,
-              'policy':('Complete content extent resized proportionally with LANCZOS, without enlargement; small details may become ambiguous. Original files and original read tool unchanged.' if args.max_side else 'Original RGB rectangle is byte-identical at native resolution. Each page stays complete and in document order. Only external row/column labels are added; cells do not classify writing or determine marks.' if args.grid else 'All original nonwhite RGB pixels retained at native resolution; exact white padding reconstructs original. Blank/non-RGB pages remain complete. Original read tool unchanged.')}
+              'policy':('Complete content extent resized proportionally with LANCZOS, without enlargement; small details may become ambiguous. Original files and original read tool unchanged.' if args.max_side else 'All original nonwhite RGB pixels retained at native resolution; exact white padding reconstructs original. Blank/non-RGB pages remain complete. Original read tool unchanged.')}
     (args.output/'manifest.json').write_text(json.dumps(result,indent=2)+'\n')
     print(json.dumps({'pages':sum(len(d['pages']) for d in outputs.values()), 'pixel_reduction_fraction':result['pixel_reduction_fraction']}))
 

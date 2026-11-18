@@ -7,11 +7,11 @@ test('local optical hints bind to source bytes and retain alternatives without r
     {rect:[.77,.414,.06,.012],candidates:[{text:'u = -x?'},{text:'u = -x²'}]},
     {rect:[.331,.517,.132,.026],candidates:[{text:'= 2e - 1'}]},
   ]};
-  const before=structuredClone(observations),text=localObservationHint(page,observations,true);
-  assert.match(text,/i3.H17:I18 \| u = -x\? \/ alternative: u = -x²/);
+  const before=structuredClone(observations),text=localObservationHint(page,observations);
+  assert.match(text,/u = -x\? \/ alternative: u = -x²/);
   assert.match(text,/= 2e - 1/);assert.doesNotMatch(text,/2\/e/);
   assert.deepEqual(observations,before);
-  assert.doesNotMatch(localObservationHint(page,observations,false),/i3\.[A-J]\d/);
+  assert.doesNotMatch(localObservationHint(page,observations),/i3\.[A-J]\d/);
   assert.throws(()=>localObservationHint({...page,sha256:'changed'},observations),/Unbound/);
   assert.throws(()=>localObservationHint({...page,page:4},observations),/Unbound/);
   const bad=structuredClone(observations);bad.rows[0].rect[0]=-.1;
