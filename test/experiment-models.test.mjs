@@ -217,3 +217,12 @@ test('structured Flash output preserves exact arguments and refuses interrupted 
     } else assert.equal(after,before);
   }
 });
+
+test('Flash requests an explicit reason even when a source issue is only identified later', async () => {
+  const {configureFlashSubmission} = await import('../src/flash-grading.mjs');
+  const schema = {$defs:{decision:{properties:{r:{type:'string'}}}}};
+  const payload = {messages:[],tools:[{function:{name:'submit_grading',parameters:schema}}]};
+  configureFlashSubmission(payload);
+  assert.equal(payload.response_format.json_schema.schema.$defs.decision.properties.r.minLength,2);
+  assert.deepEqual(schema.$defs.decision.properties.r,{type:'string'});
+});
