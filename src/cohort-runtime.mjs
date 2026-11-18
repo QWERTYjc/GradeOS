@@ -131,6 +131,14 @@ export function createRuntime({ models, model, output, cap, controller, maxReque
         }
         requireFeedbackSubmission(payload, requestPhase);
         requireGradingCorrectionTool(payload, gradingCorrectionRequest);
+        // Alibaba Flash accepts automatic tool choice. Keep only the requested
+        // tool and let the existing submission validator decide completion.
+        if (laneModel.id === 'qwen/qwen3.8-flash' && payload.tool_choice?.type === 'function') {
+          const name = payload.tool_choice.function.name;
+          payload.tools = payload.tools.filter(tool => tool.function.name === name);
+          if (!payload.tools.length) throw Error('Requested tool is missing from the Flash request');
+          payload.tool_choice = 'auto';
+        }
         const cacheScope = studentCacheNamespace && /^(student|feedback|exception|source-review)-/.test(lane) ? `${studentCacheNamespace}/${lane}` : null;
         if (cacheScope) isolateStudentCache(payload, cacheScope);
         // Keep high detail for every phase, including source reinspection.

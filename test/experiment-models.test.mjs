@@ -171,7 +171,7 @@ test('grading presets and custom pairs reach both serialized routes with their s
     }};
     const runtime = createRuntime({models,model:main,workerModel:worker,output,cap:2,controller:new AbortController(),
       provider:experimentProvider(main.id),workerProvider:experimentProvider(worker.id),
-      mainEffort:config.mainEffort,workerEffort:config.workerEffort,maxOutputTokens:12000,structuredOutput:false});
+      mainEffort:config.mainEffort,workerEffort:config.workerEffort,maxOutputTokens:12000,structuredOutput:false,singlePassGrading:true});
     try {
       for (const [index,[lane,model,effort]] of [['main',main,config.mainEffort],['student-a',worker,config.workerEffort]].entries()) {
         const io = await runtime.io(lane,()=>lane==='main'?'ms_compilation':'student_grading');
@@ -183,6 +183,12 @@ test('grading presets and custom pairs reach both serialized routes with their s
         assert.deepEqual(payload.reasoning,model.id==='qwen/qwen3.8-flash' ?
           effort==='off'?{enabled:false}:{max_tokens:2048} : {effort:effort==='off'?'none':effort});
         assert.equal(payload.tools[0].function.name,'submit_grading');
+        if (lane === 'student-a') {
+          assert.equal(payload.tools.length, 1);
+          assert.equal(payload.tools[0].function.strict, true);
+          assert.deepEqual(payload.tool_choice, model.id === 'qwen/qwen3.8-flash'
+            ? 'auto' : {type:'function',function:{name:'submit_grading'}});
+        }
       }
     } finally {runtime.close();await rm(output,{recursive:true,force:true});}
   }
