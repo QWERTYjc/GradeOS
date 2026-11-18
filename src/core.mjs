@@ -127,8 +127,10 @@ export function wireEstimate(payload) {
       const start=v.indexOf(',')+1, header=Buffer.from(v.slice(start,start+44),'base64');
       if(header.length>=24 && header.subarray(0,8).toString('hex')==='89504e470d0a1a0a' && header.toString('ascii',12,16)==='IHDR') {
         const width=header.readUInt32BE(16),height=header.readUInt32BE(20);
-        bound=Math.max(4096,Math.ceil(width/32)*Math.ceil(height/32)*3);
-        if (alibabaFlash) bound=Math.min(16386, bound+2);
+        const patches = Math.ceil(width/32)*Math.ceil(height/32);
+        // Flash uses one visual token per 32x32 patch. Round both dimensions
+        // upwards and retain a small-image floor for provider preprocessing.
+        bound = alibabaFlash ? Math.min(16384,Math.max(4096,patches))+2 : Math.max(4096,patches*3);
       }
       imageTokenReserve+=bound;return '<image>';
     }
