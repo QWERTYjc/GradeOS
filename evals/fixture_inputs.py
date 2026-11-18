@@ -51,7 +51,7 @@ def input_documents(directory: Path) -> dict:
 
 def prepare(directory: Path, output: Path) -> dict:
     # Only declared source documents cross this boundary; fixture ID and labels do not.
-    from native_pages import prepare_pdf
+    from scripts.python.native_pages import prepare_pdf
 
     documents = input_documents(directory)
     output = output.resolve()

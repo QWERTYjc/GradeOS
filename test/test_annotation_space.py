@@ -7,8 +7,8 @@ import unittest
 from pathlib import Path
 
 from PIL import Image
-from annotation_space import page_occupancy, comment_glyph_widths
-from annotation_pdf import register_font, formatted_text
+from scripts.python.annotation_space import page_occupancy, comment_glyph_widths
+from scripts.python.annotation_pdf import register_font, formatted_text
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.platypus import Paragraph
 

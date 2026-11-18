@@ -35,7 +35,7 @@ if (!['openai/gpt-6.1-terra', 'openai/gpt-6.1-sol'].includes(model.id)) throw Er
 await mkdir(output, { recursive: false });
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const sourceHashes = {};
-for (const path of ['src/core.mjs', 'src/output-budget.mjs', 'src/run.mjs', 'prepare.py', 'package-lock.json']) sourceHashes[path] = digest(await readFile(resolve(root, path)));
+for (const path of ['src/core.mjs', 'src/output-budget.mjs', 'src/run.mjs', 'scripts/python/prepare.py', 'package-lock.json']) sourceHashes[path] = digest(await readFile(resolve(root, path)));
 const plan = {
   mode: 'full-cold fixture', created_at: new Date().toISOString(), model,
   source_hashes: sourceHashes, manifest, prompt_hash: digest(SYSTEM_PROMPT), schema_hash: digest(SUBMIT_SCHEMA),

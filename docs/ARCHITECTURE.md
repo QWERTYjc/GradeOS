@@ -19,7 +19,7 @@ flowchart LR
 | 链路 | 原依赖 | 独立后 | 保留的契约 |
 | --- | --- | --- | --- |
 | PDF 导入、裁切和批注导出 | `GradeOS/backend/.venv` | 本仓库 `.venv`；可显式配置 Python | 原页像素、页面坐标、文件哈希、失败可见 |
-| 班级报告 | `review_utils` 导入整个后端服务图 | `analytics.py` 中原函数的确定快照 | 原统计公式、不可用分数排除、无成绩写入 |
+| 班级报告 | `review_utils` 导入整个后端服务图 | `scripts/python/analytics.py` 中原函数的确定快照 | 原统计公式、不可用分数排除、无成绩写入 |
 | 批改工作台 | 原型目录中的 Node 服务 | 独立 Node 服务和静态模块 | 原 Pi 类、工具、人工确认、取消和恢复 |
 | 测试资料 | Skill 目录和历史 artifact 目录 | `evals/fixtures` 下自行安装的本地材料 | 原 PDF 字节和 SHA-256；官方标签仅事后使用 |
 
@@ -27,7 +27,7 @@ flowchart LR
 以及 Poppler。依赖锁文件同时保留。报告函数仅用 Python 标准库。
 无需 Next.js、FastAPI、LangGraph、PostgreSQL、Redis 或 Docker，也不读取旧仓库的环境变量文件。
 
-`analytics.py` 保留原函数体，去掉 facade 全局重绑定和后端导入链。
+`scripts/python/analytics.py` 保留原函数体，去掉 facade 全局重绑定和后端导入链。
 [analytics.json](provenance/analytics.json) 记录原文件、函数位置和哈希；中性样本对比覆盖
 缺失成绩、部分未知、分档、低分项与离群提示。这里的知识点字段仍只是题项得分代理。
 `gradeos.*` 方法名作为既有报告格式中的标识保留，实际执行的函数已经在本仓库内。

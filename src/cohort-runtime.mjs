@@ -28,7 +28,7 @@ export async function readImage(page) {
   return { type: 'image', mimeType: 'image/png', data: bytes.toString('base64') };
 }
 async function readSourceView(page, args, path) {
-  const {stdout}=await promisify(execFile)(pythonExecutable(),[fileURLToPath(new URL('../student_images.py',import.meta.url)),
+  const {stdout}=await promisify(execFile)(pythonExecutable(),[fileURLToPath(new URL('../scripts/python/student_images.py',import.meta.url)),
     '--source',page.absolute_path,'--sha256',page.sha256,...args],
     {encoding:'buffer',maxBuffer:32*1024*1024,timeout:60000});
   await writeFile(path,stdout);

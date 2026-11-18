@@ -1,4 +1,4 @@
-> 独立仓库说明：安装见 [README](README.md)，当前依赖边界见 [架构](docs/ARCHITECTURE.md)。下方保留原型工作流与历史实验；GradeOS 报告函数现已在本仓库内执行。
+> 独立仓库说明：安装见 [README](../README.md)，当前依赖边界见 [架构](ARCHITECTURE.md)。下方保留原型工作流与历史实验；GradeOS 报告函数现已在本仓库内执行。
 
 # Pi 批改实验
 
@@ -144,15 +144,15 @@ flowchart TD
 ```
 
 ```sh
-python3 prepare.py --scheme /absolute/path/ms.pdf --output /absolute/path/prepared-ms
-python3 prepare.py --student /absolute/path/answer-001.pdf --output /absolute/path/prepared-student-001
+python3 scripts/python/prepare.py --scheme /absolute/path/ms.pdf --output /absolute/path/prepared-ms
+python3 scripts/python/prepare.py --student /absolute/path/answer-001.pdf --output /absolute/path/prepared-student-001
 node src/run-cohort.mjs --manifest /absolute/path/cohort.json --output /absolute/path/preflight
 node src/run-cohort.mjs --manifest /absolute/path/cohort.json --output /absolute/path/run-1 \
   --env /absolute/path/ignored-openrouter.env --cap 1 --concurrency 4 --execute
 ```
 
 凭据也可只通过进程环境提供。每次运行使用新目录；生成总计划、冻结rubric、主/子对话及请求回执、
-每学生grading与summary、全批次summary。官方参考分仅交给事后的 `evaluate.py`。
+每学生grading与summary、全批次summary。官方参考分仅交给事后的 `evals/evaluate.py`。
 默认入口每批次重新整理一次MS；下述复用模式可跳过该阶段。
 
 可分别指定主 agent 和执行 agent 的模型，例如 `--model openai/gpt-6.1-sol --worker-model openai/gpt-6-luna`。

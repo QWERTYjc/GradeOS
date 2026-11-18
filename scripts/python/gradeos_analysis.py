@@ -7,7 +7,7 @@ import json
 import statistics
 
 ROOT = Path(__file__).resolve().parent
-from analytics import (
+from .analytics import (
     _build_class_report, _build_student_summary, build_global_logic_review_audit,
 )
 

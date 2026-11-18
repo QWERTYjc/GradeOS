@@ -44,11 +44,11 @@ await store.seal(sourceSummary.students, rubric.hash);
 const models = createModels(); models.setProvider(openrouterProvider());
 const model = models.getModel('openrouter', sourcePlan.model.id);
 const hashes = {};
-for (const name of ['src/core.mjs','src/rubric-contract.mjs','src/point-evidence.mjs','src/report-context.mjs','src/cohort-core.mjs','src/cohort-runtime.mjs','src/results-store.mjs','src/cohort-reporting.mjs','src/report-markdown.mjs','src/run-report.mjs','analytics.py', 'src/python.mjs', 'gradeos_analysis.py','package-lock.json']) hashes[name] = digest(await readFile(resolve(root,name)));
+for (const name of ['src/core.mjs','src/rubric-contract.mjs','src/point-evidence.mjs','src/report-context.mjs','src/cohort-core.mjs','src/cohort-runtime.mjs','src/results-store.mjs','src/cohort-reporting.mjs','src/report-markdown.mjs','src/run-report.mjs','scripts/python/analytics.py', 'src/python.mjs', 'scripts/python/gradeos_analysis.py','package-lock.json']) hashes[name] = digest(await readFile(resolve(root,name)));
 await mkdir(resolve(output,'source-files'));
 for (const name of Object.keys(hashes)) { const target=resolve(output,'source-files',name);await mkdir(dirname(target),{recursive:true});await writeFile(target,await readFile(resolve(root,name)),{flag:'wx'}); }
 const gradeosHashes = {};
-for (const name of ['analytics.py','gradeos_analysis.py']) gradeosHashes[name] = digest(await readFile(resolve(root,name)));
+for (const name of ['scripts/python/analytics.py','scripts/python/gradeos_analysis.py']) gradeosHashes[name] = digest(await readFile(resolve(root,name)));
 await freezeJson(output, 'plan.json', { mode: 'reporting-only replay of previously committed Pi student results',
   created_at: new Date().toISOString(), source, source_summary_sha256: digest(await readFile(resolve(source,'summary.json'))),
   model, reasoning: 'low', prompt_hash: digest(REPORTING_INSTRUCTIONS), source_hashes: hashes, gradeos_source_hashes: gradeosHashes,

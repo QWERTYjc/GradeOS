@@ -1,6 +1,6 @@
 import unittest
 from PIL import Image
-from student_images import exact_white_crop, source_grid, resize_overview, original_region
+from scripts.python.student_images import exact_white_crop, source_grid, resize_overview, original_region
 
 
 class ExactImageTests(unittest.TestCase):

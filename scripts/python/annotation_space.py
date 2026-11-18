@@ -58,7 +58,7 @@ def main():
     parser.add_argument('--output', required=True, type=Path)
     args = parser.parse_args()
     packet = json.loads(args.input.read_text())
-    from annotation_pdf import register_font
+    from .annotation_pdf import register_font
     font = register_font()
     cache, result = {}, {}
     for page in packet['pages']:

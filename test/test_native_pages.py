@@ -11,7 +11,7 @@ from pypdf import PdfReader, PdfWriter
 from pypdf.generic import (ArrayObject, DecodedStreamObject, DictionaryObject,
                            NameObject, NumberObject)
 
-from native_pages import complete_scan, prepare_pdf
+from scripts.python.native_pages import complete_scan, prepare_pdf
 
 
 def scan_pdf(path, images, overlay=False):
@@ -108,7 +108,7 @@ class NativePageTests(unittest.TestCase):
             base=Path(temporary);source=Image.new('RGB',(2100,2900),'white')
             source.putpixel((2099,2899),(1,2,3));source.save(base/'source.png')
             output=base/'upload';output.mkdir()
-            subprocess.run([sys.executable,str(Path(__file__).resolve().parents[1]/'workspace_documents.py'),
+            subprocess.run([sys.executable,str(Path(__file__).resolve().parents[1]/'scripts/python/workspace_documents.py'),
                             '--source',str(base/'source.png'),'--output',str(output)],check=True)
             row=json.loads((output/'manifest.json').read_text())['pages'][0]
             self.assertEqual(row['size'],[2100,2900])

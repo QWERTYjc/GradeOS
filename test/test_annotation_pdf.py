@@ -9,7 +9,7 @@ from pypdf import PdfReader, PdfWriter
 from pypdf.generic import RectangleObject
 from reportlab.pdfgen import canvas
 
-from annotation_pdf import export_pdf, pdf_rectangle, formatted_text
+from scripts.python.annotation_pdf import export_pdf, pdf_rectangle, formatted_text
 
 
 class AnnotationPdfTests(unittest.TestCase):

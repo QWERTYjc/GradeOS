@@ -76,7 +76,7 @@ export function createReporting({ store, ensureSealed, getRubric, context, outpu
       if (analyzeOverride) computed = await analyzeOverride(bundle);
       else {
         const python = pythonExecutable();
-        const response = await execFileAsync(python, [resolve(root, 'gradeos_analysis.py'), '--bundle', resolve(output, 'analysis-input.json')],
+        const response = await execFileAsync(python, ['-m', 'scripts.python.gradeos_analysis', '--bundle', resolve(output, 'analysis-input.json')],
           { cwd: root, env: { PATH: process.env.PATH }, timeout: 60000, maxBuffer: 16*1024*1024, signal });
         computed = JSON.parse(response.stdout);
       }

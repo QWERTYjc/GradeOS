@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 import unittest
 
-from gradeos_analysis import analyze
+from scripts.python.gradeos_analysis import analyze
 
 
 def stable(value):
