@@ -24,6 +24,8 @@ No offline check or single-paper pass proves general accuracy or readiness to re
 
 ## Changes and data
 
+GradeOS is open source (GPL-3.0-only). Base public changes on the public repository history.
+Use synthetic examples in public tests, documentation, screenshots and demo videos.
 Protect unrelated work. Keep source provenance and third-party licenses. Tests should cover
 meaningful behavior, including unavailable scores and source/evidence ownership.
 Never commit credentials, .env files, workspaces, generated pages, model transcripts, or runs.
