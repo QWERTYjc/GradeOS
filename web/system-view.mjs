@@ -1,7 +1,12 @@
 import { escape as e, markdown, statuses } from './ui.mjs';
 export { e, markdown };
 export const glyph = name => {
-  const paths = { plus: '<path d="M12 5v14M5 12h14"/>', arrow: '<path d="M12 19V5m-6 6 6-6 6 6"/>', down: '<path d="m7 10 5 5 5-5"/>', close: '<path d="m6 6 12 12M6 18 18 6"/>', folder: '<path d="M3 7a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v9H3Z"/>', menu: '<path d="M4 6h16M4 12h16M4 18h16"/>', stop: '<rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" stroke="none"/>', left: '<path d="m14 6-6 6 6 6"/>', right: '<path d="m10 6 6 6-6 6"/>' };
+  const paths = {
+    home: '<rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/>',
+    grading: '<path d="M13 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V10l-7-7Z"/><path d="M13 3v7h7M8 15l2 2 4-4"/>',
+    skills: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/><path d="M17.5 3v7M14 6.5h7"/>',
+    tasks: '<path d="m3 7 2 2 3-4m-5 12 2 2 3-4m3-8h10m-10 10h10"/>',
+    plus: '<path d="M12 5v14M5 12h14"/>', arrow: '<path d="M12 19V5m-6 6 6-6 6 6"/>', down: '<path d="m7 10 5 5 5-5"/>', close: '<path d="m6 6 12 12M6 18 18 6"/>', folder: '<path d="M3 7a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v9H3Z"/>', menu: '<path d="M4 6h16M4 12h16M4 18h16"/>', stop: '<rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" stroke="none"/>', left: '<path d="m14 6-6 6 6 6"/>', right: '<path d="m10 6 6 6-6 6"/>' };
   return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name] || paths.plus}</svg>`;
 };
 export const button = (action, label, attrs = '', className = '') => `<button type="button" data-action="${action}" class="${className}" ${attrs}>${label}</button>`;
@@ -11,11 +16,11 @@ export const fileUrl = file => `/api/system/files/${encodeURIComponent(file.id)}
 export const refMeta = file => ({ id: file.id, title: file.title, revision: file.revision, hash: file.hash });
 export function shell(state, route) {
   const prefs = state.preferences;
-  return `<aside class="sidebar" aria-label="主导航"><a href="#home" class="wordmark">GradeOS</a>${button('new', `${glyph('plus')}<span>新对话</span>`, '', 'new-chat')}
-    <nav>${[['home', '工作台'], ['grading', '批改'], ['files', '文件'], ['skills', 'Skills'], ['tasks', '任务']].map(([key, label]) => `<a href="#${key}" data-route="${key}" ${route === key ? 'aria-current="page"' : ''}>${label}</a>`).join('')}</nav>
+  return `<aside class="sidebar" aria-label="主导航"><a href="#home" class="wordmark">Grade<span>OS</span></a>${button('new', `${glyph('plus')}<span>新对话</span>`, '', 'new-chat')}
+    <nav>${[['home', '工作台'], ['grading', '批改'], ['files', '文件'], ['skills', 'Skills'], ['tasks', '任务']].map(([key, label]) => `<a href="#${key}" data-route="${key}" ${route === key ? 'aria-current="page"' : ''}>${glyph(key === 'files' ? 'folder' : key)}<span>${label}</span></a>`).join('')}</nav>
     ${button('account', `<span class="avatar">${e(prefs.displayName.slice(0, 1))}</span><span>${e(prefs.displayName)}</span>${glyph('down')}`, 'aria-haspopup="dialog"', 'account')}
   </aside><button class="sidebar-scrim" data-action="close-nav" aria-label="关闭导航"></button>
-  <main id="main" tabindex="-1"><div class="mobile-header">${button('menu', glyph('menu'), 'aria-label="打开导航"')}<span>GradeOS</span></div><div id="page"></div></main>`;
+  <main id="main" tabindex="-1"><div class="mobile-header">${button('menu', glyph('menu'), 'aria-label="打开导航"')}<span>Grade<span class="brand-suffix">OS</span></span></div><div id="page"></div></main>`;
 }
 export function composer(ctx) {
   const busy = ctx.state.active?.threadId === ctx.threadId;

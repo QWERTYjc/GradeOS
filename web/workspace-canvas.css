@@ -85,6 +85,15 @@
 .pane-footer button{font-size:10px;padding:3px 6px;min-height:23px;color:var(--muted)}
 .pane-footer .icon{width:10px;height:10px}
 .workspace-panels[data-count="1"]{max-width:1000px;margin:auto}
+@media (min-width: 900px) {
+  .workspace-panels[data-count="1"]:has(.document-reader) {
+    max-width: 1640px;
+  }
+  .workspace-panels[data-count="1"] .reader-chapter {
+    max-width: 920px;
+    margin-inline: auto;
+  }
+}
 .is-empty .workspace-panels{display:flex;background:transparent;overflow:auto}
 
 /* Editing and saved state share the file heading instead of adding another toolbar. */
