@@ -1,6 +1,6 @@
 import unittest
 from PIL import Image
-from scripts.python.student_images import exact_white_crop, source_grid, resize_overview, original_region
+from scripts.python.student_images import exact_white_crop, resize_overview, original_region
 
 
 class ExactImageTests(unittest.TestCase):
@@ -55,17 +55,6 @@ class ExactImageTests(unittest.TestCase):
         shown = resize_overview(source, 1280)
         self.assertNotEqual(shown.size, source.size)
         self.assertEqual(source.getpixel((800, 1200)), (254, 255, 255))
-
-    def test_external_grid_retains_every_source_pixel_and_blank_page(self):
-        for size in [(999, 1400), (1400, 701), (180, 300)]:
-            im = Image.new('RGB', size, 'white')
-            for color in [(255, 255, 255), (254, 255, 255), (0, 0, 0)]:
-                im.putpixel((size[0]-1, size[1]-1), color)
-                im.putpixel((0, 0), color)
-                shown, box, grid = source_grid(im)
-                self.assertEqual(shown.crop(box).tobytes(), im.tobytes())
-                self.assertEqual(shown.crop(box).size, size)
-                self.assertEqual(grid, {'columns': 10, 'rows': 40, 'version': 'source-grid-v1'})
 
     def test_faint_colored_boundary_footer_and_minus_pixels_are_retained(self):
         for offset in [0, 17, 53]:

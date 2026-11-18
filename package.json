@@ -11,7 +11,7 @@
     "test:workspace": "node --test test/workspace*.test.mjs",
     "test": "node --test test/*.test.mjs",
     "grade": "node src/run.mjs",
-    "grade:cohort": "node src/run-cohort.mjs --scripted --grading-reasoning medium --annotation-grid --inline-annotations",
+    "grade:cohort": "node src/run-cohort.mjs --scripted --grading-reasoning medium --inline-annotations",
     "grade:cohort:self-review": "node src/run-cohort.mjs --student-protocol evidence-v4 --reason-style brief-full-credit --economy-reporting --lean-reports --trim-white-margins --isolate-student-cache",
     "start": "node --env-file-if-exists=.env src/workspace/server.mjs",
     "doctor": "node --env-file-if-exists=.env scripts/doctor.mjs",
@@ -21,7 +21,7 @@
     "fixtures:evaluate": "node scripts/python.mjs scripts/fixtures.py evaluate",
     "fixtures:workspace": "node scripts/import-fixture.mjs",
     "check": "npm test && npm run test:python",
-    "grade:cohort:macos": "node src/run-cohort.mjs --scripted --grading-reasoning medium --annotation-grid --inline-annotations --local-ocr",
+    "grade:cohort:macos": "node src/run-cohort.mjs --scripted --grading-reasoning medium --inline-annotations --local-ocr",
     "medly:prepare": "node scripts/python.mjs scripts/medly.py",
     "check:public": "npm test && npm run test:python",
     "export:public": "node scripts/export-public.mjs"
@@ -29,6 +29,7 @@
   "dependencies": {
     "@earendil-works/pi-agent-core": "1.5.2",
     "@earendil-works/pi-ai": "1.5.2",
+    "js-tiktoken": "1.0.21",
     "katex": "0.16.45"
   },
   "description": "Lightweight Pi-based grading workspace and GradeOS successor foundation",

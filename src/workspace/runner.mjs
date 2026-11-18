@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { readFile, access, appendFile, writeFile, mkdir } from 'node:fs/promises';
+import { readFile, access, appendFile, writeFile, mkdir, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { digest } from '../core.mjs';
 import { fail, id, makeRecord, now, startTask } from './store.mjs';
@@ -30,10 +30,14 @@ export class WorkspaceRunner {
     this.store = store; this.model = model; this.cap = cap; this.agent = agent; this.rubricPath = rubricPath; this.active = new Map();
   }
   async readFailureReason(task) {
-    const messages = await json(join(this.store.directory, 'runs', task.id, 'output/main/transcript.json'));
-    const failure = Array.isArray(messages) && messages.findLast(message => message.role === 'assistant' && message.stopReason === 'error');
-    if (failure?.errorMessage?.includes('This model is not available in your region')) {
-      return '模型服务拒绝了请求（403）：当前模型在此地区不可用。请先调整模型配置。';
+    const directory = join(this.store.directory, 'runs', task.id, 'output');
+    const lanes = await readdir(directory, {withFileTypes:true}).catch(() => []);
+    for (const lane of lanes.filter(entry => entry.isDirectory() && (entry.name === 'main' || entry.name.startsWith('student-')))) {
+      const messages = await json(join(directory, lane.name, 'transcript.json'));
+      const failure = Array.isArray(messages) && messages.findLast(message => message.role === 'assistant' && message.stopReason === 'error');
+      if (failure?.errorMessage?.includes('This model is not available in your region')) {
+        return '模型服务拒绝了请求（403）：当前模型在此地区不可用。';
+      }
     }
     return null;
   }
@@ -109,12 +113,11 @@ export class WorkspaceRunner {
       groupIds: task.groupIds, selections: task.selections || [], references: task.references || [], createdAt: now(), origin: 'task' }] });
     if (usesAdaptiveGrading(task)) return runAdaptiveGrading({ store: this.store, task, input, entry, runner: this });
     const config = task.modelConfig;
+    const workerModel = config?.workerModel ?? DEFAULT_WORKER_MODEL_ID;
     const args = [join(experimentRoot, 'src/run-cohort.mjs'), '--manifest', input.manifest, '--output', input.output,
       '--interaction-dir', entry.interaction,
-      '--execute', '--model', config?.mainModel ?? this.model, '--worker-model', config?.workerModel ?? DEFAULT_WORKER_MODEL_ID, '--scripted', '--cap', String(this.cap), '--max-requests', '256',
-      ...(config ? ['--main-reasoning', config.mainEffort, '--worker-reasoning', config.workerEffort] : ['--grading-reasoning', 'medium']), '--annotation-grid', '--inline-annotations', '--student-cap', String(this.cap)];
-    // Vision runs locally; other platforms retain the image-only path explicitly.
-    if (process.platform === 'darwin') args.push('--local-ocr');
+      '--execute', '--model', config?.mainModel ?? this.model, '--worker-model', workerModel, '--scripted', '--cap', String(this.cap), '--max-requests', '256',
+      ...(config ? ['--main-reasoning', config.mainEffort, '--worker-reasoning', config.workerEffort] : ['--grading-reasoning', 'medium']), '--inline-annotations', '--student-cap', String(workerModel === 'openai/gpt-6-luna' ? Math.min(this.cap, .01) : this.cap)];
     if (this.rubricPath) {
       const manifest = await json(input.manifest);
       const scheme = (await json(join(manifest.scheme_input, 'manifest.json'))).documents.scheme;

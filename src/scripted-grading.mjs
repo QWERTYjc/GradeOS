@@ -108,7 +108,7 @@ export async function writeAnnotationViewer(directory, student, grade, frozen) {
 }
 
 export async function runScriptedGrading({ runtime, output, frozen, guide, scheme, students, model,
-  concurrency = null, inlineAnnotations = true, imageVariants = null, interaction = null, gradingReasoning = 'low', allMsImages = false, localObservations = null }) {
+  concurrency = null, inlineAnnotations = false, imageVariants = null, interaction = null, gradingReasoning = 'low', allMsImages = false, localObservations = null }) {
   if (guide) validateReplayGuide(guide, frozen);
   const registry = new StudentRegistry([...students.keys()], concurrency);
   const sourcePages = gradingSourcePages(frozen, scheme, guide, allMsImages);
@@ -122,14 +122,15 @@ export async function runScriptedGrading({ runtime, output, frozen, guide, schem
     const io = await runtime.io(`student-${id}`, () => 'student_grading');
     const student = students.get(id), start = Date.now(); let failure = null;
     await io.log({ type: 'student_task_start', student_id: id, rubric_hash: frozen.hash });
+    const hasRegions = inlineAnnotations && imageVariants?.documents[id]?.pages.some(page => page.regions?.length);
     const child = createStudentAgent({ model, streamFn: io.streamFn, frozen, scheme, student, readImage,
-      singlePass: true, protocol: 'evidence-v4', reasonStyle: 'brief-full-credit', inlineAnnotations,
+      singlePass: true, protocol: 'evidence-v4', reasonStyle: 'brief-full-credit', inlineAnnotations: Boolean(hasRegions),
       markingGuide: interaction ? null : guide, gradingReasoning,localObservations:localObservations?.documents[id]?.pages||[],
       ...(imageVariants ? { readInitialStudentImage: page => readImage(imageVariants.documents[id].pages.find(p => p.page === page.page)),
         initialStudentImageMode: imageVariants.mode || 'exact_white_margin_trim', initialStudentGeometry: imageVariants.documents[id].pages } : {}),
       log: io.log, persistSubmission: raw => freezeJson(io.directory, 'submission.json', raw),
       persist: grade => freezeJson(io.directory, 'grading-primary.json', grade) });
-    const detach = io.attach(child.agent);
+    const detach = io.attach(child.agent, {guideRubric: inlineAnnotations ? frozen : null});
     try { await runtime.run(child.agent, await child.initialPrompt(sourcePages), io.directory); }
     catch (error) { failure = error.message; }
     finally { detach(); }

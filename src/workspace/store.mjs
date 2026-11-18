@@ -167,6 +167,7 @@ export function makeRecord(task, group, item, point, rule, gradeHash, rubricHash
   const annotationRegions=annotationCurrent?(annotation.regions||[]).flatMap(region=>{
     const pageId=group.pageIds[region.page-1],page=task.pages?.find(page=>page.id===pageId);
     return page&&page.sha256===region.pageHash&&selected.student_pages.includes(region.page)?[{pageId,pageHash:page.sha256,rect:region.rect,frameId:region.frameId,
+      ...(region.precision==='ocr-regions'?{precision:region.precision,regionId:region.regionId,regionManifestHash:region.regionManifestHash}: {}),
       ...(region.precision==='grid-cells'?{precision:region.precision,contextRect:region.contextRect,contextPaddingCells:region.contextPaddingCells}: {})}]:[];
   }):[];
   const source = { task: task.id, group: group.id, item: item.item_id, point: point?.point_id ?? null, gradeHash, rubricHash };
@@ -181,7 +182,7 @@ export function makeRecord(task, group, item, point, rule, gradeHash, rubricHash
     studentPageIds: (selected.student_pages || item.student_pages || []).map(number => group.pageIds[number - 1]).filter(Boolean),
     schemePageIds: (rule?.source_pages || item.scheme_pages || []).map(number => task.scheme?.pageIds[number - 1]).filter(Boolean),
     reviewRequired: Boolean(item.review_required || selected.score == null),
-    ...(annotation?{annotationStatus:annotationCurrent?annotation.status:'stale',annotationRegions}:{}),
+    ...(annotation?{annotationStatus:annotationCurrent?annotation.status:'stale',annotationOrigin:annotation.origin,annotationIssues:annotation.issues||[],annotationRegions}:{}),
     originalHash: digest({ ...source, selected, rule }),
   };
 }

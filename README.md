@@ -25,7 +25,7 @@
 可编辑文档和 PDF 批注导出。单个 Node 服务直接提供静态页面，状态保存到本地文件。
 
 - Agent 依赖 `@earendil-works/pi-agent-core` 和 `@earendil-works/pi-ai`，均锁定 1.5.2；报告排版使用本地 KaTeX 0.16.45。
-- Python 只负责 PDF、图像和确定性报告：Pillow、pypdf、ReportLab；另需 Poppler。
+- Python 使用 Pillow、NumPy、pypdf 和 ReportLab 处理图像、原页批注与报告，PDF 渲染使用 Poppler。
 - 公开代码包不包含考试、答卷或数据集素材；研究环境中的私有评测资产单独保留。
 - 可独立克隆、安装和运行，无需启动旧 GradeOS 服务或数据库。
 

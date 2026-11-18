@@ -9,6 +9,7 @@ import { pythonExecutable } from './python.mjs';
 import { Budget, digest, wireEstimate } from './core.mjs';
 import { inputContextSnapshot, inputContextReceipt, inputContextEstimate } from './input-context-estimate.mjs';
 import {requireFeedbackSubmission,validateCorrectionRequest,requireGradingCorrectionTool} from './submission-contract.mjs';
+import {prepareLunaAnnotationRequest} from './luna-annotation-budget.mjs';
 import {outputBudget} from './output-budget.mjs';
 
 export const redactImages = value => JSON.parse(JSON.stringify(value, (key, data) => {
@@ -68,7 +69,7 @@ export function isolateStudentCache(payload, scope) {
   return payload;
 }
 
-export function createRuntime({ models, model, output, cap, controller, maxRequests = 60, deadlineMs = 900000, maxOutputTokens = null, studentCacheNamespace = null, progress = null, interaction = null, structuredOutput = true, provider = { only: ['openai'], allow_fallbacks: false, require_parameters: true, data_collection: 'deny' }, workerModel = model, workerProvider = provider, mainEffort, workerEffort, singlePassGrading = false, coldCacheNamespace = null, studentCapUsd = null }) {
+export function createRuntime({ models, model, output, cap, controller, maxRequests = 60, deadlineMs = 900000, maxOutputTokens = null, studentCacheNamespace = null, progress = null, interaction = null, structuredOutput = true, provider = { only: ['openai'], allow_fallbacks: false, require_parameters: true, data_collection: 'deny' }, workerModel = model, workerProvider = provider, mainEffort, workerEffort, singlePassGrading = false, economicalLuna = false, coldCacheNamespace = null, studentCapUsd = null }) {
   if (maxOutputTokens!==null&&(!Number.isInteger(maxOutputTokens) || maxOutputTokens < 1)) throw Error('Invalid explicit output token allowance');
   const budget = new Budget({ cap, maxRequests, deadlineMs, scopeCap:studentCapUsd });
   const active = new Set();
@@ -95,9 +96,10 @@ export function createRuntime({ models, model, output, cap, controller, maxReque
       const {gradingCorrectionRequest,...providerOptions}=options??{};
       const requestPhase = phase();
       validateCorrectionRequest(requestPhase,lane,gradingCorrectionRequest);
+      const pricedRegions = economicalLuna && singlePassGrading && requestPhase === 'student_grading';
       const flashSubmission = singlePassGrading && requestPhase === 'student_grading' && laneModel.id === 'qwen/qwen3.8-flash';
       const upstream = models.streamSimple(selectedModel, context, {
-      ...providerOptions, ...(effort ? { reasoning: effort === 'on' ? 'low' : effort === 'off' ? undefined : effort } : {}), apiKey: process.env.OPENROUTER_API_KEY, maxRetries: 0, maxTokens: maxOutputTokens??laneModel.maxTokens, timeoutMs: singlePassGrading ? 240000 : 180000,
+      ...providerOptions, ...(effort ? { reasoning: effort === 'on' ? 'low' : effort === 'off' ? undefined : effort } : {}), apiKey: process.env.OPENROUTER_API_KEY, maxRetries: 0, maxTokens: maxOutputTokens??laneModel.maxTokens, timeoutMs: pricedRegions ? 600000 : singlePassGrading ? 240000 : 180000,
       signal: options?.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal,
       onPayload: async payload => {
         await interaction?.beforeRequest(lane);
@@ -149,7 +151,7 @@ export function createRuntime({ models, model, output, cap, controller, maxReque
         for (const message of payload.messages) for (const part of Array.isArray(message.content) ? message.content : []) {
           if (part.type === 'image_url') part.image_url.detail = 'high';
         }
-        const estimate = wireEstimate(payload);
+        const estimate = pricedRegions ? prepareLunaAnnotationRequest(payload, laneModel.cost) : wireEstimate(payload);
         const inputSnapshot = inputContextSnapshot(payload, estimate);
         const inputContext = inputContextEstimate(inputSnapshot, estimate, previousInputReceipt);
         const tier=(laneModel.cost.tiers??[]).filter(t=>inputContext.upperBound>t.inputTokensAbove).at(-1)??laneModel.cost;
@@ -160,11 +162,11 @@ export function createRuntime({ models, model, output, cap, controller, maxReque
           request_kind:gradingCorrectionRequest?.kind??'normal',grading_correction:gradingCorrectionRequest??null,
           student_cache_scope:cacheScope,...estimate,cost_input_token_reserve:inputContext.upperBound,input_context_estimate:inputContext};
         try {
-          const allowance=outputBudget({model:laneModel,payload,inputTokens:inputContext.upperBound,prices:tier,available:budget.available(scope),requestedLimit:maxOutputTokens});
+          const allowance=outputBudget({model:laneModel,payload,inputTokens:inputContext.upperBound,prices:pricedRegions ? {...tier, cacheWrite: tier.input} : tier,available:budget.available(scope),requestedLimit:maxOutputTokens});
           if (payload.reasoning?.max_tokens >= allowance.tokens) throw Object.assign(
             Error('本次费用或上下文余量不足以容纳所选思考预算，请降低思考强度。'), {code:'OUTPUT_BUDGET_LIMIT'});
           const {reservation}=allowance;reserve=reservation.input_usd+reservation.output_usd;
-          Object.assign(metadata,wireEstimate(payload),{max_output_tokens:allowance.tokens,output_allowance:allowance,reservation});
+          Object.assign(metadata,pricedRegions ? {payloadHash:digest(payload)} : wireEstimate(payload),{max_output_tokens:allowance.tokens,output_allowance:allowance,reservation});
           current = budget.admit(reserve,metadata);
           currentInputSnapshot = inputSnapshot;
         } catch (error) {
@@ -210,10 +212,10 @@ export function createRuntime({ models, model, output, cap, controller, maxReque
         writeFile(resolve(directory, 'structured-submission-' + current.number + '.json'), text, {flag:'wx',mode:0o600}));
       return upstream;
     };
-    const attach = agent => {
+    const attach = (agent, { guideRubric = null } = {}) => {
       const singlePass=singlePassGrading&&phase()==='student_grading';
       if (isolated) isolatedAgents.add(agent);
-      const detachInteraction = isolated ? null : interaction?.attach(agent, lane, { interactiveTools: !singlePass&&phase() !== 'student_feedback', singlePass });
+      const detachInteraction = isolated ? null : interaction?.attach(agent, lane, { interactiveTools: !singlePass&&phase() !== 'student_feedback', singlePass, guideRubric });
       const unsubscribe = agent.subscribe(async event => {
       if (event.type === 'message_end' && event.message.role === 'assistant') {
         if (current) {
