@@ -236,7 +236,7 @@ test('adaptive runtime persists adopted guide, original records and provisional 
   const localModels = createModels(); localModels.setProvider(openrouterProvider());
   localModels.streamSimple = stream((context, selectedModel) => {
     const main = context.systemPrompt?.includes('main GradeOS') || context.messages.some(row => row.role === 'system' && JSON.stringify(row).includes('main GradeOS'));
-    assert.equal(selectedModel.id, main ? 'openai/gpt-6.1-terra' : 'openai/gpt-6-luna');
+    assert.equal(selectedModel.id, main ? 'openai/gpt-6.2-sol' : 'openai/gpt-6.1-terra');
     const system = context.systemPrompt || JSON.stringify(context.messages.find(row => row.role === 'system'));
     if (system.includes('independently establish reference solutions')) {
       assert.doesNotMatch(JSON.stringify(context.messages), /用中文反馈/);
@@ -272,8 +272,8 @@ test('adaptive runtime persists adopted guide, original records and provisional 
   assert.match(store.state.documents.find(row => row.kind === 'marking_guide').body, /本批已核对的补充要求/);
   assert.equal(JSON.parse(await readFile(join(input.output, 'summary.json'), 'utf8')).status, 'submitted');
   const runPlan = JSON.parse(await readFile(join(input.output, 'adaptive-run.json'), 'utf8'));
-  assert.equal(runPlan.model, 'openai/gpt-6.1-terra');
-  assert.equal(runPlan.workerModel, 'openai/gpt-6-luna');
+  assert.equal(runPlan.model, 'openai/gpt-6.2-sol');
+  assert.equal(runPlan.workerModel, 'openai/gpt-6.1-terra');
   assert.equal((await new WorkspaceStore(directory).init()).state.tasks[0].records.length, 1);
 });
 

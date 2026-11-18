@@ -11,7 +11,8 @@ import { atomicJSON, readJSON, readQuestions } from '../teacher-interaction.mjs'
 import { validateSelections } from './canvas-context.mjs';
 import { addDocument, readDocument, resolveReferences } from './editable-documents.mjs';
 import { runAdaptiveGrading, usesAdaptiveGrading } from './adaptive-runtime.mjs';
-import { DEFAULT_MAIN_MODEL_ID, DEFAULT_WORKER_MODEL_ID } from '../experiment-models.mjs';
+import { gradingPresets } from '../../web/grading-models.mjs';
+import { DEFAULT_MAIN_MODEL_ID } from '../experiment-models.mjs';
 
 const json = async path => { try { return JSON.parse(await readFile(path, 'utf8')); } catch { return null; } };
 export function canReuseScheme(plan, model, effort) {
@@ -30,8 +31,10 @@ export async function snapshotFrozenRubric(sourcePath, directory, scheme) {
   return frozenPath;
 }
 export class WorkspaceRunner {
-  constructor(store, { model = DEFAULT_MAIN_MODEL_ID, cap = 2, agent = runWorkspaceAgent, rubricPath = null } = {}) {
-    this.store = store; this.model = model; this.cap = cap; this.agent = agent; this.rubricPath = rubricPath; this.active = new Map();
+  constructor(store, { model, cap = 2, agent = runWorkspaceAgent, rubricPath = null } = {}) {
+    const preset = gradingPresets[0];
+    this.defaultGradingConfig = !model || model === preset.mainModel ? {...preset} : {...preset, mainModel:model, mainEffort:'low'};
+    this.store = store; this.model = model ?? DEFAULT_MAIN_MODEL_ID; this.cap = cap; this.agent = agent; this.rubricPath = rubricPath; this.active = new Map();
   }
   async readFailureReason(task) {
     const directory = join(this.store.directory, 'runs', task.id, 'output');
@@ -116,12 +119,12 @@ export class WorkspaceRunner {
       notes: [{ id: id(), text: '批改所选答卷',
       groupIds: task.groupIds, selections: task.selections || [], references: task.references || [], createdAt: now(), origin: 'task' }] });
     if (usesAdaptiveGrading(task)) return runAdaptiveGrading({ store: this.store, task, input, entry, runner: this });
-    const config = task.modelConfig;
-    const workerModel = config?.workerModel ?? DEFAULT_WORKER_MODEL_ID;
+    const config = task.modelConfig ?? this.defaultGradingConfig;
+    const workerModel = config.workerModel;
     const args = [join(experimentRoot, 'src/run-cohort.mjs'), '--manifest', input.manifest, '--output', input.output,
       '--interaction-dir', entry.interaction,
-      '--execute', '--model', config?.mainModel ?? this.model, '--worker-model', workerModel, '--scripted', '--cap', String(this.cap), '--max-requests', '256',
-      ...(config ? ['--main-reasoning', config.mainEffort, '--worker-reasoning', config.workerEffort] : ['--grading-reasoning', 'medium']), '--inline-annotations', '--student-cap', String(workerModel === 'openai/gpt-6-luna' ? Math.min(this.cap, .01) : this.cap)];
+      '--execute', '--model', config.mainModel, '--worker-model', workerModel, '--scripted', '--cap', String(this.cap), '--max-requests', '256',
+      '--main-reasoning', config.mainEffort, '--worker-reasoning', config.workerEffort, '--inline-annotations', '--student-cap', String(workerModel === 'openai/gpt-6-luna' ? Math.min(this.cap, .01) : this.cap)];
     if (this.rubricPath) {
       const manifest = await json(input.manifest);
       const scheme = (await json(join(manifest.scheme_input, 'manifest.json'))).documents.scheme;
@@ -132,7 +135,7 @@ export class WorkspaceRunner {
       if (prior.id === task.id || prior.schemeId !== task.schemeId || !['completed', 'needs_review', 'partial'].includes(prior.status)) continue;
       const directory = join(this.store.directory, 'runs', prior.id, 'output');
       const plan = await json(join(directory, 'plan.json'));
-      if (!canReuseScheme(plan, config?.mainModel ?? this.model, config?.mainEffort ?? 'low')) continue;
+      if (!canReuseScheme(plan, config.mainModel, config.mainEffort)) continue;
       const rubric = join(directory, 'rubric.json');
       try { await access(rubric); args.push('--rubric', rubric); break; } catch { /* No frozen rubric yet. */ }
     }

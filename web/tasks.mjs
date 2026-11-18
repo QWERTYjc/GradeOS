@@ -88,9 +88,7 @@ export function taskForm(ctx, task = null, { allowStart = false } = {}) {
   const schemeId = task ? task.schemeId : ctx.state.schemes[0]?.id;
   const questionId = task ? task.questionId : ctx.state.questions?.[0]?.id;
   const selectedGroups = ctx.state.groups.filter(group => selected.has(group.id));
-  const legacyConfig = task?.id && ctx.state.defaultGradingConfig;
-  const adaptive = !task?.schemeId || task.questionId || task.allowWebSearch || task.gradingContext;
-  const config = task?.modelConfig || (legacyConfig && { ...legacyConfig, workerEffort: adaptive ? 'low' : legacyConfig.workerEffort }) || gradingPresets[0];
+  const config = task?.modelConfig ?? ctx.state.defaultGradingConfig ?? gradingPresets[0];
   const canStart = allowStart && task?.kind !== 'assist';
   return `<form id="task-form" class="form task-setup"><input type="hidden" name="kind" value="${task?.kind === 'assist' ? 'assist' : 'grade'}">
     ${task?.title ? `<input type="hidden" name="title" value="${e(task.title)}">` : ''}
