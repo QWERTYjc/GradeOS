@@ -59,7 +59,7 @@ test('slow progress writes cannot lose a subsequent request receipt or change mo
   const {createRuntime}=await import('../src/cohort-runtime.mjs');
   const f=await fixture(t);let notifyEntered,release;const entered=new Promise(r=>notifyEntered=r),blocked=new Promise(r=>release=r);
   const events=[],payloads=[];const source={messages:[{role:'user',content:[{type:'text',text:'Source-bound test input'}]}]};
-  const model={cost:{input:1,output:5}};
+  const model={maxTokens:200000,contextWindow:1000000,cost:{input:1,output:5}};
   const models={streamSimple:async(_model,_context,options)=>{payloads.push(await options.onPayload(structuredClone(source)));return {};}};
   const runtime=createRuntime({models,model,output:f.directory,cap:1,controller:new AbortController(),structuredOutput:false,progress:{observe:async e=>{events.push(e);if(e.type==='request_terminal'&&e.request.number===1){notifyEntered();await blocked;}}}});
   t.after(()=>runtime.close());const io=await runtime.io('student-one',()=> 'student_grading');let observer;
@@ -70,5 +70,5 @@ test('slow progress writes cannot lose a subsequent request receipt or change mo
   await observer({type:'message_end',message:message(.03)});
   assert.deepEqual(runtime.budget.requests.map(r=>r.cost_usd),[.02,.03]);
   assert.deepEqual(events.filter(e=>e.type==='request_terminal').map(e=>e.request.number),[1,2]);
-  assert.deepEqual(payloads[0],payloads[1]);assert.deepEqual(payloads[0].messages,source.messages);
+  assert.deepEqual(payloads[0].messages,payloads[1].messages);assert.deepEqual(payloads[0].messages,source.messages);assert.ok(payloads[1].max_tokens<payloads[0].max_tokens);
 });

@@ -38,6 +38,38 @@ test('changed prefix, context checkpoint, model or tools fall back to the full c
   }
 });
 
+test('output ceiling changes preserve measured input while keeping the wire unchanged', () => {
+  for (const key of ['max_tokens', 'max_completion_tokens']) {
+    for (const [previous, next] of [[32000, 800], [800, 64000], [undefined, 2048]]) {
+      const before = payload();
+      if (previous !== undefined) before[key] = previous;
+      const after = structuredClone(before); after[key] = next;
+      after.messages.push({role:'assistant',content:'Inspect the source again.'},
+        {role:'tool',content:'Original evidence remains unchanged.'});
+      const original = structuredClone(after), estimate = wireEstimate(after);
+      const result = inputContextEstimate(inputContextSnapshot(after, estimate), estimate, receipt(before));
+      const withoutLimits = value => { const copy=structuredClone(value);delete copy[key];return wireEstimate(copy); };
+      assert.equal(result.method, 'receipt_plus_append_bound');
+      assert.equal(result.upperBound, 30100 + withoutLimits(after).textBytes - withoutLimits(before).textBytes + 128);
+      assert.deepEqual(after, original);
+      assert.equal(after[key], next, 'the current output ceiling must still reach budget admission and the provider');
+    }
+  }
+});
+
+test('changed input configuration and invalid ceilings cannot disguise themselves as output-only changes', () => {
+  for (const mutate of [
+    p=>{p.tools.push({name:'different-source-tool'});}, p=>{p.provider.only=['different'];},
+    p=>{p.messages[1].content+='changed source';}, p=>{p.reasoning={effort:'high'};},
+    p=>{p.max_tokens=0;}, p=>{p.max_tokens='1024';},
+  ]) {
+    const before=payload();before.max_tokens=32000;
+    const after=structuredClone(before);after.max_tokens=1024;mutate(after);
+    const estimate=wireEstimate(after);
+    assert.equal(inputContextEstimate(inputContextSnapshot(after,estimate),estimate,receipt(before)).method,'full_byte_image_bound');
+  }
+});
+
 test('error, aborted, missing, negative or inconsistent usage never creates a context anchor', () => {
   const p = payload();
   for (const override of [

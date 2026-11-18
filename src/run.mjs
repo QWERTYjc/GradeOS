@@ -5,6 +5,7 @@ import { resolve, dirname, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { createGrader, Budget, digest, wireEstimate, SYSTEM_PROMPT, SUBMIT_SCHEMA } from './core.mjs';
+import {outputBudget} from './output-budget.mjs';
 
 const { values } = parseArgs({ options: {
   input: { type: 'string' }, output: { type: 'string' }, env: { type: 'string' },
@@ -34,14 +35,14 @@ if (!['openai/gpt-6.1-terra', 'openai/gpt-6.1-sol'].includes(model.id)) throw Er
 await mkdir(output, { recursive: false });
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const sourceHashes = {};
-for (const path of ['src/core.mjs', 'src/run.mjs', 'prepare.py', 'package-lock.json']) sourceHashes[path] = digest(await readFile(resolve(root, path)));
+for (const path of ['src/core.mjs', 'src/output-budget.mjs', 'src/run.mjs', 'prepare.py', 'package-lock.json']) sourceHashes[path] = digest(await readFile(resolve(root, path)));
 const plan = {
   mode: 'full-cold fixture', created_at: new Date().toISOString(), model,
   source_hashes: sourceHashes, manifest, prompt_hash: digest(SYSTEM_PROMPT), schema_hash: digest(SUBMIT_SCHEMA),
   reasoning: 'low', temperature: null, seed: null, explicit_cache: false,
   provider: { only: ['openai'], allow_fallbacks: false, require_parameters: true, data_collection: 'deny' },
   library: { core: '1.5.2', ai: '1.5.2' }, cap_usd: cap,
-  max_requests: 24, max_output_tokens: 12000, deadline_seconds: 900,
+  max_requests: 24, output_policy:'model/context capacity and available task funds', deadline_seconds: 900,
   network_retries: 0, max_premature_stop_continuations: 2, workers: 1, request_concurrency: 1,
   labels_in_model_context: false, runs: 1, completion: 'validated durable submit_grading',
   comparison: 'Exploratory comparison only: historical Codex model route, images and prompt differ.',
@@ -65,7 +66,7 @@ const redactImages = value => JSON.parse(JSON.stringify(value, (k, v) => {
 }));
 const streamFn = (selectedModel, context, options) => models.streamSimple(selectedModel, context, {
   ...options, apiKey: process.env.OPENROUTER_API_KEY, maxRetries: 0,
-  maxTokens: plan.max_output_tokens, timeoutMs: 180000,
+  maxTokens: model.maxTokens, timeoutMs: 180000,
   onPayload: async (payload) => {
     payload.provider = plan.provider;
     payload.usage = { include: true };
@@ -75,8 +76,9 @@ const streamFn = (selectedModel, context, options) => models.streamSimple(select
     }
     const estimate = wireEstimate(payload);
     if (estimate.inputTokenReserve >= 272000) throw Error('Conservative input reservation reaches long-context price tier');
-    const reserve = (estimate.inputTokenReserve * model.cost.input + plan.max_output_tokens * model.cost.output) / 1e6;
-    currentRequest = budget.admit(reserve, estimate);
+    const allowance=outputBudget({model,payload,inputTokens:estimate.inputTokenReserve,prices:model.cost,available:budget.available()});
+    const reserve=allowance.reservation.input_usd+allowance.reservation.output_usd;
+    currentRequest = budget.admit(reserve, {...estimate,max_output_tokens:allowance.tokens,output_allowance:allowance});
     await writeFile(resolve(output, `request-${currentRequest.number}.json`), JSON.stringify(redactImages(payload)), { flag: 'wx' });
     await log({ type: 'request_admitted', request: currentRequest });
     return payload;

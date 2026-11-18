@@ -11,6 +11,7 @@ import { atomicJSON, readJSON, readQuestions } from '../teacher-interaction.mjs'
 import { validateSelections } from './canvas-context.mjs';
 import { addDocument, readDocument, resolveReferences } from './editable-documents.mjs';
 import { runAdaptiveGrading, usesAdaptiveGrading } from './adaptive-runtime.mjs';
+import { DEFAULT_MAIN_MODEL_ID, DEFAULT_WORKER_MODEL_ID } from '../experiment-models.mjs';
 
 const json = async path => { try { return JSON.parse(await readFile(path, 'utf8')); } catch { return null; } };
 export async function snapshotFrozenRubric(sourcePath, directory, scheme) {
@@ -25,7 +26,7 @@ export async function snapshotFrozenRubric(sourcePath, directory, scheme) {
   return frozenPath;
 }
 export class WorkspaceRunner {
-  constructor(store, { model = 'openai/gpt-6.1-terra', cap = 2, agent = runWorkspaceAgent, rubricPath = null } = {}) {
+  constructor(store, { model = DEFAULT_MAIN_MODEL_ID, cap = 2, agent = runWorkspaceAgent, rubricPath = null } = {}) {
     this.store = store; this.model = model; this.cap = cap; this.agent = agent; this.rubricPath = rubricPath; this.active = new Map();
   }
   async recover() {
@@ -95,7 +96,7 @@ export class WorkspaceRunner {
     if (usesAdaptiveGrading(task)) return runAdaptiveGrading({ store: this.store, task, input, entry, runner: this });
     const args = [join(experimentRoot, 'src/run-cohort.mjs'), '--manifest', input.manifest, '--output', input.output,
       '--interaction-dir', entry.interaction,
-      '--execute', '--model', this.model, '--worker-model', 'openai/gpt-6-luna', '--scripted', '--cap', String(this.cap), '--max-requests', '256',
+      '--execute', '--model', this.model, '--worker-model', DEFAULT_WORKER_MODEL_ID, '--scripted', '--cap', String(this.cap), '--max-requests', '256',
       '--grading-reasoning', 'medium', '--annotation-grid', '--inline-annotations', '--student-cap', '0.01'];
     // Vision runs locally; other platforms retain the image-only path explicitly.
     if (process.platform === 'darwin') args.push('--local-ocr');

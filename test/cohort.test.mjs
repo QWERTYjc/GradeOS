@@ -1,11 +1,32 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {mkdtemp,readFile,rm,writeFile} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 import { createModels, createAssistantMessageEventStream, validateToolArguments } from '@earendil-works/pi-ai';
 import { openrouterProvider } from '@earendil-works/pi-ai/providers/openrouter';
 import { StudentRegistry, freezeRubric, validateFrozenRubric, createCoordinator, createStudentAgent, parseConcurrency } from '../src/cohort-core.mjs';
-import { isolateStudentCache } from '../src/cohort-runtime.mjs';
-import { Budget } from '../src/core.mjs';
+import { isolateStudentCache, schemeOverviewReader } from '../src/cohort-runtime.mjs';
+import { Budget, digest } from '../src/core.mjs';
 import { MS_WRITE_SCHEMA, expandMSItems } from '../src/rubric-contract.mjs';
+
+test('shared MS overview preserves the whole frame and checks its original before reuse',async t=>{
+  const dir=await mkdtemp(join(tmpdir(),'ms-overview-'));
+  t.after(()=>rm(dir,{recursive:true,force:true}));
+  // A 96 × 48 page with exactly white outer padding and a single ink pixel.
+  const source=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAGAAAAAwCAIAAABhdOiYAAAAiUlEQVR4nO3WsQ2AMAwAwYSejmHYf7EwAXmJlrvWSvOypcy11uDdsZkhULNBQaAgUBDoU6D7vOrhX0z/oD0nFgQKAgWBgkBBoCBQECgIFAQKAgWBgkBBoCBQECgIFAQKAgWBgkBBoCBQECgIFAQKAgWBgkBBoCBQECgIFAQKAgWBgkBBoCDQ2HsAJn8GsrlmuWEAAAAASUVORK5CYII=','base64');
+  const page={absolute_path:join(dir,'source.png'),sha256:digest(source)};
+  const get=schemeOverviewReader(dir,32);
+  await writeFile(page.absolute_path,Buffer.from('changed'));
+  await assert.rejects(get(page),/Original page changed/);
+  await writeFile(page.absolute_path,source);
+  const first=get(page);
+  assert.equal(get(page),first);
+  const bytes=Buffer.from((await first).data,'base64');
+  assert.deepEqual([bytes.readUInt32BE(16),bytes.readUInt32BE(20)],[32,16]);
+  assert.deepEqual(await readFile(join(dir,`ms-32-${page.sha256}.png`)),bytes);
+  assert.deepEqual(await readFile(page.absolute_path),source);
+});
 
 function msWrite(items) {
   return {items:items.map(i=>({q:i.question_id,id:i.item_id,max:i.max_score,criteria:i.criteria,pages:i.source_pages,
@@ -115,6 +136,16 @@ test('fresh child receives text rubric and own pages, with zero automatic MS ima
   assert.equal(JSON.stringify(observations).includes('scheme-IMAGE-ONLY'), false);
   assert.equal(JSON.stringify(observations).includes('student-IMAGE-ONLY'), true);
   assert.equal(observations.length, 2);
+});
+test('known rubric uncertainty is inherited without repeated model submissions or altered awards', async () => {
+  const raw=rawRubric();raw.items[0].uncertainties=['The source connector remains ambiguous'];
+  const submitted=answer(),before=structuredClone(submitted),observations=[];let grade;
+  const child=createStudentAgent({model,scheme,student,frozen:freezeRubric(raw,scheme,new Set([1])),readImage,log,
+    persist:async value=>{grade=value;},streamFn:fakeStream([[call('read_student_pages',{pages:[1]})],[call('submit_grading',submitted)]],observations)});
+  await child.agent.prompt(await child.initialPrompt([]));
+  assert.equal(observations.length,2);assert.equal(grade.items[0].review_required,true);assert.equal(grade.status,'review_required');
+  for(const key of ['score','reason','student_pages','scheme_pages'])assert.deepEqual(grade.items[0][key],before.items[0][key]);
+  assert.deepEqual(submitted,before);
 });
 test('required diagram is requested on demand before a child may submit', async () => {
   const raw = rawRubric(); raw.items[0].requires_source_image = true; raw.items[0].image_reason = 'Spatial diagram';
@@ -282,18 +313,18 @@ test('short MS fields preserve complete source truth across renamed and multilin
   }
 });
 
-test('actual Pi main stages more than four complete items under its explicit output allowance',async()=>{
+test('actual Pi main stages more than four complete items without a fixed phase token quota',async()=>{
   const raw=rawRubric();
   const point={point_id:'record',max_score:2,allowed_awards:[0,1,2],award_type:'credit',condition:'A record includes both required source entries.',depends_on:[],source_text:'Both entries: 2; one: 1.',source_pages:[1]};
   raw.items=Array.from({length:6},(_,i)=>({...raw.items[0],question_id:`Document-${i}`,item_id:`Document-${i}`,scoring_points:[structuredClone(point)],routes:[{route_id:'source',point_ids:['record'],description:'Source record'}]}));
   const review={...sourceReview(),item_checks:raw.items.map(i=>({item_id:i.item_id,verdict:'verified',source_pages:[1],note:'Both source entries checked'}))};
   const observations=[];let candidate;
-  const main=createCoordinator({model,scheme,studentIds:['learner'],msCompilationOutputTokens:9000,readImage,log,
+  const main=createCoordinator({model,scheme,studentIds:['learner'],readImage,log,
     persistCandidate:async value=>{candidate=value;},persistReview:async()=>{},persistRubric:async()=>{},persistCohort:async()=>{},
     executeStudent:async(_id,frozen)=>{assert.deepEqual(frozen.artifact.items,raw.items);return {status:'submitted'};},
     streamFn:fakeStream([[call('read_ms_pages',{pages:[1]})],[call('write_rubric_items',msWrite(raw.items)),call('prepare_ms_review',{general_instructions:raw.general_instructions,unresolved_notes:[]})],[call('submit_ms_review',review)],[call('grade_students',{student_ids:['learner'],concurrency:1,initial_ms_pages:[]}),call('finish_cohort',{})]],observations)});
   const tool=main.agent.state.tools.find(t=>t.name==='write_rubric_items');
-  assert.equal('maxItems' in tool.parameters.properties.items,false);assert.match(tool.description,/9000-token/);assert.match(main.initialPrompt,/9000 output tokens/);
+  assert.equal('maxItems' in tool.parameters.properties.items,false);assert.match(tool.description,/no fixed item-count or phase token quota/);assert.match(main.initialPrompt,/model response capacity/);
   await main.agent.prompt(main.initialPrompt);
   assert.ok(main.getResult());assert.deepEqual(candidate.artifact.items,raw.items);assert.equal(main.agent.state.messages.filter(m=>m.role==='toolResult'&&m.isError).length,0);
   assert.equal(JSON.stringify(observations[2]).includes('scheme-IMAGE-ONLY'),true,'Same main context still contains original pages at review');

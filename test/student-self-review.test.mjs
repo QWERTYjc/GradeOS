@@ -4,7 +4,7 @@ import {createModels,createAssistantMessageEventStream,getCurrentTools} from '@e
 import {openrouterProvider} from '@earendil-works/pi-ai/providers/openrouter';
 import {createStudentAgent,StudentRegistry,freezeRubric} from '../src/cohort-core.mjs';
 import {digest} from '../src/core.mjs';
-import {validateSelfReviewRevisions,mergeSelfReviewCorrection} from '../src/submission-contract.mjs';
+import {validateSelfReviewRevisions,mergeSelfReviewCorrection,studentSelfReviewOrder} from '../src/submission-contract.mjs';
 
 const models=createModels();models.setProvider(openrouterProvider());const model=models.getModel('openrouter','openai/gpt-6-luna');
 const call=(name,args)=>({type:'toolCall',id:crypto.randomUUID(),name,arguments:structuredClone(args)});
@@ -39,6 +39,143 @@ const readingRevisions=(f,items)=>items.flatMap(item=>item.p.filter(p=>{
   return !old||old[2]!==p[2]||JSON.stringify(old[3])!==JSON.stringify(p[3]);
 }).map(p=>({item_id:item.id,point_id:p[0],page:p[3][0],location:'Document heading and author line',observed:p[2],basis:'The visible original heading and author line support this reading; the saved observation is replaced.'})));
 const review=(f,items=[])=>({items,review_notes:null,source_issues:null,checked_item_ids:f.raw.items.map(i=>i.id),summary:'Checked all source conditions and original observations; only local changes are included.',evidence_revisions:readingRevisions(f,items)});
+
+test('resized self-review inherits the overview and appends only answer and MS crops',async()=>{
+  const f=fixture(['X']),box=[12,32,612,940],region=[100,250,300,125];
+  const crops=[];
+  Object.assign(f,{initialStudentImageMode:'resized_overview',initialStudentGeometry:[{page:1,bbox:box}],
+    readInitialStudentImage:async()=>({type:'image',mimeType:'image/png',data:'initial-overview'}),
+    readInitialSchemeImage:async()=>({type:'image',mimeType:'image/png',data:'scheme-overview'}),
+    readSourceRegion:async(page,coords,options)=>{
+      crops.push({role:page.role,coords,options});
+      return {type:'image',mimeType:'image/png',data:page.role+'-crop'};
+    }});
+  let prefix;
+  const s=build(f,(context,turn)=>{
+    if(turn===1){
+      prefix=structuredClone(context.messages);
+      return [call('submit_grading',f.raw),call('read_student_pages',{pages:[1],question:'Which character is visible?',region}),
+        call('read_ms_pages',{pages:[1],region})];
+    }
+    assert.deepEqual(context.messages.slice(0,prefix.length),prefix);
+    const images=context.messages.flatMap(m=>Array.isArray(m.content)?m.content:[]).filter(p=>p.type==='image');
+    assert.deepEqual(images.map(p=>p.data),['scheme-overview','initial-overview','student-crop','scheme-crop']);
+    assert.equal(images[0].source_delivery.representation,'resized_overview');
+    return [call('submit_self_review',review(f))];
+  });
+  for(const t of s.child.agent.state.tools.filter(t=>['read_student_pages','read_ms_pages'].includes(t.name))){
+    assert.ok(t.parameters.required.includes('region'));
+    assert.equal(t.parameters.properties.pages.maxItems,1);
+    for(const invalid of [undefined,[0,0,1000,1000]]){
+      await assert.rejects(t.execute('full',{pages:[1],question:'Can the word be read?',region:invalid}),/only the region/);
+    }
+  }
+  await s.child.agent.prompt(await s.child.initialPrompt([1]));
+  assert.equal(s.finals.length,1);
+  assert.deepEqual(crops,[{role:'student',coords:region,options:{localOnly:true,frame:box}},
+    {role:'scheme',coords:region,options:{localOnly:true,frame:undefined}}]);
+  assert.deepEqual(s.finals[0].items,s.primaries[0].grade.items);
+  assert.deepEqual(s.finals[0].image_delivery_receipts.filter(r=>r.representation==='source_region').map(r=>[r.role,r.frame_bbox]),[['student',box],['scheme',undefined]]);
+});
+
+test('review order covers all awards without interpreting evidence, coercing unknown to zero or mutating the draft',()=>{
+  const rows=[
+    {score:null,max_score:2,review_required:true},
+    {score:0,max_score:2,review_required:false},
+    {score:1,max_score:2,review_required:false},
+    {score:2,max_score:2,review_required:false},
+    {score:2,max_score:2,review_required:true},
+  ];
+  for(const ids of [['A','B','C','D','E'],['甲','乙','丙','丁','戊'],['Page-end','Next-page','Written-final','Equivalent','Flagged']]){
+    const grade={items:rows.map((row,i)=>({...row,item_id:ids[i],student_pages:[i+1],evidence:i%2?'No answer':'Complete answer'}))};
+    const before=structuredClone(grade),order=studentSelfReviewOrder(grade);
+    assert.deepEqual(order,{unresolved:[ids[0],ids[4]],zero_credit:[ids[1]],partial_credit:[ids[2]],full_credit:[ids[3]]});
+    assert.deepEqual(Object.values(order).flat().sort(),[...ids].sort());
+    assert.deepEqual(grade,before);
+    const moved={items:[...grade.items].reverse().map(row=>({...row,student_pages:[99],evidence:'Different layout, wording and symbols'}))};
+    const movedOrder=studentSelfReviewOrder(moved);
+    for(const group of Object.keys(order))assert.deepEqual([...movedOrder[group]].sort(),[...order[group]].sort());
+    assert.deepEqual(movedOrder.unresolved,[ids[4],ids[0]],'within-group order follows the draft, never an item-name heuristic');
+  }
+});
+
+test('draft receipt prioritizes all groups in the original session without a new stage or duplicate evidence',async()=>{
+  const f=fixture(['Unknown','Blank-or-wrong','Partial','Full']);
+  f.raw.items[0].review=true;f.raw.items[0].p[0]=['attributes',null,'Author line illegible.',[1],'q:u','Cannot establish the author.'];
+  f.raw.items[1].p[0]=['attributes',0,'Receipt by Kian.',[2],'u:c','Neither required attribute matches.'];
+  f.raw.items[2].p[0]=['attributes',1,'Letter by Kian.',[3],'m','Only the document type matches.'];
+  let initial,turns=0;
+  const s=build(f,(context,turn)=>{
+    turns=turn;
+    if(turn===1){initial=structuredClone(context);return[call('submit_grading',f.raw)];}
+    assert.deepEqual(context.messages.slice(0,initial.messages.length),initial.messages);
+    assert.deepEqual(getCurrentTools(context.messages),getCurrentTools(initial.messages));
+    const result=context.messages.filter(m=>m.role==='toolResult').at(-1);
+    const receipt=JSON.parse(result.content.find(part=>part.type==='text').text);
+    assert.deepEqual(receipt.review_order,{unresolved:['Unknown'],zero_credit:['Blank-or-wrong'],partial_credit:['Partial'],full_credit:['Full']});
+    assert.equal(receipt.item_ids,undefined,'IDs are not repeated in a second list');
+    assert.equal(JSON.stringify(receipt).includes('Receipt by Kian'),false,'observations stay in the saved draft');
+    return[call('submit_self_review',review(f))];
+  });
+  await s.child.agent.prompt(await s.child.initialPrompt([]));
+  assert.equal(turns,2);assert.equal(s.primaries.length,1);assert.equal(s.finals.length,1);
+  assert.deepEqual(s.finals[0].items,s.primaries[0].grade.items);
+  assert.deepEqual(s.submissions[0],f.raw);assert.equal(s.events.filter(e=>e.type==='read_pages').length,0);
+});
+
+test('explicit numeric and string page encodings survive same-session review without changing observations',async()=>{
+  const f=fixture();
+  f.raw.items[0].p[0][3]=1;f.raw.items[1].p[0][3]='2';
+  const before=structuredClone(f.raw);
+  const s=build(f,(_context,turn)=>turn===1?[call('submit_grading',f.raw)]:[call('submit_self_review',review(f))]);
+  await s.child.agent.prompt(await s.child.initialPrompt([]));
+  assert.equal(s.primaries.length,1);assert.equal(s.finals.length,1);
+  assert.deepEqual(s.primaries[0].raw,before);assert.deepEqual(s.submissions[0],before);
+  assert.deepEqual(s.finals[0].items,s.primaries[0].grade.items);
+  assert.deepEqual(s.finals[0].self_review.evidence_revisions,[]);
+  assert.deepEqual(s.finals[0].items.map(i=>i.point_decisions[0].student_pages),[[1],[2],[3],[4]]);
+  const revised=structuredClone(before);revised.items[0].p[0][2]='A new reading';
+  assert.throws(()=>validateSelfReviewRevisions(before,revised,[],new Set([1,2,3,4])),/Changed readings need/);
+});
+
+test('first response saves every point and requests source pages; subsequent review patches only the unresolved point', async () => {
+  for (const additionalLookup of [false, true]) {
+    const f = fixture(['Legible', 'Unclear']);
+    const unresolved = f.raw.items[1];
+    unresolved.review = true;
+    unresolved.p[0] = ['attributes', null, 'Letter title visible, author line indistinct.', [2], 'q:u', 'The author cannot yet be identified.'];
+    const resolved = {id: 'Unclear', route: 'r', review: false,
+      p: [['attributes', 2, 'Letter signed Mira.', [2], 'm', 'The title and signature establish both attributes.']]};
+    let initial;
+    const s = build(f, (context, turn) => {
+      if (turn === 1) {
+        initial = structuredClone(context.messages);
+        return [call('submit_grading', f.raw),
+          call('read_student_pages', {pages: [2], question: 'Which name appears on the author line?'}),
+          call('read_ms_pages', {pages: [1]})];
+      }
+      assert.deepEqual(context.messages.slice(0, initial.length), initial);
+      const replies = context.messages.filter(m => m.role === 'toolResult');
+      assert.deepEqual(replies.slice(0, 3).map(m => m.toolName), ['submit_grading', 'read_student_pages', 'read_ms_pages']);
+      assert.ok(replies.every(m => !m.isError));
+      assert.equal(s.primaries[0].grade.items[1].score, null);
+      assert.equal(s.finals.length, 0);
+      if (turn === 2 && additionalLookup) {
+        return [call('read_student_pages', {pages: [1], question: 'Where does the preceding answer end?'})];
+      }
+      assert.equal(turn, additionalLookup ? 3 : 2);
+      return [call('submit_self_review', review(f, [resolved]))];
+    });
+    await s.child.agent.prompt(await s.child.initialPrompt([]));
+    assert.equal(s.primaries.length, 1);
+    assert.equal(s.finals.length, 1, s.child.agent.state.errorMessage);
+    const [final] = s.finals;
+    assert.equal(final.items[1].score, 2);
+    assert.deepEqual(final.items[0], s.primaries[0].grade.items[0]);
+    assert.deepEqual(final.self_review.changed_item_ids, ['Unclear']);
+    assert.equal(final.self_review.evidence_revisions[0].page, 2);
+  }
+});
 
 test('same agent keeps original context, saves primary once, and emits only changed items after a separate response',async()=>{
   for(const [ids,evidence] of [[['A','B','C','D'],'Mira wrote this letter.'],[['甲','乙','丙','丁'],'作者Mira；文体信件。'],[['Section-Y','Part-X','Doc-Z','Note-Q'],'Letter\nAuthor: Mira']]){
@@ -153,6 +290,49 @@ test('score-only reinterpretation keeps literal evidence and needs a reason, not
   assert.equal(s.finals[0].items[0].point_decisions[0].evidence,f.raw.items[0].p[0][2]);
 });
 
+test('explicit paired references preserve exact saved observations across rule-only revisions in the real agent',async()=>{
+  for(const [id,evidence] of [['Memo-Z','Letter by Mira.'],['资料甲','作者 Mira；文体：信件。'],['Registro-Q','Letter\nAuthor: Mira']]){
+    const f=fixture([id],evidence);f.raw.items[0].p[0][1]=0;f.raw.items[0].p[0][4]='u:c';f.raw.items[0].p[0][5]='The equivalent wording was not recognized.';
+    const primary=structuredClone(f.raw);
+    const patch={id,route:'r',review:false,p:[['attributes',2,null,null,'m','Both attributes are stated; equivalent wording meets the source rule.']]};
+    const args={...review(f),items:[patch]};
+    const s=build(f,(_context,turn)=>[turn===1?call('submit_grading',f.raw):call('submit_self_review',args)]);
+    await s.child.agent.prompt(await s.child.initialPrompt([]));
+    assert.equal(s.finals.length,1,s.child.agent.state.errorMessage);assert.equal(s.finals[0].total_score,2);
+    assert.deepEqual(f.raw,primary);assert.deepEqual(s.primaries[0].raw,primary);
+    assert.deepEqual(s.submissions[0].items[0].p[0].slice(2,4),primary.items[0].p[0].slice(2,4));
+    assert.deepEqual(s.finals[0].self_review.evidence_revisions,[]);
+    assert.equal(s.events.filter(e=>e.type==='read_pages').length,0);
+    assert.deepEqual(args.items[0].p[0].slice(2,4),[null,null]);
+  }
+});
+
+test('inherited evidence is same-route only, requires both cells, and never bypasses judgment or reading grounds',()=>{
+  const f=fixture(['Archive-Q']),base={submission_hash:digest(f.raw),items:[{id:'Archive-Q',route:'r',review:false,p:[['attributes',0,null,null,'u:c','The saved observation does not establish the required attributes.']]}],review_notes:null,source_issues:null};
+  const merged=mergeSelfReviewCorrection(f.raw,base,f.frozen);
+  const explicit=structuredClone(base);explicit.items[0].p[0].splice(2,2,...structuredClone(f.raw.items[0].p[0].slice(2,4)));
+  assert.deepEqual(merged,mergeSelfReviewCorrection(f.raw,explicit,f.frozen));
+  assert.deepEqual(validateSelfReviewRevisions(f.raw,merged,[],new Set([1])),[]);
+  for(const mutate of [a=>a.items[0].p[0][2]='New observation',a=>a.items[0].p[0][3]=[1],a=>a.items[0].route='alternate',a=>a.items[0].p[0][0]='new']){
+    const bad=structuredClone(base);mutate(bad);assert.throws(()=>mergeSelfReviewCorrection(f.raw,bad,f.frozen),/paired null.*same-route/);
+  }
+  const noReason=structuredClone(base);noReason.items[0].p[0][5]='=';
+  assert.throws(()=>validateSelfReviewRevisions(f.raw,mergeSelfReviewCorrection(f.raw,noReason,f.frozen),[],new Set([1])),/explicit short scoring reason/);
+  const changed=structuredClone(explicit);changed.items[0].p[0][2]='Receipt by Kian.';
+  assert.throws(()=>validateSelfReviewRevisions(f.raw,mergeSelfReviewCorrection(f.raw,changed,f.frozen),[],new Set([1])),/Changed readings need/);
+});
+
+test('paired evidence references cannot fabricate observations in an initial submission',async()=>{
+  const f=fixture(['Record-X']),bad=structuredClone(f.raw);bad.items[0].p[0][2]=null;bad.items[0].p[0][3]=null;
+  const s=build(f,(context,turn)=>{
+    if(turn===1)return[call('submit_grading',bad)];
+    assert.equal(s.primaries.length,0);assert.equal(s.finals.length,0);
+    assert.ok(context.messages.some(m=>m.role==='toolResult'&&m.isError));
+    return{content:[],stopReason:'error',errorMessage:'Synthetic stop after invalid initial evidence'};
+  });
+  await s.child.agent.prompt(await s.child.initialPrompt([]));assert.equal(s.primaries.length,0);assert.equal(s.finals.length,0);
+});
+
 test('grounding rejects foreign, undelivered and duplicate citations but harmless unchanged-point grounds do not block submission',()=>{
   const f=fixture(['Document-Q']);const revised=structuredClone(f.raw);
   revised.items[0].p[0]=['attributes',1,'A letter; author field is empty.',[1],'m','Only the document type is established.'];
@@ -202,5 +382,38 @@ test('one point can retain distinct page grounds while missing, foreign and repe
     assert.throws(()=>validateSelfReviewRevisions(f.raw,merged,args.evidence_revisions,new Set([1])),/delivered original/);
     assert.throws(()=>validateSelfReviewRevisions(f.raw,merged,[...args.evidence_revisions,args.evidence_revisions[0]],new Set([1,2])),/distinct original page/);
     assert.throws(()=>validateSelfReviewRevisions(f.raw,merged,[{...args.evidence_revisions[0],page:3}],new Set([1,2,3])),/delivered original/);
+  }
+});
+
+test('contrastive reading review preserves equivalent observations, corrects clear contrary evidence and keeps ambiguity unknown',async()=>{
+  // Scripted tool replies test persistence and recovery policy, not visual recognition.
+  const cases=[
+    {id:'Alpha',text:'Mira wrote a letter.',score:2,state:'m',reason:'Both attributes are visible.'},
+    {id:'段落',text:'作者 Mira；文体：信件。',score:2,state:'m',reason:'The same attributes appear in another layout and language.'},
+    {id:'Record-8',text:'Letter\nSigned: Mira',score:2,state:'m',reason:'The title and signature both meet the source.'},
+    {id:'Author',text:'Letter by Nira.',score:1,state:'m',reason:'The first name letter is N; only the document type matches.'},
+    {id:'Type',text:'Receipt by Mira.',score:1,state:'m',reason:'The heading says receipt; only the author matches.'},
+    {id:'Unrelated',text:'A route map by Kian.',score:0,state:'u:c',reason:'Neither the source type nor author matches.'},
+    {id:'Ambiguous',text:'Letter by [M/N]ira; first letter indistinct.',score:null,state:'q:u',reason:'The indistinct author prevents a definite award at this point.'},
+  ];
+  for(const item of cases){
+    const f=fixture([item.id]),edit=structuredClone(f.raw.items[0]);edit.review=item.score===null;
+    edit.p[0]=['attributes',item.score,item.text,[1],item.state,item.reason];
+    const args=review(f,[edit]);args.evidence_revisions[0].basis=item.score===null
+      ? 'At the same author initial, the faint center stroke supports neither M nor N uniquely.'
+      : 'Compared the saved wording against the visible heading and author at the same location; the revised literal observation records those features.';
+    const s=build(f,(context,turn)=>{
+      if(turn===1)return [call('submit_grading',f.raw)];
+      assert.deepEqual(getCurrentTools(context.messages).find(t=>t.name==='submit_self_review').parameters.properties.evidence_revisions.items.required,
+        ['item_id','point_id','page','location','observed','basis']);
+      return [call('submit_self_review',args)];
+    });
+    await s.child.agent.prompt(await s.child.initialPrompt([]));
+    assert.equal(s.primaries[0].grade.total_score,2);
+    assert.equal(s.finals[0].total_score,item.score);
+    assert.equal(s.finals[0].items[0].review_required,item.score===null);
+    assert.equal(s.finals[0].items[0].point_decisions[0].evidence,item.text);
+    assert.equal(s.events.filter(e=>e.type==='page_delivery'&&e.source==='requested_reinspection').length,0);
+    assert.equal(s.finals[0].self_review.evidence_revisions[0].before.evidence,f.raw.items[0].p[0][2]);
   }
 });

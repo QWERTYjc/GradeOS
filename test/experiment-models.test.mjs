@@ -5,7 +5,7 @@ import {tmpdir} from 'node:os';
 import {resolve} from 'node:path';
 import {createModels} from '@earendil-works/pi-ai';
 import {openrouterProvider} from '@earendil-works/pi-ai/providers/openrouter';
-import {experimentModel, experimentProvider, HYDROGEN_ID} from '../src/experiment-models.mjs';
+import {experimentModel, experimentProvider, HYDROGEN_ID, CARBON_ID} from '../src/experiment-models.mjs';
 import {createRuntime} from '../src/cohort-runtime.mjs';
 import {COMPACT_POINTS_SCHEMA} from '../src/compact-points.mjs';
 
@@ -46,9 +46,9 @@ test('runtime records and sends the declared Google route with unchanged privacy
   } finally {runtime.close();await rm(output,{recursive:true,force:true});}
 });
 
-test('Sol and Luna retain image input, low reasoning and the same grading contract in native Pi wire',async()=>{
+test('Terra, Sol and Luna retain image input, low reasoning and the same grading contract in native Pi wire',async()=>{
   const models=catalog();
-  for(const id of ['openai/gpt-6.1-sol','openai/gpt-6-luna']){
+  for(const id of ['openai/gpt-6.1-terra','openai/gpt-6.1-sol','openai/gpt-6.2-sol','openai/gpt-6-luna']){
     const model=experimentModel(models,id);let wire;
     await models.streamSimple(model,{systemPrompt:'Neutral source-bound grading.',messages:[{role:'user',timestamp:1,content:[{type:'image',mimeType:'image/png',data:'synthetic-no-network'}]}],tools:[{name:'submit_grading',description:'Submit complete evidence.',parameters:structuredClone(COMPACT_POINTS_SCHEMA)}]},
       {apiKey:'local-test-only',maxRetries:0,maxTokens:16000,reasoning:'low',onPayload:payload=>{wire=payload;throw Error('Inspect only; no network');}}).result();
@@ -56,6 +56,40 @@ test('Sol and Luna retain image input, low reasoning and the same grading contra
     assert.deepEqual(wire.tools[0].function.parameters,COMPACT_POINTS_SCHEMA);
     assert.equal(wire.messages.flatMap(m=>Array.isArray(m.content)?m.content:[]).filter(p=>p.type==='image_url').length,1);
   }
+});
+
+test('Luna keeps high detail and the cached prefix through self-review and on-demand source images',async()=>{
+  const output=await mkdtemp(resolve(tmpdir(),'pi-luna-high-detail-')),registry=catalog();
+  const model=experimentModel(registry,'openai/gpt-6-luna'),payloads=[];
+  const image=(data,detail)=>({type:'image_url',image_url:{url:`data:image/png;base64,${data}`,...(detail?{detail}:{})}});
+  const messages=[{role:'developer',content:'Shared source rules.'},{role:'user',content:[
+    {type:'text',text:'Complete answer and selected MS pages.'},image('answer-native','original'),image('scheme-native'),
+  ]}];
+  const initial=structuredClone(messages);
+  const models={streamSimple:async(selected,context,options)=>{
+    const payload=await options.onPayload({model:selected.id,messages:structuredClone(context.messages),reasoning:{effort:options.reasoning}});
+    payloads.push(structuredClone(payload));return{};
+  }};
+  const runtime=createRuntime({models,model,output,cap:1,controller:new AbortController(),studentCacheNamespace:'neutral-high-detail',structuredOutput:false});
+  try{
+    let phase='student_grading';const io=await runtime.io('student-neutral',()=>phase);
+    await io.streamFn(model,{messages},{reasoning:'low'});
+    phase='student_self_review';messages.push({role:'assistant',content:'Primary draft saved.'});
+    await io.streamFn(model,{messages},{reasoning:'low'});
+    messages.push({role:'user',content:[{type:'text',text:'Requested original source page.'},image('source-reinspection','original')]});
+    await io.streamFn(model,{messages},{reasoning:'low'});
+    assert.deepEqual(messages.slice(0,initial.length),initial,'wire policy must not rewrite the retained source messages');
+    for(const [index,payload] of payloads.entries()){
+      const parts=payload.messages.flatMap(m=>Array.isArray(m.content)?m.content:[]).filter(p=>p.type==='image_url');
+      assert.deepEqual(parts.map(p=>p.image_url.detail),Array(index===2?3:2).fill('high'));
+      assert.deepEqual(parts.map(p=>p.image_url.url),['data:image/png;base64,answer-native','data:image/png;base64,scheme-native',...(index===2?['data:image/png;base64,source-reinspection']:[])]);
+      assert.deepEqual(payload.reasoning,{effort:'low'});assert.deepEqual(payload.provider,experimentProvider(model.id));
+      assert.deepEqual(payload.messages.slice(0,payloads[0].messages.length),payloads[0].messages);
+      const saved=JSON.parse(await readFile(resolve(io.directory,`request-${index+1}.json`),'utf8'));
+      assert.deepEqual(saved.messages.flatMap(m=>Array.isArray(m.content)?m.content:[]).filter(p=>p.type==='image_url').map(p=>p.image_url.detail),parts.map(p=>p.image_url.detail));
+    }
+    assert.equal(runtime.budget.requests.length,3);
+  }finally{runtime.close();await rm(output,{recursive:true,force:true});}
 });
 
 test('mixed main and worker calls use their own prices under one aggregate budget and reject model drift',async()=>{
@@ -75,16 +109,16 @@ test('mixed main and worker calls use their own prices under one aggregate budge
     assert.deepEqual(payloads.map(x=>x.model),[model.id,workerModel.id]);
     assert.equal(parent.reservation.output_usd,.01);assert.equal(worker.reservation.output_usd,.0005);
     // A cold request can be billed at cache-write rates; reserve that higher price.
-    assert.ok(Math.abs(parent.reservation.input_usd/parent.inputTokenReserve-2.5/1e6)<1e-15);
-    assert.ok(Math.abs(worker.reservation.input_usd/worker.inputTokenReserve-.125/1e6)<1e-15);
+    assert.ok(Math.abs(parent.reservation.input_usd/parent.cost_input_token_reserve-2.5/1e6)<1e-15);
+    assert.ok(Math.abs(worker.reservation.input_usd/worker.cost_input_token_reserve-.125/1e6)<1e-15);
     assert.equal(runtime.budget.chargedOrReserved,parent.reserve_usd+worker.reserve_usd);
-    await assert.rejects(main.streamFn(model,{},{}),/Budget reservation/);
+    await main.streamFn(model,{},{});assert.ok(runtime.budget.chargedOrReserved<=.015);await assert.rejects(main.streamFn(model,{},{}),/Budget reservation/);
     assert.throws(()=>child.streamFn(model,{},{}),/declared lane model/);
-    assert.equal(runtime.budget.requests.length,2);assert.equal(payloads.length,2);
+    assert.equal(runtime.budget.requests.length,3);assert.equal(payloads.length,3);
     runtime.budget.settle(parent,{model:model.id,usage:{cost:{totalFromProvider:true,total:.003}}});
     runtime.budget.settle(worker,{model:workerModel.id,usage:{cost:{totalFromProvider:true,total:.0002}}});
     assert.equal(runtime.totals(runtime.budget.requests).provider_reported_cost_usd,.0032);
-    assert.equal(runtime.totals(runtime.budget.requests).unknown_cost_requests,0);
+    assert.equal(runtime.totals(runtime.budget.requests).unknown_cost_requests,1);
   }finally{runtime.close();await rm(output,{recursive:true,force:true});}
 });
 
@@ -104,4 +138,16 @@ test('single-pass Luna uses the declared endpoint parameters without loosening p
     assert.deepEqual(sent.provider,experimentProvider(model.id));
     assert.match(sent.messages[0].content,/^Execution namespace neutral-arm-a/);
   }finally{runtime.close();await rm(output,{recursive:true,force:true});}
+});
+
+
+test('Carbon and Hydrogen retain low and medium reasoning in actual Pi wire, with identical source schemas',async()=>{
+ const models=catalog();
+ for(const id of [CARBON_ID,HYDROGEN_ID])for(const effort of ['low','medium']){
+  const model=experimentModel(models,id);let wire;
+  await models.streamSimple(model,{messages:[{role:'user',timestamp:1,content:[{type:'image',mimeType:'image/png',data:'synthetic-no-network'}]}],tools:[{name:'submit_grading',description:'Complete evidence.',parameters:COMPACT_POINTS_SCHEMA}]},
+   {apiKey:'local-test-only',reasoning:effort,maxRetries:0,onPayload:p=>{wire=p;throw Error('Offline wire only');}}).result();
+  assert.equal(wire.model,id);assert.deepEqual(wire.reasoning,{effort});assert.deepEqual(wire.tools[0].function.parameters,COMPACT_POINTS_SCHEMA);
+  assert.ok((wire.max_tokens??wire.max_completion_tokens)>24000);assert.deepEqual(experimentProvider(id).only,['google-vertex/global']);
+ }
 });

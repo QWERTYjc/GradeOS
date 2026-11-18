@@ -4,7 +4,7 @@ import { openrouterProvider } from '@earendil-works/pi-ai/providers/openrouter';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createRuntime } from '../cohort-runtime.mjs';
-import {experimentModel, experimentProvider} from '../experiment-models.mjs';
+import {experimentModel, experimentProvider, DEFAULT_MAIN_MODEL_ID} from '../experiment-models.mjs';
 import { digest } from '../core.mjs';
 import { fail, id, taskDraft } from './store.mjs';
 import { validateSelections, readSelectionImage } from './canvas-context.mjs';
@@ -154,13 +154,13 @@ export function observeWorkspaceAgent(agent, onEvent) {
   });
 }
 
-export async function runWorkspaceAgent({ store, state, selectedIds, goal, mode = 'plan', controller = new AbortController(), records = [], selections = [], references = [], onEvent, modelId = 'openai/gpt-6.1-terra', cap = 0.5, maxOutputTokens = 6000 }) {
+export async function runWorkspaceAgent({ store, state, selectedIds, goal, mode = 'plan', controller = new AbortController(), records = [], selections = [], references = [], onEvent, modelId = DEFAULT_MAIN_MODEL_ID, cap = 0.5 }) {
   fail(Boolean(process.env.OPENROUTER_API_KEY), '尚未连接模型。请在启动服务时配置 OPENROUTER_API_KEY；现在仍可上传、划分和手动安排任务。', 424);
   const models = createModels(); models.setProvider(openrouterProvider());
   const model = experimentModel(models, modelId);
   const output = join(store.directory, 'agent', id());
   await mkdir(output, { recursive: true });
-  const runtime = createRuntime({ models, model, output, cap, controller, maxRequests: 24, deadlineMs: 240000, maxOutputTokens, provider:experimentProvider(modelId) });
+  const runtime = createRuntime({ models, model, output, cap, controller, maxRequests: 24, deadlineMs: 240000, provider:experimentProvider(modelId) });
   const io = await runtime.io('workspace', () => mode === 'plan' ? 'task_planning' : 'task_execution');
   const assertDocument = snapshot => documentId => { const document = readDocument(snapshot, documentId); fail(documentAllowed(snapshot, document, selectedIds), '文档超出本次任务范围。'); return document; };
   const documentIO = {

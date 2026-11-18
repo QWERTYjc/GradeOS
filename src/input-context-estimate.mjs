@@ -19,10 +19,19 @@ function outputReasoning(message) {
 export function inputContextSnapshot(payload, estimate) {
   const { messages, ...configuration } = payload;
   if (!Array.isArray(messages)) return null;
+  // Output ceilings do not change the serialized input prefix. They are still
+  // reserved separately by the runtime; only valid ceilings are excluded here.
+  let outputLimitBytes = 0;
+  for (const key of ['max_tokens', 'max_completion_tokens']) {
+    const value = configuration[key];
+    if (!Number.isSafeInteger(value) || value < 1) continue;
+    outputLimitBytes += Buffer.byteLength(JSON.stringify(key)) + String(value).length + 2;
+    delete configuration[key];
+  }
   return {
     configurationHash: digest(configuration), messageHashes: messages.map(digest),
     encryptedReasoning: messages.map(message=>message.role==='assistant'?encryptedReasoning(message.reasoning_details):[]),
-    textBytes: estimate.textBytes, images: estimate.images, imageTokenReserve: estimate.imageTokenReserve ?? estimate.images*4096,
+    textBytes: estimate.textBytes - outputLimitBytes, images: estimate.images, imageTokenReserve: estimate.imageTokenReserve ?? estimate.images*4096,
   };
 }
 

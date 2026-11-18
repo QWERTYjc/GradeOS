@@ -1,15 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,readFile,rm} from 'node:fs/promises';
+import {mkdtemp,mkdir,readFile,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {resolve} from 'node:path';
 import {createModels,createAssistantMessageEventStream,validateToolArguments} from '@earendil-works/pi-ai';
 import {openrouterProvider} from '@earendil-works/pi-ai/providers/openrouter';
 import {freezeRubric} from '../src/cohort-core.mjs';
 import {digest} from '../src/core.mjs';
-import {sourceBoundFeedbackSchema,sourceBoundFeedbackPacket,expandSourceBoundFeedback,feedbackFacts} from '../src/source-bound-feedback.mjs';
+import {sourceBoundFeedbackSchema,sourceBoundFeedbackPacket,expandSourceBoundFeedback,feedbackFacts,selectSavedFeedback} from '../src/source-bound-feedback.mjs';
 import {SOURCE_BOUND_REPORT_SCHEMA,expandSourceBoundReport,sourceReportFacts} from '../src/source-bound-report.mjs';
-import {createFeedbackAgent,validateFeedback,renderStudentFeedback} from '../src/student-feedback.mjs';
+import {createFeedbackAgent,validateFeedback,renderStudentFeedback,runStudentFeedback} from '../src/student-feedback.mjs';
 import {createReporting} from '../src/cohort-reporting.mjs';
 import {ResultsStore} from '../src/results-store.mjs';
 import {renderReportMarkdown} from '../src/report-markdown.mjs';
@@ -152,4 +152,32 @@ test('cross-student review pairs retain exact ownership rather than a Cartesian 
  const report=expandSourceBoundReport(raw,paired,a,new Set(['first/Gamma','second/Delta']));
  assert.deepEqual(report.review_priorities[0].evidence_refs,['first/Gamma','second/Delta']);
  report.records_read=['first','second'];const markdown=renderReportMarkdown(report,a);assert.ok(markdown.includes('first/Gamma'));assert.ok(markdown.includes('second/Delta'));assert.equal(markdown.includes('second/Gamma'),false);
+});
+
+
+test('saved feedback preserves unknown and source scope without a model or grade mutation',async()=>{
+ for(const names of [['North','South','East','West'],['x-19','y_42','z-7','control']]){
+  const f=fixture(names,'For every nonzero vector, including negative components.');
+  const before=structuredClone(f.grade),directory=await mkdtemp(resolve(tmpdir(),'saved-feedback-'));
+  try{
+   const runtime={io:async()=>({directory}),run:()=>{throw Error('No model call allowed');},totals:rows=>({admitted_requests:rows.length,provider_reported_cost_usd:0,unknown_cost_requests:0,charged_or_reserved_usd:0})};
+   const result=await runStudentFeedback({runtime,model,id:'student',grade:f.grade,frozen:f.frozen,mode:'source-bound-v5'});
+   assert.equal(result.status,'submitted');assert.equal(result.admitted_requests,0);assert.deepEqual(f.grade,before);
+   const saved=JSON.parse(await readFile(result.feedback_path,'utf8'));
+   assert.equal(saved.generation_mode,'deterministic-source-bound-v5');assert.equal(saved.grade_hash,digest(before));
+   assert.equal(saved.items.length,4);assert.ok(saved.items.find(x=>x.item_id===names[2]).review_recommended);
+   assert.equal(saved.selection.items[names[2]].action,'inspect_source');
+   assert.ok(!saved.strengths.some(x=>x.item_ids.includes(names[2])||x.item_ids.includes(names[3])));
+   const body=await readFile(result.report_path,'utf8');assert.match(body,/待定/);assert.match(body,/nonzero vector/);
+   assert.ok(!Object.hasOwn(saved,'model_submission_hash'));
+  }finally{await rm(directory,{recursive:true,force:true});}
+ }
+});
+
+test('saved feedback never manufactures strengths under global source uncertainty',()=>{
+ const f=fixture();f.frozen.artifact.unresolved_notes=['Applicability has not been resolved.'];
+ const raw=selectSavedFeedback(f.grade,f.frozen);assert.deepEqual(raw.strengths,[]);
+ const expanded=expandSourceBoundFeedback(raw,f.grade,f.frozen);assert.ok(expanded.feedback.items.every(x=>x.review_recommended));
+ assert.equal(expanded.metadata.selection.items.Alpha.action,'inspect_source');
+ assert.ok(expanded.feedback.items.every(x=>!x.review_reason.includes('反馈模型')));
 });

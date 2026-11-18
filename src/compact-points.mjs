@@ -38,8 +38,9 @@ export function decodePointState(state) {
 // Lossless transport decoding only. An explicit "4-6" cites all three physical
 // pages; never infer a missing citation from the score, evidence or geometry.
 export function decodeCompactPageRefs(value, student) {
+  if(Number.isSafeInteger(value)&&value>0&&student.pages.some(p=>p.page===value))return [value];
   if(Array.isArray(value))return value;
-  if(typeof value!=='string'||!/^\s*[1-9]\d*(?:\s*-\s*[1-9]\d*)?(?:\s*,\s*[1-9]\d*(?:\s*-\s*[1-9]\d*)?)*\s*$/.test(value))throw Error('Invalid explicit student page references');
+  if(typeof value!=='string'||!/^\s*[1-9]\d*(?:\s*-\s*[1-9]\d*)?(?:\s*,\s*[1-9]\d*(?:\s*-\s*[1-9]\d*)?)*\s*$/.test(value))throw Error('Invalid explicit student page references; use a bound page number, page array or explicit page range');
   const pages=[];
   for(const segment of value.split(',')) {
     const [first,last=first]=segment.trim().split(/\s*-\s*/).map(Number);
@@ -55,7 +56,9 @@ export function expandCompactPoints(raw,frozen,student) {
     if(!row||Object.keys(row).sort().join(',')!=='id,p,review,route'||!Array.isArray(row.p))throw Error('Invalid compact point item');
     return {...row,p:row.p.map(p=>{
       if(!Array.isArray(p)||p.length!==6)throw Error('Point row must have six cells');
-      const [id,score,evidence,pages,state,reason]=p;return [id,score,evidence,decodeCompactPageRefs(pages,student),...decodePointState(state),reason];
+      const [id,score,evidence,pages,state,reason]=p;
+      try{return [id,score,evidence,decodeCompactPageRefs(pages,student),...decodePointState(state),reason];}
+      catch(error){error.message=`${row.id}/${id}: ${error.message}`;error.itemIds=[row.id];throw error;}
     })};
   }),review_notes:raw.review_notes};
   return expandPointEvidence(expanded,frozen,student);
