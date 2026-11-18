@@ -1,3 +1,4 @@
+import { modelConfigError } from '../../web/grading-models.mjs';
 import { mkdir, readFile, writeFile, rename } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -79,6 +80,13 @@ export function replacePartition(state, groups, unassignedPageIds = []) {
 
 export function taskDraft(state, input) {
   const kind = input.kind ?? 'grade';
+  let modelConfig;
+  if (input.modelConfig !== undefined) {
+    const error = modelConfigError(input.modelConfig);
+    fail(kind === 'grade' && !error, error || '仅批改任务支持模型搭配。');
+    const { mainModel, mainEffort, workerModel, workerEffort } = input.modelConfig;
+    modelConfig = { mainModel, mainEffort, workerModel, workerEffort };
+  }
   fail(['grade', 'assist'].includes(kind), '任务类型无效。');
   fail(input.goal == null || (typeof input.goal === 'string' && input.goal.length <= 8000), '任务要求最多 8000 字。');
   const legacyGoal = input.goal?.trim() || '';
@@ -99,7 +107,7 @@ export function taskDraft(state, input) {
   return {
     id: id(), title: (typeof input.title === 'string' && input.title.trim() ? input.title : kind === 'grade' ? `批改 ${groups.length} 份答卷` : goal).trim().slice(0, 120), goal,
     supplementalInstructions: supplementalInstructions.trim(),
-    kind, groupIds: [...input.groupIds], schemeId: scheme?.id ?? null, after: input.after,
+    ...(modelConfig ? { modelConfig } : {}), kind, groupIds: [...input.groupIds], schemeId: scheme?.id ?? null, after: input.after,
     questionId: question?.id ?? null, question: structuredClone(question),
     gradingContext: input.gradingContext?.trim() || '', allowWebSearch: input.allowWebSearch === true,
     executionMode: executionMode(input.executionMode ?? state.executionMode),

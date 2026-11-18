@@ -12,6 +12,17 @@ const SOL_62_ID = 'openai/gpt-6.2-sol';
 const openaiIds = [SOL_62_ID, 'openai/gpt-6.1-terra', 'openai/gpt-6.1-sol', 'openai/gpt-6-luna'];
 
 export function experimentModel(models, id) {
+  if (id === 'qwen/qwen4-max' || id === 'qwen/qwen3.8-flash') {
+    const flash = models.getModel('openrouter', 'qwen/qwen3.8-flash');
+    if (!flash) throw Error('Qwen OpenRouter serializer is absent from the Pi catalog');
+    // The Alibaba endpoint exposes max_tokens for both models. Use this
+    // endpoint's cache-write pricing for budget reservations.
+    const cost = id === 'qwen/qwen4-max'
+      ? { input: 1.425, output: 4.275, cacheRead: 0.07125, cacheWrite: 1.78125 }
+      : { ...flash.cost, cacheWrite: 0.2 };
+    return { ...flash, id, name: id === 'qwen/qwen4-max' ? 'Qwen: Qwen4 Max' : flash.name,
+      cost, compat: { ...flash.compat, maxTokensField: 'max_tokens' } };
+  }
   if (openaiIds.includes(id)) {
     const model = models.getModel('openrouter', id);
     // The pinned Pi catalog predates 6.2. The standard OpenRouter endpoint
@@ -39,7 +50,8 @@ export function experimentModel(models, id) {
 }
 
 export function experimentProvider(id) {
-  if (!googleModels[id] && !openaiIds.includes(id)) throw Error('Model has no declared provider route');
-  return {only: [googleModels[id] ? 'google-vertex/global' : 'openai'],
+  const qwen = id === 'qwen/qwen4-max' || id === 'qwen/qwen3.8-flash';
+  if (!qwen && !googleModels[id] && !openaiIds.includes(id)) throw Error('Model has no declared provider route');
+  return {only: [qwen ? 'alibaba' : googleModels[id] ? 'google-vertex/global' : 'openai'],
     allow_fallbacks: false, require_parameters: true, data_collection: 'deny'};
 }

@@ -217,7 +217,7 @@ document.addEventListener('input', event => {
   }
 });
 document.addEventListener('change', event => {
-  if (event.target.closest('#task-form')) refreshTaskSetup(event.target.closest('#task-form'), ctx.state);
+  if (event.target.closest('#task-form')) refreshTaskSetup(event.target.closest('#task-form'), ctx.state, event.target);
   if (event.target.matches('[data-group]')) { const id = event.target.dataset.group; event.target.checked ? ctx.selected.add(id) : ctx.selected.delete(id); render(); }
   if (event.target.id === 'review-task') { ctx.reviewTaskId = event.target.value; ctx.reviewIndex = 0; ctx.sourcePage = {}; render(); }
   if (event.target.dataset.source) { ctx.sourcePage[event.target.dataset.source] = Number(event.target.value); render(); }

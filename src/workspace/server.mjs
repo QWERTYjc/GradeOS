@@ -12,7 +12,7 @@ import { WorkspaceRunner } from './runner.mjs';
 import { WorkspaceChat } from './chat.mjs';
 import { addDocument, readDocument, saveDocument, addAnnotation, updateAnnotation } from './editable-documents.mjs';
 import { exportAnnotatedPdf } from './annotation-export.mjs';
-import { DEFAULT_MAIN_MODEL_ID } from '../experiment-models.mjs';
+import { DEFAULT_MAIN_MODEL_ID, DEFAULT_WORKER_MODEL_ID } from '../experiment-models.mjs';
 import {gradingResult,resultMarkdown} from '../../web/grading-result.mjs';
 
 const mime = { '.html': 'text/html; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.png': 'image/png', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.woff': 'font/woff', '.ttf': 'font/ttf' };
@@ -29,6 +29,7 @@ export async function createWorkspaceServer({ directory, port = 4173, model = DE
   const token = randomBytes(32).toString('hex');
   let planning = false;
   const state = () => publicState(store.snapshot(), configured(), { planning: planning || Boolean(chat.active), chat: chat.snapshot(),
+    defaultGradingConfig: { mainModel: model, mainEffort: 'low', workerModel: DEFAULT_WORKER_MODEL_ID, workerEffort: 'medium' },
     failureReasons: runner.failureReasons, liveTasks: Object.fromEntries([...runner.active].map(([id, entry]) => [id, { events: entry.events?.slice(-120) || [] }])), runBudgetUsd: cap, researchAvailable: Boolean(process.env.BRAVE_SEARCH_API_KEY) });
   const send = (res, status, data) => { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(data)); };
   const server = createServer(async (req, res) => {
@@ -201,7 +202,7 @@ export async function createWorkspaceServer({ directory, port = 4173, model = DE
         return send(res, 200, state());
       }
       fail(req.method === 'GET' || req.method === 'HEAD', '方法不支持。', 405);
-      const files = new Set(['index.html', 'app.mjs', 'ui.mjs', 'materials.mjs', 'grading-library.mjs', 'tasks.mjs', 'review.mjs', 'style.css', 'canvas-app.mjs', 'canvas-view.mjs', 'canvas-selection.mjs', 'canvas.css', 'workspace-canvas.mjs', 'document-editor.mjs', 'workspace-canvas.css', 'document-reader.mjs', 'document-reader.css', 'report-math.mjs', 'math-text-parser.mjs', 'results-view.mjs', 'results.css']);
+      const files = new Set(['index.html', 'app.mjs', 'ui.mjs', 'materials.mjs', 'grading-library.mjs', 'grading-models.mjs', 'tasks.mjs', 'review.mjs', 'style.css', 'canvas-app.mjs', 'canvas-view.mjs', 'canvas-selection.mjs', 'canvas.css', 'workspace-canvas.mjs', 'document-editor.mjs', 'workspace-canvas.css', 'document-reader.mjs', 'document-reader.css', 'report-math.mjs', 'math-text-parser.mjs', 'results-view.mjs', 'results.css']);
       for (const file of ['system.html', 'system-app.mjs', 'system-view.mjs', 'system.css']) files.add(file);
       const relative = url.pathname === '/' ? 'system.html' : url.pathname === '/grading' ? 'index.html' : url.pathname.slice(1);
       let file;

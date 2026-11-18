@@ -108,10 +108,11 @@ export class WorkspaceRunner {
       notes: [{ id: id(), text: '批改所选答卷',
       groupIds: task.groupIds, selections: task.selections || [], references: task.references || [], createdAt: now(), origin: 'task' }] });
     if (usesAdaptiveGrading(task)) return runAdaptiveGrading({ store: this.store, task, input, entry, runner: this });
+    const config = task.modelConfig;
     const args = [join(experimentRoot, 'src/run-cohort.mjs'), '--manifest', input.manifest, '--output', input.output,
       '--interaction-dir', entry.interaction,
-      '--execute', '--model', this.model, '--worker-model', DEFAULT_WORKER_MODEL_ID, '--scripted', '--cap', String(this.cap), '--max-requests', '256',
-      '--grading-reasoning', 'medium', '--annotation-grid', '--inline-annotations', '--student-cap', '0.01'];
+      '--execute', '--model', config?.mainModel ?? this.model, '--worker-model', config?.workerModel ?? DEFAULT_WORKER_MODEL_ID, '--scripted', '--cap', String(this.cap), '--max-requests', '256',
+      ...(config ? ['--main-reasoning', config.mainEffort, '--worker-reasoning', config.workerEffort] : ['--grading-reasoning', 'medium']), '--annotation-grid', '--inline-annotations', '--student-cap', '0.01'];
     // Vision runs locally; other platforms retain the image-only path explicitly.
     if (process.platform === 'darwin') args.push('--local-ocr');
     if (this.rubricPath) {

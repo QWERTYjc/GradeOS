@@ -1,3 +1,4 @@
+import { gradingModel, effortLabel } from './grading-models.mjs';
 import { escape as e, icon, button as b, iconButton as ib, markdown, statuses, latestReview } from './ui.mjs';
 import { progressMetrics } from './tasks.mjs';
 import { resultTasks, resultsBar } from './results-view.mjs';
@@ -84,6 +85,7 @@ export function processView(ctx, task) {
   const phase = !running && task.progress?.phase ? `<p>最后处理到：${e(task.progress.phase)}</p>` : '';
   return `<article class="process-sheet"><div class="process-caption">批改处理过程</div><h1>${e(title)}</h1>
     <p>${e(task.title)} · ${total} 份答卷</p>
+    ${task.modelConfig ? `<p class="process-models">主模型 ${e(gradingModel(task.modelConfig.mainModel)?.name)}（${e(effortLabel(task.modelConfig.mainModel, task.modelConfig.mainEffort))}） · 子模型 ${e(gradingModel(task.modelConfig.workerModel)?.name)}（${e(effortLabel(task.modelConfig.workerModel, task.modelConfig.workerEffort))}）</p>` : ''}
     <div class="process-meter"><strong>已保存评分</strong><span>${completed} / ${total} 份</span></div>
     <progress value="${completed}" max="${Math.max(1,total)}" aria-label="已保存评分的答卷"></progress>
     ${phase}${task.error ? `<p role="status" class="small-notice">${e(ctx.state.failureReasons?.[task.id] || task.error)}</p>` : ''}${progressMetrics(task.progress)}

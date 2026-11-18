@@ -1,3 +1,4 @@
+import { flashBudgets } from '../web/grading-models.mjs';
 import { readFile, writeFile, mkdir, rename, appendFile, open } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -66,7 +67,7 @@ export function isolateStudentCache(payload, scope) {
   return payload;
 }
 
-export function createRuntime({ models, model, output, cap, controller, maxRequests = 60, deadlineMs = 900000, maxOutputTokens = null, studentCacheNamespace = null, progress = null, interaction = null, structuredOutput = true, provider = { only: ['openai'], allow_fallbacks: false, require_parameters: true, data_collection: 'deny' }, workerModel = model, workerProvider = provider, singlePassGrading = false, coldCacheNamespace = null, studentCapUsd = null }) {
+export function createRuntime({ models, model, output, cap, controller, maxRequests = 60, deadlineMs = 900000, maxOutputTokens = null, studentCacheNamespace = null, progress = null, interaction = null, structuredOutput = true, provider = { only: ['openai'], allow_fallbacks: false, require_parameters: true, data_collection: 'deny' }, workerModel = model, workerProvider = provider, mainEffort, workerEffort, singlePassGrading = false, coldCacheNamespace = null, studentCapUsd = null }) {
   if (maxOutputTokens!==null&&(!Number.isInteger(maxOutputTokens) || maxOutputTokens < 1)) throw Error('Invalid explicit output token allowance');
   const budget = new Budget({ cap, maxRequests, deadlineMs, scopeCap:studentCapUsd });
   const active = new Set();
@@ -85,6 +86,7 @@ export function createRuntime({ models, model, output, cap, controller, maxReque
     const directory = resolve(output, lane); await mkdir(directory);
     const laneModel = lane === 'main' ? model : workerModel;
     const laneProvider = lane === 'main' ? provider : workerProvider;
+    const effort = lane === 'main' ? mainEffort : workerEffort;
     let current = null, currentInputSnapshot = null, previousInputReceipt = null;
     const laneLog = event => log({ lane, ...event });
     const streamFn = (selectedModel, context, options) => {
@@ -93,7 +95,7 @@ export function createRuntime({ models, model, output, cap, controller, maxReque
       const requestPhase = phase();
       validateCorrectionRequest(requestPhase,lane,gradingCorrectionRequest);
       return models.streamSimple(selectedModel, context, {
-      ...providerOptions, apiKey: process.env.OPENROUTER_API_KEY, maxRetries: 0, maxTokens: maxOutputTokens??laneModel.maxTokens, timeoutMs: singlePassGrading ? 240000 : 180000,
+      ...providerOptions, ...(effort ? { reasoning: effort === 'on' ? 'low' : effort === 'off' ? undefined : effort } : {}), apiKey: process.env.OPENROUTER_API_KEY, maxRetries: 0, maxTokens: maxOutputTokens??laneModel.maxTokens, timeoutMs: singlePassGrading ? 240000 : 180000,
       signal: options?.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal,
       onPayload: async payload => {
         await interaction?.beforeRequest(lane);
@@ -102,9 +104,15 @@ export function createRuntime({ models, model, output, cap, controller, maxReque
         if (!isolated) await interaction?.recordDelivery(lane, payload);
         if (payload.model !== laneModel.id) throw Error('Serialized model differs from the declared lane model');
         payload.provider = laneProvider; payload.usage = { include: true };
-        // The OpenRouter OpenAI Luna endpoint declares max_tokens, not the
-        // catalog serializer's max_completion_tokens. Keep strict routing.
-        if(laneModel.id==='openai/gpt-6-luna'&&payload.max_completion_tokens!==undefined) {
+        if (effort) {
+          if (laneModel.id === 'qwen/qwen3.8-flash') {
+            payload.reasoning = flashBudgets[effort] ? { max_tokens: flashBudgets[effort] } : { enabled: effort !== 'off' };
+          } else {
+            payload.reasoning = { effort: effort === 'off' ? 'none' : effort };
+          }
+        }
+        // These pinned endpoints declare max_tokens for tool calls with images.
+        if (['openai/gpt-6-luna', 'openai/gpt-6.2-sol', 'qwen/qwen4-max', 'qwen/qwen3.8-flash'].includes(laneModel.id) && payload.max_completion_tokens !== undefined) {
           payload.max_tokens=payload.max_completion_tokens;
           delete payload.max_completion_tokens;
         }
@@ -137,11 +145,13 @@ export function createRuntime({ models, model, output, cap, controller, maxReque
         const studentScope=/^(student|feedback|exception|source-review)-/.test(lane)?lane.replace(/^(feedback|exception|source-review)-/,'student-'):undefined;
         const scope=budget.scopes.has(lane)?lane:studentScope&&(budget.scopes.has(studentScope)||singlePassGrading)?studentScope:undefined;
         let reserve=null;
-        const metadata={lane,phase:requestPhase,...(scope?{budget_scope:scope,student_cap_usd:studentCapUsd}:{}),configured_model:laneModel.id,configured_provider:laneProvider,
+        const metadata={lane,phase:requestPhase,...(scope?{budget_scope:scope,student_cap_usd:studentCapUsd}:{}),configured_model:laneModel.id,configured_provider:laneProvider,configured_reasoning:effort ?? options?.reasoning,
           request_kind:gradingCorrectionRequest?.kind??'normal',grading_correction:gradingCorrectionRequest??null,
           student_cache_scope:cacheScope,...estimate,cost_input_token_reserve:inputContext.upperBound,input_context_estimate:inputContext};
         try {
           const allowance=outputBudget({model:laneModel,payload,inputTokens:inputContext.upperBound,prices:tier,available:budget.available(scope),requestedLimit:maxOutputTokens});
+          if (payload.reasoning?.max_tokens >= allowance.tokens) throw Object.assign(
+            Error('本次费用或上下文余量不足以容纳所选思考预算，请降低思考强度。'), {code:'OUTPUT_BUDGET_LIMIT'});
           const {reservation}=allowance;reserve=reservation.input_usd+reservation.output_usd;
           Object.assign(metadata,wireEstimate(payload),{max_output_tokens:allowance.tokens,output_allowance:allowance,reservation});
           current = budget.admit(reserve,metadata);

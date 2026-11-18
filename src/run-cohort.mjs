@@ -1,3 +1,4 @@
+import { gradingModel } from '../web/grading-models.mjs';
 import { pythonExecutable } from './python.mjs';
 import { createModels } from '@earendil-works/pi-ai';
 import { openrouterProvider } from '@earendil-works/pi-ai/providers/openrouter';
@@ -56,6 +57,8 @@ const { values } = parseArgs({ options: {
   'trim-white-margins': {type:'boolean',default:false},
   'initial-image-max-side': {type:'string'},
   'annotation-grid': {type:'boolean',default:false},
+  'main-reasoning': {type:'string'},
+  'worker-reasoning': {type:'string'},
   'grading-reasoning': {type:'string',default:'low'},
   'all-ms-images': {type:'boolean',default:false},
   'local-ocr': {type:'boolean',default:false},
@@ -105,10 +108,11 @@ const maxRequests = requestLimit === 'unlimited' ? null : Number(requestLimit);
 if (maxRequests !== null && (!Number.isInteger(maxRequests) || maxRequests < 1 || maxRequests > 512)) throw Error('Invalid aggregate request limit');
 const inlineAnnotations=values['inline-annotations'];
 const scripted=values.scripted;
-const annotationGrid=values['annotation-grid'],gradingReasoning=values['grading-reasoning'];
+const mainEffort=values['main-reasoning'],workerEffort=values['worker-reasoning'];
+const annotationGrid=values['annotation-grid'],gradingReasoning=workerEffort === 'on' ? 'low' : workerEffort ?? values['grading-reasoning'];
 if(values['local-ocr']&&(!scripted||process.platform!=='darwin'))throw Error('Local optical hints require scripted grading on macOS');
 if(annotationGrid&&!scripted)throw Error('Spatial ruler requires scripted grading');
-if(!['off','low','medium','high'].includes(gradingReasoning))throw Error('Grading reasoning must be off, low, medium or high');
+if(!['off','low','medium','high','xhigh','max'].includes(gradingReasoning))throw Error('Unsupported grading reasoning level');
 if(scripted&&studentProtocol!=='evidence-v4')throw Error('Scripted execution requires evidence-v4');
 if(values['approved-guide']&&(!scripted||!reusedRubric||values['interaction-dir']))throw Error('Approved guide replay requires scripted frozen rubric without live interaction');
 const replayGuide=values['approved-guide']?validateReplayGuide(JSON.parse(await readFile(resolve(values['approved-guide']),'utf8')),reusedRubric):null;
@@ -132,6 +136,9 @@ const model = experimentModel(models, values.model);
 const provider = experimentProvider(model.id);
 const workerModel = experimentModel(models, values['worker-model'] ?? DEFAULT_WORKER_MODEL_ID);
 const workerProvider = experimentProvider(workerModel.id);
+for (const [roleModel, effort] of [[model,mainEffort],[workerModel,workerEffort]]) {
+  if (effort !== undefined && !gradingModel(roleModel.id)?.efforts.includes(effort)) throw Error('Unsupported reasoning setting for ' + roleModel.id);
+}
 await mkdir(output, { recursive: false });
 let imageVariants=null;const preparationStarted=Date.now();
 if(values['trim-white-margins']||annotationGrid||initialImageMaxSide!==null){
@@ -167,6 +174,7 @@ const opticalPreparationSeconds=localObservations?(Date.now()-opticalStarted)/10
 const sourceHashes = {};
 for(const path of ['scripts/python/native_pages.py','scripts/python/prepare.py','scripts/python/workspace_documents.py'])sourceHashes[path]=digest(await readFile(resolve(root,path)));
 sourceHashes['src/inline-annotations.mjs']=digest(await readFile(resolve(root,'src/inline-annotations.mjs')));
+sourceHashes['web/grading-models.mjs'] = digest(await readFile(resolve(root, 'web/grading-models.mjs')));
 sourceHashes['src/scripted-grading.mjs']=digest(await readFile(resolve(root,'src/scripted-grading.mjs')));
 sourceHashes['src/single-pass-grading.mjs']=digest(await readFile(resolve(root,'src/single-pass-grading.mjs')));
 for(const path of ['src/local-observations.mjs','scripts/macos/student_ocr.swift'])sourceHashes[path]=digest(await readFile(resolve(root,path)));
@@ -195,7 +203,7 @@ const plan = { version: 2, mode: reusedRubric ? 'frozen-rubric replay' : 'full-c
   preparation_elapsed_seconds:imagePreparationSeconds+opticalPreparationSeconds,
   student_cache_namespace: studentCacheNamespace,
   cache_experiment: studentCacheNamespace ? 'Unique first-user namespace per student/feedback lane, after shared system/MS prefix; same namespace across turns. Verify actual cache receipts.' : 'Provider automatic caching without artificial input isolation',
-  max_requests: maxRequests, output_policy:'model/context capacity and available task funds; no phase or correction token quota', deadline_seconds: 900, reasoning: 'low', grading_reasoning:gradingReasoning, temperature: null, seed: null,
+  max_requests: maxRequests, output_policy:'model/context capacity and available task funds; no phase or correction token quota', deadline_seconds: 900, reasoning: mainEffort ?? 'low', grading_reasoning:workerEffort ?? gradingReasoning, temperature: null, seed: null,
   provider, model_roles: {main:{model,provider,phases:['ms_compilation','ms_verification','coordination','reporting']},
     worker:{model:workerModel,provider:workerProvider,phases:['student_grading','student_self_review','exception_review','source_permission_review','student_feedback']}},
   network_retries: 0, attempts_per_student: 1, labels_in_model_context: false,
@@ -235,7 +243,7 @@ await progress.start();
 const controller = new AbortController();
 const interaction = values['interaction-dir'] ? await new TeacherInteraction(resolve(values['interaction-dir']), { signal: controller.signal,
   schemePages: scheme.pages, students: new Map([...students].map(([id, document]) => [id, document.pages])) }).init() : null;
-const runtime = createRuntime({ models, model, workerModel, output, cap, controller, maxRequests, studentCacheNamespace, progress, interaction, structuredOutput:values.json,provider,workerProvider,
+const runtime = createRuntime({ models, model, workerModel, output, cap, controller, maxRequests, studentCacheNamespace, progress, interaction, structuredOutput:values.json,provider,workerProvider,mainEffort,workerEffort,
   singlePassGrading:scripted,coldCacheNamespace:values['cold-cache-namespace']??null,studentCapUsd:scripted?studentCapUsd:null });
 process.once('SIGINT', () => {void progress.cancelRequested();controller.abort(Error('User cancellation'));});
 if(scripted) {

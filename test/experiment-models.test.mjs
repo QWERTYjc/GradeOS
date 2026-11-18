@@ -151,3 +151,39 @@ test('Carbon and Hydrogen retain low and medium reasoning in actual Pi wire, wit
   assert.ok((wire.max_tokens??wire.max_completion_tokens)>24000);assert.deepEqual(experimentProvider(id).only,['google-vertex/global']);
  }
 });
+
+test('grading presets and custom pairs reach both serialized routes with their selected reasoning', async () => {
+  const { gradingPresets, modelConfigError } = await import('../web/grading-models.mjs');
+  const native = catalog();
+  const configs = [...gradingPresets,
+    { mainModel:'qwen/qwen3.8-flash', mainEffort:'off', workerModel:'openai/gpt-6.2-sol', workerEffort:'max' },
+    { mainModel:'openai/gpt-6.1-terra', mainEffort:'off', workerModel:'qwen/qwen4-max', workerEffort:'xhigh' }];
+  assert.match(modelConfigError({...configs[2],mainEffort:'medium'}), /不支持/);
+  for (const config of configs) {
+    assert.equal(modelConfigError(config),null);
+    const output = await mkdtemp(resolve(tmpdir(),'grading-wires-'));
+    const main = experimentModel(native,config.mainModel), worker = experimentModel(native,config.workerModel);
+    const models = {streamSimple(model,context,options) {
+      return native.streamSimple(model,context,{...options,apiKey:'local-test-only',onPayload:async payload=>{
+        await options.onPayload(payload);
+        throw Error('Offline capture complete');
+      }});
+    }};
+    const runtime = createRuntime({models,model:main,workerModel:worker,output,cap:2,controller:new AbortController(),
+      provider:experimentProvider(main.id),workerProvider:experimentProvider(worker.id),
+      mainEffort:config.mainEffort,workerEffort:config.workerEffort,maxOutputTokens:12000,structuredOutput:false});
+    try {
+      for (const [index,[lane,model,effort]] of [['main',main,config.mainEffort],['student-a',worker,config.workerEffort]].entries()) {
+        const io = await runtime.io(lane,()=>lane==='main'?'ms_compilation':'student_grading');
+        await io.streamFn(model,{messages:[{role:'user',timestamp:1,content:[{type:'image',mimeType:'image/png',data:'synthetic'}]}],
+          tools:[{name:'submit_grading',description:'Submit evidence',parameters:COMPACT_POINTS_SCHEMA}]},{reasoning:'low'}).result();
+        const payload = JSON.parse(await readFile(resolve(io.directory,`request-${index+1}.json`),'utf8'));
+        assert.equal(payload.model,model.id);
+        assert.deepEqual(payload.provider.only,[model.id.startsWith('qwen/')?'alibaba':'openai']);
+        assert.deepEqual(payload.reasoning,model.id==='qwen/qwen3.8-flash' ?
+          effort==='off'?{enabled:false}:{max_tokens:2048} : {effort:effort==='off'?'none':effort});
+        assert.equal(payload.tools[0].function.name,'submit_grading');
+      }
+    } finally {runtime.close();await rm(output,{recursive:true,force:true});}
+  }
+});

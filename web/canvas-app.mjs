@@ -360,7 +360,7 @@ document.addEventListener('change', event => {
   if (event.target.matches('#assign-form select')) event.target.form.elements.label.disabled = Boolean(event.target.value);
   if (event.target.id === 'result-task') openResults(event.target.value).catch(error => toast(error.message));
   if (event.target.id === 'result-group') openResults(ctx.resultTaskId, event.target.value).catch(error => toast(error.message));
-  if (event.target.closest('#task-form')) refreshTaskSetup(event.target.closest('#task-form'), ctx.state);
+  if (event.target.closest('#task-form')) refreshTaskSetup(event.target.closest('#task-form'), ctx.state, event.target);
   if (event.target.id === 'document-picker') showPage(documents(ctx.state).find(doc => doc.id === event.target.value)?.pageIds[0]);
   if (event.target.matches('[data-group]')) { ctx.scopeAll = false; const id = event.target.dataset.group; event.target.checked ? ctx.selected.add(id) : ctx.selected.delete(id); render(); }
 });

@@ -183,7 +183,7 @@ export function createStudentAgent({ model, streamFn, frozen, scheme, student, r
   readInitialStudentImage=readImage,readInitialSchemeImage=null,readStudentRegion=null,readSourceRegion=readStudentRegion,initialStudentImageMode='original',reasonStyle='detailed',sourcePermissionReview=false,
   inlineAnnotations=false, initialStudentGeometry=[], singlePass=false, markingGuide=null, gradingReasoning='low', localObservations=[], selfReview=false, persistPrimary }) {
   if(selfReview&&(protocol!=='evidence-v4'||singlePass||sourcePermissionReview||typeof persistPrimary!=='function'))throw Error('Self-review requires normal evidence-v4 grading and durable primary persistence');
-  if (!['off', 'low', 'medium', 'high'].includes(gradingReasoning)) throw Error('Unsupported grading reasoning');
+  if (!['off', 'low', 'medium', 'high', 'xhigh', 'max'].includes(gradingReasoning)) throw Error('Unsupported grading reasoning');
   if (!['original', 'source_grid', 'exact_white_margin_trim', 'resized_overview'].includes(initialStudentImageMode)) throw Error('Unsupported answer image representation');
   const annotationGrid = initialStudentImageMode === 'source_grid';
   const localOnly=selfReview&&initialStudentImageMode==='resized_overview';

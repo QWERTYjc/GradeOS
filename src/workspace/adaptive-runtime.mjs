@@ -55,11 +55,12 @@ export async function runAdaptiveGrading({ store, task, input, entry, runner, mo
     schemePages: pagesFor('scheme'), questionPages: pagesFor('question'),
     students: new Map(task.groups.map(group => [group.id, group.pageIds.map(id => task.pages.find(page => page.id === id))])) }).init();
   if (!models) { models = createModels(); models.setProvider(openrouterProvider()); }
-  const model = experimentModel(models, runner.model);
-  const workerModel = experimentModel(models, DEFAULT_WORKER_MODEL_ID);
+  const config = task.modelConfig;
+  const model = experimentModel(models, config?.mainModel ?? runner.model);
+  const workerModel = experimentModel(models, config?.workerModel ?? DEFAULT_WORKER_MODEL_ID);
   const runtime = createRuntime({ models, model, output: input.output, cap: runner.cap, controller: entry.controller,
     maxRequests: 128, deadlineMs: 900000, structuredOutput: false,
-    studentCacheNamespace: task.id, provider: experimentProvider(runner.model),
+    studentCacheNamespace: task.id, provider: experimentProvider(model.id), mainEffort: config?.mainEffort, workerEffort: config?.workerEffort,
     workerModel, workerProvider: experimentProvider(workerModel.id), interaction });
   const research = createGradingResearch({ enabled: task.allowWebSearch, signal: entry.controller.signal,
     persist: event => appendFile(join(input.output, 'research.jsonl'), JSON.stringify(event) + '\n', { mode: 0o600 }) });
@@ -92,7 +93,7 @@ export async function runAdaptiveGrading({ store, task, input, entry, runner, mo
   }, 500);
   const io = await runtime.io('main', () => coordinator?.getPlan() ? 'adaptive_coordination' : 'adaptive_preparation');
   try {
-    await freezeJson(input.output, 'adaptive-run.json', { version: 1, taskId: task.id, model: runner.model, workerModel: workerModel.id, provider: runtime.provider,
+    await freezeJson(input.output, 'adaptive-run.json', { version: 1, taskId: task.id, model: model.id, workerModel: workerModel.id, mainEffort: config?.mainEffort ?? 'low', workerEffort: config?.workerEffort ?? 'low', provider: runtime.provider,
       sourcePages: task.pages.map(({ id, role, sha256 }) => ({ id, role, sha256 })), groupIds: task.groupIds,
       gradingContext: task.gradingContext, teacherGoal: task.goal, supplementalInstructions: task.supplementalInstructions, executionMode: task.executionMode, cap: runner.cap,
       researchAvailable: research.available, labelsInModelContext: false, referenceVerification: 'isolated-task-derivation-and-source-audit-v1' });

@@ -1,3 +1,4 @@
+import { gradingModels, gradingModel, gradingPresets, effortLabel } from './grading-models.mjs';
 import { escape as e, icon, button, statuses, empty, markdown } from './ui.mjs';
 
 const finite = value => typeof value === 'number' && Number.isFinite(value) && value >= 0;
@@ -40,6 +41,46 @@ export function taskView(ctx) {
   </section>`;
 }
 
+function presetIndex(config) {
+  return gradingPresets.findIndex(preset => Object.keys(preset).every(key => preset[key] === config[key]));
+}
+function effortOptions(modelId, selected) {
+  return gradingModel(modelId).efforts.map(effort => `<option value="${effort}" ${effort === selected ? 'selected' : ''}>${effortLabel(modelId, effort)}</option>`).join('');
+}
+function gradingModelFields(config) {
+  const preset = presetIndex(config);
+  const roleFields = (role, label) => {
+    const id = config[role + 'Model'];
+    return `<div class="model-role"><label>${label}<select name="${role}Model">${gradingModels.map(model => `<option value="${model.id}" ${model.id === id ? 'selected' : ''}>${model.name}</option>`).join('')}</select></label>
+      <label>思考强度<select aria-label="${label}思考强度" name="${role}Effort">${effortOptions(id, config[role + 'Effort'])}</select></label></div>`;
+  };
+  return `<section class="model-settings"><label>模型搭配<select name="modelPreset">${gradingPresets.map((pair,index) => `<option value="${index}" ${index === preset ? 'selected' : ''}>${gradingModel(pair.mainModel).name} + ${gradingModel(pair.workerModel).name}</option>`).join('')}<option value="custom" ${preset < 0 ? 'selected' : ''}>自定义搭配</option></select></label>
+    <details class="model-details" ${preset < 0 ? 'open' : ''}><summary>调整模型与思考强度</summary>${roleFields('main','主模型 · 整理评分要求')}${roleFields('worker','子模型 · 逐份批改')}</details></section>`;
+}
+function readModelConfig(data) {
+  return Object.fromEntries(['mainModel','mainEffort','workerModel','workerEffort'].map(key => [key, data.get(key)]));
+}
+function changeModelSelection(form, field) {
+  const preset = form.elements.modelPreset;
+  if (!preset || !field) return;
+  if (field === preset) {
+    if (preset.value === 'custom') { form.querySelector('.model-details').open = true; return; }
+    const pair = gradingPresets[Number(preset.value)];
+    for (const role of ['main','worker']) {
+      form.elements[role+'Model'].value = pair[role+'Model'];
+      form.elements[role+'Effort'].innerHTML = effortOptions(pair[role+'Model'], pair[role+'Effort']);
+    }
+    return;
+  }
+  if (!['mainModel','mainEffort','workerModel','workerEffort'].includes(field.name)) return;
+  if (field.name.endsWith('Model')) {
+    const strength = form.elements[field.name.replace('Model','Effort')], levels = gradingModel(field.value).efforts;
+    strength.innerHTML = effortOptions(field.value, levels.includes(strength.value) ? strength.value : levels.includes('medium') ? 'medium' : 'high');
+  }
+  const matched = presetIndex(readModelConfig(new FormData(form)));
+  preset.value = matched < 0 ? 'custom' : String(matched);
+}
+
 export function taskForm(ctx, task = null, { allowStart = false } = {}) {
   const selected = new Set(task?.groupIds || [...ctx.selected]);
   const mode = task ? task.executionMode || 'review' : 'auto';
@@ -47,6 +88,9 @@ export function taskForm(ctx, task = null, { allowStart = false } = {}) {
   const schemeId = task ? task.schemeId : ctx.state.schemes[0]?.id;
   const questionId = task ? task.questionId : ctx.state.questions?.[0]?.id;
   const selectedGroups = ctx.state.groups.filter(group => selected.has(group.id));
+  const legacyConfig = task?.id && ctx.state.defaultGradingConfig;
+  const adaptive = !task?.schemeId || task.questionId || task.allowWebSearch || task.gradingContext;
+  const config = task?.modelConfig || (legacyConfig && { ...legacyConfig, workerEffort: adaptive ? 'low' : legacyConfig.workerEffort }) || gradingPresets[0];
   const canStart = allowStart && task?.kind !== 'assist';
   return `<form id="task-form" class="form task-setup"><input type="hidden" name="kind" value="${task?.kind === 'assist' ? 'assist' : 'grade'}">
     ${task?.title ? `<input type="hidden" name="title" value="${e(task.title)}">` : ''}
@@ -56,6 +100,7 @@ export function taskForm(ctx, task = null, { allowStart = false } = {}) {
     <label>Marking scheme（可选）<select name="schemeId"><option value="">无</option>${ctx.state.schemes.map(scheme => `<option value="${e(scheme.id)}" ${schemeId === scheme.id ? 'selected' : ''}>${e(scheme.label)}</option>`).join('')}</select></label></div></div></details>
     ${task?.kind === 'assist' ? `<label>任务说明<textarea name="goal" required maxlength="8000" rows="3">${e(task.goal)}</textarea></label>` : ''}
     <label>补充批改要求（可选）<textarea name="supplementalInstructions" maxlength="8000" rows="3" placeholder="例如：高中数学，DSE；用中文解释失分原因。留空也可以。">${e(supplement)}</textarea></label>
+    ${task?.kind === 'assist' ? '' : gradingModelFields(config)}
     <details class="setup-options"><summary>更多设置<span>${mode === 'auto' ? '自动继续' : '先确认再批改'}${task?.allowWebSearch ? ' · 可联网' : ''}</span></summary><div class="setup-option-fields">
     ${task?.gradingContext ? `<label>已有学科与考试信息<textarea name="gradingContext" maxlength="4000" rows="2">${e(task.gradingContext)}</textarea></label>` : ''}
     <label>批改方式<select name="executionMode"><option value="review" ${mode === 'review' ? 'selected' : ''}>先让我确认评分要求，再批改</option><option value="auto" ${mode === 'auto' ? 'selected' : ''}>自动继续批改</option></select></label>
@@ -67,7 +112,8 @@ export function taskForm(ctx, task = null, { allowStart = false } = {}) {
 
 export const taskModeHint = mode => mode === 'auto' ? '准备好评分要求后自动批改；有具体疑问时会询问你。' : '先准备评分要求，等你确认后再批改答卷。';
 
-export function refreshTaskSetup(form, state) {
+export function refreshTaskSetup(form, state, field) {
+  changeModelSelection(form, field);
   const input = taskFormInput(new FormData(form));
   const groups = state.groups.filter(group => input.groupIds.includes(group.id));
   form.querySelector('[data-setup-count]').textContent = `${groups.length} 份答卷 · ${groups.reduce((sum, group) => sum + group.pageIds.length, 0)} 页`;
@@ -79,7 +125,7 @@ export function refreshTaskSetup(form, state) {
 
 export function taskFormInput(data) {
   const kind = data.get('kind') === 'assist' ? 'assist' : 'grade';
-  return { kind, ...(data.get('title') ? { title: String(data.get('title')) } : {}), ...(kind === 'assist' ? { goal: String(data.get('goal') || '').trim() } : {}),
+  return { kind, ...(kind === 'grade' && data.has('mainModel') ? {modelConfig: readModelConfig(data)} : {}), ...(data.get('title') ? { title: String(data.get('title')) } : {}), ...(kind === 'assist' ? { goal: String(data.get('goal') || '').trim() } : {}),
     supplementalInstructions: String(data.get('supplementalInstructions') || '').trim(),
     after: data.get('after'), executionMode: data.get('executionMode') || 'review',
     groupIds: data.getAll('groupIds'), schemeId: data.get('schemeId') || null,
