@@ -62,11 +62,11 @@ test('altered source, reordered pages and mismatched frozen artifacts stop befor
 
 test('automatic reuse retains the selected source model, thinking effort and image quality', () => {
   const model = 'qwen/qwen4-max';
-  const plan = {scheme_image_owner:'main', image_quality:'medium', model_roles:{main:{model:{id:model}}}, reasoning:'high'};
+  const plan = {printed_item_inventory:true, scheme_image_owner:'main', image_quality:'medium', model_roles:{main:{model:{id:model}}}, reasoning:'high'};
   assert.ok(canReuseScheme(plan, model, 'high'));
   assert.ok(!canReuseScheme(plan, 'qwen/qwen3.8-flash', 'high'));
   assert.ok(!canReuseScheme(plan, model, 'low'));
-  for (const override of [{scheme_image_owner:null}, {image_quality:'high'}, {rubric_reuse:{}}]) {
+  for (const override of [{printed_item_inventory:undefined}, {scheme_image_owner:null}, {image_quality:'high'}, {rubric_reuse:{}}]) {
     assert.ok(!canReuseScheme({...plan, ...override}, model, 'high'));
   }
 });

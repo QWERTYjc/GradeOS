@@ -66,10 +66,44 @@ const nonempty = value => typeof value === 'string' && value.trim();
 const unique = values => Array.isArray(values) && values.every(nonempty) && new Set(values).size === values.length;
 const sameNumber = (a, b) => Math.abs(a - b) < 1e-9;
 
+// Each leaf is anchored to the first page on which it is independently scored.
+// An empty row accounts for instructions, blank pages, or continuation only.
+export function sourceItemOwners(inventory, allowedPages) {
+  if (!Array.isArray(inventory)) throw Error('Missing printed item inventory');
+  const owners = new Map(), pages = new Set();
+  for (const {page, item_ids} of inventory) {
+    if (!allowedPages.has(page) || pages.has(page) || !Array.isArray(item_ids))
+      throw Error('Inventory pages must be distinct inspected MS pages');
+    pages.add(page);
+    for (const id of item_ids) {
+      if (typeof id !== 'string' || !id.trim() || id !== id.trim() || owners.has(id))
+        throw Error('Invalid or duplicate independently scored item: ' + id);
+      owners.set(id, page);
+    }
+  }
+  return owners;
+}
+
+export function checkSourceItem(item, owners) {
+  if (!owners.has(item.item_id)) throw Error('Item is absent from the printed leaf inventory: ' + item.item_id);
+  if (!item.source_pages.includes(owners.get(item.item_id)))
+    throw Error('Item must cite its printed starting page: ' + item.item_id);
+}
+
 export function freezeRubric(raw, scheme, seen) {
   if (!scheme.pages.every(p => seen.has(p.page))) throw Error('Read all MS pages before publishing');
   const copy = structuredClone(raw);
   if (!copy.items?.length) throw Error('No rubric items');
+  if (copy.source_inventory !== undefined) {
+    const pages = new Set(scheme.pages.map(p => p.page));
+    const owners = sourceItemOwners(copy.source_inventory, pages);
+    const unread = [...pages].filter(page => !copy.source_inventory.some(row => row.page === page));
+    if (unread.length) throw Error('Record the printed item inventory for MS pages: ' + unread.join(', '));
+    for (const item of copy.items) checkSourceItem(item, owners);
+    const staged = new Set(copy.items.map(item => item.item_id));
+    const missing = [...owners.keys()].filter(id => !staged.has(id));
+    if (missing.length) throw Error('Missing independently scored printed items: ' + missing.join(', '));
+  }
   const ids = new Set();
   const pointMode = copy.version === 2 || copy.items.some(item => 'scoring_points' in item);
   for (const item of copy.items) {

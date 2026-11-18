@@ -29,7 +29,7 @@ Use uncertain for unresolved source meaning and explain it; preserve a faithful 
 Submit one complete source-bound review with submit_ms_review in a subsequent model turn after prepare_ms_review. This freezes the reviewed rules before any student dispatch.
 Be concise: preserve necessary mathematical conditions, omit repeated prose. This is coordinator self-review, not an independent or human verification.`;
 
-export function applyMSReview(raw, candidate, scheme, seen) {
+export function applyMSReview(raw, candidate, scheme, seen, sourceInventory) {
   if (candidate.artifact.version !== 2) throw Error('MS review requires point-structured rules');
   if (!scheme.pages.every(page => seen.has(page.page))) throw Error('MS review lacks complete image delivery');
   const artifact = structuredClone(candidate.artifact); const original = new Map(artifact.items.map(item => [item.item_id,item]));
@@ -56,6 +56,7 @@ export function applyMSReview(raw, candidate, scheme, seen) {
     if (check.verdict === 'uncertain') item.uncertainties = [...new Set([...item.uncertainties,check.note])];
     if (check.verdict === 'verified' && item.uncertainties.length) throw Error('Unresolved item cannot be verified');
   }
+  if (sourceInventory !== undefined) artifact.source_inventory = structuredClone(sourceInventory);
   artifact.items = [...items.values()];
   const frozen = freezeRubric(artifact,scheme,seen);
   const status = frozen.artifact.unresolved_notes.length || frozen.artifact.items.some(item => item.uncertainties.length) ? 'review_required' : 'verified';

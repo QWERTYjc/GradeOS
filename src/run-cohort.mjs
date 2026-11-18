@@ -232,7 +232,7 @@ const plan = { version: 2, mode: reusedRubric ? 'frozen-rubric replay' : 'full-c
   context_policy: 'Main preserves the compilation prefix through MS self-review, then receives frozen rubric navigation; scoped source views remain available. Student/exception/feedback sessions stay isolated. Delivered result batches and point/image views can be checkpointed with source-bound notes; context retains score/null/review/source issues and immutable refs.',
   comparison: 'Count declared tasks and actual executions separately; duplicated answer books measure repeatability, not a diverse student population.' };
 if(scripted)Object.assign(plan,{execution:'scripted-single-pass',
-  ...(mainOwnsScheme ? {scheme_image_owner:'main', image_quality:'medium'} : {}),student_cap_usd:studentCapUsd,reporting:'Deterministic scripts from immutable grading records; zero model calls',
+  ...(mainOwnsScheme ? {scheme_image_owner:'main', image_quality:'medium', printed_item_inventory:true} : {}),student_cap_usd:studentCapUsd,reporting:'Deterministic scripts from immutable grading records; zero model calls',
   student_prompt_hash:digest(singlePassPrompt({inlineAnnotations,compact:economicalLuna,mainOwnsScheme})),point_wire_protocol:economicalLuna?'compact-ocr-point-fields':inlineAnnotations?'fixed-observed-ink-local-regions':'fixed-observed-ink-v3',
   student_feedback:'Exact saved evidence and reasons; deterministic rendering; zero model calls',
   exception_review:{enabled:false,policy:'Positive exception proposals withheld as null pending teacher review; raw primary preserved'},

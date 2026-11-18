@@ -1,6 +1,6 @@
 import { Agent } from '@earendil-works/pi-agent-core';
 import { digest, SUBMIT_SCHEMA, validateGrade } from './core.mjs';
-import { RUBRIC_SCHEMA, ITEM_SCHEMA, GENERAL_SCHEMA, freezeRubric, validateFrozenRubric, checkPages, POINT_SUBMIT_SCHEMA, validatePointDecisions, MS_SOURCE_RELATIONS, MS_WRITE_SCHEMA, MS_WRITE_PROMPT, expandMSItems, studentRubricText } from './rubric-contract.mjs';
+import { RUBRIC_SCHEMA, ITEM_SCHEMA, GENERAL_SCHEMA, freezeRubric, validateFrozenRubric, checkPages, POINT_SUBMIT_SCHEMA, validatePointDecisions, MS_SOURCE_RELATIONS, MS_WRITE_SCHEMA, MS_WRITE_PROMPT, expandMSItems, studentRubricText, sourceItemOwners, checkSourceItem } from './rubric-contract.mjs';
 import { EVIDENCE_SUBMIT_SCHEMA, EVIDENCE_PROTOCOL_PROMPT, VISUAL_EVIDENCE_PROMPT, expandPointEvidence, checkItemCoverage } from './point-evidence.mjs';
 import { createReportContext, createSourceInspection, requiredMsPages, rubricOverview } from './report-context.mjs';
 import {COMPACT_POINTS_SCHEMA,COMPACT_POINTS_PROMPT,SOURCE_ISSUE_SCHEMA,expandCompactPoints} from './compact-points.mjs';
@@ -454,6 +454,25 @@ export function createCoordinator({ model, streamFn, scheme, studentIds, concurr
   const pagesPerTurn = MS_PAGES_PER_TURN;
   const windowed = scheme.pages.length > pagesPerTurn;
   const inspected = new Set();
+  let inventory = [], owners = new Map();
+  const inventoryTool = {
+    name: 'record_ms_inventory', label: '登记卷面独立计分小问',
+    description: 'Read the printed question column on each inspected page. List full printed IDs of independently scored parts starting here. Include every nested label, even when the subtotal is printed only for the parent. Empty list for instructions, blanks or continuation. Do not list solution steps, marking points, cross-references or alternative methods. Re-recording a page replaces its inventory.',
+    parameters: obj({pages:{type:'array', minItems:1, items:obj({page:{type:'integer', minimum:1}, item_ids:{...strings,uniqueItems:true}})}}),
+    executionMode:'sequential',
+    execute: async (_id, {pages}) => {
+      if (frozen) throw Error('The MS is already frozen');
+      sourceItemOwners(pages, inspected);
+      const replaced = new Set(pages.map(row => row.page));
+      const next = [...inventory.filter(row => !replaced.has(row.page)), ...pages].sort((a,b) => a.page-b.page);
+      const nextOwners = sourceItemOwners(next, inspected);
+      const discarded = candidate ? [] : [...stagedItems.keys()].filter(id => !nextOwners.has(id));
+      await log({type:'ms_inventory_recorded', pages, discarded_draft_items:discarded});
+      inventory = next; owners = nextOwners;
+      for (const id of discarded) stagedItems.delete(id);
+      return {content:[{type:'text',text:JSON.stringify({recorded:pages, discarded_draft_items:discarded})}],details:{}};
+    },
+  };
   let imageTurn = -1, imagesThisTurn = 0;
   const tools = [
     (() => {
@@ -475,6 +494,7 @@ export function createCoordinator({ model, streamFn, scheme, studentIds, concurr
       };
       return tool;
     })(),
+    ...(mainOwnsScheme && !reusedRubric ? [inventoryTool] : []),
     { name: 'write_rubric_items', label: 'Stage source-derived items', description: 'Write complete source-derived items using the short keys in the schema. Choose complete-item batches; no fixed item-count or phase token quota. Same IDs replace prior draft items before publication; this does not freeze or delegate.',
       parameters:MS_WRITE_SCHEMA, executionMode:'sequential',
       execute:async (_id,args) => {
@@ -483,6 +503,7 @@ export function createCoordinator({ model, streamFn, scheme, studentIds, concurr
         if (new Set(items.map(item=>item.item_id)).size !== items.length) throw Error('Invalid draft batch');
         for (const item of items) {
           if (item.source_pages.some(page=>!(windowed ? inspected : seen).has(page))) throw Error('Read item source pages before staging');
+          if (mainOwnsScheme) checkSourceItem(item, owners);
           // Cross-item relations are checked against the complete inventory at publication.
           freezeRubric({general_instructions:[],unresolved_notes:[],items:[{...item,related_item_ids:[]}]},scheme,new Set(scheme.pages.map(page=>page.page)));
         }
@@ -493,7 +514,7 @@ export function createCoordinator({ model, streamFn, scheme, studentIds, concurr
     { name: 'prepare_ms_review', label: 'Checkpoint MS for self-review', description: 'Save the complete staged candidate and begin review in this same conversation. Retains original images/history; does not freeze or delegate. Next review the latest staged items and submit_ms_review with item checks and corrections.', parameters: obj({general_instructions:GENERAL_SCHEMA,unresolved_notes:strings}), executionMode: 'sequential',
       execute: async (_id, raw) => {
         if (frozen || candidate) throw Error('Rubric draft already submitted');
-        const prepared = freezeRubric({...raw,items:[...stagedItems.values()]}, scheme, windowed ? inspected : seen);
+        const prepared = freezeRubric({...raw,...(mainOwnsScheme ? {source_inventory:inventory} : {}),items:[...stagedItems.values()]}, scheme, windowed ? inspected : seen);
         if (prepared.artifact.version !== 2 || !persistReview || !persistCandidate) throw Error('Structured points and persisted MS review are required');
         await persistCandidate(prepared); candidate = prepared; candidateTurn = modelTurns;
         return {content:[{type:'text',text:JSON.stringify({candidate_hash:candidate.hash,item_ids:[...stagedItems.keys()],source_pages:[...seen],message:'Candidate saved, not frozen. Review the latest staged items against the original images already in this conversation; submit_ms_review in your next turn. Do not resend the full candidate or reread all pages.'})}],details:{}};
@@ -502,7 +523,7 @@ export function createCoordinator({ model, streamFn, scheme, studentIds, concurr
       execute:async (_id,raw)=>{
         if (!candidate || frozen) throw Error('Prepare an unreviewed MS candidate first');
         if (modelTurns <= candidateTurn) throw Error('Review the saved candidate and original source in a subsequent model turn before freezing');
-        const checked = applyMSReview(raw,candidate,scheme,seen);
+        const checked = applyMSReview(raw,candidate,scheme,seen,mainOwnsScheme ? inventory : undefined);
         const reviewed = validateFrozenRubric(checked.frozen,scheme);
         if (!reviewed.verification || reviewed.verification.candidate_hash !== candidate.hash) throw Error('Missing source-bound MS verification');
         await persistReview(checked);
@@ -558,7 +579,7 @@ export function createCoordinator({ model, streamFn, scheme, studentIds, concurr
     ? `Read up to ${pagesPerTurn} original pages per turn. Only the latest page group remains visible. Stage complete items while their source is visible. Record global instructions as you read. Earlier pages can be reopened for continuations and review.`
     : null;
   const prompt = [gradingReview ? basePrompt.replace(/You cannot read student answers\./g,'You review primary grading before final persistence and can inspect original answers on demand.') : basePrompt, readingInstructions, reporting?.instructions, gradingReview?.instructions,
-    mainOwnsScheme ? 'Only you see the marking scheme images. Explicitly transcribe diagram relationships, table cells, shared brackets and alternative award conditions into the relevant rubric points. Check them against the cited pages. Record anything the source cannot resolve in uncertainties; do not clear a visual dependency to finish.' : null,
+    mainOwnsScheme ? 'Only you see the marking scheme images. After reading each group, call record_ms_inventory BEFORE write_rubric_items, ideally in the same response. Start with the printed assessment hierarchy, independently of your draft. Record the deepest independently marked subpart as its own item using its full printed path with original parentheses. Keep individual method/accuracy marks and alternative routes inside that item. A shared parent subtotal does not merge separately scored children. If the source genuinely gives one indivisible joint award, keep it together. Record every inspected page, including pages with no new items. Reconcile the final inventory against the source on review; correct both inventory and items if necessary. Explicitly transcribe diagram relationships, table cells, shared brackets and alternative award conditions into the relevant rubric points. Check them against the cited pages. Record anything the source cannot resolve in uncertainties; do not clear a visual dependency to finish.' : null,
     prepareOnly ? 'Your scope ends when the verified MS and teacher implementation guide are ready. The host dispatches grading and renders reports deterministically; do not plan batches, grade answers or write reports.' : null,
     publishMarkingGuide ? 'Before any student dispatch, call publish_marking_guide with concise Chinese Markdown describing how to apply the reviewed MS: reading order, evidence checks, equivalent/alternative methods, uncertainty and teacher review. The host adds the complete source-bound point rules. Wait for the teacher to edit and confirm 评分实施.md. The confirmed document is an execution reference alongside the frozen rules; conflicts must be surfaced, never silently ignored or used to invent awards.' : null].filter(Boolean).join('\n\n');
   const ctl = controlledAgent({ model, streamFn, prompt, tools: availableTools, finished: () => prepareOnly ? Boolean(frozen && (!publishMarkingGuide || markingGuide)) : completed !== null, log,

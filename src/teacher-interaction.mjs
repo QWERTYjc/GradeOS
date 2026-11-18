@@ -18,7 +18,7 @@ export async function readQuestions(directory) {
   const names = await readdir(join(directory, 'questions')).catch(() => []);
   return (await Promise.all(names.filter(name => /^[\w-]+\.json$/.test(name)).map(name => readJSON(join(directory, 'questions', name))))).filter(Boolean).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 }
-const labels = { read_scheme_pages: '查看评分标准原页', read_student_pages: '查看答卷原页', read_pages: '查看材料原页',
+const labels = { record_ms_inventory: '核对卷面小问编号', read_scheme_pages: '查看评分标准原页', read_student_pages: '查看答卷原页', read_pages: '查看材料原页',
   review_grading_requirements: '核对补充批改要求',
   read_selection: '查看老师圈选的区域', ask_teacher: '等待老师确认', submit_ms_review: '保存 MS 核对结果',
   submit_grading: '保存批改依据', delegate_student: '安排答卷批改', submit_student_feedback: '保存个人反馈',

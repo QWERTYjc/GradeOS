@@ -120,3 +120,15 @@ test('fractional awards require explicit source permission and source issues may
   await child.agent.prompt(await child.initialPrompt([]));
   assert.equal(saved.source_issues[0].scheme_pages[0],2);assert.equal(saved.status,'review_required');
 });
+
+test('MS self-review reconciles the corrected printed inventory before freezing', () => {
+  const original = candidate();
+  const pages = new Set([1,2]);
+  const source = [{page:1,item_ids:['Essay-a','Essay-b']},{page:2,item_ids:[]}];
+  assert.throws(() => applyMSReview(review(),original,scheme,pages,source), /Missing independently scored.*Essay-b/);
+  const corrected = review();
+  corrected.revised_items = rawRubric('Essay-b').items;
+  corrected.item_checks.push({...corrected.item_checks[0], item_id:'Essay-b', verdict:'corrected'});
+  const {frozen} = applyMSReview(corrected,original,scheme,pages,source);
+  assert.deepEqual(validateFrozenRubric(frozen,scheme).artifact.source_inventory, source);
+});

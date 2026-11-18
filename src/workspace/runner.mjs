@@ -15,7 +15,7 @@ import { DEFAULT_MAIN_MODEL_ID, DEFAULT_WORKER_MODEL_ID } from '../experiment-mo
 
 const json = async path => { try { return JSON.parse(await readFile(path, 'utf8')); } catch { return null; } };
 export function canReuseScheme(plan, model, effort) {
-  return plan?.scheme_image_owner === 'main' && plan.image_quality === 'medium' &&
+  return plan?.printed_item_inventory === true && plan.scheme_image_owner === 'main' && plan.image_quality === 'medium' &&
     !plan.rubric_reuse && plan.model_roles?.main?.model?.id === model && plan.reasoning === effort;
 }
 export async function snapshotFrozenRubric(sourcePath, directory, scheme) {
@@ -126,7 +126,7 @@ export class WorkspaceRunner {
       const manifest = await json(input.manifest);
       const scheme = (await json(join(manifest.scheme_input, 'manifest.json'))).documents.scheme;
       const frozenPath = await snapshotFrozenRubric(this.rubricPath, input.directory, scheme);
-      args.push('--rubric', frozenPath);
+      if ((await json(frozenPath))?.artifact?.source_inventory) args.push('--rubric', frozenPath);
     }
     for (const prior of this.rubricPath ? [] : [...this.store.state.tasks].reverse()) {
       if (prior.id === task.id || prior.schemeId !== task.schemeId || !['completed', 'needs_review', 'partial'].includes(prior.status)) continue;
