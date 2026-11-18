@@ -356,3 +356,34 @@ test('actual Pi replay delegates with the saved rubric and cannot publish or mut
   assert.equal(main.agent.state.tools.some(x => x.name === 'read_ms_pages'), false);
   assert.equal(JSON.stringify(observations).includes('scheme-IMAGE-ONLY'), false);
 });
+
+test('long schemes bound combined image reads per turn and retain page references for review', async () => {
+  const observations = [], reads = [];
+  const scheme = {sha256: 'synthetic', pages: Array.from({length: 7}, (_, i) => ({page:i+1}))};
+  const read = pages => call('read_ms_pages', {pages});
+  const main = createCoordinator({
+    model, scheme, studentIds: ['learner'], log,
+    readImage: async page => {
+      reads.push(page.page);
+      return {type:'image', mimeType:'image/png', data:'source-page-'+page.page};
+    },
+    streamFn:fakeStream([
+      [read([1,2,3,4,5]),read([6,7])],
+      [read([4,5]),read([6,7])],
+      [read([7]), call('prepare_ms_review',{general_instructions:[],unresolved_notes:[]})],
+      [read([2])],
+    ], observations),
+  });
+  await main.agent.prompt(main.initialPrompt);
+  const images = ctx => ctx.messages.flatMap(message => Array.isArray(message.content)
+    ? message.content.filter(part=>part.type==='image').map(part=>part.data) : []);
+  assert.deepEqual(observations.slice(1,5).map(images), [
+    ['source-page-1','source-page-2','source-page-3'],
+    ['source-page-4','source-page-5','source-page-6'],
+    ['source-page-7'], ['source-page-2'],
+  ]);
+  assert.match(JSON.stringify(observations[2].messages), /scheme physical PDF page 1/);
+  assert.deepEqual(reads,[1,2,3,4,5,6,7,2]);
+  assert.equal(main.getRubric(),null);
+  assert.ok(main.agent.state.messages.some(m=>m.toolName==='prepare_ms_review' && m.isError));
+});

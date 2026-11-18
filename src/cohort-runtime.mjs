@@ -1,3 +1,4 @@
+import { configureFlashSubmission, flashSubmissionResult } from './flash-grading.mjs';
 import { flashBudgets } from '../web/grading-models.mjs';
 import { readFile, writeFile, mkdir, rename, appendFile, open } from 'node:fs/promises';
 import { resolve } from 'node:path';
@@ -94,7 +95,8 @@ export function createRuntime({ models, model, output, cap, controller, maxReque
       const {gradingCorrectionRequest,...providerOptions}=options??{};
       const requestPhase = phase();
       validateCorrectionRequest(requestPhase,lane,gradingCorrectionRequest);
-      return models.streamSimple(selectedModel, context, {
+      const flashSubmission = singlePassGrading && requestPhase === 'student_grading' && laneModel.id === 'qwen/qwen3.8-flash';
+      const upstream = models.streamSimple(selectedModel, context, {
       ...providerOptions, ...(effort ? { reasoning: effort === 'on' ? 'low' : effort === 'off' ? undefined : effort } : {}), apiKey: process.env.OPENROUTER_API_KEY, maxRetries: 0, maxTokens: maxOutputTokens??laneModel.maxTokens, timeoutMs: singlePassGrading ? 240000 : 180000,
       signal: options?.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal,
       onPayload: async payload => {
@@ -139,6 +141,7 @@ export function createRuntime({ models, model, output, cap, controller, maxReque
           if (!payload.tools.length) throw Error('Requested tool is missing from the Flash request');
           payload.tool_choice = 'auto';
         }
+        if (flashSubmission) configureFlashSubmission(payload);
         const cacheScope = studentCacheNamespace && /^(student|feedback|exception|source-review)-/.test(lane) ? `${studentCacheNamespace}/${lane}` : null;
         if (cacheScope) isolateStudentCache(payload, cacheScope);
         // Keep high detail for every phase, including source reinspection.
@@ -202,7 +205,11 @@ export function createRuntime({ models, model, output, cap, controller, maxReque
           await laneLog({ type: 'provider_receipt', number: current?.number, id: chunk.id, model: chunk.model, provider: chunk.provider, usage: chunk.usage });
         }
       },
-    }); };
+      });
+      if (flashSubmission) return flashSubmissionResult(upstream, text =>
+        writeFile(resolve(directory, 'structured-submission-' + current.number + '.json'), text, {flag:'wx',mode:0o600}));
+      return upstream;
+    };
     const attach = agent => {
       const singlePass=singlePassGrading&&phase()==='student_grading';
       if (isolated) isolatedAgents.add(agent);

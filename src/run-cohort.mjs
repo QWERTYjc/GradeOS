@@ -10,7 +10,7 @@ import { randomUUID } from 'node:crypto';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import { digest, parseStudentBudget } from './core.mjs';
-import { createCoordinator, createStudentAgent, StudentRegistry, validateFrozenRubric, parseConcurrency, MAIN_PROMPT, REPLAY_MAIN_PROMPT, studentPromptForProtocol } from './cohort-core.mjs';
+import { createCoordinator, createStudentAgent, StudentRegistry, validateFrozenRubric, parseConcurrency, MS_PAGES_PER_TURN, MAIN_PROMPT, REPLAY_MAIN_PROMPT, studentPromptForProtocol } from './cohort-core.mjs';
 import { createRuntime, freezeJson, readImage, readImageRegion, schemeOverviewReader } from './cohort-runtime.mjs';
 import { requiredMsPages } from './report-context.mjs';
 import { ResultsStore } from './results-store.mjs';
@@ -108,6 +108,9 @@ const maxRequests = requestLimit === 'unlimited' ? null : Number(requestLimit);
 if (maxRequests !== null && (!Number.isInteger(maxRequests) || maxRequests < 1 || maxRequests > 512)) throw Error('Invalid aggregate request limit');
 const inlineAnnotations=values['inline-annotations'];
 const scripted=values.scripted;
+// A cold workspace batch must finish source compilation and a full answer-book request.
+const deadlineSeconds = scripted && values['interaction-dir'] && !reusedRubric && scheme.pages.length > MS_PAGES_PER_TURN
+  ? 1800 : 900;
 const mainEffort=values['main-reasoning'],workerEffort=values['worker-reasoning'];
 const annotationGrid=values['annotation-grid'],gradingReasoning=workerEffort === 'on' ? 'low' : workerEffort ?? values['grading-reasoning'];
 if(values['local-ocr']&&(!scripted||process.platform!=='darwin'))throw Error('Local optical hints require scripted grading on macOS');
@@ -174,6 +177,7 @@ const opticalPreparationSeconds=localObservations?(Date.now()-opticalStarted)/10
 const sourceHashes = {};
 for(const path of ['scripts/python/native_pages.py','scripts/python/prepare.py','scripts/python/workspace_documents.py'])sourceHashes[path]=digest(await readFile(resolve(root,path)));
 sourceHashes['src/inline-annotations.mjs']=digest(await readFile(resolve(root,'src/inline-annotations.mjs')));
+sourceHashes['src/flash-grading.mjs'] = digest(await readFile(resolve(root, 'src/flash-grading.mjs')));
 sourceHashes['web/grading-models.mjs'] = digest(await readFile(resolve(root, 'web/grading-models.mjs')));
 sourceHashes['src/scripted-grading.mjs']=digest(await readFile(resolve(root,'src/scripted-grading.mjs')));
 sourceHashes['src/single-pass-grading.mjs']=digest(await readFile(resolve(root,'src/single-pass-grading.mjs')));
@@ -203,7 +207,7 @@ const plan = { version: 2, mode: reusedRubric ? 'frozen-rubric replay' : 'full-c
   preparation_elapsed_seconds:imagePreparationSeconds+opticalPreparationSeconds,
   student_cache_namespace: studentCacheNamespace,
   cache_experiment: studentCacheNamespace ? 'Unique first-user namespace per student/feedback lane, after shared system/MS prefix; same namespace across turns. Verify actual cache receipts.' : 'Provider automatic caching without artificial input isolation',
-  max_requests: maxRequests, output_policy:'model/context capacity and available task funds; no phase or correction token quota', deadline_seconds: 900, reasoning: mainEffort ?? 'low', grading_reasoning:workerEffort ?? gradingReasoning, temperature: null, seed: null,
+  max_requests: maxRequests, output_policy:'model/context capacity and available task funds; no phase or correction token quota', deadline_seconds: deadlineSeconds, reasoning: mainEffort ?? 'low', grading_reasoning:workerEffort ?? gradingReasoning, temperature: null, seed: null,
   provider, model_roles: {main:{model,provider,phases:['ms_compilation','ms_verification','coordination','reporting']},
     worker:{model:workerModel,provider:workerProvider,phases:['student_grading','student_self_review','exception_review','source_permission_review','student_feedback']}},
   network_retries: 0, attempts_per_student: 1, labels_in_model_context: false,
@@ -244,7 +248,7 @@ const controller = new AbortController();
 const interaction = values['interaction-dir'] ? await new TeacherInteraction(resolve(values['interaction-dir']), { signal: controller.signal,
   schemePages: scheme.pages, students: new Map([...students].map(([id, document]) => [id, document.pages])) }).init() : null;
 const runtime = createRuntime({ models, model, workerModel, output, cap, controller, maxRequests, studentCacheNamespace, progress, interaction, structuredOutput:values.json,provider,workerProvider,mainEffort,workerEffort,
-  singlePassGrading:scripted,coldCacheNamespace:values['cold-cache-namespace']??null,studentCapUsd:scripted?studentCapUsd:null });
+  deadlineMs:deadlineSeconds*1000,singlePassGrading:scripted,coldCacheNamespace:values['cold-cache-namespace']??null,studentCapUsd:scripted?studentCapUsd:null });
 process.once('SIGINT', () => {void progress.cancelRequested();controller.abort(Error('User cancellation'));});
 if(scripted) {
   const started=Date.now();let frozen=reusedRubric,guide=replayGuide,result=null,failure=null;
@@ -262,7 +266,7 @@ if(scripted) {
       const detach=io.attach(preparer.agent);
       try{await runtime.run(preparer.agent,preparer.initialPrompt,io.directory);}finally{detach();}
       frozen=preparer.getRubric();guide=preparer.getMarkingGuide();
-      if(!frozen||(interaction&&!guide))throw Error('MS and implementation requirements are not ready');
+      if(!frozen||(interaction&&!guide))throw Error(preparer.agent.state.errorMessage || 'MS and implementation requirements are not ready');
     } else if(interaction) guide=await interaction.publishGuide(frozen,DEFAULT_EXECUTION_METHOD);
     if(guide){await freezeJson(output,'marking-guide.json',guide);await writeFile(resolve(output,'评分实施.md'),guide.body,{flag:'wx'});}
     await runtime.log({type:'rubric_ready'});

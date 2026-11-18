@@ -19,8 +19,9 @@ const str = { type: 'string', minLength: 1 };
 const strings = { type: 'array', items: str };
 const pages = { type: 'array', items: { type: 'integer', minimum: 1 }, uniqueItems: true };
 const readSchema = obj({ pages: { ...pages, minItems: 1, maxItems: 8 } });
+export const MS_PAGES_PER_TURN = 3;
 export const MAIN_PROMPT = `You coordinate grading for a cohort using a shared marking scheme (MS).
-First read every MS page, including instructions and continuations. You cannot read student answers.
+Inspect every MS page, including instructions and continuations. Work through the pages in order, staging the complete items visible in each group before requesting the next group. If an item continues across pages, reopen its source page when needed. You cannot read student answers.
 Build the candidate with write_rubric_items, batching complete items within the model response capacity rather than a fixed item count. Then call prepare_ms_review with the general instructions and unresolved notes. Review it yourself in this same conversation before submit_ms_review freezes the rules and allows student dispatch. Transcribe mathematical expressions carefully.
 For every separately scored subpart preserve all individual award types/values, conditions, dependencies,
 exclusive alternatives, equivalent methods, follow-through and limits in the scoring-point conditions. criteria holds the item overview and any shared qualification; do not repeat every point there or reduce methods to answer summaries.
@@ -436,11 +437,28 @@ export function createCoordinator({ model, streamFn, scheme, studentIds, concurr
   let frozen = reusedRubric ? validateFrozenRubric(reusedRubric, scheme) : null; let completed = null; let candidate = null; let modelTurns = 0; let candidateTurn = null; const stagedItems = new Map();
   const views=reporting?.views ?? createReportContext();
   let markingGuide = null;
+  const pagesPerTurn = MS_PAGES_PER_TURN;
+  const windowed = scheme.pages.length > pagesPerTurn;
+  const inspected = new Set();
+  let imageTurn = -1, imagesThisTurn = 0;
   const tools = [
     (() => {
       const tool = pageTool('read_ms_pages', 'Before freezing only: inspect every original MS page for compilation. After verification use scoped inspect_ms for specific unresolved source questions.', scheme, 'scheme', readImage, seen, log);
       const execute = tool.execute;
-      tool.execute = async (...args) => { if (frozen) throw Error('MS already frozen. Use inspect_ms for a specific unresolved item question; do not reread the full MS.'); const result = await execute(...args); result.details.ms_stage = 'compilation'; return result; };
+      tool.execute = async (id, args, ...rest) => {
+        if (frozen) throw Error('MS already frozen. Use inspect_ms for a specific unresolved item question.');
+        checkPages(args.pages, scheme);
+        if (imageTurn !== modelTurns) { imageTurn = modelTurns; imagesThisTurn = 0; }
+        const available = windowed ? pagesPerTurn - imagesThisTurn : args.pages.length;
+        if (available === 0) throw Error('Inspect the returned pages and stage complete items before requesting more pages next turn.');
+        const pages = args.pages.slice(0, available);
+        const result = await execute(id, { ...args, pages }, ...rest);
+        imagesThisTurn += pages.length;
+        Object.assign(result.details, { ms_stage: 'compilation', imageTurn });
+        if (windowed) result.content.push({type:'text', text:
+          `Images returned: ${pages.join(', ')}. Unread physical pages: ${scheme.pages.filter(page=>!seen.has(page.page)).map(page=>page.page).join(', ') || 'none'}. Stage complete items now, then read the next group. Reopen earlier pages by number as needed.`});
+        return result;
+      };
       return tool;
     })(),
     { name: 'write_rubric_items', label: 'Stage source-derived items', description: 'Write complete source-derived items using the short keys in the schema. Choose complete-item batches; no fixed item-count or phase token quota. Same IDs replace prior draft items before publication; this does not freeze or delegate.',
@@ -450,7 +468,7 @@ export function createCoordinator({ model, streamFn, scheme, studentIds, concurr
         const items=expandMSItems(args);
         if (new Set(items.map(item=>item.item_id)).size !== items.length) throw Error('Invalid draft batch');
         for (const item of items) {
-          if (item.source_pages.some(page=>!seen.has(page))) throw Error('Read item source pages before staging');
+          if (item.source_pages.some(page=>!(windowed ? inspected : seen).has(page))) throw Error('Read item source pages before staging');
           // Cross-item relations are checked against the complete inventory at publication.
           freezeRubric({general_instructions:[],unresolved_notes:[],items:[{...item,related_item_ids:[]}]},scheme,new Set(scheme.pages.map(page=>page.page)));
         }
@@ -461,7 +479,7 @@ export function createCoordinator({ model, streamFn, scheme, studentIds, concurr
     { name: 'prepare_ms_review', label: 'Checkpoint MS for self-review', description: 'Save the complete staged candidate and begin review in this same conversation. Retains original images/history; does not freeze or delegate. Next review the latest staged items and submit_ms_review with item checks and corrections.', parameters: obj({general_instructions:GENERAL_SCHEMA,unresolved_notes:strings}), executionMode: 'sequential',
       execute: async (_id, raw) => {
         if (frozen || candidate) throw Error('Rubric draft already submitted');
-        const prepared = freezeRubric({...raw,items:[...stagedItems.values()]}, scheme, seen);
+        const prepared = freezeRubric({...raw,items:[...stagedItems.values()]}, scheme, windowed ? inspected : seen);
         if (prepared.artifact.version !== 2 || !persistReview || !persistCandidate) throw Error('Structured points and persisted MS review are required');
         await persistCandidate(prepared); candidate = prepared; candidateTurn = modelTurns;
         return {content:[{type:'text',text:JSON.stringify({candidate_hash:candidate.hash,item_ids:[...stagedItems.keys()],source_pages:[...seen],message:'Candidate saved, not frozen. Review the latest staged items against the original images already in this conversation; submit_ms_review in your next turn. Do not resend the full candidate or reread all pages.'})}],details:{}};
@@ -522,13 +540,22 @@ export function createCoordinator({ model, streamFn, scheme, studentIds, concurr
   const availableTools = [...tools.filter(tool => !(prepareOnly && ['grade_students','finish_cohort'].includes(tool.name)) && !(reusedRubric && ['prepare_ms_review','submit_ms_review','write_rubric_items','read_ms_pages'].includes(tool.name)) && !(reporting?.economy && tool.name==='finish_cohort')),
     createSourceInspection({getRubric:()=>frozen,scheme,readImage,views,log}), ...(gradingReview?.tools??[]), ...reportTools];
   const basePrompt=reusedRubric ? REPLAY_MAIN_PROMPT : MAIN_PROMPT;
-  const prompt = [gradingReview ? basePrompt.replace(/You cannot read student answers\./g,'You review primary grading before final persistence and can inspect original answers on demand.') : basePrompt, reporting?.instructions, gradingReview?.instructions,
+  const readingInstructions = windowed && !reusedRubric
+    ? `Read up to ${pagesPerTurn} original pages per turn. Only the latest page group remains visible. Stage complete items while their source is visible. Record global instructions as you read. Earlier pages can be reopened for continuations and review.`
+    : null;
+  const prompt = [gradingReview ? basePrompt.replace(/You cannot read student answers\./g,'You review primary grading before final persistence and can inspect original answers on demand.') : basePrompt, readingInstructions, reporting?.instructions, gradingReview?.instructions,
     prepareOnly ? 'Your scope ends when the verified MS and teacher implementation guide are ready. The host dispatches grading and renders reports deterministically; do not plan batches, grade answers or write reports.' : null,
     publishMarkingGuide ? 'Before any student dispatch, call publish_marking_guide with concise Chinese Markdown describing how to apply the reviewed MS: reading order, evidence checks, equivalent/alternative methods, uncertainty and teacher review. The host adds the complete source-bound point rules. Wait for the teacher to edit and confirm 评分实施.md. The confirmed document is an execution reference alongside the frozen rules; conflicts must be surfaced, never silently ignored or used to invent awards.' : null].filter(Boolean).join('\n\n');
   const ctl = controlledAgent({ model, streamFn, prompt, tools: availableTools, finished: () => prepareOnly ? Boolean(frozen && (!publishMarkingGuide || markingGuide)) : completed !== null, log,
-    onModelResponse:()=>{modelTurns++;if (reporting) reporting.onModelResponse();else views.confirmDelivery();},
+    onModelResponse:()=>{for (const page of seen) inspected.add(page);modelTurns++;if (reporting) reporting.onModelResponse();else views.confirmDelivery();},
     transformContext: async messages => {
-      if (!frozen) return messages;
+      if (!frozen) {
+        if (!windowed) return messages;
+        return messages.map(message => message.role === 'toolResult' && message.details?.ms_stage === 'compilation'
+          && message.details.imageTurn !== imageTurn
+          ? {...message, content:message.content.filter(part=>part.type !== 'image')}
+          : message);
+      }
       // The complete source transcript stays on disk; reviewed rules replace the drafting conversation in future requests.
       const published = messages.findIndex(message => message.role === 'toolResult' && message.toolName === 'submit_ms_review' && !message.isError);
       let replay = messages;

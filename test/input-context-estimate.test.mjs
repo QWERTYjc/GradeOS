@@ -144,3 +144,16 @@ test('unknown, altered, duplicated or unmeasured opaque data is never discounted
   const estimate=wireEstimate(after),r=inputContextEstimate(inputContextSnapshot(after,estimate),estimate,anchor);
   assert.equal(r.encrypted_replay_bytes,400000);assert.ok(r.upperBound>400000,'only the immediate measured response can receive credit');
 });
+
+test('only the pinned Alibaba Flash route uses its per-image token ceiling', () => {
+  const header = Buffer.alloc(33);
+  Buffer.from('89504e470d0a1a0a','hex').copy(header);
+  header.write('IHDR',12); header.writeUInt32BE(3500,16); header.writeUInt32BE(4800,20);
+  const url = 'data:image/png;base64,' + header.toString('base64');
+  const p = {model:'qwen/qwen3.8-flash',provider:{only:['alibaba'],allow_fallbacks:false},
+    messages:[{role:'user',content:[{type:'image_url',image_url:{url}}]}]};
+  assert.equal(wireEstimate(p).imageTokenReserve,16386);
+  assert.ok(wireEstimate({...p,provider:{only:['alibaba'],allow_fallbacks:true}}).imageTokenReserve>16386);
+  assert.ok(wireEstimate({...p,model:'other/model'}).imageTokenReserve>16386);
+  assert.equal(p.messages[0].content[0].image_url.url,url);
+});

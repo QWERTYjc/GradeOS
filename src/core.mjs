@@ -112,16 +112,23 @@ export const digest = value => createHash('sha256').update(typeof value === 'str
 
 export function wireEstimate(payload) {
   let images = 0, imageTokenReserve = 0;
+  // Alibaba Model Studio documents at most 16,384 visual tokens per Flash
+  // image, plus its two boundary tokens. Only use this on the pinned route.
+  // https://www.alibabacloud.com/help/en/model-studio/vision
+  const alibabaFlash = payload.model === 'qwen/qwen3.8-flash'
+    && payload.provider?.allow_fallbacks === false && payload.provider.only?.length === 1
+    && payload.provider.only[0] === 'alibaba';
   const compact = JSON.stringify(payload, (k, v) => {
     if (k === 'url' && typeof v === 'string' && v.startsWith('data:image/')) {
       images++;
-      let bound=4096;
+      let bound=alibabaFlash ? 16386 : 4096;
       // Native-detail PNGs can exceed the old per-image allowance. Bound their
       // full 32px patch area without assuming provider resizing or caching.
       const start=v.indexOf(',')+1, header=Buffer.from(v.slice(start,start+44),'base64');
       if(header.length>=24 && header.subarray(0,8).toString('hex')==='89504e470d0a1a0a' && header.toString('ascii',12,16)==='IHDR') {
         const width=header.readUInt32BE(16),height=header.readUInt32BE(20);
-        bound=Math.max(bound,Math.ceil(width/32)*Math.ceil(height/32)*3);
+        bound=Math.max(4096,Math.ceil(width/32)*Math.ceil(height/32)*3);
+        if (alibabaFlash) bound=Math.min(16386, bound+2);
       }
       imageTokenReserve+=bound;return '<image>';
     }

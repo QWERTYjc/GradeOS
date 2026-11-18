@@ -112,7 +112,7 @@ export class WorkspaceRunner {
     const args = [join(experimentRoot, 'src/run-cohort.mjs'), '--manifest', input.manifest, '--output', input.output,
       '--interaction-dir', entry.interaction,
       '--execute', '--model', config?.mainModel ?? this.model, '--worker-model', config?.workerModel ?? DEFAULT_WORKER_MODEL_ID, '--scripted', '--cap', String(this.cap), '--max-requests', '256',
-      ...(config ? ['--main-reasoning', config.mainEffort, '--worker-reasoning', config.workerEffort] : ['--grading-reasoning', 'medium']), '--annotation-grid', '--inline-annotations', '--student-cap', '0.01'];
+      ...(config ? ['--main-reasoning', config.mainEffort, '--worker-reasoning', config.workerEffort] : ['--grading-reasoning', 'medium']), '--annotation-grid', '--inline-annotations', '--student-cap', String(this.cap)];
     // Vision runs locally; other platforms retain the image-only path explicitly.
     if (process.platform === 'darwin') args.push('--local-ocr');
     if (this.rubricPath) {

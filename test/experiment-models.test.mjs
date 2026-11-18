@@ -182,6 +182,12 @@ test('grading presets and custom pairs reach both serialized routes with their s
         assert.deepEqual(payload.provider.only,[model.id.startsWith('qwen/')?'alibaba':'openai']);
         assert.deepEqual(payload.reasoning,model.id==='qwen/qwen3.8-flash' ?
           effort==='off'?{enabled:false}:{max_tokens:2048} : {effort:effort==='off'?'none':effort});
+        if (model.id === 'qwen/qwen3.8-flash' && lane === 'student-a') {
+          assert.equal(payload.response_format.json_schema.strict,true);
+          assert.deepEqual(payload.response_format.json_schema.schema,COMPACT_POINTS_SCHEMA);
+          assert.equal(payload.tools,undefined);
+          continue;
+        }
         assert.equal(payload.tools[0].function.name,'submit_grading');
         if (lane === 'student-a') {
           assert.equal(payload.tools.length, 1);
@@ -191,5 +197,23 @@ test('grading presets and custom pairs reach both serialized routes with their s
         }
       }
     } finally {runtime.close();await rm(output,{recursive:true,force:true});}
+  }
+});
+
+test('structured Flash output preserves exact arguments and refuses interrupted or ambiguous responses', async () => {
+  const {flashSubmissionResult} = await import('../src/flash-grading.mjs');
+  const raw = '{"observations":{"item":"a \\"quote\\""},"items":{},"review_notes":[],"source_issues":[]}';
+  for (const [text,stopReason,converted] of [
+    [raw,'stop',true],
+    [raw,'length',false],
+    [raw.replace('"items":{}','"items":{},"items":{}'),'stop',false],
+    [raw.slice(1),'stop',false],
+  ]) {
+    const before = {stopReason,content:[{type:'text',text}]};
+    const after = await flashSubmissionResult({result:async()=>before},async saved=>assert.equal(saved,text)).result();
+    if (converted) {
+      assert.equal(after.stopReason,'toolUse');
+      assert.deepEqual(after.content[0].arguments,JSON.parse(raw));
+    } else assert.equal(after,before);
   }
 });
