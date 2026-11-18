@@ -1,4 +1,4 @@
-> 独立仓库说明：安装见 [README](README.md)，当前依赖边界见 [架构](docs/ARCHITECTURE.md)。下方保留原型工作流与历史实验；GradeOS 报告函数现已在本仓库内执行。
+> 独立仓库说明：安装见 [README](../README.md)，当前依赖边界见 [架构](ARCHITECTURE.md)。下方保留原型工作流与历史实验；GradeOS 报告函数现已在本仓库内执行。
 
 # Pi 教师工作区
 

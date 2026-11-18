@@ -18,4 +18,8 @@ dialog{border:1px solid #e0e0e0;border-radius:17px;box-shadow:0 20px 80px #00000
 @media(min-width:1001px){.artifact-scroll{padding-inline:8.2vw}.artifact-dock{width:calc(100% - 16.4vw)}.artifact .page-header{padding-inline:60px}}
 
 .version-list{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:25px}
+:root{--brand:#0759d4;--brand-hover:#0646a8;--brand-tint:#eaf2ff;--line:#dce3eb;--muted:#59697c;--surface:#f8fafd}
+.wordmark,.mobile-header>span{color:var(--brand)}
+.sidebar nav a[aria-current=page],.segments button[aria-pressed=true]{background:var(--brand-tint);color:var(--brand-hover)}
+.send,.primary{background:var(--brand);color:white}.send:hover:not(:disabled),.primary:hover:not(:disabled){background:var(--brand-hover)}
 .artifact-dock .source-chip{margin-bottom:0}.artifact-dock .composer-tools>div{min-width:0}.artifact-dock .reference-chips{max-height:76px;overflow:auto}.artifact-dock .task-composer{padding-block:17px 13px}

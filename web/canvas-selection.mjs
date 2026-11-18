@@ -51,12 +51,12 @@ export function bindSelection(canvas, { getPage, getMode, getSelections, onSelec
       context.beginPath(); context.lineWidth = 1.5; context.lineCap = 'round'; context.lineJoin = 'round';
       context.setLineDash(selection.generated ? [] : [5, 4]);
       context.strokeStyle = selection.generated
-        ? ({credit:'#23845b',deduction:'#c64545',review:'#a47824'}[selection.tone]||'#7899c1') : active||selection.live?'#3976ba':'#7899c1';
+        ? ({credit:'#176441',deduction:'#a33636',review:'#80560d'}[selection.tone]||'#566881') : active||selection.live?'#0759d4':'#566881';
       context.globalAlpha=1;
       if(selection.generated&&selection.shape!=='lasso') {
         const r=selection.rect,x=r.x*width,y=r.y*height,w=r.width*width,h=r.height*height;
         context.lineWidth=active?2:1.5;context.roundRect(x,y,w,h,Math.min(4,w/4,h/4));
-        context.fillStyle={credit:'rgba(35,132,91,.09)',deduction:'rgba(198,69,69,.09)',review:'rgba(164,120,36,.09)'}[selection.tone]||'rgba(57,118,186,.06)';context.fill();
+        context.fillStyle={credit:'rgba(23,100,65,.09)',deduction:'rgba(163,54,54,.09)',review:'rgba(128,86,13,.09)'}[selection.tone]||'rgba(7,89,212,.06)';context.fill();
         context.stroke();context.globalAlpha=1;continue;
       }
       if (selection.shape === 'lasso') {
@@ -64,7 +64,7 @@ export function bindSelection(canvas, { getPage, getMode, getSelections, onSelec
         // Keep the moving stroke open. Closing every frame creates a distracting moving chord.
         if (!selection.live) context.closePath();
       } else { const { x, y, width: w, height: h } = selection.rect; context.rect(x * width, y * height, w * width, h * height); }
-      if (active && !selection.live) { context.fillStyle = 'rgba(57,118,186,.035)'; context.fill('evenodd'); }
+      if (active && !selection.live) { context.fillStyle = 'rgba(7,89,212,.035)'; context.fill('evenodd'); }
       context.stroke();
       context.globalAlpha = 1;
     }
