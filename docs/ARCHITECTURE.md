@@ -23,8 +23,7 @@ flowchart LR
 | 批改工作台 | 原型目录中的 Node 服务 | 独立 Node 服务和静态模块 | 原 Pi 类、工具、人工确认、取消和恢复 |
 | 测试资料 | Skill 目录和历史 artifact 目录 | `evals/fixtures` 下自行安装的本地材料 | 原 PDF 字节和 SHA-256；官方标签仅事后使用 |
 
-运行依赖是两个固定版本的 Pi npm 包，三个直接 Python 依赖（Pillow、pypdf、ReportLab），
-以及 Poppler。依赖锁文件同时保留。报告函数仅用 Python 标准库。
+Node 使用 Pi、KaTeX 和本地请求计数器 js-tiktoken。Python 使用 Pillow、NumPy、pypdf 和 ReportLab，PDF 渲染使用 Poppler。macOS 可用 Vision 识别文字行，其他平台可选本机 Tesseract。依赖版本记录在锁文件中。
 无需 Next.js、FastAPI、LangGraph、PostgreSQL、Redis 或 Docker，也不读取旧仓库的环境变量文件。
 
 `scripts/python/analytics.py` 保留原函数体，去掉 facade 全局重绑定和后端导入链。

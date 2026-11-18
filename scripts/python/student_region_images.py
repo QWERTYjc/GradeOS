@@ -1,6 +1,7 @@
 """Label locally detected regions on complete pages; never crop or reorder ink."""
 import argparse
 import hashlib
+import io
 import json
 import time
 from pathlib import Path
@@ -47,10 +48,10 @@ def main():
             if source['source_sha256'] != page['sha256']:
                 raise ValueError('OCR catalog page mismatch')
             regions = source['regions']
-            original = Image.open(page['absolute_path']).convert('RGB')
+            original = Image.open(io.BytesIO(data)).convert('RGB')
             content = original.copy()
             long_side = args.max_side or max(original.size)
-            margin = max(14, round(long_side * .031))
+            margin = max(14, round(long_side * .031)) if regions else 0
             if args.max_side:
                 content.thumbnail((long_side - 2 * margin, long_side), Image.Resampling.LANCZOS)
             shown = Image.new('RGB', (content.width + 2 * margin, content.height), 'white')

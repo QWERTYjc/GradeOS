@@ -38,8 +38,16 @@ export async function prepareAnnotationPages({ students, output, maxSide }) {
   buildOCRRegionCatalog(raw, students);
   let observations = raw;
   if (raw.engine !== 'unavailable') {
-    await python('student_region_geometry.py', '--documents', sourcePath, '--observations', observedPath, '--output', refinedPath);
-    observations = await read(refinedPath);
+    try {
+      await python('student_region_geometry.py', '--documents', sourcePath, '--observations', observedPath, '--output', refinedPath);
+      const refined = await read(refinedPath);
+      buildOCRRegionCatalog(refined, students);
+      observations = refined;
+    } catch (error) {
+      // Raw OCR already passed document/page binding. The image writer checks
+      // source bytes again, so a changed page can never use these rectangles.
+      await freezeJson(output, 'ocr-refinement-status.json', {status:'using_raw_ocr', reason:error.code || 'refinement_failed'});
+    }
   }
   const catalog = buildOCRRegionCatalog(observations, students);
   await freezeJson(output, 'student-ocr-regions.json', catalog);

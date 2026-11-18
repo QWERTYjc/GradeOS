@@ -6,6 +6,7 @@ Unruled areas retain their OCR geometry instead of guessing a writing grid.
 """
 import argparse
 import hashlib
+import io
 import json
 from pathlib import Path
 
@@ -209,9 +210,10 @@ def main():
             raise ValueError('OCR document binding mismatch')
         for page in document['pages']:
             source=next(p for p in target['pages'] if p['page']==page['page'])
-            if source['source_sha256'] != page['sha256'] or hashlib.sha256(Path(page['absolute_path']).read_bytes()).hexdigest()!=page['sha256']:
+            data = Path(page['absolute_path']).read_bytes()
+            if source['source_sha256'] != page['sha256'] or hashlib.sha256(data).hexdigest()!=page['sha256']:
                 raise ValueError('OCR geometry source changed')
-            with Image.open(page['absolute_path']) as image:
+            with Image.open(io.BytesIO(data)) as image:
                 source['rows'],source['geometry_analysis']=complete_regions(image,source['rows'])
     observed['geometry_version']=1
     observed['geometry_engine']='local source-ink writing bands; no model coordinates'
