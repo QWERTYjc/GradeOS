@@ -17,14 +17,15 @@ export function gradingAnnotations(state, taskId, groupId, pageId = null) {
   const group = task?.groups?.find(group => group.id === groupId);
   if (!group) return [];
   const current = state.groups?.find(row => row.id === groupId);
-  // A repartitioned answer book needs a new run, not old comments on new pupils.
-  if (!current || JSON.stringify(current.pageIds) !== JSON.stringify(group.pageIds)) return [];
+  // Removing an upload keeps its frozen evidence. Reassigning an active page invalidates the old overlay.
   const pages = new Map(state.pages.map(page => [page.id, page]));
+  const remaining = group.pageIds.filter(id => pages.get(id)?.active !== false);
+  if (JSON.stringify(current?.pageIds || []) !== JSON.stringify(remaining)) return [];
   const frozenPages = new Map((task.pages || []).map(page => [page.id, page]));
   const validPage = id => {
     const page = pages.get(id), frozen = frozenPages.get(id);
     const hash = frozen?.sha256 || task.pageHashes?.[id];
-    return page && page.active !== false && (!hash || hash === page.sha256);
+    return page && (page.active !== false || Boolean(hash)) && (!hash || hash === page.sha256);
   };
   const document = state.documents?.find(doc => doc.taskId === taskId && doc.proposalId);
   const approval = document?.approvals?.at(-1);

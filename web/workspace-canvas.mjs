@@ -9,6 +9,14 @@ import {PageStream} from './page-stream.mjs';
 import {gradingResult,resultDocument} from './grading-result.mjs';
 
 const control = (action, label, title, disabled = false) => `<button type="button" data-pane-action="${action}" title="${e(title || label)}" aria-label="${e(title || label)}" ${disabled ? 'disabled' : ''}>${label}</button>`;
+function sourceForPage(state, pageId) {
+  const source = documents(state).find(row => row.pageIds.includes(pageId));
+  if (source) return source;
+  const page = state.pages.find(row => row.id === pageId);
+  if (!page) return null;
+  const siblings = state.pages.filter(row => row.sourceId === page.sourceId && row.active === page.active);
+  return { id: 'upload-' + page.sourceId, label: page.fileName, role: page.role, pageIds: siblings.map(row => row.id), original: true };
+}
 export class WorkspaceCanvas {
   constructor(root, { request, getState, onReference, toast, onChange = () => {}, onReview = () => {}, onResultDocument = () => {} }) {
     Object.assign(this, { root, request, getState, onReference, toast, onChange, onReview, onResultDocument });
@@ -85,7 +93,12 @@ export class WorkspaceCanvas {
   }
   choices() {
     const state = this.getState();
-    return [...documents(state).map(row => ({ value: `source:${row.id}`, label: row.role === 'scheme' ? `MS · ${row.label}` : row.role === 'question' ? `题目 · ${row.label}` : row.label, source: row })),
+    const visibleOriginals = new Map();
+    for (const panel of this.panels) {
+      const source = sourceForPage(state, panel.pageId);
+      if (source?.original) visibleOriginals.set(source.id, source);
+    }
+    return [...[...documents(state), ...visibleOriginals.values()].map(row => ({ value: `source:${row.id}`, label: row.role === 'scheme' ? `MS · ${row.label}` : row.role === 'question' ? `题目 · ${row.label}` : row.label, source: row })),
       ...state.tasks.filter(t=>t.kind==='grade'&&t.records?.length).flatMap(task=>task.groups.map(group=>({value:`result:${task.id}:${group.id}`,label:`批改结果 · ${group.label}`,result:{taskId:task.id,groupId:group.id}}))),
       ...(state.documents || []).map(row => {
         const batch = state.tasks.filter(task => task.kind === 'grade').findIndex(task => task.id === row.taskId) + 1;
@@ -148,7 +161,7 @@ export class WorkspaceCanvas {
     this.closeNote(); this.update();
   }
   async showPage(pageId, beside = false) {
-    const source=documents(this.getState()).find(d=>d.pageIds.includes(pageId));
+    const source=sourceForPage(this.getState(), pageId);
     const existing = this.panels.find(row => row.pageId === pageId)||this.panels.find(row=>source?.pageIds.includes(row.pageId));
     if (existing) { existing.pageId=pageId;this.renderPanel(existing);existing.stream?.go(pageId);this.activeId = existing.id; existing.root.scrollIntoView({ block: 'nearest', inline: 'nearest' });this.persist(); return; }
     const panel = this.panels.find(row => row.id === this.activeId) || this.panels[0];
@@ -168,7 +181,7 @@ export class WorkspaceCanvas {
   }
   async showSource(pageId, besideDocument = true) {
     if (!this.getState().pages.some(page => page.id === pageId)) return;
-    const source=documents(this.getState()).find(row=>row.pageIds.includes(pageId));
+    const source=sourceForPage(this.getState(), pageId);
     const panel=this.panels.find(row=>source?.pageIds.includes(row.pageId));
     if(panel)this.activeId=panel.id;
     const compare=source?.role!=='student'&&this.panels.some(row=>this.getState().groups.some(g=>g.pageIds.includes(row.pageId)));
@@ -239,7 +252,7 @@ export class WorkspaceCanvas {
   renderPanel(panel) {
     const state = this.getState(), page = state.pages.find(row => row.id === panel.pageId), doc = state.documents?.find(row => row.id === panel.documentId);
     const result=panel.resultTaskId?gradingResult(state,panel.resultTaskId,panel.resultGroupId):null;
-    const source = documents(state).find(row => row.pageIds.includes(panel.pageId)), pageIndex = source?.pageIds.indexOf(panel.pageId);
+    const source = sourceForPage(state, panel.pageId), pageIndex = source?.pageIds.indexOf(panel.pageId);
     const heading = panel.root.querySelector('.pane-heading');
     const value = result?`result:${panel.resultTaskId}:${panel.resultGroupId}`:doc ? `text:${doc.id}` : `source:${source?.id}`;
     const html = `<div class="pane-document">${icon('file-text')}<select class="pane-document-picker" aria-label="窗口 ${this.panels.indexOf(panel) + 1} 的文档">${this.choices().map(choice => `<option value="${e(choice.value)}" ${choice.value === value ? 'selected' : ''}>${e(choice.label)}</option>`).join('')}</select></div>${source ? `<div class="pane-pager">${control('previous', icon('left'), '上一页', pageIndex === 0)}<span>${pageIndex + 1}<small> / ${source.pageIds.length}</small></span>${control('next', icon('right'), '下一页', pageIndex === source.pageIds.length - 1)}</div>` : '<div class="pane-editor-tools"></div>'}${this.panels.length > 1 ? control('close', icon('close'), '关闭这个窗口') : ''}`;
@@ -250,9 +263,10 @@ export class WorkspaceCanvas {
       picker.innerHTML='<option value="continuous">连续滚动</option><option value="paged">逐页翻阅</option>';picker.value=panel.readMode;heading.insertBefore(picker,heading.querySelector('.pane-pager'));
     }
     const content=panel.root.querySelector('.pane-content'),continuous=panel.readMode==='continuous';
-    const key=doc?`doc:${doc.id}`:panel.resultTaskId?`result:${panel.resultTaskId}:${panel.resultGroupId}`:continuous?`flow:${source?.id}`:`page:${page?.id}`;
+    const key=doc?`doc:${doc.id}`:panel.resultTaskId?`result:${panel.resultTaskId}:${panel.resultGroupId}`:continuous?`flow:${source?.id}:${source?.pageIds.join(",")}`:`page:${page?.id}`;
     if(panel.contentKey!==key){
       panel.stream?.destroy();panel.stream=null;panel.editor?.destroy();panel.editor=null;panel.contentKey=key;panel.pinsHTML=null;
+      if (!page && !doc && !result) content.replaceChildren();
       if(page){panel.stream=new PageStream(this,panel,source,content,continuous);requestAnimationFrame(()=>panel.stream?.go(panel.pageId));}
       else if(doc){
         content.innerHTML = '<div class="document-editor"></div><div class="document-annotations"></div>';
@@ -473,7 +487,7 @@ export class WorkspaceCanvas {
       this.renderPins(panel);
     }
     if (action === 'previous' || action === 'next') {
-      const doc = documents(this.getState()).find(row => row.pageIds.includes(panel.pageId));
+      const doc = sourceForPage(this.getState(), panel.pageId);
       panel.pageId = doc.pageIds[doc.pageIds.indexOf(panel.pageId) + (action === 'previous' ? -1 : 1)]; this.closeNote(); this.update();
       panel.stream?.go(panel.pageId);
     }

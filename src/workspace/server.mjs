@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { timingSafeEqual, randomBytes } from 'node:crypto';
 import { WorkspaceStore, fail, replacePartition, taskDraft, saveReview, publicState, executionMode } from './store.mjs';
-import { importUpload, experimentRoot } from './documents.mjs';
+import { importUpload, removeUploads, experimentRoot } from './documents.mjs';
 import { runWorkspaceAgent } from './agent.mjs';
 import { SystemService } from './system-service.mjs';
 import { WorkspaceRunner } from './runner.mjs';
@@ -29,7 +29,7 @@ export async function createWorkspaceServer({ directory, port = 4173, model = DE
   const token = randomBytes(32).toString('hex');
   let planning = false;
   const state = () => publicState(store.snapshot(), configured(), { planning: planning || Boolean(chat.active), chat: chat.snapshot(),
-    liveTasks: Object.fromEntries([...runner.active].map(([id, entry]) => [id, { events: entry.events?.slice(-120) || [] }])), runBudgetUsd: cap, researchAvailable: Boolean(process.env.BRAVE_SEARCH_API_KEY) });
+    failureReasons: runner.failureReasons, liveTasks: Object.fromEntries([...runner.active].map(([id, entry]) => [id, { events: entry.events?.slice(-120) || [] }])), runBudgetUsd: cap, researchAvailable: Boolean(process.env.BRAVE_SEARCH_API_KEY) });
   const send = (res, status, data) => { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(data)); };
   const server = createServer(async (req, res) => {
     res.setHeader('Cache-Control', 'no-store');
@@ -81,7 +81,7 @@ export async function createWorkspaceServer({ directory, port = 4173, model = DE
       }
       if (req.method === 'POST' && url.pathname === '/api/uploads') {
         const bytes = await readBody(req, 40 * 1024 * 1024);
-        await importUpload(store, { bytes, role: url.searchParams.get('role'), name: url.searchParams.get('name') });
+        await importUpload(store, { bytes, role: url.searchParams.get('role'), name: url.searchParams.get('name'), grouping: url.searchParams.get('grouping') ?? 'file' });
         return send(res, 201, state());
       }
       if (url.pathname.startsWith('/api/') && req.method !== 'GET') {
@@ -131,8 +131,10 @@ export async function createWorkspaceServer({ directory, port = 4173, model = DE
               doc.folder = body.folder.trim();
             }
           });
+        } else if (req.method === 'DELETE' && url.pathname === '/api/uploads') {
+          await removeUploads(store, body.sourceIds, body.revision);
         } else if (req.method === 'PATCH' && url.pathname === '/api/materials') {
-          await store.mutate(body.revision, snapshot => replacePartition(snapshot, body.groups));
+          await store.mutate(body.revision, snapshot => replacePartition(snapshot, body.groups, body.unassignedPageIds));
         } else if (req.method === 'PATCH' && url.pathname === '/api/execution-mode') {
           await store.mutate(body.revision, snapshot => { snapshot.executionMode = executionMode(body.mode); });
         } else if (req.method === 'PATCH' && url.pathname === '/api/project') {

@@ -42,7 +42,7 @@ export function taskView(ctx) {
 
 export function taskForm(ctx, task = null, { allowStart = false } = {}) {
   const selected = new Set(task?.groupIds || [...ctx.selected]);
-  const mode = task?.executionMode || ctx.state.executionMode || 'review';
+  const mode = task ? task.executionMode || 'review' : 'auto';
   const supplement = task ? task.supplementalInstructions ?? task.goal ?? '' : ctx.command || '';
   const schemeId = task ? task.schemeId : ctx.state.schemes[0]?.id;
   const questionId = task ? task.questionId : ctx.state.questions?.[0]?.id;

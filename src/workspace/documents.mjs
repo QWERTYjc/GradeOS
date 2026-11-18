@@ -11,9 +11,10 @@ export const experimentRoot = fileURLToPath(new URL('../../', import.meta.url));
 export const python = pythonExecutable();
 const execute = promisify(execFile);
 
-export async function importUpload(store, { bytes, name, role }) {
+export async function importUpload(store, { bytes, name, role, grouping = 'file' }) {
   fail(['student', 'scheme', 'question'].includes(role), '材料类别无效。');
   fail(bytes.length > 0 && bytes.length <= 40 * 1024 * 1024, '单个文件最多 40 MB。');
+  fail(['manual', 'file'].includes(grouping), '请选择有效的分组方式。');
   const uploadId = id(), directory = join(store.directory, 'uploads', uploadId);
   await mkdir(directory, { recursive: true });
   const source = join(directory, 'source');
@@ -30,10 +31,10 @@ export async function importUpload(store, { bytes, name, role }) {
       size: page.size, imageToPdf: page.image_to_pdf, imageRepresentation: page.representation,
     }));
     await store.mutate(null, state => {
-      fail(state.pages.length + pages.length <= 1500, '此实验工作区最多保存 1500 页。');
+      fail(state.pages.filter(page => page.active !== false).length + pages.length <= 1500, '此实验工作区最多保存 1500 页。');
       state.pages.push(...pages);
-      if (role === 'student') state.groups.push({ id: id(), label: fileName.replace(/\.[^.]+$/, ''), pageIds: pages.map(page => page.id) });
-      else (role === 'question' ? state.questions : state.schemes).push({ id: uploadId, label: fileName, pageIds: pages.map(page => page.id), sha256: manifest.sha256 });
+      if (role === 'student' && grouping === 'file') state.groups.push({ id: id(), label: fileName.replace(/\.[^.]+$/, ''), pageIds: pages.map(page => page.id) });
+      else if (role !== 'student') (role === 'question' ? state.questions : state.schemes).push({ id: uploadId, label: fileName, pageIds: pages.map(page => page.id), sha256: manifest.sha256 });
       state.materialRevision++;
       if (state.title === '新的作业') state.title = fileName.replace(/\.[^.]+$/, '').slice(0, 80);
     });
@@ -41,7 +42,41 @@ export async function importUpload(store, { bytes, name, role }) {
   } catch (error) {
     await rm(directory, { recursive: true, force: true });
     if (error.status) throw error;
-    throw Object.assign(new Error('无法读取材料。请上传未加密的 PDF、PNG 或 JPEG（每文件最多 300 页）。'), { status: 422 });
+    throw Object.assign(new Error('无法读取材料。请上传未加密的 PDF、PNG、JPEG、WebP、TIFF 或 BMP（每文件最多 300 页）。'), { status: 422 });
+  }
+}
+
+// Drop unused originals only after the new material list is durable. Referenced
+// uploads stay available by immutable page ID to older reports and annotations.
+export async function removeUploads(store, sourceIds, revision) {
+  const unused = await store.mutate(revision, state => {
+    fail(Array.isArray(sourceIds) && sourceIds.length > 0, '请选择要移出的文件。');
+    const sources = new Set(sourceIds);
+    const removed = state.pages.filter(page => page.active !== false && sources.has(page.sourceId));
+    fail(new Set(removed.map(page => page.sourceId)).size === sources.size, '材料已变化，请重新选择。', 409);
+    const ids = new Set(removed.map(page => page.id));
+    const retained = new Set();
+    const retain = pageId => { if (ids.has(pageId)) retained.add(pageId); };
+    for (const task of state.tasks) {
+      for (const group of [...task.groups, task.scheme, task.question].filter(Boolean)) group.pageIds.forEach(retain);
+    }
+    for (const doc of state.documents) (doc.sourcePageIds || []).forEach(retain);
+    for (const annotation of state.annotations) retain(annotation.target?.pageId);
+    for (const message of state.conversation) {
+      for (const selection of message.selections || []) retain(selection.pageId);
+      for (const ref of message.references || []) retain(ref.target?.pageId);
+    }
+    const keepSources = new Set(removed.filter(page => retained.has(page.id)).map(page => page.sourceId));
+    for (const page of removed) page.active = false;
+    state.pages = state.pages.filter(page => !ids.has(page.id) || keepSources.has(page.sourceId));
+    state.groups = state.groups.map(group => ({ ...group, pageIds: group.pageIds.filter(id => !ids.has(id)) })).filter(group => group.pageIds.length);
+    state.questions = state.questions.filter(row => !sources.has(row.id));
+    state.schemes = state.schemes.filter(row => !sources.has(row.id));
+    state.materialRevision++;
+    return [...sources].filter(id => !keepSources.has(id));
+  });
+  for (const id of unused) {
+    if (/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(id)) await rm(join(store.directory, 'uploads', id), { recursive: true, force: true });
   }
 }
 

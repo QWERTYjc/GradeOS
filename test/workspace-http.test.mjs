@@ -101,3 +101,37 @@ test('HTTP upload → split → draft → review persists; rejects cross-origin/
   assert.equal(state.reviews.length, 2);
   for (const path of ['/', '/app.mjs', '/style.css', '/assets/icons/upload.svg']) assert.equal((await fetch(base + path)).status, 200);
 });
+
+test('manual intake separates uploaded files from student ownership and clears only current materials', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'gradeos-manual-intake-'));
+  const app = await createWorkspaceServer({directory, port: 0, configured: () => false});
+  t.after(async () => { await app.close(); await rm(directory, {recursive:true, force:true}); });
+  const base = 'http://127.0.0.1:' + app.server.address().port;
+  let state = await (await fetch(base + '/api/state')).json();
+  const headers = { 'X-Workspace-Token': state.token };
+  async function upload() {
+    const res = await fetch(base + '/api/uploads?role=student&name=a.pdf&grouping=manual', {method:'POST',headers,body:pdf()});
+    assert.equal(res.status, 201); state = await res.json();
+  }
+  async function write(path, method, body) {
+    const res = await fetch(base + path, {method,headers:{...headers,'Content-Type':'application/json'},body:JSON.stringify({revision:state.revision,...body})});
+    assert.equal(res.status,200); state=await res.json();
+  }
+  await upload(); await upload();
+  const [a,b,c,d] = state.pages;
+  assert.equal(state.groups.length,0);
+  await write('/api/materials','PATCH',{groups:[{id:'pupil',pageIds:[a.id,c.id]}],unassignedPageIds:[b.id,d.id]});
+  await write('/api/tasks','POST',{groupIds:['pupil'],after:'review'});
+  const frozen = state.tasks[0].groups;
+  await write('/api/uploads','DELETE',{sourceIds:[a.sourceId,c.sourceId]});
+  assert.deepEqual(state.groups,[]);
+  assert.deepEqual(state.tasks[0].groups,frozen);
+  assert.ok(state.pages.every(page=>page.active===false));
+  assert.equal((await fetch(base+a.url)).status,200);
+  await upload();
+  const unused=state.pages.at(-1);
+  await write('/api/uploads','DELETE',{sourceIds:[unused.sourceId]});
+  assert.equal((await fetch(base+unused.url)).status,404);
+  const {access}=await import('node:fs/promises');
+  await assert.rejects(access(join(directory,'uploads',unused.sourceId)), {code:'ENOENT'});
+});

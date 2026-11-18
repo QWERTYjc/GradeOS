@@ -60,7 +60,7 @@ export function workflowView(ctx, panels = []) {
 export function header(ctx) {
   const pending = questions(ctx.state).length + pendingRecords(ctx.state).length + (ctx.state.documents || []).filter(doc => doc.proposalId && !doc.approvals.length && ctx.state.tasks.some(task => task.id === doc.taskId && task.status === 'running' && task.executionMode !== 'auto')).length;
   return `<div class="brand-line"><a class="canvas-wordmark" href="/" target="_top">Grade<span>OS</span></a><span class="header-divider"></span>${b('rename-project', e(ctx.state.title), { className: 'project-name' })}</div>
-    <div class="header-actions">${ctx.resultsOpen && !ctx.state.tasks.some(task => task.status === 'running') ? b('prepare-materials', '新批改', { className: 'quiet' }) : ''}${b('materials', `材料 <span class="count">${ctx.state.pages.length}</span>`, { className: 'quiet' })}${resultTasks(ctx.state).length ? b('results', '批改结果', { className: ctx.resultsOpen ? 'header-result-active' : 'quiet', attrs: `aria-pressed="${Boolean(ctx.resultsOpen)}"` }) : ''}${b('reviews', pending ? `<span class="amber-dot"></span>待确认 ${pending}` : '审阅', { className: pending ? 'review-count' : 'quiet' })}${ib('history', '对话与任务记录', 'history')}<a class="quiet" href="/#files" target="_top">工作区文件</a></div>`;
+    <div class="header-actions">${!ctx.processId && ctx.returnProcessId ? b('show-process', '返回处理过程', { attrs: attr(ctx.returnProcessId) }) : ''}${ctx.resultsOpen && !ctx.state.tasks.some(task => task.status === 'running') ? b('prepare-materials', '新批改', { className: 'quiet' }) : ''}${b('materials', `材料 <span class="count">${ctx.state.pages.filter(page => page.active !== false).length}</span>`, { className: 'quiet' })}${resultTasks(ctx.state).length ? b('results', '批改结果', { className: ctx.resultsOpen ? 'header-result-active' : 'quiet', attrs: `aria-pressed="${Boolean(ctx.resultsOpen)}"` }) : ''}${b('reviews', pending ? `<span class="amber-dot"></span>待确认 ${pending}` : '审阅', { className: pending ? 'review-count' : 'quiet' })}${ib('history', '对话与任务记录', 'history')}<a class="quiet" href="/#files" target="_top">工作区文件</a></div>`;
 }
 export function toolbar(ctx, needsMaterials = false) {
   const tool = (mode, label, title = '') => b(mode, label, {
@@ -75,6 +75,23 @@ function eventsView(events) {
   for (const event of events || []) if (event.label) latest.set(event.key || event.id || `${event.type}:${event.lane}`, event);
   return [...latest.values()].slice(-12).map(event => `<li><span class="event-dot ${event.status === 'done' ? 'done' : event.status === 'error' ? 'error' : ''}"></span><span>${e(event.label)}</span>${event.pageIds?.length ? b('event-page', '原页', { className: 'source-link', attrs: attr(event.pageIds[0]) }) : ''}<span class="event-lane">${e(event.lane?.startsWith('student-') ? '答卷' : event.lane === 'ms-review' ? 'MS' : '')}</span></li>`).join('');
 }
+export function processView(ctx, task) {
+  const running = task.status === 'running', guide = guideForTask(ctx.state, task);
+  const waiting = running && guide && !guide.approvals.length && task.executionMode === 'review';
+  const events = [...(task.interaction?.events || []), ...(ctx.state.liveTasks?.[task.id]?.events || [])];
+  const completed = task.progress?.completed ?? 0, total = task.groups.length;
+  const title = waiting ? '等待确认评分要求' : running ? task.progress?.phase || '正在准备批改' : statuses[task.status] || '任务状态未知';
+  const phase = !running && task.progress?.phase ? `<p>最后处理到：${e(task.progress.phase)}</p>` : '';
+  return `<article class="process-sheet"><div class="process-caption">批改处理过程</div><h1>${e(title)}</h1>
+    <p>${e(task.title)} · ${total} 份答卷</p>
+    <div class="process-meter"><strong>已保存评分</strong><span>${completed} / ${total} 份</span></div>
+    <progress value="${completed}" max="${Math.max(1,total)}" aria-label="已保存评分的答卷"></progress>
+    ${phase}${task.error ? `<p role="status" class="small-notice">${e(ctx.state.failureReasons?.[task.id] || task.error)}</p>` : ''}${progressMetrics(task.progress)}
+    ${events.length ? `<h2>最近活动</h2><ol class="activity-list">${eventsView(events)}</ol>` : ''}
+    <div class="process-actions">${guide ? b('open-document', waiting ? '审阅评分要求' : '查看评分说明', {className:waiting ? 'primary' : 'quiet', attrs:attr(guide.id)}) : ''}
+    ${task.records.length || task.artifacts.length ? b('results','查看已保存结果',{className:'primary',attrs:attr(task.id)}) : ''}
+    ${running ? b('cancel-task','停止任务',{attrs:attr(task.id),disabled:task.progress?.stopping}) : b('prepare-materials','返回准备材料',{className:'outline'})}</div></article>`;
+}
 export function taskCard(task, ctx) {
   const stale = task.status === 'draft' && task.materialRevision !== ctx.state.materialRevision;
   const stage = task.kind === 'grade' ? gradingStage(ctx.state, task) : null;
@@ -85,7 +102,7 @@ export function taskCard(task, ctx) {
     ${task.status === 'running' ? `<p class="task-phase">${e(stage === 'prepare' ? '阅读材料并整理评分要求' : stage === 'align' ? '评分实施已就绪，答卷尚未批改' : task.progress?.phase || '正在处理')}${stage === 'grading' ? ` · 已保存 ${task.progress?.completed || 0}/${task.groupIds.length} 份` : ''}</p>` : ''}
     ${events.length ? `<details class="activity-details"><summary>查看处理过程</summary><ol class="activity-list">${eventsView(events)}</ol>${progressMetrics(task.progress)}</details>` : ''}
     ${stale || task.error ? `<p class="small-notice">${e(stale ? '材料已改变，请更新范围后开始。' : task.error)}</p>` : ''}
-    <div class="task-card-actions">${task.status === 'draft' ? `${b('edit-task', '修改安排', { attrs: attr(task.id) })}${b('start-task', task.kind === 'grade' ? task.executionMode === 'auto' ? '准备并批改' : '整理评分要求' : '开始任务', { className: 'primary', attrs: attr(task.id), disabled: stale })}` : task.status === 'running' ? `${guideForTask(ctx.state, task) ? b('open-document', '评分实施', { attrs: attr(guideForTask(ctx.state, task).id) }) : ''}${task.kind === 'grade' ? b('target-task', '补充要求', { attrs: attr(task.id) }) + b(task.interaction?.paused ? 'resume-task' : 'pause-task', task.interaction?.paused ? '继续' : '暂停', { attrs: attr(task.id) }) : ''}${b('cancel-task', '停止', { attrs: attr(task.id) })}` : ''}
+    <div class="task-card-actions">${task.kind === 'grade' && task.status !== 'draft' ? b('show-process', '处理过程', {attrs:attr(task.id)}) : ''}${task.status === 'draft' ? `${b('edit-task', '修改安排', { attrs: attr(task.id) })}${b('start-task', task.kind === 'grade' ? task.executionMode === 'auto' ? '准备并批改' : '整理评分要求' : '开始任务', { className: 'primary', attrs: attr(task.id), disabled: stale })}` : task.status === 'running' ? `${guideForTask(ctx.state, task) ? b('open-document', '评分实施', { attrs: attr(guideForTask(ctx.state, task).id) }) : ''}${task.kind === 'grade' ? b('target-task', '补充要求', { attrs: attr(task.id) }) + b(task.interaction?.paused ? 'resume-task' : 'pause-task', task.interaction?.paused ? '继续' : '暂停', { attrs: attr(task.id) }) : ''}${b('cancel-task', '停止', { attrs: attr(task.id) })}` : ''}
     ${task.records.length ? b('task-reviews', `${task.records.length} 条评分`, { attrs: attr(task.id) }) : ''}${task.artifacts.map(artifact => b('artifact', `${icon('file-text')}${e(artifact.title)}`, { className: 'artifact-link', attrs: `data-task="${e(task.id)}" ${attr(artifact.id)}` })).join('')}
     ${task.status === 'needs_review' ? b('complete-review', '完成审阅', { attrs: attr(task.id) }) : ''}</div></article>`;
 }

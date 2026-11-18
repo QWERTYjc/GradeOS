@@ -19,15 +19,22 @@ def main():
     else:
         Image.MAX_IMAGE_PIXELS = 50_000_000
         with Image.open(args.source) as original:
-            if original.format not in ('PNG', 'JPEG'):
+            if original.format not in ('PNG', 'JPEG', 'WEBP', 'TIFF', 'BMP'):
                 raise ValueError('Unsupported image')
-            image = ImageOps.exif_transpose(original).convert('RGB')
-            if image.width * image.height > 50_000_000:
-                raise ValueError('Image dimensions')
-            path = args.output / 'page-1.png'; image.save(path)
-            pages = [{'page': 1, 'path': path.name, 'size': list(image.size),
-                      'sha256': hashlib.sha256(path.read_bytes()).hexdigest(),
-                      'representation': 'complete_source_image', 'source_pixels_preserved': True}]
+            count = getattr(original, 'n_frames', 1)
+            if count > 300:
+                raise ValueError('Too many pages')
+            pages = []
+            for index in range(count):
+                original.seek(index)
+                if original.width * original.height > Image.MAX_IMAGE_PIXELS:
+                    raise ValueError('Image dimensions')
+                image = ImageOps.exif_transpose(original).convert('RGB')
+                path = args.output / f'page-{index + 1}.png'
+                image.save(path)
+                pages.append({'page': index + 1, 'path': path.name, 'size': list(image.size),
+                              'sha256': hashlib.sha256(path.read_bytes()).hexdigest(),
+                              'representation': 'complete_source_image', 'source_pixels_preserved': True})
     manifest = {'sha256': hashlib.sha256(source).hexdigest(), 'pages': pages}
     (args.output / 'manifest.json').write_text(json.dumps(manifest))
 

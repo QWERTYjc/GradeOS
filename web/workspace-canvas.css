@@ -479,3 +479,20 @@
 .original-page{display:block;text-overflow:ellipsis;overflow:hidden;white-space:nowrap;color:var(--muted);font-size:10px;line-height:18px}
 .grading-intake .page-tools{bottom:20px}
 @media(max-width:760px){.grading-intake .page-tools{bottom:auto}}
+.staged-files{margin:12px 0;border-block:1px solid #dde3eb}
+.staged-files>header,.staged-files>div,.pending-help,.process-meter,.process-actions{display:flex;align-items:center;gap:12px}
+.staged-files>header,.staged-files>div{padding:4px 0;font-size:12px}
+.staged-files>header strong,.staged-files>div>span{flex:1;min-width:0;overflow-wrap:anywhere}
+.staged-files small,.pending-help{color:var(--muted);font-size:12px}
+.staged-files button,.pending-help button{color:var(--blue);font-size:12px}
+.upload-extras select{padding:5px 8px;max-width:100%;border:1px solid #dce2e9;border-radius:5px;background:white}
+.pending-help{justify-content:space-between;margin:10px 0;flex-wrap:wrap}
+#batch-process{min-height:0;overflow:auto;flex:1}
+.process-sheet{width:min(740px,100%);margin:0 auto;padding:clamp(22px,5vh,56px) 16px}
+.process-caption,.process-sheet p{font-size:13px;color:var(--muted)}
+.process-sheet h1{font-size:24px;margin:8px 0}
+.process-sheet h2,.process-meter{font-size:14px}
+.process-meter{margin:26px 0 6px;justify-content:space-between}
+.process-sheet progress{width:100%;height:6px;accent-color:var(--blue)}
+.process-actions{margin-top:20px;flex-wrap:wrap}
+.process-sheet .small-notice{color:#874223;background:#fff6ea;border-radius:6px;padding:12px}

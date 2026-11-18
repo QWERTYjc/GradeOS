@@ -55,10 +55,11 @@ export class WorkspaceStore {
   }
 }
 
-export function replacePartition(state, groups) {
-  fail(Array.isArray(groups) && groups.length > 0, '请保留至少一份答卷。');
+export function replacePartition(state, groups, unassignedPageIds = []) {
+  fail(Array.isArray(groups) && Array.isArray(unassignedPageIds) && (groups.length || unassignedPageIds.length), '请保留至少一份答卷。');
   const available = new Set(answerPages(state).map(page => page.id));
-  const seen = new Set(), groupIds = new Set();
+  fail(unassignedPageIds.every(id => available.has(id)) && new Set(unassignedPageIds).size === unassignedPageIds.length, '待分组页面无效。');
+  const seen = new Set(unassignedPageIds), groupIds = new Set();
   const previous = new Map(state.groups.map(group => [group.id, group]));
   const next = groups.map((group, index) => {
     fail(typeof group.id === 'string' && /^[\w-]{1,64}$/.test(group.id) && !groupIds.has(group.id), '答卷标识重复或无效。');

@@ -1,7 +1,7 @@
 import { escape as e, icon, button as b, iconButton as ib, pageById, recordScoreText } from './ui.mjs';
-import { materialView, equalGroups, movedGroups, assignPages, intakeView, historyLibrary } from './materials.mjs';
+import { materialView, equalGroups, movedGroups, assignPages, intakeView, historyLibrary, pendingPages, uploadSources, uploadsView } from './materials.mjs';
 import { taskForm, taskFormInput, refreshTaskSetup, submitTaskSetup, artifactContent } from './tasks.mjs';
-import { documents, questions, pendingRecords, allRecords, header, toolbar, historyView, statusView, contextChips, questionView, workflowView, needsGradingMaterials } from './canvas-view.mjs';
+import { documents, questions, pendingRecords, allRecords, header, toolbar, historyView, statusView, contextChips, questionView, workflowView, needsGradingMaterials, processView } from './canvas-view.mjs';
 import { WorkspaceCanvas } from './workspace-canvas.mjs';
 import { findGradingAnnotation } from './grading-annotations.mjs';
 import { resultTasks, resultContext, resultsOutline, recordDetail, reviewForRecord } from './results-view.mjs';
@@ -22,14 +22,12 @@ const toast = message => {
 const scope = () => ctx.scopeAll ? ctx.state.groups.map(group => group.id) : [...ctx.selected];
 function setState(state) {
   if (state.token) ctx.token = state.token;
-  const previousDocuments = ctx.state ? new Set((ctx.state.documents || []).map(row => row.id)) : null;
   ctx.state = state;
   ctx.references = ctx.references.filter(ref => !ref.annotationId || state.annotations?.some(note => note.id === ref.annotationId && !note.archivedAt)
     || findGradingAnnotation(state, ref.annotationId, ref.target?.pageId));
-  const incomingDocument = previousDocuments && state.documents?.find(row => !previousDocuments.has(row.id) && row.actor === 'agent' && row.kind === 'marking_guide');
-  if (incomingDocument && surface) queueMicrotask(() => surface.showDocument(incomingDocument.id, surface.panels.length < 2).catch(error => toast(error.message)));
   ctx.selected = new Set([...ctx.selected].filter(id => state.groups.some(group => group.id === id)));
   if (!state.pages.some(page => page.id === ctx.pageId)) ctx.pageId = state.schemes[0]?.pageIds[0] || state.questions?.[0]?.pageIds[0] || state.groups[0]?.pageIds[0];
+  if (ctx.processId && state.tasks.some(task => task.id === ctx.processId && task.status === 'running')) ctx.targetTaskId = ctx.processId;
   if (ctx.targetTaskId && !state.tasks.some(task => task.id === ctx.targetTaskId && task.status === 'running')) { ctx.targetTaskId = null; ctx.questionId = null; }
   const pending = questions(state);
   const incoming = pending.find(row => !ctx.seenQuestions.has(row.id));
@@ -44,10 +42,11 @@ async function request(path, body = {}, method = 'POST') {
   const response = await fetch(path, { method, headers: { 'Content-Type': 'application/json', 'X-Workspace-Token': ctx.token }, body: JSON.stringify({ revision: ctx.state.revision, materialRevision: ctx.state.materialRevision, ...body }) });
   const result = await response.json();
   if (!response.ok) { if (response.status === 409) { await refresh(); render(); } throw Error(result.error || '操作未完成。'); }
+  if (path.endsWith('/approve') && result.documents?.some(doc => doc.taskId === ctx.returnProcessId && path === `/api/documents/${doc.id}/approve`)) ctx.processId = ctx.returnProcessId;
   setState(result); render(); return result;
 }
 function frame() {
-  app.innerHTML = `<header class="canvas-header" id="workspace-header"></header><main class="canvas-workspace" aria-label="材料画布"><section class="workflow-stage" id="workflow-stage" aria-label="当前批改阶段" hidden></section><div class="canvas-toolbar" id="canvas-toolbar"></div><div class="canvas-stage"><aside class="results-outline" id="results-outline" aria-label="批改题目导航" hidden></aside><div class="multi-canvas" id="multi-canvas"></div><aside class="record-panel" id="record-panel" aria-label="评分审阅" hidden></aside></div></main>
+  app.innerHTML = `<header class="canvas-header" id="workspace-header"></header><main class="canvas-workspace" aria-label="材料画布"><section class="workflow-stage" id="workflow-stage" aria-label="当前批改阶段" hidden></section><div class="canvas-toolbar" id="canvas-toolbar"></div><section id="batch-process" hidden aria-label="批改处理过程"></section><div class="canvas-stage"><aside class="results-outline" id="results-outline" aria-label="批改题目导航" hidden></aside><div class="multi-canvas" id="multi-canvas"></div><aside class="record-panel" id="record-panel" aria-label="评分审阅" hidden></aside></div></main>
     <aside class="question-peek" id="question-peek" aria-label="待确认问题" hidden></aside>
     <section class="conversation-panel" id="conversation-panel" aria-label="对话与处理过程" hidden></section><div class="collaboration-dock"><div class="agent-status" id="agent-status" aria-live="polite"></div>
       <form id="composer" class="composer"><div class="composer-context" id="composer-context"></div><textarea id="composer-input" name="goal" rows="1" maxlength="8000" aria-label="补充批改要求或提问" placeholder="补充批改要求，或针对材料提问…"></textarea>
@@ -84,14 +83,20 @@ function renderHistory() {
   const next = node.querySelector('#conversation-scroll'); next.scrollTop = atEnd ? next.scrollHeight : oldTop;
 }
 function renderWorkflow() {
-  const intake = surface && !surface.intake.hidden;
+  const process = ctx.state.tasks.find(task => task.id === ctx.processId);
+  if (process?.status === 'running') ctx.targetTaskId = process.id;
+  const processNode = document.querySelector('#batch-process');
+  processNode.hidden = !process;
+  html(processNode, process ? processView(ctx, process) : '');
+  document.querySelector('.canvas-stage').hidden = Boolean(process);
+  const intake = !process && surface && !surface.intake.hidden;
   html(surface.intake, intake ? intakeView(ctx) : '');
   const toolbarNode = document.querySelector('#canvas-toolbar');
   html(toolbarNode, toolbar(ctx, needsGradingMaterials(ctx.state) || surface?.prepareBatch));
-  toolbarNode.hidden = intake;
-  document.querySelector('.collaboration-dock').hidden = intake;
+  toolbarNode.hidden = intake || Boolean(process);
+  document.querySelector('.collaboration-dock').hidden = intake || Boolean(process && process.status !== 'running');
   const workflow = document.querySelector('#workflow-stage');
-  html(workflow, intake ? '' : workflowView(ctx, surface?.panels || []));
+  html(workflow, intake || process ? '' : workflowView(ctx, surface?.panels || []));
   workflow.hidden = !workflow.innerHTML;
 }
 function renderResults() {
@@ -108,11 +113,11 @@ function alignmentGuide() {
     || guides.findLast(doc => surface.panels.some(panel => panel.documentId === doc.id)) || guides.at(-1);
 }
 function render() {
-  if (!ctx.state) return;
+  if (!ctx.state || ctx.submittingSetup) return;
   app.classList.toggle('conversation-open', ctx.historyOpen);
   renderResults();
   html(document.querySelector('#workspace-header'), header(ctx));
-  surface.update();
+  if (ctx.processId) renderWorkflow(); else surface.update();
   html(document.querySelector('#composer-context'), contextChips(ctx));
   const aligning = alignmentGuide();
   document.querySelector('#composer-input').placeholder = ctx.questionId ? '回复这一处问题…' : ctx.recordContextId ? '针对这个评分点，写下你的问题…' : ctx.selections.length || ctx.references.length ? '针对引用内容，说说你的要求…' : aligning ? '和 Agent 对齐这次的评分要求…' : ctx.targetTaskId ? '给当前批改补充说明…' : ctx.resultsOpen ? '针对答卷提问，或圈选原卷补充说明…' : '补充批改要求，或针对材料提问…';
@@ -128,12 +133,15 @@ function openDialog(title, content, className = '') {
 }
 const closeDialog = () => dialog.close();
 function openMaterials() {
-  openDialog('材料与答卷划分', `<div class="material-upload">${b('upload-student', '添加答卷', { symbol: 'plus', className: 'outline' })}${b('upload-scheme', '添加评分标准', { className: 'quiet' })}${b('upload-question', '添加题目', { className: 'quiet' })}</div>${b('new-document', '新建文档', { className: 'quiet' })}${historyLibrary(ctx.state)}${materialView(ctx)}`, 'materials-drawer');
+  openDialog('材料与答卷划分', `<div class="material-upload">${b('upload-student', '添加答卷', { symbol: 'plus', className: 'outline' })}${b('upload-scheme', '添加评分标准', { className: 'quiet' })}${b('upload-question', '添加题目', { className: 'quiet' })}</div>${b('new-document', '新建文档', { className: 'quiet' })}${uploadsView(ctx.state)}${historyLibrary(ctx.state)}${materialView(ctx)}`, 'materials-drawer');
 }
 function showPage(id) { if (pageById(ctx.state, id)) { ctx.pageId = id; return surface.showPage(id); } }
 function openTask(task = null) { if (ctx.busy) { toast('材料正在读取，请稍候。'); return; } modalTaskId = task?.id || null; modalSelections = task?.selections || ctx.selections; const selected = ctx.selected; ctx.selected = new Set(scope()); openDialog(task?.kind === 'assist' ? '修改安排' : '开始批改', taskForm(ctx, task, { allowStart: true }), 'task-setup-dialog'); ctx.selected = selected; }
 async function savePartition(groups, remember = true) {
-  const before = structuredClone(ctx.state.groups); await request('/api/materials', { groups }, 'PATCH');
+  const before = structuredClone(ctx.state.groups);
+  const assigned = new Set(groups.flatMap(group => group.pageIds));
+  const unassignedPageIds = ctx.state.pages.filter(page => page.role === 'student' && page.active !== false && !assigned.has(page.id)).map(page => page.id);
+  await request('/api/materials', { groups, unassignedPageIds }, 'PATCH');
   if (remember) ctx.undo = [...ctx.undo, before].slice(-30);
   ctx.pickedPages.clear();
   if (!surface.intake.hidden) { closeDialog(); renderWorkflow(); }
@@ -170,6 +178,7 @@ async function showRecord(id) {
   await surface.revealRecord(record, record.taskId);
 }
 async function openResults(taskId = null, groupId = null) {
+  ctx.processId = null;
   closeDialog(); closeRecord(); ctx.resultsOpen = true; ctx.historyOpen = false;
   ctx.resultTaskId = taskId || ctx.resultTaskId; ctx.resultGroupId = groupId || ctx.resultGroupId;
   const { task, group, items } = resultContext(ctx);
@@ -205,14 +214,14 @@ async function upload(files) {
   ctx.busy = true; updateSend(); renderWorkflow(); const role = ctx.uploadRole;
   try {
     for (const [index, file] of [...files].entries()) {
-      if (role === 'document' || /\.(md|txt|csv|json)$/i.test(file.name)) { const result = await request('/api/documents', { title: file.name, body: await file.text() }); await surface.showDocument(result.document.id, surface.panels.length < 2); continue; }
+      if (role === 'document') { const result = await request('/api/documents', { title: file.name, body: await file.text() }); await surface.showDocument(result.document.id, surface.panels.length < 2); continue; }
       toast(`正在读取 ${file.name}（${index + 1}/${files.length}）…`);
-      const response = await fetch(`/api/uploads?role=${role}&name=${encodeURIComponent(file.name)}`, { method: 'POST', headers: { 'X-Workspace-Token': ctx.token }, body: file });
+      const response = await fetch(`/api/uploads?role=${role}&grouping=${ctx.uploadGrouping || 'manual'}&name=${encodeURIComponent(file.name)}`, { method: 'POST', headers: { 'X-Workspace-Token': ctx.token }, body: file });
       const state = await response.json(); if (!response.ok) throw Error(state.error);
       const previous = new Set(ctx.state.pages.map(page => page.id)); setState(state);
       ctx.pageId = state.pages.find(page => !previous.has(page.id))?.id || ctx.pageId; ctx.undo = [];
     }
-    closeDialog(); render(); if (role !== 'document' && surface.intake.hidden) await showPage(ctx.pageId); toast(role === 'document' ? '文档已导入，可以直接编辑。' : '材料已保存，可以检查页面分组。');
+    closeDialog(); render(); if (role !== 'document' && surface.intake.hidden && !ctx.processId) openMaterials(); toast(role === 'document' ? '文档已导入，可以直接编辑。' : '材料已保存，可以检查页面分组。');
   } finally { ctx.busy = false; uploadInput.value = ''; pendingFiles = null; render(); }
 }
 async function submitMessage() {
@@ -221,7 +230,7 @@ async function submitMessage() {
   sending = true; updateSend();
   try {
     const guide = alignmentGuide();
-    if (ctx.targetTaskId && (ctx.questionId || guide?.taskId !== ctx.targetTaskId)) {
+    if (ctx.targetTaskId && (ctx.processId || ctx.questionId || guide?.taskId !== ctx.targetTaskId)) {
       const task = ctx.state.tasks.find(row => row.id === ctx.targetTaskId);
       await request(`/api/tasks/${task.id}/${ctx.questionId ? 'answer' : 'note'}`, { text: goal, questionId: ctx.questionId, groupIds: task.groupIds, selections: ctx.selections, references: ctx.references });
       toast(ctx.questionId ? '回复已提交，等待 agent 接收。' : '补充已排队，将在下一次处理时送达。');
@@ -239,12 +248,15 @@ const actions = {
     renderWorkflow(); surface.intake.scrollTop = 0;
     surface.intake.querySelector('h1')?.setAttribute('tabindex','-1'); surface.intake.querySelector('h1')?.focus({preventScroll:true});
   },
+  'show-process': element => { ctx.processId = element.dataset.id; ctx.returnProcessId = ctx.processId; ctx.historyOpen = false; ctx.resultsOpen = false; render(); },
   'prepare-materials': () => {
+    if (ctx.processId) { try { sessionStorage.setItem('gradeos-dismissed-process', ctx.processId); } catch {} }
+    ctx.targetTaskId = null; ctx.processId = null; ctx.intakeStep = 1;
     closeRecord(); ctx.resultsOpen = false; ctx.historyOpen = false; surface.readDocuments = false; surface.prepareBatch = true;
     surface.closeNote(); render(); surface.intake.querySelector('button')?.focus();
   },
   'close-dialog': closeDialog, materials: () => {
-    if (!surface.intake.hidden) { ctx.intakeStep=1; renderWorkflow(); surface.intake.scrollTop=0; }
+    if (!ctx.processId && !surface.intake.hidden) { ctx.intakeStep=1; renderWorkflow(); surface.intake.scrollTop=0; }
     else openMaterials();
   }, scope: openMaterials,
   'group-result': element => { surface.prepareBatch = false; surface.readDocuments = true; return openResults(element.dataset.task, element.dataset.id); },
@@ -252,6 +264,11 @@ const actions = {
     const docs = ctx.state.documents.filter(doc => !doc.taskId);
     const folders = [...new Set(docs.map(doc => doc.folder).filter(Boolean))];
     openDialog('整理历史文档', `<form id="folder-form" class="form"><label>分类名称<input name="folder" maxlength="80" list="history-folders" placeholder="例如：课后讲评（留空移回未关联批次）"><datalist id="history-folders">${folders.map(folder => `<option value="${e(folder)}"></option>`).join('')}</datalist></label><fieldset class="scope-picker"><legend>选择文档</legend>${docs.map(doc => `<label><input type="checkbox" name="documentIds" value="${e(doc.id)}"><span>${e(doc.title)}</span><small>${e(doc.folder)}</small></label>`).join('')}</fieldset><button type="submit" class="primary">保存分类</button></form>`);
+  },
+  'group-pending': () => { ctx.pickedPages = new Set(pendingPages(ctx.state).map(page => page.id)); actions['assign-pages'](); },
+  'remove-uploads': element => {
+    const files = uploadSources(ctx.state).filter(file => !element.dataset.id || file.id === element.dataset.id);
+    openDialog('移出本次材料', `<form id="remove-uploads-form" class="form">${files.map(file => `<input type="hidden" name="source" value="${e(file.id)}">`).join('')}<p>将${files.length === 1 ? e(files[0].name) : `这 ${files.length} 个文件`}从本次材料移出。未引用的原文件会删除，历史批次使用的原页会保留。</p><button class="primary">确认移出</button></form>`);
   },
   'assign-pages': () => openDialog('将选中页分到答卷', `<form id="assign-form" class="form"><label>目标答卷<select name="target"><option value="">新建答卷</option>${ctx.state.groups.map(group => `<option value="${e(group.id)}">${e(group.label)}</option>`).join('')}</select></label><label>新答卷名称<input name="label" maxlength="80" value="答卷 ${ctx.state.groups.length + 1}"></label><button type="submit" class="primary">归入答卷</button></form>`),
   history: () => { ctx.historyOpen = !ctx.historyOpen; if (ctx.historyOpen) closeRecord(); render(); },
@@ -265,19 +282,19 @@ const actions = {
   'result-report': async element => { await openArtifact(element.dataset.task, element.dataset.id, false); ctx.resultReport = element.dataset.id; render(); },
   'record-source': element => surface.showSource(element.dataset.id),
   'previous-result': () => stepResult(-1), 'next-result': () => stepResult(1),
-  upload: () => openDialog('添加材料', `<div class="upload-choices">${b('upload-student', '上传答卷', { className: 'primary', symbol: 'upload' })}${b('upload-scheme', '上传评分标准', { className: 'outline', symbol: 'file-text' })}${b('upload-question', '上传题目', { className: 'outline', symbol: 'file-text' })}${b('upload-document', '导入文本文件', { className: 'quiet' })}${b('new-document', '新建文档', { className: 'quiet' })}</div><p class="muted">PDF、PNG 或 JPEG · 单个文件最多 40 MB</p>`),
-  'upload-student': () => { ctx.uploadRole = 'student'; uploadInput.accept = '.pdf,.png,.jpg,.jpeg'; return pendingFiles ? upload(pendingFiles) : uploadInput.click(); },
-  'upload-scheme': () => { ctx.uploadRole = 'scheme'; uploadInput.accept = '.pdf,.png,.jpg,.jpeg'; return pendingFiles ? upload(pendingFiles) : uploadInput.click(); },
-  'upload-question': () => { ctx.uploadRole = 'question'; uploadInput.accept = '.pdf,.png,.jpg,.jpeg'; return pendingFiles ? upload(pendingFiles) : uploadInput.click(); },
+  upload: () => openDialog('添加材料', `<div class="upload-choices">${b('upload-student', '上传答卷', { className: 'primary', symbol: 'upload' })}${b('upload-scheme', '上传评分标准', { className: 'outline', symbol: 'file-text' })}${b('upload-question', '上传题目', { className: 'outline', symbol: 'file-text' })}${b('upload-document', '导入文本文件', { className: 'quiet' })}${b('new-document', '新建文档', { className: 'quiet' })}</div><p class="muted">PDF、PNG、JPEG、WebP、TIFF 或 BMP · 单个文件最多 40 MB</p>`),
+  'upload-student': () => { ctx.uploadRole = 'student'; uploadInput.accept = '.pdf,.png,.jpg,.jpeg,.webp,.tif,.tiff,.bmp'; return pendingFiles ? upload(pendingFiles) : uploadInput.click(); },
+  'upload-scheme': () => { ctx.uploadRole = 'scheme'; uploadInput.accept = '.pdf,.png,.jpg,.jpeg,.webp,.tif,.tiff,.bmp'; return pendingFiles ? upload(pendingFiles) : uploadInput.click(); },
+  'upload-question': () => { ctx.uploadRole = 'question'; uploadInput.accept = '.pdf,.png,.jpg,.jpeg,.webp,.tif,.tiff,.bmp'; return pendingFiles ? upload(pendingFiles) : uploadInput.click(); },
   'rename-project': () => openDialog('作业名称', `<form id="project-form" class="form"><label>名称<input name="title" value="${e(ctx.state.title)}" maxlength="80" required></label><button class="primary" type="submit">保存</button></form>`),
   'material-role': element => { ctx.materialRole = element.dataset.role || 'student'; surface.intake.hidden ? openMaterials() : renderWorkflow(); },
   'select-all': () => { ctx.scopeAll = false; ctx.selected = new Set(ctx.selected.size === ctx.state.groups.length ? [] : ctx.state.groups.map(group => group.id)); openMaterials(); render(); },
   sorting: () => { ctx.sorting = !ctx.sorting; surface.intake.hidden ? openMaterials() : renderWorkflow(); },
   undo: async () => { const previous = ctx.undo.pop(); if (previous) await savePartition(previous, false); },
-  'equal-split': () => openDialog('按人数均分', `<form id="split-form" class="form"><label>学生人数<input name="count" type="number" min="1" max="${ctx.state.groups.reduce((n, group) => n + group.pageIds.length, 0)}" value="${ctx.state.groups.length}" required></label><p class="muted">先均分，再调整分界。可撤销。</p><button class="primary" type="submit">应用划分</button></form>`),
+  'equal-split': () => openDialog('按人数均分', `<form id="split-form" class="form"><label>学生人数<input name="count" type="number" min="1" max="${ctx.state.pages.filter(page => page.role === 'student' && page.active !== false).length}" value="${ctx.state.groups.length || 1}" required></label><p class="muted">先均分，再调整分界。可撤销。</p><button class="primary" type="submit">应用划分</button></form>`),
   'file-split': () => {
     const sources = new Map();
-    for (const id of ctx.state.groups.flatMap(group => group.pageIds)) {
+    for (const id of ctx.state.pages.filter(page => page.role === 'student' && page.active !== false).map(page => page.id)) {
       const page = pageById(ctx.state, id);
       if (!sources.has(page.sourceId)) sources.set(page.sourceId, { id: crypto.randomUUID(), label: page.fileName.replace(/\.[^.]+$/, ''), pageIds: [] });
       sources.get(page.sourceId).pageIds.push(id);
@@ -292,14 +309,21 @@ const actions = {
     if (surface.intake.hidden) { closeDialog(); return showPage(element.dataset.id); }
     const page = pageById(ctx.state, element.dataset.id);
     if (page) openDialog(`${page.fileName} · 第 ${page.sourcePage} 页`, `<img class="intake-preview" src="${e(page.url)}" alt="页面预览">`, 'intake-preview-dialog');
-  }, 'event-page': element => showPage(element.dataset.id),
+  }, 'event-page': element => {
+    if (ctx.processId) {
+      const page = pageById(ctx.state, element.dataset.id);
+      if (page) openDialog(page.fileName, `<img class="intake-preview" src="${e(page.url)}" alt="原页">`, 'intake-preview-dialog');
+      return;
+    }
+    return showPage(element.dataset.id);
+  },
   'previous-page': () => pageStep(-1), 'next-page': () => pageStep(1),
   browse: () => { surface.setMode('browse'); ctx.mode = surface.mode; render(); },
   lasso: () => { surface.setMode('lasso'); ctx.mode = surface.mode; render(); }, rectangle: () => { surface.setMode('rectangle'); ctx.mode = surface.mode; render(); },
   compare: () => { surface.add(); render(); },
   'remove-reference': element => { ctx.references.splice(Number(element.dataset.id), 1); render(); },
   'reference-location': element => { const target = ctx.references[Number(element.dataset.id)]?.target; if (target) return target.kind === 'text' ? surface.showDocument(target.documentId) : showPage(target.pageId); },
-  'open-document': element => { closeDialog(); return surface.showDocument(element.dataset.id, surface.panels.length < 2); },
+  'open-document': element => { if (ctx.processId) { ctx.returnProcessId = ctx.processId; ctx.processId = null; render(); } closeDialog(); return surface.showDocument(element.dataset.id, surface.panels.length < 2); },
   'new-document': () => openDialog('新建文档', `<form id="new-document-form" class="form"><label>文档名称<input name="title" value="未命名.md" required maxlength="100"></label><label>用途<select name="schemeId"><option value="">普通文档</option>${ctx.state.schemes.map(scheme => `<option value="${e(scheme.id)}">${e(scheme.label)} · 评分实施说明</option>`).join('')}</select></label><button type="submit" class="primary">创建并编辑</button></form>`),
   'upload-document': () => { ctx.uploadRole = 'document'; uploadInput.accept = '.md,.txt,.csv,.json'; uploadInput.click(); },
   'zoom-in': () => { ctx.zoom = Math.min(1.8, ctx.zoom + .1); render(); }, 'zoom-out': () => { ctx.zoom = Math.max(.6, ctx.zoom - .1); render(); }, 'zoom-reset': () => { ctx.zoom = 1; render(); },
@@ -307,7 +331,7 @@ const actions = {
   'selection-page': element => showPage(ctx.selections.find(row => row.id === element.dataset.id)?.pageId),
   'restore-selection': element => { const selection = ctx.state.conversation.find(row => row.id === element.dataset.message)?.selections?.find(row => row.id === element.dataset.id); if (selection) { if (!ctx.selections.some(row => row.id === selection.id) && ctx.selections.length < 8) ctx.selections.push(selection); const group = ctx.state.groups.find(group => group.pageIds.includes(selection.pageId)); if (group && !ctx.scopeAll) ctx.selected.add(group.id); showPage(selection.pageId); } },
   'manual-task': () => openTask(), 'edit-task': element => openTask(ctx.state.tasks.find(task => task.id === element.dataset.id)),
-  'start-task': async element => { await request(`/api/tasks/${element.dataset.id}/start`); ctx.targetTaskId = null; ctx.historyOpen = false; closeDialog(); render(); },
+  'start-task': async element => { await request(`/api/tasks/${element.dataset.id}/start`); ctx.processId = element.dataset.id; ctx.returnProcessId = ctx.processId; ctx.targetTaskId = null; ctx.historyOpen = false; closeDialog(); render(); },
   'approve-guide': element => surface.approveDocument(element.dataset.id),
   'pause-task': element => request(`/api/tasks/${element.dataset.id}/pause`), 'resume-task': element => request(`/api/tasks/${element.dataset.id}/resume`),
   'cancel-task': element => request(`/api/tasks/${element.dataset.id}/cancel`), 'stop-chat': () => request('/api/chat/cancel'),
@@ -326,6 +350,7 @@ const actions = {
 function pageStep(step) { const doc = documents(ctx.state).find(doc => doc.pageIds.includes(ctx.pageId)); if (doc) showPage(doc.pageIds[doc.pageIds.indexOf(ctx.pageId) + step]); }
 document.addEventListener('click', event => { const element = event.target.closest('[data-action]'); if (element && !element.disabled && actions[element.dataset.action]) Promise.resolve().then(() => actions[element.dataset.action](element)).catch(error => toast(error.message)); });
 document.addEventListener('change', event => {
+  if (event.target.id === 'upload-grouping') ctx.uploadGrouping = event.target.value;
   if (event.target.matches('[data-pick-page]')) {
     const id = event.target.dataset.pickPage;
     event.target.checked ? ctx.pickedPages.add(id) : ctx.pickedPages.delete(id);
@@ -351,18 +376,29 @@ document.addEventListener('submit', event => {
       if (surface.intake.hidden) openMaterials(); else closeDialog();
       return;
     }
-    if (form.id === 'assign-form') return savePartition(assignPages(ctx.state.groups, ctx.pickedPages, data.get('target'), data.get('label') || ''));
-    if (form.id === 'split-form') return savePartition(equalGroups(ctx.state.groups, Number(data.get('count'))));
+    if (form.id === 'remove-uploads-form') {
+      await request('/api/uploads', { sourceIds: data.getAll('source') }, 'DELETE');
+      ctx.undo = []; ctx.pickedPages.clear(); ctx.intakeStep = 1;
+      const active = new Set(ctx.state.pages.filter(page => page.active !== false).map(page => page.id));
+      ctx.selections = ctx.selections.filter(selection => active.has(selection.pageId));
+      ctx.references = ctx.references.filter(ref => !ref.target?.pageId || active.has(ref.target.pageId));
+      if (surface.intake.hidden || ctx.processId) openMaterials(); else closeDialog();
+      render(); return;
+    }
+    if (form.id === 'assign-form') return savePartition(assignPages(ctx.state.groups, ctx.pickedPages, data.get('target'), data.get('label') || '', pendingPages(ctx.state).map(page => page.id)));
+    if (form.id === 'split-form') return savePartition(equalGroups([...ctx.state.groups, {pageIds: pendingPages(ctx.state).map(page => page.id)}], Number(data.get('count'))));
     if (form.id === 'rename-group-form') { const groups = structuredClone(ctx.state.groups); groups.find(group => group.id === form.dataset.id).label = String(data.get('label')); return savePartition(groups); }
     if (form.id === 'new-document-form') { const result = await request('/api/documents', { title: String(data.get('title')), schemeId: data.get('schemeId') || null, body: '' }); closeDialog(); await surface.showDocument(result.document.id, surface.panels.length < 2); }
     if (form.id === 'project-form') { await request('/api/project', { title: String(data.get('title')) }, 'PATCH'); closeDialog(); }
     if (form.id === 'task-form') {
       form.dataset.submitting = 'true';
       for (const submit of form.querySelectorAll('[type="submit"]')) submit.disabled = true;
+      ctx.submittingSetup = true;
       try {
-        await submitTaskSetup({ request, input: { ...taskFormInput(data), selections: modalSelections, references: ctx.references }, taskId: modalTaskId, start: startGrading, onSaved: id => { modalTaskId = id; } });
+        const taskId = await submitTaskSetup({ request, input: { ...taskFormInput(data), selections: modalSelections, references: ctx.references }, taskId: modalTaskId, start: startGrading, onSaved: id => { modalTaskId = id; } });
+        if (startGrading) { ctx.processId = taskId; ctx.returnProcessId = taskId; }
         surface.prepareBatch = false; surface.readDocuments = true; ctx.intakeStep = 1; ctx.intakeDraft = null; closeDialog(); ctx.historyOpen = !startGrading; ctx.targetTaskId = null; render();
-      } finally { delete form.dataset.submitting; if (form.isConnected) refreshTaskSetup(form, ctx.state); }
+      } finally { ctx.submittingSetup = false; delete form.dataset.submitting; render(); if (form.isConnected) refreshTaskSetup(form, ctx.state); }
     }
     if (form.id === 'canvas-review-form') {
       const value = data.get('score'), record = reviewRecord;
@@ -389,6 +425,14 @@ let polling = false;
 window.addEventListener('resize', () => { if (ctx.state && document.querySelector('#composer')) render(); });
 setInterval(async () => { if (document.hidden || polling || sending || ctx.busy) return; polling = true; try { const before = JSON.stringify([ctx.state?.revision, ctx.state?.chat, ctx.state?.liveTasks]); await refresh(); if (JSON.stringify([ctx.state.revision, ctx.state.chat, ctx.state.liveTasks]) !== before) render(); } catch { /* Keep the canvas and unsent input intact during reconnects. */ } finally { polling = false; } }, 900);
 try {
-  await refresh(); frame(); render();
-  if (resultTasks(ctx.state).length && !ctx.state.tasks.some(task => ['running', 'draft'].includes(task.status))) await openResults();
+  await refresh();
+  const latest = ctx.state.tasks.findLast(task => task.kind === 'grade' && task.status === 'running')
+    || ctx.state.tasks.findLast(task => task.kind === 'grade');
+  let dismissed;
+  try { dismissed = sessionStorage.getItem('gradeos-dismissed-process'); } catch {}
+  if (latest && (latest.status === 'running' || (latest.id !== dismissed && ['failed','partial','interrupted','cancelled'].includes(latest.status)))) {
+    ctx.processId = latest.id; ctx.returnProcessId = latest.id;
+  }
+  frame(); render();
+  if (!ctx.processId && resultTasks(ctx.state).length && !ctx.state.tasks.some(task => ['running', 'draft'].includes(task.status))) await openResults();
 } catch (error) { app.innerHTML = `<section class="empty"><h1>工作区暂时无法打开</h1><p>${e(error.message)}</p><a href="/">重新加载</a></section>`; }

@@ -29,7 +29,20 @@ export class WorkspaceRunner {
   constructor(store, { model = DEFAULT_MAIN_MODEL_ID, cap = 2, agent = runWorkspaceAgent, rubricPath = null } = {}) {
     this.store = store; this.model = model; this.cap = cap; this.agent = agent; this.rubricPath = rubricPath; this.active = new Map();
   }
+  async readFailureReason(task) {
+    const messages = await json(join(this.store.directory, 'runs', task.id, 'output/main/transcript.json'));
+    const failure = Array.isArray(messages) && messages.findLast(message => message.role === 'assistant' && message.stopReason === 'error');
+    if (failure?.errorMessage?.includes('This model is not available in your region')) {
+      return '模型服务拒绝了请求（403）：当前模型在此地区不可用。请先调整模型配置。';
+    }
+    return null;
+  }
   async recover() {
+    this.failureReasons = {};
+    for (const task of this.store.state.tasks.filter(row => row.status === 'failed' && row.kind === 'grade')) {
+      const reason = await this.readFailureReason(task);
+      if (reason) this.failureReasons[task.id] = reason;
+    }
     if (this.store.state.tasks.some(task => task.status === 'running')) await this.store.mutate(null, state => {
       for (const task of state.tasks.filter(item => item.status === 'running')) {
         task.status = 'interrupted'; task.error = '服务已重启。已保存的结果保留，任务不会自动重跑。';
@@ -43,10 +56,11 @@ export class WorkspaceRunner {
     const entry = { controller, promise: null, child: null };
     this.active.set(taskId, entry);
     entry.promise = this.execute(task, entry).catch(async () => {
+      const reason = !controller.signal.aborted && task.kind === 'grade' && await this.readFailureReason(task);
       await this.store.mutate(null, state => {
         const row = state.tasks.find(item => item.id === taskId);
         row.status = controller.signal.aborted ? 'cancelled' : (row.records.length || row.artifacts.length ? 'partial' : 'failed');
-        row.error = controller.signal.aborted ? '任务已取消，已完成的记录仍保留。' : '任务未完成。已有结果保留，可查看运行目录中的回执。';
+        row.error = controller.signal.aborted ? '任务已取消，已完成的记录仍保留。' : reason || '任务未完成。已有结果保留，可查看运行目录中的回执。';
         if (entry.events?.length) row.interaction = { events: entry.events.slice(-120), questions: [], notes: [] };
         row.finishedAt = now();
       });
