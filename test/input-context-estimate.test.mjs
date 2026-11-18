@@ -156,4 +156,8 @@ test('only the pinned Alibaba Flash route uses its per-image token ceiling', () 
   assert.ok(wireEstimate({...p,provider:{only:['alibaba'],allow_fallbacks:true}}).imageTokenReserve>16386);
   assert.ok(wireEstimate({...p,model:'other/model'}).imageTokenReserve>16386);
   assert.equal(p.messages[0].content[0].image_url.url,url);
+  header.writeUInt32BE(2300,16); header.writeUInt32BE(3200,20);
+  const smaller = 'data:image/png;base64,' + header.toString('base64');
+  p.messages[0].content[0].image_url.url = smaller;
+  assert.equal(wireEstimate(p).imageTokenReserve,7202);
 });

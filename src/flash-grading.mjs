@@ -2,12 +2,17 @@
 // The tool still validates its arguments, evidence, routes and award bounds.
 export function configureFlashSubmission(payload) {
   const submission = payload.tools.find(tool => tool.function.name === 'submit_grading');
+  const schema = structuredClone(submission.function.parameters);
+  // A later source issue can invalidate a short attestation for any point.
+  // Request an explicit reason up front without changing the model's award.
+  const reason = schema.$defs?.decision?.properties?.r;
+  if (reason) Object.assign(reason, {minLength:2, description:'Give the specific scoring reason in words, including for full credit. Never use the equals-sign abbreviation.'});
   payload.response_format = {type:'json_schema', json_schema:{
-    name:'submit_grading', strict:true, schema:submission.function.parameters,
+    name:'submit_grading', strict:true, schema,
   }};
   delete payload.tools;
   delete payload.tool_choice;
-  payload.messages.push({role:'user', content:'Return exactly the submit_grading arguments as one JSON object following the supplied response schema. For each point with no visible evidence use its absent-page object. Include every observation slot, including unselected alternative routes. Do not invent evidence.'});
+  payload.messages.push({role:'user', content:'Return exactly the submit_grading arguments as one JSON object following the supplied response schema. For each point with no visible evidence use its absent-page object. Include every observation slot, including unselected alternative routes. Use a specific written scoring reason in every r field. Do not use the equals-sign abbreviation or invent evidence.'});
 }
 
 export function flashSubmissionResult(upstream, saveText) {
