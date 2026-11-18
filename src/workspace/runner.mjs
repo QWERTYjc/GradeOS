@@ -14,6 +14,10 @@ import { runAdaptiveGrading, usesAdaptiveGrading } from './adaptive-runtime.mjs'
 import { DEFAULT_MAIN_MODEL_ID, DEFAULT_WORKER_MODEL_ID } from '../experiment-models.mjs';
 
 const json = async path => { try { return JSON.parse(await readFile(path, 'utf8')); } catch { return null; } };
+export function canReuseScheme(plan, model, effort) {
+  return plan?.scheme_image_owner === 'main' && plan.image_quality === 'medium' &&
+    !plan.rubric_reuse && plan.model_roles?.main?.model?.id === model && plan.reasoning === effort;
+}
 export async function snapshotFrozenRubric(sourcePath, directory, scheme) {
   fail(sourcePath.endsWith('.json'), '冻结评分标准需要 JSON 文件和对应哈希校验文件。');
   const bytes = await readFile(sourcePath);
@@ -126,7 +130,10 @@ export class WorkspaceRunner {
     }
     for (const prior of this.rubricPath ? [] : [...this.store.state.tasks].reverse()) {
       if (prior.id === task.id || prior.schemeId !== task.schemeId || !['completed', 'needs_review', 'partial'].includes(prior.status)) continue;
-      const rubric = join(this.store.directory, 'runs', prior.id, 'output/rubric.json');
+      const directory = join(this.store.directory, 'runs', prior.id, 'output');
+      const plan = await json(join(directory, 'plan.json'));
+      if (!canReuseScheme(plan, config?.mainModel ?? this.model, config?.mainEffort ?? 'low')) continue;
+      const rubric = join(directory, 'rubric.json');
       try { await access(rubric); args.push('--rubric', rubric); break; } catch { /* No frozen rubric yet. */ }
     }
     const child = spawn(process.execPath, args, { cwd: experimentRoot, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] });

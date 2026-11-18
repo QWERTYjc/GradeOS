@@ -203,6 +203,15 @@ test('actual Pi student has no other book, cannot submit before page delivery, a
   await ctl.agent.prompt(ctl.prompt); assert.equal(saves, 1); assert.ok(ctl.getResult());
 });
 
+test('adaptive student cannot fetch a marking scheme by its known page ID', async () => {
+  const f = task({scheme:true}).task;
+  const value = validatePlan(plan([criterion({basis:'provided_scheme',sourcePageIds:['ms','qp'],scalePageIds:['ms']})]), f, new Set(['ms','qp']));
+  const child = createAdaptiveStudent({model, task:f, group:f.groups[0], frozen:value, streamFn:stream(() => []), readPage:image});
+  assert.ok(!JSON.parse(child.prompt).sources.some(page => page.role === 'scheme'));
+  const reader = child.agent.state.tools.find(tool => tool.name === 'read_pages');
+  await assert.rejects(reader.execute('attempt', {pageIds:['ms']}), /范围/);
+});
+
 test('new task form preserves explicitly absent MS and exposes three separate upload roles', () => {
   const f = task({ scheme: true }).state;
   const html = taskForm({ state: f, selected: new Set(['a']), command: '' }, { ...f.tasks[0], schemeId: null });
@@ -216,7 +225,7 @@ test('adaptive runtime persists adopted guide, original records and provisional 
   t.after(() => rm(directory, { recursive: true, force: true }));
   const store = await new WorkspaceStore(directory).init(); const f = task();
   f.task.supplementalInstructions = '用中文反馈';
-  for (const page of f.task.pages) { page.path = join(directory, `${page.id}.png`); const bytes = Buffer.from(page.id); page.sha256 = digest(bytes); await writeFile(page.path, bytes); }
+  for (const page of f.task.pages) { page.path = join(directory, `${page.id}.png`); const bytes = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4//8/AAX+Av4N70a4AAAAAElFTkSuQmCC', 'base64'); page.sha256 = digest(bytes); await writeFile(page.path, bytes); }
   f.state.pages = f.task.pages; f.state.tasks[0] = f.task;
   await store.mutate(null, state => Object.assign(state, f.state));
   const input = await prepareTaskInput(store, f.task);

@@ -34,9 +34,16 @@ async function readSourceView(page, args, path) {
   const {stdout}=await promisify(execFile)(pythonExecutable(),[fileURLToPath(new URL('../scripts/python/student_images.py',import.meta.url)),
     '--source',page.absolute_path,'--sha256',page.sha256,...args],
     {encoding:'buffer',maxBuffer:32*1024*1024,timeout:60000});
-  await writeFile(path,stdout);
+  if (path) await writeFile(path,stdout);
   return {type:'image',mimeType:'image/png',data:stdout.toString('base64')};
 }
+// OpenRouter has no medium image-detail enum. Bound the full page locally
+// before source delivery is recorded, preserving its aspect ratio and frame.
+export const MEDIUM_IMAGE_MAX_SIDE = 1536;
+export function readMediumPage(page) {
+  return readSourceView(page, ['--max-side', String(MEDIUM_IMAGE_MAX_SIDE)]);
+}
+
 export async function readImageRegion(page, region, directory, {frame,localOnly=false}={}) {
   if(!Array.isArray(region)||region.length!==4||!region.every(Number.isSafeInteger)
     ||region[0]<0||region[1]<0||region[2]<=0||region[3]<=0||region[0]+region[2]>1000||region[1]+region[3]>1000)throw Error('Invalid original-page region');
@@ -69,7 +76,7 @@ export function isolateStudentCache(payload, scope) {
   return payload;
 }
 
-export function createRuntime({ models, model, output, cap, controller, maxRequests = 60, deadlineMs = 900000, maxOutputTokens = null, studentCacheNamespace = null, progress = null, interaction = null, structuredOutput = true, provider = { only: ['openai'], allow_fallbacks: false, require_parameters: true, data_collection: 'deny' }, workerModel = model, workerProvider = provider, mainEffort, workerEffort, singlePassGrading = false, economicalLuna = false, coldCacheNamespace = null, studentCapUsd = null }) {
+export function createRuntime({ models, model, output, cap, controller, maxRequests = 60, deadlineMs = 900000, maxOutputTokens = null, studentCacheNamespace = null, progress = null, interaction = null, structuredOutput = true, provider = { only: ['openai'], allow_fallbacks: false, require_parameters: true, data_collection: 'deny' }, workerModel = model, workerProvider = provider, mainEffort, workerEffort, singlePassGrading = false, economicalLuna = false, coldCacheNamespace = null, studentCapUsd = null, mediumImages = false }) {
   if (maxOutputTokens!==null&&(!Number.isInteger(maxOutputTokens) || maxOutputTokens < 1)) throw Error('Invalid explicit output token allowance');
   const budget = new Budget({ cap, maxRequests, deadlineMs, scopeCap:studentCapUsd });
   const active = new Set();
@@ -84,11 +91,11 @@ export function createRuntime({ models, model, output, cap, controller, maxReque
     await appendFile(resolve(output, 'events.jsonl'), JSON.stringify(entry) + '\n');
     await progress?.observe(entry);
   };
-  const io = async (lane, phase, { isolated = false } = {}) => {
+  const io = async (lane, phase, { isolated = false, useMainModel = lane === 'main' } = {}) => {
     const directory = resolve(output, lane); await mkdir(directory);
-    const laneModel = lane === 'main' ? model : workerModel;
-    const laneProvider = lane === 'main' ? provider : workerProvider;
-    const effort = lane === 'main' ? mainEffort : workerEffort;
+    const laneModel = useMainModel ? model : workerModel;
+    const laneProvider = useMainModel ? provider : workerProvider;
+    const effort = useMainModel ? mainEffort : workerEffort;
     let current = null, currentInputSnapshot = null, previousInputReceipt = null;
     const laneLog = event => log({ lane, ...event });
     const streamFn = (selectedModel, context, options) => {
@@ -146,10 +153,8 @@ export function createRuntime({ models, model, output, cap, controller, maxReque
         if (flashSubmission) configureFlashSubmission(payload);
         const cacheScope = studentCacheNamespace && /^(student|feedback|exception|source-review)-/.test(lane) ? `${studentCacheNamespace}/${lane}` : null;
         if (cacheScope) isolateStudentCache(payload, cacheScope);
-        // Keep high detail for every phase, including source reinspection.
-        // Original source files do not require provider detail="original".
         for (const message of payload.messages) for (const part of Array.isArray(message.content) ? message.content : []) {
-          if (part.type === 'image_url') part.image_url.detail = 'high';
+          if (part.type === 'image_url') part.image_url.detail = mediumImages ? 'auto' : 'high';
         }
         const estimate = pricedRegions ? prepareLunaAnnotationRequest(payload, laneModel.cost) : wireEstimate(payload);
         const inputSnapshot = inputContextSnapshot(payload, estimate);
@@ -158,7 +163,7 @@ export function createRuntime({ models, model, output, cap, controller, maxReque
         const studentScope=/^(student|feedback|exception|source-review)-/.test(lane)?lane.replace(/^(feedback|exception|source-review)-/,'student-'):undefined;
         const scope=budget.scopes.has(lane)?lane:studentScope&&(budget.scopes.has(studentScope)||singlePassGrading)?studentScope:undefined;
         let reserve=null;
-        const metadata={lane,phase:requestPhase,...(scope?{budget_scope:scope,student_cap_usd:studentCapUsd}:{}),configured_model:laneModel.id,configured_provider:laneProvider,configured_reasoning:effort ?? options?.reasoning,
+        const metadata={lane,phase:requestPhase,...(scope?{budget_scope:scope,student_cap_usd:studentCapUsd}:{}),...(mediumImages ? {image_quality:'medium', image_max_side:MEDIUM_IMAGE_MAX_SIDE} : {}),configured_model:laneModel.id,configured_provider:laneProvider,configured_reasoning:effort ?? options?.reasoning,
           request_kind:gradingCorrectionRequest?.kind??'normal',grading_correction:gradingCorrectionRequest??null,
           student_cache_scope:cacheScope,...estimate,cost_input_token_reserve:inputContext.upperBound,input_context_estimate:inputContext};
         try {

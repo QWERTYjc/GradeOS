@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { digest } from '../src/core.mjs';
 import { freezeRubric, validateFrozenRubric } from '../src/rubric-contract.mjs';
 import { prepareTaskInput } from '../src/workspace/documents.mjs';
-import { WorkspaceRunner, snapshotFrozenRubric } from '../src/workspace/runner.mjs';
+import { WorkspaceRunner, snapshotFrozenRubric, canReuseScheme } from '../src/workspace/runner.mjs';
 import { execFileSync } from 'node:child_process';
 import { experimentRoot } from '../src/workspace/documents.mjs';
 
@@ -58,4 +58,15 @@ test('altered source, reordered pages and mismatched frozen artifacts stop befor
   assert.equal(entry.child, null);
   await writeFile(join(f.sourceDir, 'source'), 'changed source');
   await assert.rejects(prepareTaskInput({ directory: f.directory }, { ...f.task, id: 'changed' }), /原件已改变/);
+});
+
+test('automatic reuse retains the selected source model, thinking effort and image quality', () => {
+  const model = 'qwen/qwen4-max';
+  const plan = {scheme_image_owner:'main', image_quality:'medium', model_roles:{main:{model:{id:model}}}, reasoning:'high'};
+  assert.ok(canReuseScheme(plan, model, 'high'));
+  assert.ok(!canReuseScheme(plan, 'qwen/qwen3.8-flash', 'high'));
+  assert.ok(!canReuseScheme(plan, model, 'low'));
+  for (const override of [{scheme_image_owner:null}, {image_quality:'high'}, {rubric_reuse:{}}]) {
+    assert.ok(!canReuseScheme({...plan, ...override}, model, 'high'));
+  }
 });

@@ -11,7 +11,7 @@ import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import { digest, parseStudentBudget } from './core.mjs';
 import { createCoordinator, createStudentAgent, StudentRegistry, validateFrozenRubric, parseConcurrency, MS_PAGES_PER_TURN, MAIN_PROMPT, REPLAY_MAIN_PROMPT, studentPromptForProtocol } from './cohort-core.mjs';
-import { createRuntime, freezeJson, readImage, readImageRegion, schemeOverviewReader } from './cohort-runtime.mjs';
+import { createRuntime, freezeJson, readImage, readImageRegion, schemeOverviewReader, readMediumPage } from './cohort-runtime.mjs';
 import { requiredMsPages } from './report-context.mjs';
 import { ResultsStore } from './results-store.mjs';
 import { createReporting, REPORTING_INSTRUCTIONS, ECONOMY_REPORTING_INSTRUCTIONS, LEAN_REPORTING_INSTRUCTIONS } from './cohort-reporting.mjs';
@@ -139,6 +139,9 @@ const model = experimentModel(models, values.model);
 const provider = experimentProvider(model.id);
 const workerModel = experimentModel(models, values['worker-model'] ?? DEFAULT_WORKER_MODEL_ID);
 const workerProvider = experimentProvider(workerModel.id);
+const mainOwnsScheme = scripted && (Boolean(values['interaction-dir']) ||
+  (model.id === 'qwen/qwen4-max' && workerModel.id === 'qwen/qwen3.8-flash'));
+const gradingPage = mainOwnsScheme ? readMediumPage : readImage;
 for (const [roleModel, effort] of [[model,mainEffort],[workerModel,workerEffort]]) {
   if (effort !== undefined && !gradingModel(roleModel.id)?.efforts.includes(effort)) throw Error('Unsupported reasoning setting for ' + roleModel.id);
 }
@@ -228,12 +231,13 @@ const plan = { version: 2, mode: reusedRubric ? 'frozen-rubric replay' : 'full-c
   initial_student_image_variant:imageVariants?{mode:imageVariants.mode,max_side:imageVariants.max_side,manifest_sha256:digest(await readFile(resolve(output,'student-image-variants/manifest.json'))),pixel_reduction_fraction:imageVariants.pixel_reduction_fraction,preparation_elapsed_seconds:imagePreparationSeconds}:null,
   context_policy: 'Main preserves the compilation prefix through MS self-review, then receives frozen rubric navigation; scoped source views remain available. Student/exception/feedback sessions stay isolated. Delivered result batches and point/image views can be checkpointed with source-bound notes; context retains score/null/review/source issues and immutable refs.',
   comparison: 'Count declared tasks and actual executions separately; duplicated answer books measure repeatability, not a diverse student population.' };
-if(scripted)Object.assign(plan,{execution:'scripted-single-pass',student_cap_usd:studentCapUsd,reporting:'Deterministic scripts from immutable grading records; zero model calls',
-  student_prompt_hash:digest(singlePassPrompt({inlineAnnotations,compact:economicalLuna})),point_wire_protocol:economicalLuna?'compact-ocr-point-fields':inlineAnnotations?'fixed-observed-ink-local-regions':'fixed-observed-ink-v3',
+if(scripted)Object.assign(plan,{execution:'scripted-single-pass',
+  ...(mainOwnsScheme ? {scheme_image_owner:'main', image_quality:'medium'} : {}),student_cap_usd:studentCapUsd,reporting:'Deterministic scripts from immutable grading records; zero model calls',
+  student_prompt_hash:digest(singlePassPrompt({inlineAnnotations,compact:economicalLuna,mainOwnsScheme})),point_wire_protocol:economicalLuna?'compact-ocr-point-fields':inlineAnnotations?'fixed-observed-ink-local-regions':'fixed-observed-ink-v3',
   student_feedback:'Exact saved evidence and reasons; deterministic rendering; zero model calls',
   exception_review:{enabled:false,policy:'Positive exception proposals withheld as null pending teacher review; raw primary preserved'},
   cold_cache_namespace:values['cold-cache-namespace']??null,approved_guide:replayGuide?{hash:replayGuide.hash,revision:replayGuide.revision}:null,
-  image_policy:values['all-ms-images']?'All MS and student pages attached once':'With an adopted guide and verified source compilation, retain visual/unresolved/general-rule MS images; otherwise all MS. Complete student book once; exact selected pages in grading-input-policy.json.',
+  image_policy:mainOwnsScheme ? 'Main alone reads MS pages. Student sees the verified rules and answer pages. Medium page images.' : values['all-ms-images']?'All MS and student pages attached once':'With an adopted guide and verified source compilation, retain visual/unresolved/general-rule MS images; otherwise all MS. Complete student book once; exact selected pages in grading-input-policy.json.',
   attempts_per_student:1,model_roles:{main:{model,provider,phases:reusedRubric?[]:['ms_compilation','ms_verification']},worker:{model:workerModel,provider:workerProvider,phases:['student_grading']}}});
 if(lean&&!scripted)plan.student_feedback='Deterministic source-bound feedback from saved points; zero model calls';
 await freezeJson(output, 'plan.json', plan);
@@ -260,7 +264,7 @@ const controller = new AbortController();
 const interaction = values['interaction-dir'] ? await new TeacherInteraction(resolve(values['interaction-dir']), { signal: controller.signal,
   schemePages: scheme.pages, students: new Map([...students].map(([id, document]) => [id, document.pages])) }).init() : null;
 const runtime = createRuntime({ models, model, workerModel, output, cap, controller, maxRequests, studentCacheNamespace, progress, interaction, structuredOutput:values.json,provider,workerProvider,mainEffort,workerEffort,
-  deadlineMs:deadlineSeconds*1000,singlePassGrading:scripted,economicalLuna,coldCacheNamespace:values['cold-cache-namespace']??null,studentCapUsd:scripted?studentCapUsd:null });
+  deadlineMs:deadlineSeconds*1000,singlePassGrading:scripted,mediumImages:mainOwnsScheme,economicalLuna,coldCacheNamespace:values['cold-cache-namespace']??null,studentCapUsd:scripted?studentCapUsd:null });
 process.once('SIGINT', () => {void progress.cancelRequested();controller.abort(Error('User cancellation'));});
 if(scripted) {
   const started=Date.now();let frozen=reusedRubric,guide=replayGuide,result=null,failure=null;
@@ -270,8 +274,8 @@ if(scripted) {
     if(!frozen||needsRequirements) {
       let preparer;
       const io=await runtime.io('main',()=>preparer?.getMSPhase()??'coordination');
-      preparer=createCoordinator({model,streamFn:io.streamFn,scheme,studentIds:[...students.keys()],readImage,log:io.log,
-        prepareOnly:true,reusedRubric,signal:controller.signal,
+      preparer=createCoordinator({model,streamFn:io.streamFn,scheme,studentIds:[...students.keys()],readImage:gradingPage,log:io.log,
+        prepareOnly:true,mainOwnsScheme,reusedRubric,signal:controller.signal,
         persistCandidate:value=>freezeJson(output,'rubric-draft.json',value),persistReview:value=>freezeJson(output,'ms-review.json',value),
         persistRubric:value=>freezeJson(output,'rubric.json',value),
         publishMarkingGuide:interaction?(value,method)=>interaction.publishGuide(value,method):null});
@@ -282,7 +286,7 @@ if(scripted) {
     } else if(interaction) guide=await interaction.publishGuide(frozen,DEFAULT_EXECUTION_METHOD);
     if(guide){await freezeJson(output,'marking-guide.json',guide);await writeFile(resolve(output,'评分实施.md'),guide.body,{flag:'wx'});}
     await runtime.log({type:'rubric_ready'});
-    result=await runScriptedGrading({runtime,output,frozen,guide,scheme,students,model:workerModel,concurrency,inlineAnnotations,imageVariants,interaction,gradingReasoning,allMsImages:values['all-ms-images'],localObservations});
+    result=await runScriptedGrading({runtime,output,frozen,guide,scheme,students,model:workerModel,concurrency,inlineAnnotations,imageVariants,interaction,gradingReasoning,mainOwnsScheme,readPage:gradingPage,allMsImages:values['all-ms-images'],localObservations});
   }catch(error){failure=error.message;}
   finally {
     runtime.close();progress.stop();

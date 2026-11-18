@@ -184,7 +184,8 @@ export function validateSourceIssue(raw,frozen,scheme,seen,index=0) {
 
 export function createStudentAgent({ model, streamFn, frozen, scheme, student, readImage, persist, log, protocol = 'legacy', persistSubmission,
   readInitialStudentImage=readImage,readInitialSchemeImage=null,readStudentRegion=null,readSourceRegion=readStudentRegion,initialStudentImageMode='original',reasonStyle='detailed',sourcePermissionReview=false,
-  inlineAnnotations=false, initialStudentGeometry=[], singlePass=false, markingGuide=null, gradingReasoning='low', localObservations=[], selfReview=false, persistPrimary }) {
+  inlineAnnotations=false, initialStudentGeometry=[], singlePass=false, mainOwnsScheme=false, markingGuide=null, gradingReasoning='low', localObservations=[], selfReview=false, persistPrimary }) {
+  if (mainOwnsScheme && !singlePass) throw Error('Compiled-only scheme delivery requires single-pass grading');
   if(selfReview&&(protocol!=='evidence-v4'||singlePass||sourcePermissionReview||typeof persistPrimary!=='function'))throw Error('Self-review requires normal evidence-v4 grading and durable primary persistence');
   if (!['off', 'low', 'medium', 'high', 'xhigh', 'max'].includes(gradingReasoning)) throw Error('Unsupported grading reasoning');
   if (!['original', 'source_regions', 'exact_white_margin_trim', 'resized_overview'].includes(initialStudentImageMode)) throw Error('Unsupported answer image representation');
@@ -280,7 +281,11 @@ export function createStudentAgent({ model, streamFn, frozen, scheme, student, r
             ...frozen.artifact.items.filter(other => item.related_item_ids.includes(other.item_id)).flatMap(other => other.source_pages)]);
           if (row.scheme_pages.some(p => !allowedSource.has(p))) throw Error('Unrelated MS page citation');
           const missingImages = item.requires_source_image ? item.source_pages.filter(p => !schemeSeen.has(p)) : [];
-          if (missingImages.length) throw Error(`Item ${item.item_id}: read_ms_pages must deliver missing MS pages ${JSON.stringify(missingImages)} before submission`);
+          if (mainOwnsScheme && missingImages.length) {
+            // The main model may have transcribed a bracket or diagram in full.
+            // Retain the original visual dependency for teacher review.
+            row.review_required = true;
+          } else if (missingImages.length) throw Error(`Item ${item.item_id}: read_ms_pages must deliver missing MS pages ${JSON.stringify(missingImages)} before submission`);
           // Shared source uncertainty belongs to the rubric. Inherit its review
           // state without asking the grader to copy a known flag or changing marks.
           if (item.uncertainties.length) row.review_required = true;
@@ -371,7 +376,7 @@ export function createStudentAgent({ model, streamFn, frozen, scheme, student, r
   }
   let protocolPrompt=shared?SHARED_EVIDENCE_PROMPT:optimized?compactPromptForReasons(reasonStyle):EVIDENCE_PROTOCOL_PROMPT;
   if(sourcePermissionReview)protocolPrompt=sourcePermissionPrompt(protocolPrompt);
-  const studentPrompt=(singlePass ? singlePassPrompt({inlineAnnotations,compact:compactWire}) : studentPromptForProtocol(protocol,selfReview))+(studentRegion?'\n'+localReadingPrompt(localOnly):'');
+  const studentPrompt=(singlePass ? singlePassPrompt({inlineAnnotations,compact:compactWire,mainOwnsScheme}) : studentPromptForProtocol(protocol,selfReview))+(studentRegion?'\n'+localReadingPrompt(localOnly):'');
   const allTools=optimized?tools.filter(t=>t.name!=='report_ms_issue'):tools;
   const normalTools=allTools.filter(t=>singlePass?t.name==='submit_grading':!['correct_grading','reopen_grading'].includes(t.name));
   const studentStream=(selected,context,options)=>streamFn(selected,context,{...options,
@@ -402,10 +407,11 @@ export function createStudentAgent({ model, streamFn, frozen, scheme, student, r
     }}:{}),
   });
   return { ...ctl, getResult: () => result, getPrimary:()=>primary, getPhase:()=>primary?'student_self_review':'student_grading', initialPrompt: async seedPages => {
+    if (mainOwnsScheme && seedPages.length) throw Error('Only the main model receives MS images');
     if (seedPages.length) checkPages(seedPages, scheme);
     const stillRequired = requiredMsPages(frozen).filter(p => !seedPages.includes(p));
     if(localOnly&&stillRequired.length)throw Error('Attach all mandatory MS images before region-only grading');
-    if(singlePass&&stillRequired.length)throw Error('Single-pass grading requires all mandatory MS images in its only input');
+    if(singlePass&&!mainOwnsScheme&&stillRequired.length)throw Error('Single-pass grading requires all mandatory MS images in its only input');
     const content = [{ type: 'text', text: selfReview && !stillRequired.length
       ? `Grade all ${student.pages.length} attached answer pages now. Call submit_grading in this first response; include any needed read_student_pages or read_ms_pages calls in the same response. Attached MS pages: ${JSON.stringify(seedPages)}. Global source notes require review_notes: ${frozen.artifact.unresolved_notes.length > 0}.`
       : singlePass ? `Inspect all ${student.pages.length} answer pages below and grade every frozen rubric point once. Original MS pages attached: ${JSON.stringify(seedPages)}. Global source notes require review_notes: ${frozen.artifact.unresolved_notes.length > 0}.`
@@ -440,7 +446,7 @@ export function createStudentAgent({ model, streamFn, frozen, scheme, student, r
   } };
 }
 
-export function createCoordinator({ model, streamFn, scheme, studentIds, concurrencyLimit = null, readImage, persistRubric, executeStudent, persistCohort, log, signal, reusedRubric = null, reporting = null, persistReview, persistCandidate, publishMarkingGuide = null, prepareOnly = false, gradingReview = null }) {
+export function createCoordinator({ model, streamFn, scheme, studentIds, concurrencyLimit = null, readImage, persistRubric, executeStudent, persistCohort, log, signal, reusedRubric = null, reporting = null, persistReview, persistCandidate, publishMarkingGuide = null, prepareOnly = false, mainOwnsScheme = false, gradingReview = null }) {
   const seen = new Set(); const registry = new StudentRegistry(studentIds, concurrencyLimit);
   let frozen = reusedRubric ? validateFrozenRubric(reusedRubric, scheme) : null; let completed = null; let candidate = null; let modelTurns = 0; let candidateTurn = null; const stagedItems = new Map();
   const views=reporting?.views ?? createReportContext();
@@ -552,6 +558,7 @@ export function createCoordinator({ model, streamFn, scheme, studentIds, concurr
     ? `Read up to ${pagesPerTurn} original pages per turn. Only the latest page group remains visible. Stage complete items while their source is visible. Record global instructions as you read. Earlier pages can be reopened for continuations and review.`
     : null;
   const prompt = [gradingReview ? basePrompt.replace(/You cannot read student answers\./g,'You review primary grading before final persistence and can inspect original answers on demand.') : basePrompt, readingInstructions, reporting?.instructions, gradingReview?.instructions,
+    mainOwnsScheme ? 'Only you see the marking scheme images. Explicitly transcribe diagram relationships, table cells, shared brackets and alternative award conditions into the relevant rubric points. Check them against the cited pages. Record anything the source cannot resolve in uncertainties; do not clear a visual dependency to finish.' : null,
     prepareOnly ? 'Your scope ends when the verified MS and teacher implementation guide are ready. The host dispatches grading and renders reports deterministically; do not plan batches, grade answers or write reports.' : null,
     publishMarkingGuide ? 'Before any student dispatch, call publish_marking_guide with concise Chinese Markdown describing how to apply the reviewed MS: reading order, evidence checks, equivalent/alternative methods, uncertainty and teacher review. The host adds the complete source-bound point rules. Wait for the teacher to edit and confirm 评分实施.md. The confirmed document is an execution reference alongside the frozen rules; conflicts must be surfaced, never silently ignored or used to invent awards.' : null].filter(Boolean).join('\n\n');
   const ctl = controlledAgent({ model, streamFn, prompt, tools: availableTools, finished: () => prepareOnly ? Boolean(frozen && (!publishMarkingGuide || markingGuide)) : completed !== null, log,

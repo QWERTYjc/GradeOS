@@ -6,6 +6,7 @@ import { readSelectionImage } from './workspace/canvas-context.mjs';
 import { createInitialSystemMessage, toToolDeclaration } from '@earendil-works/pi-ai';
 import { markingGuideMarkdown, validateGuideApproval } from './marking-guide.mjs';
 import { guideWireText } from './guide-wire.mjs';
+import { MEDIUM_IMAGE_MAX_SIDE } from './cohort-runtime.mjs';
 import { digest } from './core.mjs';
 
 export const readJSON = async (path, fallback = null) => { try { return JSON.parse(await readFile(path, 'utf8')); } catch (error) { if (error.code === 'ENOENT') return fallback; throw error; } };
@@ -196,15 +197,15 @@ export class TeacherInteraction {
       : interactiveTools
       ? '\n\nA teacher is collaborating in the workspace. Question papers and MS are optional: their absence alone does not warrant a clarification or a request to supply them. Use the provided work without a materials-completion step. When source meaning, MS conditions, page boundaries or handwriting ambiguity prevents a reliable decision, use ask_teacher with a concise concrete question and the original source page. Wait for their answer; do not claim a teacher has approved anything before a reply. Teacher notes are source clarifications, not authority to invent rules, exceed fixed maxima, expand this lane, or overwrite a submitted grade. Do not expose hidden reasoning; report tool actions and findings concisely.'
       : '\n\nThe teacher implementation document accompanies these frozen grading records. Preserve their evidence and unresolved judgments in the feedback. This stage only submits feedback: it cannot reread source images, ask new grading questions, or change awards. Do not claim those actions occurred.') + (lane === 'main' ? '\nGrading is already the task; never ask what the teacher wants to do. Supplemental requirements are optional. Read the relevant question/MS evidence, then use review_grading_requirements before publishing a guide or dispatching when requirements are present. Apply compatible preferences without extra confirmation. If a preference conflicts with the question, MS, exam system, fair grading, or available capabilities, explain the specific issue and suggest an adjustment through that tool. Do not silently comply, discard, or substitute your preference. Automatic mode never authorizes bypassing an unresolved adjustment. After a reply reassess it, record the agreed requirements, and incorporate them in the grading guide. Preserve original source rules and distinguish explicitly agreed custom evaluation from official marking.' : '');
-    if (interactiveTools) agent.state.tools = [...agent.state.tools, { name: 'read_teacher_selection', label: '查看老师圈选', description: 'Read the exact original pixels inside a teacher selection. The source page identity and normalized rectangle are preserved.',
+    if (interactiveTools) agent.state.tools = [...agent.state.tools, { name: 'read_teacher_selection', label: '查看老师圈选', description: 'Read a medium-resolution view of the teacher selection. The source page identity and normalized rectangle are preserved.',
       parameters: { type: 'object', required: ['selectionId'], additionalProperties: false, properties: { selectionId: { type: 'string' } } },
       execute: async (_id, { selectionId }) => {
         const control = await readJSON(join(this.directory, 'control.json'), {});
         const selections = [...(control.notes || []).filter(note => this.applies(lane, note)).flatMap(note => note.selections || []), ...(await readQuestions(this.directory)).filter(row => this.visibleQuestion(lane, row)).flatMap(row => row.selections || [])];
         const selection = selections.find(item => item.id === selectionId);
-        const page = [...this.schemePages, ...this.questionPages, ...(this.students.get(this.owner(lane)) || [])].find(page => (page.workspace_page_id || page.id) === selection?.pageId);
+        const page = [...(lane === 'main' ? this.schemePages : []), ...this.questionPages, ...(this.students.get(this.owner(lane)) || [])].find(page => (page.workspace_page_id || page.id) === selection?.pageId);
         if (!selection || !page) throw Error('Selection outside this agent lane');
-        return { content: [{ type: 'text', text: JSON.stringify(selection) }, await readSelectionImage(page, selection)], details: {} };
+        return { content: [{ type: 'text', text: JSON.stringify(selection) }, await readSelectionImage(page, selection, MEDIUM_IMAGE_MAX_SIDE)], details: {} };
       } }, { name: 'ask_teacher', label: '请老师确认', description: 'Pause this agent for a teacher clarification about a specific source. Other independent students may continue.',
       parameters: { type: 'object', additionalProperties: false, required: ['question', 'references'], properties: { question: { type: 'string', minLength: 1, maxLength: 4000 }, references: { type: 'array', maxItems: 12, items: { type: 'object', additionalProperties: false, required: ['role', 'page'], properties: { role: { type: 'string', enum: ['scheme', 'question', 'student'] }, page: { type: 'integer', minimum: 1 } } } } } },
       execute: async (_id, input) => ({ content: [{ type: 'text', text: JSON.stringify(await this.ask(lane, input)) }], details: {} }) }];

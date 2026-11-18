@@ -1,8 +1,8 @@
-import { mkdir, readFile, appendFile } from 'node:fs/promises';
+import { mkdir, appendFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createModels } from '@earendil-works/pi-ai';
 import { openrouterProvider } from '@earendil-works/pi-ai/providers/openrouter';
-import { createRuntime, freezeJson } from '../cohort-runtime.mjs';
+import { createRuntime, freezeJson, readMediumPage } from '../cohort-runtime.mjs';
 import { experimentModel, experimentProvider, DEFAULT_WORKER_MODEL_ID } from '../experiment-models.mjs';
 import { TeacherInteraction } from '../teacher-interaction.mjs';
 import { digest } from '../core.mjs';
@@ -61,13 +61,12 @@ export async function runAdaptiveGrading({ store, task, input, entry, runner, mo
   const runtime = createRuntime({ models, model, output: input.output, cap: runner.cap, controller: entry.controller,
     maxRequests: 128, deadlineMs: 900000, structuredOutput: false,
     studentCacheNamespace: task.id, provider: experimentProvider(model.id), mainEffort: config?.mainEffort, workerEffort: config?.workerEffort,
-    workerModel, workerProvider: experimentProvider(workerModel.id), interaction });
+    workerModel, workerProvider: experimentProvider(workerModel.id), mediumImages:true, interaction });
   const research = createGradingResearch({ enabled: task.allowWebSearch, signal: entry.controller.signal,
     persist: event => appendFile(join(input.output, 'research.jsonl'), JSON.stringify(event) + '\n', { mode: 0o600 }) });
   const readPage = async page => {
     entry.controller.signal.throwIfAborted();
-    const bytes = await readFile(page.path); fail(digest(bytes) === page.sha256, '原始材料发生改变，停止执行。');
-    return { type: 'image', mimeType: 'image/png', data: bytes.toString('base64') };
+    return readMediumPage({ absolute_path:page.path, sha256:page.sha256 });
   };
   let collecting = false, candidateNumber = 0, auditNumber = 0, failure = null, coordinator;
   const sync = async () => {
@@ -111,8 +110,8 @@ export async function runAdaptiveGrading({ store, task, input, entry, runner, mo
         finally { detachDeriver(); }
         const derivation = deriver.getResult(); fail(derivation, '独立推导未提交完整结果，不能发布未经核验的数值标准。');
         await freezeJson(derivationIO.directory, 'derivation.json', derivation);
-        const reviewIO = await runtime.io(`reference-review-${number}`, () => 'adaptive_reference_review', { isolated: true });
-        const reviewer = createReferenceReviewer({ model: workerModel, streamFn: reviewIO.streamFn, candidate, derivation, pages: task.pages, readPage, log: reviewIO.log });
+        const reviewIO = await runtime.io(`reference-review-${number}`, () => 'adaptive_reference_review', { isolated: true, useMainModel:Boolean(task.scheme) });
+        const reviewer = createReferenceReviewer({ model: task.scheme ? model : workerModel, streamFn: reviewIO.streamFn, candidate, derivation, pages: task.pages, readPage, log: reviewIO.log });
         const detachReviewer = reviewIO.attach(reviewer.agent);
         try { await runtime.run(reviewer.agent, reviewer.prompt, reviewIO.directory); }
         finally { detachReviewer(); }

@@ -13,6 +13,9 @@ with Image.open(sys.argv[1]) as source:
            min(width, math.ceil((rect['x'] + rect['width']) * width)),
            min(height, math.ceil((rect['y'] + rect['height']) * height)))
     cropped = source.crop(box)
+    if len(sys.argv) > 3:
+        max_side = int(sys.argv[3])
+        cropped.thumbnail((max_side, max_side), Image.Resampling.LANCZOS)
     output = io.BytesIO()
     cropped.save(output, format='PNG')
     print(base64.b64encode(output.getvalue()).decode('ascii'))

@@ -25,12 +25,12 @@ export function validateSelections(state, selections = [], groupIds = state.grou
   });
 }
 
-export async function readSelectionImage(page, selection) {
+export async function readSelectionImage(page, selection, maxSide) {
   const { experimentRoot, python } = await import('./documents.mjs');
   const path = page.absolute_path || page.path;
   const bytes = await readFile(path);
   fail(digest(bytes) === selection.pageHash, '圈选原页哈希不一致。');
   const { stdout } = await promisify(execFile)(python, [join(experimentRoot, 'scripts/python/workspace_crop.py'),
-    path, JSON.stringify(selection.rect)], { maxBuffer: 6 * 1024 * 1024, timeout: 10000, env: { PATH: process.env.PATH } });
+    path, JSON.stringify(selection.rect), ...(maxSide ? [String(maxSide)] : [])], { maxBuffer: 6 * 1024 * 1024, timeout: 10000, env: { PATH: process.env.PATH } });
   return { type: 'image', mimeType: 'image/png', data: stdout.trim() };
 }

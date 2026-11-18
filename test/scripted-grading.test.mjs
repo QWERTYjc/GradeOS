@@ -5,6 +5,12 @@ import { openrouterProvider } from '@earendil-works/pi-ai/providers/openrouter';
 import { createStudentAgent, createCoordinator, freezeRubric } from '../src/cohort-core.mjs';
 import { deferUnreviewedExceptions, scriptedStudentReport, validateReplayGuide, gradingSourcePages } from '../src/scripted-grading.mjs';
 import { exceptionProbeFixture } from '../src/exception-probe-fixture.mjs';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { readMediumPage, MEDIUM_IMAGE_MAX_SIDE } from '../src/cohort-runtime.mjs';
+import { execFileSync } from 'node:child_process';
+import { pythonExecutable } from '../src/python.mjs';
 import { digest } from '../src/core.mjs';
 
 const models=createModels();models.setProvider(openrouterProvider());
@@ -16,6 +22,36 @@ frozen.verification={final_rubric_hash:frozen.hash,source_sha256:scheme.sha256,r
 const guide={proposalId:'approved',revision:2,body:'Accept equivalent genre names.',hash:digest('Accept equivalent genre names.'),rubricHash:frozen.hash,sourceHash:scheme.sha256,method:'teacher'};
 const image=async page=>({type:'image',mimeType:'image/png',data:page.sha256});
 const log=async()=>{};
+
+test('medium model input scales the entire frame, keeps originals and checks source hashes', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'grading-medium-'));
+  t.after(() => rm(dir, {recursive:true, force:true}));
+  const path = join(dir, 'page.png');
+  for (const [width, height, expected] of [[2048, 1024, [MEDIUM_IMAGE_MAX_SIDE, 768]], [60, 90, [60, 90]]]) {
+    const source = execFileSync(pythonExecutable(), ['-c',
+      'from PIL import Image; import sys; Image.new("RGB",(int(sys.argv[1]),int(sys.argv[2])),"white").save(sys.stdout.buffer,"PNG")', String(width), String(height)]);
+    await writeFile(path, source);
+    const page = {absolute_path:path, sha256:digest(source)};
+    const image = Buffer.from((await readMediumPage(page)).data, 'base64');
+    assert.deepEqual([image.readUInt32BE(16), image.readUInt32BE(20)], expected);
+    assert.deepEqual(await readFile(path), source);
+    await assert.rejects(readMediumPage({...page, sha256:'incorrect'}));
+  }
+});
+
+test('compiled-only grader receives its answer and rules even with mandatory MS pages', async () => {
+  const visual = structuredClone(frozen);
+  visual.artifact.items[0].requires_source_image = true;
+  visual.artifact.items[0].image_reason = 'Check the scope of the illustrated rule.';
+  visual.artifact.unresolved_notes = ['A visual link remains unclear.'];
+  const child = createStudentAgent({ model, streamFn:() => assert.fail('Unexpected model request'), frozen:visual, scheme, student, log, readImage:image,
+    singlePass:true, mainOwnsScheme:true, markingGuide:guide, protocol:'evidence-v4', persist:async()=>{} });
+  await assert.rejects(child.initialPrompt([1]), /Only the main model/);
+  const {content} = await child.initialPrompt([]);
+  assert.deepEqual(content.filter(part => part.type === 'image').map(part => part.data), ['answer1']);
+  assert.ok(content.some(part => part.text?.includes(visual.artifact.items[0].image_reason)));
+  assert.deepEqual(child.agent.state.tools.map(tool => tool.name), ['submit_grading']);
+});
 
 for(const invalid of [false,true])test(`single-pass grading ${invalid?'retains failure without retry':'submits once with the confirmed guide and all pages'}`,async()=>{
   let calls=0,context,saved;

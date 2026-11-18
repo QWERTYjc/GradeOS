@@ -108,12 +108,15 @@ export async function writeAnnotationViewer(directory, student, grade, frozen) {
 }
 
 export async function runScriptedGrading({ runtime, output, frozen, guide, scheme, students, model,
-  concurrency = null, inlineAnnotations = false, imageVariants = null, interaction = null, gradingReasoning = 'low', allMsImages = false, localObservations = null }) {
+  concurrency = null, inlineAnnotations = false, imageVariants = null, interaction = null, gradingReasoning = 'low', allMsImages = false, localObservations = null, mainOwnsScheme = false, readPage = readImage }) {
   if (guide) validateReplayGuide(guide, frozen);
   const registry = new StudentRegistry([...students.keys()], concurrency);
-  const sourcePages = gradingSourcePages(frozen, scheme, guide, allMsImages);
+  if (mainOwnsScheme && (frozen.verification?.final_rubric_hash !== frozen.hash ||
+    frozen.verification?.source_sha256 !== scheme.sha256)) throw Error('Student grading requires a source-verified rubric');
+  const sourcePages = mainOwnsScheme ? [] : gradingSourcePages(frozen, scheme, guide, allMsImages);
   await freezeJson(output, 'grading-input-policy.json', { scheme_pages:sourcePages, total_scheme_pages:scheme.pages.length,
-    source_contract:'Unchanged frozen rubric and exact approved guide; selected originals retain visual dependencies, source uncertainties and general rules.',
+    scheme_image_owner:mainOwnsScheme ? 'main' : 'shared',
+    source_contract:mainOwnsScheme ? 'Student uses the source-verified text. Original-dependent awards remain pending.' : 'Unchanged frozen rubric and exact approved guide; selected originals retain visual dependencies, source uncertainties and general rules.',
     student_pages:'Complete original answer content once; no separate locator or model review.' });
   const started = Date.now();
   runtime.allocateStudentBudgets([...students.keys()],{reserveCoordinator:false});
@@ -123,10 +126,10 @@ export async function runScriptedGrading({ runtime, output, frozen, guide, schem
     const student = students.get(id), start = Date.now(); let failure = null;
     await io.log({ type: 'student_task_start', student_id: id, rubric_hash: frozen.hash });
     const hasRegions = inlineAnnotations && imageVariants?.documents[id]?.pages.some(page => page.regions?.length);
-    const child = createStudentAgent({ model, streamFn: io.streamFn, frozen, scheme, student, readImage,
+    const child = createStudentAgent({ model, streamFn: io.streamFn, frozen, scheme, student, readImage:readPage, mainOwnsScheme,
       singlePass: true, protocol: 'evidence-v4', reasonStyle: 'brief-full-credit', inlineAnnotations: Boolean(hasRegions),
       markingGuide: interaction ? null : guide, gradingReasoning,localObservations:localObservations?.documents[id]?.pages||[],
-      ...(imageVariants ? { readInitialStudentImage: page => readImage(imageVariants.documents[id].pages.find(p => p.page === page.page)),
+      ...(imageVariants ? { readInitialStudentImage: page => readPage(imageVariants.documents[id].pages.find(p => p.page === page.page)),
         initialStudentImageMode: imageVariants.mode || 'exact_white_margin_trim', initialStudentGeometry: imageVariants.documents[id].pages } : {}),
       log: io.log, persistSubmission: raw => freezeJson(io.directory, 'submission.json', raw),
       persist: grade => freezeJson(io.directory, 'grading-primary.json', grade) });
