@@ -49,7 +49,7 @@ def prepare_answer(answer_id: str, output: Path) -> dict:
     from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
     from reportlab.lib.styles import ParagraphStyle
     from pypdf import PdfReader
-    from annotation_pdf import register_font
+    from scripts.python.annotation_pdf import register_font
 
     row = next((r for r in check() if r['answer_id'] == answer_id), None)
     if row is None:

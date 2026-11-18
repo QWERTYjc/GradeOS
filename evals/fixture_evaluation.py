@@ -5,7 +5,7 @@ import json
 import re
 from pathlib import Path
 
-from evaluate import compare
+from evals.evaluate import compare
 from evals.fixture_inputs import input_documents, sha
 from evals.hkeaa_reference import _reference_result_summary
 

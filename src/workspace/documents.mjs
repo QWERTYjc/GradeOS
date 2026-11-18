@@ -19,7 +19,7 @@ export async function importUpload(store, { bytes, name, role }) {
   const source = join(directory, 'source');
   await writeFile(source, bytes, { mode: 0o600 });
   try {
-    await execute(python, [join(experimentRoot, 'workspace_documents.py'), '--source', source, '--output', directory], {
+    await execute(python, [join(experimentRoot, 'scripts/python/workspace_documents.py'), '--source', source, '--output', directory], {
       timeout: 120000, maxBuffer: 1024 * 1024, env: { PATH: process.env.PATH },
     });
     const manifest = JSON.parse(await readFile(join(directory, 'manifest.json'), 'utf8'));

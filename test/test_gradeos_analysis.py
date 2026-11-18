@@ -1,10 +1,7 @@
-import importlib.util
 from pathlib import Path
 import unittest
 
-spec = importlib.util.spec_from_file_location('gradeos_bridge', Path(__file__).parents[1]/'gradeos_analysis.py')
-bridge = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(bridge)
+from scripts.python import gradeos_analysis as bridge
 
 
 class GradeOSAnalysisTests(unittest.TestCase):

@@ -4,7 +4,7 @@ from pathlib import Path
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from evaluate import compare, remap_ids
+from evals.evaluate import compare, remap_ids
 
 
 class EvaluationTests(unittest.TestCase):

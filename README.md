@@ -77,4 +77,4 @@ npm start
 
 ## 本地验证与许可
 
-安装依赖后运行 `npm run check`。考试材料与个人评分记录由使用者保存在本地。参见[评测工具](evals/README.md)、[架构](docs/ARCHITECTURE.md)和[批改流程](COHORT.md)。源代码使用 GPL-3.0-only，第三方许可随源码保留。
+安装依赖后运行 `npm run check`。考试材料与个人评分记录由使用者保存在本地。参见[评测工具](evals/README.md)、[架构](docs/ARCHITECTURE.md)和[批改流程](docs/COHORT.md)。源代码使用 GPL-3.0-only，第三方许可随源码保留。
