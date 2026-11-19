@@ -1,4 +1,5 @@
 import { createServer } from 'node:http';
+import { CloudPublisher } from './cloud-publisher.mjs';
 import { readFile } from 'node:fs/promises';
 import { resolve, join, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -26,6 +27,7 @@ export async function createWorkspaceServer({ directory, port = 4173, model, cap
   const runner = new WorkspaceRunner(store, { model, cap, agent, rubricPath });
   const chat = new WorkspaceChat(store, { agent, model:model ?? DEFAULT_MAIN_MODEL_ID, configured });
   const system = await new SystemService(store, { model:model ?? DEFAULT_MAIN_MODEL_ID, cap, configured, agent: systemAgent }).init();
+  const cloud = new CloudPublisher(store);
   const token = randomBytes(32).toString('hex');
   let planning = false;
   const state = () => publicState(store.snapshot(), configured(), { planning: planning || Boolean(chat.active), chat: chat.snapshot(),
@@ -49,6 +51,10 @@ export async function createWorkspaceServer({ directory, port = 4173, model, cap
         const submitted = Buffer.from(String(req.headers['x-workspace-token'] || ''));
         fail(submitted.length === token.length && timingSafeEqual(submitted, Buffer.from(token)), '请刷新工作区后重试。', 403);
         fail(!req.headers.origin || req.headers.origin === `http://${req.headers.host}`, '来源无效。', 403);
+      }
+      if (url.pathname.startsWith('/api/cloud/')) {
+        const body = req.method === 'POST' ? JSON.parse((await readBody(req, 2 * 1024 * 1024)).toString() || '{}') : {};
+        return send(res, 200, await cloud.route(req.method, url.pathname.slice('/api/cloud/'.length), body));
       }
       if (url.pathname.startsWith('/api/system/')) {
         const body = ['GET', 'HEAD'].includes(req.method) ? null : JSON.parse((await readBody(req, 3 * 1024 * 1024)).toString() || '{}');
@@ -202,7 +208,7 @@ export async function createWorkspaceServer({ directory, port = 4173, model, cap
         return send(res, 200, state());
       }
       fail(req.method === 'GET' || req.method === 'HEAD', '方法不支持。', 405);
-      const files = new Set(['index.html', 'app.mjs', 'ui.mjs', 'materials.mjs', 'grading-library.mjs', 'grading-models.mjs', 'tasks.mjs', 'review.mjs', 'style.css', 'canvas-app.mjs', 'canvas-view.mjs', 'canvas-selection.mjs', 'canvas.css', 'workspace-canvas.mjs', 'document-editor.mjs', 'workspace-canvas.css', 'document-reader.mjs', 'document-reader.css', 'report-math.mjs', 'math-text-parser.mjs', 'results-view.mjs', 'results.css']);
+      const files = new Set(['cloud-publish.html', 'cloud-publish.css', 'cloud-publish.mjs', 'index.html', 'app.mjs', 'ui.mjs', 'materials.mjs', 'grading-library.mjs', 'grading-models.mjs', 'tasks.mjs', 'review.mjs', 'style.css', 'canvas-app.mjs', 'canvas-view.mjs', 'canvas-selection.mjs', 'canvas.css', 'workspace-canvas.mjs', 'document-editor.mjs', 'workspace-canvas.css', 'document-reader.mjs', 'document-reader.css', 'report-math.mjs', 'math-text-parser.mjs', 'results-view.mjs', 'results.css']);
       for (const file of ['system.html', 'system-app.mjs', 'system-view.mjs', 'system.css']) files.add(file);
       const relative = url.pathname === '/' ? 'system.html' : url.pathname === '/grading' ? 'index.html' : url.pathname.slice(1);
       let file;
