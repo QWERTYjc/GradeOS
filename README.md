@@ -77,4 +77,6 @@ npm start
 
 ## 本地验证与许可
 
+老师可在批改结果页选择「发布给学生」，连接班级、核对学号并确认发布。改分后可从同一入口同步新版本。参见[班级成绩发布](docs/CLOUD-PUBLISH.md)。
+
 安装依赖后运行 `npm run check`。考试材料与个人评分记录由使用者保存在本地。参见[评测工具](evals/README.md)、[架构](docs/ARCHITECTURE.md)和[批改流程](docs/COHORT.md)。源代码使用 GPL-3.0-only，第三方许可随源码保留。
