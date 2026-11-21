@@ -1,0 +1,57 @@
+.quick-google, .auth-password {
+  box-sizing: border-box;
+  position: relative;
+  display: flex;
+  width: 100%;
+  min-height: 40px;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 39px;
+  font: 540 14px/1.35 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  border-radius: 5px;
+  text-decoration: none;
+}
+.quick-google { background: #131314; color: #fff; border: 1px solid #8e918f; }
+.quick-google:hover { background: #2b2c30; }
+.quick-google .provider-icon {
+  position: absolute; left: 3px; display: grid; place-items: center;
+  width: 32px; height: 32px; background: #fff; border-radius: 3px;
+}
+.quick-google img { display: block; width: 18px; height: auto; }
+.auth-password { background: #fff; border: 1px solid #c7cbd1; color: #20242b; }
+.auth-password:hover { background: #f4f5f7; border-color: #9296a0; }
+.auth-password svg { position: absolute; left: 12px; width: 17px; height: 17px; }
+.quick-google:focus-visible, .auth-password:focus-visible, .auth-foot :is(a,button):focus-visible {
+  outline: 2px solid #236cd1; outline-offset: 3px;
+}
+.account-methods, .connection-row>.account-methods:last-child:not(:first-child) {
+  display: grid; gap: 10px; width: min(100%, 255px);
+}
+.auth-dialog { width: min(414px, calc(100vw - 32px)); border-radius: 16px; background: #fafafb; }
+.auth-dialog>header { display: grid; justify-content: center; justify-items: center; gap: 18px; padding: 36px 28px 23px; }
+.auth-dialog>header>.icon-button { position: absolute; top: 11px; right: 11px; }
+.auth-wordmark { display: flex; align-items: baseline; justify-content: center; gap: 7px; font-size: 32px; line-height: 1; }
+.auth-wordmark small { color: #616572; font: 540 18px/1 "Inter Tight Variable", system-ui, sans-serif; letter-spacing: -.045em; }
+.auth-dialog h2 { font-size: 25px; letter-spacing: -.045em; font-weight: 620; }
+.auth-dialog .dialog-content { padding: 0 36px 28px; }
+.auth-dialog .account-methods { width: 100%; }
+.auth-dialog .auth-foot { margin: 21px 0 0; text-align: center; font-size: 13px; color: #646974; }
+.auth-foot a, .auth-foot .auth-link, .auth-return a { color: #175bb9; text-decoration: none; font-size: 13px; }
+.auth-foot .auth-link { background: transparent; padding: 4px; }
+.auth-foot :is(button,a):hover, .auth-return a:hover { text-decoration: underline; }
+.auth-password-form { display: grid; gap: 14px; }
+.auth-dialog .auth-password-form label { margin: 0; font-size: 13px; color: #242833; }
+.auth-dialog .auth-password-form input { height: 41px; padding: 8px 12px; background: #fff; border: 1px solid #c9ccd2; border-radius: 6px; }
+.auth-dialog .auth-password-form button { width: 100%; min-height: 40px; border-radius: 5px; }
+.auth-return {
+  box-sizing: border-box; display: grid; min-height: 100svh; margin: 0;
+  place-items: center; padding: 36px 20px max(36px, 7vh); background: #fafafb; color: #151b27;
+  font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+.auth-return main { box-sizing: border-box; max-width: 336px; text-align: center; }
+.auth-return h1 { margin: 27px 0 11px; font-size: 28px; letter-spacing: -.045em; line-height: 1.25; }
+.auth-return p { color: #565e69; margin: 0 0 22px; }
+@media (max-width: 600px) {
+  .connection-row>.account-methods:last-child:not(:first-child) { width: 100%; margin-top: 7px; }
+  .auth-dialog .dialog-content { padding-inline: 23px; }
+}

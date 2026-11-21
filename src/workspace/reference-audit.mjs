@@ -62,6 +62,19 @@ export function createReferenceReviewer({ model, streamFn, candidate, derivation
   const items = derivedScoreItems(candidate), required = new Set(items.flatMap(i => [...i.sourcePageIds, ...i.scalePageIds]));
   const available = pages.filter(p => required.has(p.id));
   const delivered = new Set(), pending = new Set(), arithmetic = referenceArithmeticTool(object, text); let result;
+  const submit = raw => {
+    fail(!result && [...required].every(id => delivered.has(id)), '先读取全部待核验原页，且只提交一次。');
+    validateItems(raw, items, arithmetic.calculations);
+    for (const item of raw.items) {
+      const independent = derivation.items.find(i => i.id === item.id);
+      const proposed = items.find(i => i.id === item.id);
+      fail(item.status !== 'confirmed' || (item.referenceAnswer === proposed.referenceAnswer && item.criteria === proposed.criteria), `评分项 ${item.id} 修改了参考答案或条件，必须标 corrected 并保留具体修正说明；confirmed 只能原样采用候选内容。`);
+      fail((item.sourceFaithful && independent.status === 'established') || item.status === 'unresolved', `评分项 ${item.id} 未获得完整题意的独立推导，不能直接放行。`);
+      fail(item.status === 'confirmed' ? item.findings.length === 0 : item.findings.length > 0, '修正或未确定的标准必须保留具体发现。');
+    }
+    result = { candidateHash: candidate.hash, derivationHash: digest(derivation), ...structuredClone(raw), calculations: [...arithmetic.calculations.values()] };
+    return { content: [{ type: 'text', text: JSON.stringify({ saved: true }) }], terminate: true };
+  };
   const ctl = controlledAgent({ model, streamFn, log, prompt: REVIEW_PROMPT, finished: () => Boolean(result),
     onModelResponse: () => { for (const id of pending) delivered.add(id); pending.clear(); },
     tools: [{
@@ -79,20 +92,24 @@ export function createReferenceReviewer({ model, streamFn, candidate, derivation
     }, arithmetic.tool, {
       name: 'submit_reference_review', label: '保存逐项标准校核', parameters: REFERENCE_REVIEW_SCHEMA,
       description: 'Submit concrete per-item verification, corrections or unresolved conflicts after source delivery.',
-      execute: async (_id, raw) => {
-        fail(!result && [...required].every(id => delivered.has(id)), '先读取全部待核验原页，且只提交一次。');
-        validateItems(raw, items, arithmetic.calculations);
-        for (const item of raw.items) {
-          const independent = derivation.items.find(i => i.id === item.id);
-          const proposed = items.find(i => i.id === item.id);
-          fail(item.status !== 'confirmed' || (item.referenceAnswer === proposed.referenceAnswer && item.criteria === proposed.criteria), `评分项 ${item.id} 修改了参考答案或条件，必须标 corrected 并保留具体修正说明；confirmed 只能原样采用候选内容。`);
-          fail((item.sourceFaithful && independent.status === 'established') || item.status === 'unresolved', `评分项 ${item.id} 未获得完整题意的独立推导，不能直接放行。`);
-          fail(item.status === 'confirmed' ? item.findings.length === 0 : item.findings.length > 0, '修正或未确定的标准必须保留具体发现。');
-        }
-        result = { candidateHash: candidate.hash, derivationHash: digest(derivation), ...structuredClone(raw), calculations: [...arithmetic.calculations.values()] };
-        return { content: [{ type: 'text', text: JSON.stringify({ saved: true }) }], terminate: true };
+      execute: async (_id, raw) => submit(raw),
+    }, ...(items.length > 1 ? [{
+      name: 'confirm_matching_references', label: '确认已逐页核验的同题评分依据',
+      description: 'When every item is confirmed on its own original page, group identical question and policy entries with an identical concrete check. List every verified item ID explicitly. For corrections, uncertainty or differing checks use submit_reference_review.',
+      parameters: object({ groups: { type: 'array', minItems: 1, items: object({ ids: { ...strings, minItems: 1 }, checks, calculationIds: strings }) } }),
+      execute: async (_id, { groups }) => {
+        const confirmed = groups.flatMap(group => {
+          const entries = group.ids.map(id => items.find(item => item.id === id));
+          fail(entries.length && entries.every(Boolean), '请列出实际核验的候选评分项。');
+          const signature = item => JSON.stringify([item.question, item.questionStatus, item.basis, item.scaleBasis, item.scaleQuote, item.maxScore, item.allowedAwards, item.referenceAnswer, item.criteria, item.uncertainties]);
+          fail(entries.every(item => signature(item) === signature(entries[0])), '题意、分值或评分条件不同，请逐项提交核验记录。');
+          return entries.map(item => ({ id: item.id, status: 'confirmed', sourceFaithful: true,
+            referenceAnswer: item.referenceAnswer, criteria: item.criteria, checks: group.checks,
+            calculationIds: group.calculationIds, findings: [] }));
+        });
+        return submit({ items: confirmed });
       },
-    }],
+    }] : [])],
   });
   return { ...ctl, getResult: () => result, prompt: JSON.stringify({ candidateItems: items,
     independentDerivations: derivation.items, sources: available.map(({ id, role, sourcePage }) => ({ id, role, sourcePage })) }) };

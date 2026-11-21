@@ -2,10 +2,11 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { createStudentAgent, StudentRegistry } from './cohort-core.mjs';
 import { digest, validateGrade } from './core.mjs';
-import { freezeJson, readImage } from './cohort-runtime.mjs';
+import { freezeJson, MEDIUM_IMAGE_MAX_SIDE, readConcentratedAnswerView, readImage, readMediumPage, readPageOverview, readResultEvidenceBand, readSourcePageBands } from './cohort-runtime.mjs';
 import { exceptionTargets } from './exception-review.mjs';
 import { validatePointDecisions } from './rubric-contract.mjs';
 import { validateGuideApproval } from './marking-guide.mjs';
+import { runIndependentSourceReview } from './independent-source-review.mjs';
 
 export const DEFAULT_EXECUTION_METHOD = '逐页查看答卷，按下列已核对的评分条件记录证据和理由。允许原 MS 支持的等价方法；不能确定的判断保留待定并请老师审阅。批改时尽可能记录证据位置；批注和汇总由脚本生成。';
 
@@ -81,7 +82,11 @@ export function scriptedStudentReport(id, grade, frozen, guide) {
     lines.push(`| ${safe(item.item_id)}/${safe(point.point_id)} | ${score(point.score)} / ${criterion.max_score} | ${safe(point.evidence)} | ${safe(point.reason)} | ${safe(criterion.condition)} | ${point.student_pages.join(', ')} | ${point.annotation?.regions.length || 0} 处 |`);
   }
   lines.push('', '## 待审阅', '', ...grade.review_notes.map(note => `- ${note}`),
-    ...grade.items.filter(item => item.review_required).map(item => `- ${item.item_id}：${item.reason}`), '');
+    ...grade.items.filter(item => item.review_required).flatMap(item => [
+      `- ${item.item_id}：${item.reason}`,
+      ...item.point_decisions.filter(point=>point.independent_review_abstention).map(point=>
+        `  - ${point.point_id} 暂保留初批分。复核缺少足够证据：${safe(point.independent_review_abstention.reason)}`),
+    ]), '');
   return lines.join('\n');
 }
 
@@ -108,16 +113,18 @@ export async function writeAnnotationViewer(directory, student, grade, frozen) {
 }
 
 export async function runScriptedGrading({ runtime, output, frozen, guide, scheme, students, model,
-  concurrency = null, inlineAnnotations = false, imageVariants = null, interaction = null, gradingReasoning = 'low', allMsImages = false, localObservations = null, mainOwnsScheme = false, readPage = readImage }) {
+  concurrency = null, inlineAnnotations = true, imageVariants = null, interaction = null, gradingReasoning = 'low', allMsImages = false, localObservations = null, reviewOpticalObservations = null, mainOwnsScheme = false, compactWire = false, typedCompact = false, selectedObservations = false, resultLocations = false, verdictWire = false, resolveUncertainty = false, sourceReviewScope = 'unresolved', readPage = readImage, readAnswerPage = readPage }) {
   if (guide) validateReplayGuide(guide, frozen);
   const registry = new StudentRegistry([...students.keys()], concurrency);
   if (mainOwnsScheme && (frozen.verification?.final_rubric_hash !== frozen.hash ||
     frozen.verification?.source_sha256 !== scheme.sha256)) throw Error('Student grading requires a source-verified rubric');
   const sourcePages = mainOwnsScheme ? [] : gradingSourcePages(frozen, scheme, guide, allMsImages);
+  const readVariant = imageVariants?.mode === 'resized_overview' && imageVariants.max_side <= MEDIUM_IMAGE_MAX_SIDE
+    ? readImage : readAnswerPage;
   await freezeJson(output, 'grading-input-policy.json', { scheme_pages:sourcePages, total_scheme_pages:scheme.pages.length,
     scheme_image_owner:mainOwnsScheme ? 'main' : 'shared',
     source_contract:mainOwnsScheme ? 'Student uses the source-verified text. Original-dependent awards remain pending.' : 'Unchanged frozen rubric and exact approved guide; selected originals retain visual dependencies, source uncertainties and general rules.',
-    student_pages:'Complete original answer content once; no separate locator or model review.' });
+    student_pages:resultLocations?'Complete answer book for primary grading; delivered result regions may guide independent rereading.':'Complete original answer content once; no separate locator or model review.' });
   const started = Date.now();
   runtime.allocateStudentBudgets([...students.keys()],{reserveCoordinator:false});
   await registry.dispatch([...students.keys()], concurrency ?? students.size, async id => {
@@ -125,21 +132,38 @@ export async function runScriptedGrading({ runtime, output, frozen, guide, schem
     const io = await runtime.io(`student-${id}`, () => 'student_grading');
     const student = students.get(id), start = Date.now(); let failure = null;
     await io.log({ type: 'student_task_start', student_id: id, rubric_hash: frozen.hash });
-    const hasRegions = inlineAnnotations && imageVariants?.documents[id]?.pages.some(page => page.regions?.length);
     const child = createStudentAgent({ model, streamFn: io.streamFn, frozen, scheme, student, readImage:readPage, mainOwnsScheme,
-      singlePass: true, protocol: 'evidence-v4', reasonStyle: 'brief-full-credit', inlineAnnotations: Boolean(hasRegions),
+      singlePass: true, compactWire, typedCompact, selectedObservations, resultLocations, verdictWire, deferConflicts: resolveUncertainty, protocol: 'evidence-v4', reasonStyle: 'brief-full-credit', inlineAnnotations,
       markingGuide: interaction ? null : guide, gradingReasoning,localObservations:localObservations?.documents[id]?.pages||[],
-      ...(imageVariants ? { readInitialStudentImage: page => readPage(imageVariants.documents[id].pages.find(p => p.page === page.page)),
-        initialStudentImageMode: imageVariants.mode || 'exact_white_margin_trim', initialStudentGeometry: imageVariants.documents[id].pages } : {}),
+      readInitialStudentImage: imageVariants ? page => readVariant(imageVariants.documents[id].pages.find(p => p.page === page.page)) : readAnswerPage,
+      ...(imageVariants ? {initialStudentImageMode: imageVariants.mode || 'exact_white_margin_trim', initialStudentGeometry: imageVariants.documents[id].pages} : {}),
       log: io.log, persistSubmission: raw => freezeJson(io.directory, 'submission.json', raw),
       persist: grade => freezeJson(io.directory, 'grading-primary.json', grade) });
-    const detach = io.attach(child.agent, {guideRubric: inlineAnnotations ? frozen : null});
+    const detach = io.attach(child.agent);
     try { await runtime.run(child.agent, await child.initialPrompt(sourcePages), io.directory); }
     catch (error) { failure = error.message; }
     finally { detach(); }
-    const primary = child.getResult(); let grade = null, feedback = null;
+    const primary = child.getResult(); let grade = null, feedback = null, sourceReview = null;
     if (primary) {
       grade = deferUnreviewedExceptions(primary, frozen, scheme, student);
+      if (resolveUncertainty) {
+        try {
+          const reviewed = await runIndependentSourceReview({runtime,model,id,primary,frozen,scheme,student,
+            loadImage:sourceReviewScope==='mixed-credit'?readMediumPage:page=>readPageOverview(page,1280),
+            ...(sourceReviewScope==='result-evidence'?{
+              readScheme:page=>readPageOverview(page,1088,{trimWhiteMargins:true}),
+              readConcentratedView:readConcentratedAnswerView,
+            }:{}),
+            ...(resultLocations||reviewOpticalObservations?{readResultBand:readResultEvidenceBand,readOverview:page=>readPageOverview(page,640)}:{}),
+            opticalLines:reviewOpticalObservations?.documents[id]?.pages,
+            readPageBands:readSourcePageBands,scope:sourceReviewScope});
+          grade = reviewed.grade;
+          sourceReview = reviewed.status;
+        } catch (error) {
+          sourceReview = 'unavailable';
+          await io.log({type:'bounded_source_review_unavailable',failure:error.message});
+        }
+      }
       await freezeJson(io.directory, 'grading.json', grade);
       await io.log({ type: 'grading_result_saved', student_id: id, review_status: grade.status });
       const reportDirectory = resolve(output, `feedback-${id}`);
@@ -150,10 +174,10 @@ export async function runScriptedGrading({ runtime, output, frozen, guide, schem
         report_path: resolve(reportDirectory, 'REPORT.zh-CN.md'), grade_hash: digest(grade), rubric_hash: frozen.hash };
       await freezeJson(reportDirectory, 'summary.json', feedback);
     }
-    const requests = runtime.budget.requests.filter(row => row.lane === `student-${id}`);
+    const requests = runtime.budget.requests.filter(row => row.budget_scope === `student-${id}` || row.lane === `student-${id}`);
     const summary = { student_id: id, status: grade ? 'submitted' : 'failed', failure: failure || child.agent.state.errorMessage || (!grade ? 'Single grading response did not pass validation; no automatic retry.' : null),
       mode: 'scripted-single-pass', total_score: grade?.total_score ?? null, primary_total_score: primary?.total_score ?? null,
-      max_score: grade?.max_score ?? null, review_status: grade?.status ?? null,
+      max_score: grade?.max_score ?? null, review_status: grade?.status ?? null, source_review_status: sourceReview,
       rubric_hash: frozen.hash, marking_guide_hash: guide?.hash ?? null, elapsed_seconds: (Date.now() - start) / 1000,
       feedback_status: feedback?.status ?? 'unavailable', feedback, ...runtime.totals(requests), requests,
       result_path: grade ? resolve(io.directory, 'grading.json') : null };

@@ -1,0 +1,39 @@
+.composer-model {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  max-width: min(190px, 34vw);
+  padding: 5px 6px;
+  color: #54585c;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.5;
+  border-radius: 8px;
+}
+.composer-model > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.composer-model::after {
+  content: ""; width: 5px; height: 5px; flex: none; margin: -2px 2px 0 0;
+  border: solid currentColor; border-width: 0 1px 1px 0; transform: rotate(45deg);
+}
+.composer-model select {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  opacity: 0; cursor: pointer; font-size: 16px;
+}
+.composer-model:hover { color: #16181b; background: #f3f4f4 }
+.composer-model:has(:focus-visible) { outline: 2px solid #57606b; outline-offset: 2px }
+.composer-model:has(:disabled)::after { display: none }
+.composer-model:has(:disabled) { background: transparent; color: #686b70 }
+@media(max-width: 360px) {
+  .composer-model { gap: 3px; padding-inline: 3px }
+}
+
+.connection-model-field { margin-block: 12px }
+.connection-model-heading { display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin-bottom:5px }
+.connection-model-heading label { margin:0 }
+.connection-model-heading .text-link { font-size:12px }
+.connection-model-field > :is(input,select) { width:100% }
+.connection-model-field > [hidden] { display:none }
+.connection-model-field small { display:block; margin-top:4px; color:var(--muted); font-size:12px }
+.connection-model-field small:empty { display:none }

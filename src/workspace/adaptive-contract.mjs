@@ -30,8 +30,12 @@ export const GRADE_SCHEMA = object({ items: { type: 'array', minItems: 1, maxIte
 
 export function validatePlan(raw, task, delivered, webReferences = new Map()) {
   const plan = structuredClone(raw), ids = new Set(), selected = new Set(task.groupIds);
-  fail(plan.items?.length && plan.coverage?.length === selected.size, '需要逐份说明题目覆盖情况。');
-  fail(new Set(plan.coverage.map(row => row.groupId)).size === selected.size && plan.coverage.every(row => selected.has(row.groupId)), '覆盖范围与任务不符。');
+  fail(plan.items?.length && Array.isArray(plan.coverage), '需要逐份说明题目覆盖情况。');
+  const covered = new Set(plan.coverage.map(row => row.groupId));
+  const missing = [...selected].filter(id => !covered.has(id));
+  const foreign = [...covered].filter(id => !selected.has(id));
+  fail(!missing.length && !foreign.length && plan.coverage.length === selected.size,
+    `覆盖范围与任务不符。每份答卷只列一次。缺少 ID：${missing.join('、') || '无'}；无效 ID：${foreign.join('、') || '无'}。`);
   const sourcePages = new Map(task.pages.map(page => [page.id, page]));
   const shared = new Set([...(task.scheme?.pageIds || []), ...(task.question?.pageIds || [])]);
   // Source preparation sees question/MS pages first. Answer-only preparation must inspect
@@ -40,7 +44,7 @@ export function validatePlan(raw, task, delivered, webReferences = new Map()) {
   fail([...required].every(id => delivered.has(id)), '先阅读完整题目和标准；仅答卷模式需逐份阅读。');
   for (const item of plan.items) {
     fail(typeof item.id === 'string' && item.id.trim() && !ids.has(item.id), '题目标识重复或无效。'); ids.add(item.id);
-    fail(item.groupIds?.length && new Set(item.groupIds).size === item.groupIds.length && item.groupIds.every(id => selected.has(id)), '题目适用范围无效。');
+    fail(item.groupIds?.length && new Set(item.groupIds).size === item.groupIds.length && item.groupIds.every(id => selected.has(id)), `评分项 ${item.id} 的答卷 ID 缺失、重复或无效：${item.groupIds?.join('、') || '无'}。请核对本批答卷清单。`);
     const own = new Set(task.groups.filter(group => item.groupIds.includes(group.id)).flatMap(group => group.pageIds));
     const refs = [...item.sourcePageIds, ...item.scalePageIds];
     fail(item.sourcePageIds.length, `评分项 ${item.id} 缺少原页引用。`);

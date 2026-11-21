@@ -40,7 +40,7 @@ export class DocumentReader {
     this.article = article; this.onLayout = onLayout; this.prefix = `reader-${++readerId}-`;
     this.key = `gradeos-reading:${location.port}:${id}`;
     try { this.saved = JSON.parse(localStorage.getItem(this.key)) || {}; } catch { this.saved = {}; }
-    this.mode = this.saved.mode === 'full' ? 'full' : 'chapters';
+    this.mode = this.saved.mode === 'chapters' ? 'chapters' : 'full';
     this.shell = document.createElement('div'); this.shell.className = 'document-reader';
     article.replaceWith(this.shell);
     this.shell.innerHTML = `<aside class="reader-outline" id="${this.prefix}outline" aria-label="文档目录"><div class="reader-outline-heading"><strong>目录</strong><button type="button" data-reader="close" aria-label="关闭目录">×</button></div><label class="reader-search"><span class="sr-only">查找章节或题号</span><input type="search" placeholder="查找章节或题号" aria-label="查找章节或题号"></label><nav class="reader-toc" aria-label="章节与小节"></nav><p class="reader-search-status" role="status"></p></aside><button type="button" class="reader-scrim" data-reader="close" aria-label="关闭目录遮罩" tabindex="-1"></button><div class="reader-main"><div class="reader-toolbar"><button type="button" class="reader-menu" data-reader="menu" aria-controls="${this.prefix}outline" aria-expanded="false">目录</button><div class="reader-location"><span class="reader-current"></span><small class="reader-position"></small></div><button type="button" class="reader-mode" data-reader="mode" aria-pressed="false">阅读全文</button><div class="reader-paging"><button type="button" data-reader="previous" aria-label="上一章" title="上一章">‹</button><button type="button" data-reader="next" aria-label="下一章" title="下一章">›</button></div></div></div>`;

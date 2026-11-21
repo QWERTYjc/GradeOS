@@ -1,0 +1,14 @@
+{
+  "name": "gradeos-desktop-build",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "devDependencies": {
+    "@electron/packager": "20.3.0"
+  },
+  "config": {
+    "electronVersion": "45.4.1"
+  }
+}

@@ -3,6 +3,7 @@ import { join } from 'node:path';
 
 const readJson = async path => { try { return JSON.parse(await readFile(path, 'utf8')); } catch { return null; } };
 const nonnegative = value => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+const studentStates = new Set(['waiting', 'grading', 'feedback', 'submitted', 'failed', 'cancelled']);
 const phaseLabels = { preparing: '准备材料', coordination: '安排批改', ms_compilation: '整理评分标准',
   ms_verification: '核对评分标准', student_grading: '批改答卷', exception_review: '核对例外给分',
   source_permission_review: '核对源规则', student_feedback: '生成个人反馈', reporting: '整理汇总报告' };
@@ -41,6 +42,8 @@ export async function collectGradingProgress({ task, output, summary, gradingSav
   return { artifacts, progress: {
     // Existing consumers use completed for grades persisted, never estimated work or model tokens.
     completed: gradingSaved, total: task.groups.length,
+    students: students.filter(row => expected.has(row.student_id) && studentStates.has(row.status))
+      .map(row => ({ id: row.student_id, status: row.status })),
     feedbackCompleted: artifacts.filter(artifact => artifact.groupId).length,
     phase: live?.status === 'stopping' ? '停止任务并保存结果' : active.length ? active.join('、') : phaseLabels[live?.phase] ?? fallback,
     stopping: live?.status === 'stopping', elapsedSeconds: elapsed, settledCostUsd: settledCost,

@@ -26,6 +26,10 @@ After original MS pages have actually appeared in a previous model input, append
 `+EVIDENCE_PROTOCOL_PROMPT.slice(EVIDENCE_PROTOCOL_PROMPT.indexOf('The host restores'));
 
 const origins={n:'none',i:'inherited',c:'current',m:'mixed',u:'unknown'};
+export function explicitPointStates(ruleIds) {
+  return ['m', ...['u','q'].flatMap(relation => Object.keys(origins).map(origin => `${relation}:${origin}`)),
+    ...['i','c','m'].flatMap(origin => ruleIds.map(rule => `x:${origin}:${rule}`))];
+}
 export function decodePointState(state) {
   if(state==='m')return ['met','none',''];
   if(typeof state!=='string')throw Error('Missing explicit point state');

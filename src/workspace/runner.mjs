@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { readFile, access, appendFile, writeFile, mkdir, readdir } from 'node:fs/promises';
+import { readFile, access, appendFile, writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { digest } from '../core.mjs';
 import { fail, id, makeRecord, now, startTask } from './store.mjs';
@@ -12,12 +12,16 @@ import { validateSelections } from './canvas-context.mjs';
 import { addDocument, readDocument, resolveReferences } from './editable-documents.mjs';
 import { runAdaptiveGrading, usesAdaptiveGrading } from './adaptive-runtime.mjs';
 import { gradingPresets } from '../../web/grading-models.mjs';
+
+const smallerAnswerOverviews = new Set([
+  'openai/gpt-6.1-terra', 'openai/gpt-6-luna', 'qwen/qwen3.7-plus',
+]);
 import { DEFAULT_MAIN_MODEL_ID } from '../experiment-models.mjs';
 
 const json = async path => { try { return JSON.parse(await readFile(path, 'utf8')); } catch { return null; } };
 export function canReuseScheme(plan, model, effort) {
   return plan?.printed_item_inventory === true && plan.scheme_image_owner === 'main' && plan.image_quality === 'medium' &&
-    !plan.rubric_reuse && plan.model_roles?.main?.model?.id === model && plan.reasoning === effort;
+    !plan.rubric_reuse && !plan.model_roles?.main?.provider?.connectionId && plan.model_roles?.main?.model?.id === model && plan.reasoning === effort;
 }
 export async function snapshotFrozenRubric(sourcePath, directory, scheme) {
   fail(sourcePath.endsWith('.json'), '冻结评分标准需要 JSON 文件和对应哈希校验文件。');
@@ -31,20 +35,21 @@ export async function snapshotFrozenRubric(sourcePath, directory, scheme) {
   return frozenPath;
 }
 export class WorkspaceRunner {
-  constructor(store, { model, cap = 2, agent = runWorkspaceAgent, rubricPath = null } = {}) {
+  constructor(store, { model, cap = 2, agent = runWorkspaceAgent, rubricPath = null, modelConnections = null } = {}) {
     const preset = gradingPresets[0];
-    this.defaultGradingConfig = !model || model === preset.mainModel ? {...preset} : {...preset, mainModel:model, mainEffort:'low'};
-    this.store = store; this.model = model ?? DEFAULT_MAIN_MODEL_ID; this.cap = cap; this.agent = agent; this.rubricPath = rubricPath; this.active = new Map();
+    this.environmentGradingConfig = !model || model === preset.mainModel ? {...preset} : {...preset, mainModel:model, mainEffort:'low'};
+    this.modelConnections = modelConnections; this.store = store; this.model = model ?? DEFAULT_MAIN_MODEL_ID; this.cap = cap; this.agent = agent; this.rubricPath = rubricPath; this.active = new Map();
+  }
+  get defaultGradingConfig() {
+    const selected = this.modelConnections?.catalog().defaultId;
+    return selected?.startsWith('connection:')
+      ? {mainModel:selected,mainEffort:'off',workerModel:selected,workerEffort:'off'} : this.environmentGradingConfig;
   }
   async readFailureReason(task) {
-    const directory = join(this.store.directory, 'runs', task.id, 'output');
-    const lanes = await readdir(directory, {withFileTypes:true}).catch(() => []);
-    for (const lane of lanes.filter(entry => entry.isDirectory() && (entry.name === 'main' || entry.name.startsWith('student-')))) {
-      const messages = await json(join(directory, lane.name, 'transcript.json'));
-      const failure = Array.isArray(messages) && messages.findLast(message => message.role === 'assistant' && message.stopReason === 'error');
-      if (failure?.errorMessage?.includes('This model is not available in your region')) {
-        return '模型服务拒绝了请求（403）：当前模型在此地区不可用。';
-      }
+    const messages = await json(join(this.store.directory, 'runs', task.id, 'output/main/transcript.json'));
+    const failure = Array.isArray(messages) && messages.findLast(message => message.role === 'assistant' && message.stopReason === 'error');
+    if (failure?.errorMessage?.includes('This model is not available in your region')) {
+      return '模型服务拒绝了请求（403）：当前模型在此地区不可用。请先调整模型配置。';
     }
     return null;
   }
@@ -60,11 +65,25 @@ export class WorkspaceRunner {
       }
     });
   }
+  taskRoutes(task) {
+    const resolve = id => this.modelConnections?.resolve(id) ??
+      {modelId:id || this.model, connection:null, ready:Boolean(process.env.OPENROUTER_API_KEY)};
+    const config = task.modelConfig ?? this.defaultGradingConfig;
+    const main = resolve(task.kind === 'assist' ? task.modelId : config.mainModel);
+    const worker = task.kind === 'assist' ? main : resolve(config.workerModel);
+    return {main, worker, config};
+  }
   async start(taskId, revision) {
-    fail(Boolean(process.env.OPENROUTER_API_KEY), '尚未连接模型，请配置 OPENROUTER_API_KEY 后启动任务。', 424);
-    const task = await this.store.mutate(revision, state => startTask(state, taskId));
+    let routes;
+    const task = await this.store.mutate(revision, state => {
+      const pending = state.tasks.find(row=>row.id===taskId);
+      fail(pending, '任务不存在。', 404);
+      routes = this.taskRoutes(pending);
+      fail(routes.main.ready && routes.worker.ready, routes.main.reason || routes.worker.reason || '请在账号设置中连接所选模型。', 424);
+      return startTask(state, taskId);
+    });
     const controller = new AbortController();
-    const entry = { controller, promise: null, child: null };
+    const entry = { controller, promise: null, child: null, routes };
     this.active.set(taskId, entry);
     entry.promise = this.execute(task, entry).catch(async () => {
       const reason = !controller.signal.aborted && task.kind === 'grade' && await this.readFailureReason(task);
@@ -79,6 +98,7 @@ export class WorkspaceRunner {
     return task.id;
   }
   async execute(task, entry) {
+    entry.routes ??= this.taskRoutes(task);
     const input = await prepareTaskInput(this.store, task);
     if (entry.controller.signal.aborted) throw Error('Cancelled');
     if (task.kind === 'assist') {
@@ -94,7 +114,7 @@ export class WorkspaceRunner {
         state: { ...current, groups: task.groups, pages: task.pages, schemes: task.scheme ? [task.scheme] : [], questions: task.question ? [task.question] : [] },
         selectedIds: task.groupIds, goal: task.goal, mode: 'work', records, selections: task.selections || [], references: task.references || [],
         onEvent: event => { if (event.type !== 'text_delta') { entry.events ||= []; entry.events.push({ ...event, at: now() }); } },
-        controller: entry.controller, modelId: this.model, cap: this.cap });
+        controller: entry.controller, modelId:entry.routes.main.modelId, connection:entry.routes.main.connection, cap: this.cap });
       if (entry.controller.signal.aborted) throw Error('Cancelled');
       fail(result.documents.length > 0, 'Agent 没有提交成果。');
       await this.store.mutate(null, state => {
@@ -119,19 +139,22 @@ export class WorkspaceRunner {
       notes: [{ id: id(), text: '批改所选答卷',
       groupIds: task.groupIds, selections: task.selections || [], references: task.references || [], createdAt: now(), origin: 'task' }] });
     if (usesAdaptiveGrading(task)) return runAdaptiveGrading({ store: this.store, task, input, entry, runner: this });
-    const config = task.modelConfig ?? this.defaultGradingConfig;
-    const workerModel = config.workerModel;
+    const {main,worker,config} = entry.routes;
+    const native = main.connection || worker.connection;
     const args = [join(experimentRoot, 'src/run-cohort.mjs'), '--manifest', input.manifest, '--output', input.output,
       '--interaction-dir', entry.interaction,
-      '--execute', '--model', config.mainModel, '--worker-model', workerModel, '--scripted', '--cap', String(this.cap), '--max-requests', '256',
-      '--main-reasoning', config.mainEffort, '--worker-reasoning', config.workerEffort, '--inline-annotations', '--student-cap', String(workerModel === 'openai/gpt-6-luna' ? Math.min(this.cap, .01) : this.cap)];
+      '--execute', '--model', main.modelId, '--worker-model', worker.modelId, '--scripted', '--cap', String(this.cap), '--max-requests', '256',
+      '--main-reasoning', config.mainEffort, '--worker-reasoning', config.workerEffort, '--annotation-grid', '--inline-annotations', '--student-cap', String(this.cap)];
+    if ((!worker.connection || worker.connection.kind === 'openrouter') && smallerAnswerOverviews.has(worker.modelId)) args.push('--student-overview-max-side', '1280');
+    // Vision runs locally; other platforms retain the image-only path explicitly.
+    if (process.platform === 'darwin') args.push('--local-ocr');
     if (this.rubricPath) {
       const manifest = await json(input.manifest);
       const scheme = (await json(join(manifest.scheme_input, 'manifest.json'))).documents.scheme;
       const frozenPath = await snapshotFrozenRubric(this.rubricPath, input.directory, scheme);
       if ((await json(frozenPath))?.artifact?.source_inventory) args.push('--rubric', frozenPath);
     }
-    for (const prior of this.rubricPath ? [] : [...this.store.state.tasks].reverse()) {
+    for (const prior of this.rubricPath || native ? [] : [...this.store.state.tasks].reverse()) {
       if (prior.id === task.id || prior.schemeId !== task.schemeId || !['completed', 'needs_review', 'partial'].includes(prior.status)) continue;
       const directory = join(this.store.directory, 'runs', prior.id, 'output');
       const plan = await json(join(directory, 'plan.json'));
@@ -139,7 +162,12 @@ export class WorkspaceRunner {
       const rubric = join(directory, 'rubric.json');
       try { await access(rubric); args.push('--rubric', rubric); break; } catch { /* No frozen rubric yet. */ }
     }
-    const child = spawn(process.execPath, args, { cwd: experimentRoot, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(process.execPath, args, { cwd:experimentRoot, env:{...process.env,GRADEOS_CONNECTION_PIPE:native?'1':''},
+      stdio:[native?'pipe':'ignore','pipe','pipe'] });
+    if (native) {
+      child.stdin.on('error', ()=>{}); // A failing preflight can close its pipe before reading.
+      child.stdin.end(JSON.stringify({main:main.connection,worker:worker.connection}));
+    }
     entry.child = child;
     const logPath = join(input.directory, 'process.log');
     for (const stream of [child.stdout, child.stderr]) stream.on('data', data => { void appendFile(logPath, data).catch(() => {}); });

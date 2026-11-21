@@ -1,20 +1,20 @@
+import { piModelRoute } from '../pi-model-route.mjs';
 import { Agent } from '@earendil-works/pi-agent-core';
 import { createModels } from '@earendil-works/pi-ai';
 import { openrouterProvider } from '@earendil-works/pi-ai/providers/openrouter';
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createRuntime } from '../cohort-runtime.mjs';
-import { experimentModel, experimentProvider } from '../experiment-models.mjs';
 import { observeWorkspaceAgent } from './agent.mjs';
 import { fail, id } from './store.mjs';
 
 const object = properties => ({ type: 'object', properties, required: Object.keys(properties), additionalProperties: false });
 const string = { type: 'string' };
-export async function runSystemAgent({ directory, modelId, cap, goal, history, references, catalog, skills, readFile, saveFile, controller, onEvent }) {
+export async function runSystemAgent({ directory, modelId, connection = null, cap, goal, history, references, catalog, skills, readFile, saveFile, controller, onEvent }) {
   const models = createModels(); models.setProvider(openrouterProvider());
-  const model = experimentModel(models, modelId), output = join(directory, 'assistant', id());
+  const {model,provider} = piModelRoute(models, modelId, connection), output = join(directory, 'assistant', id());
   await mkdir(output, { recursive: true, mode: 0o700 });
-  const runtime = createRuntime({ models, model, output, cap, controller, maxRequests: 20, deadlineMs: 240000, maxOutputTokens: 12000, provider: experimentProvider(modelId) });
+  const runtime = createRuntime({ models, model, output, cap, controller, maxRequests: 20, deadlineMs: 240000, maxOutputTokens: 12000, provider, mainConnection:connection });
   const io = await runtime.io('workbench', () => 'general_task');
   const agent = new Agent({
     initialState: { model, thinkingLevel: 'low', systemPrompt: `You are GradeOS, a local-first general assistant. Respond concisely in Chinese. Help with teaching material, presentations, data and simple code. The user decides the task; do not default to grading.
@@ -23,7 +23,7 @@ Keep unknown, provisional, partial and failed grading states intact. Never chang
 Available enabled skills (use when relevant): ${JSON.stringify(skills.map(({ name, instructions }) => ({ name, instructions })))}`, tools: [
       { name: 'list_files', label: '查找工作区文件', description: 'List available file metadata. No file contents or grading conversation.', parameters: object({}), execute: async () => ({ content: [{ type: 'text', text: JSON.stringify(catalog) }], details: {} }) },
       { name: 'read_file', label: '阅读文件', description: 'Read the frozen version of a listed file. Sources may be incomplete or provisional.', parameters: object({ fileId: string }), execute: async (_call, { fileId }) => ({ content: [{ type: 'text', text: JSON.stringify(await readFile(fileId)) }], details: {} }) },
-      { name: 'save_file', label: '保存文件', description: 'Save a local output. Use fileId empty and revision 0 for a new file. Supported suffixes: md, txt, csv, json, html, js, mjs, py, css, ts, sql. HTML must contain no external assets or scripts.', parameters: object({ fileId: string, revision: { type: 'integer', minimum: 0 }, title: string, body: string }), execute: async (_call, input) => ({ content: [{ type: 'text', text: JSON.stringify(await saveFile({ ...input, id: input.fileId || undefined })) }], details: {} }) },
+      { name: 'save_file', label: '保存文件', description: 'Save a local output. Use fileId empty and revision 0 for a new file. Use UTF-8 plain text up to 2 MiB. Text formats and extensionless names are supported. PDF and Office documents require their native formats and cannot be saved here. HTML must contain no external assets or scripts.', parameters: object({ fileId: string, revision: { type: 'integer', minimum: 0 }, title: string, body: string }), execute: async (_call, input) => ({ content: [{ type: 'text', text: JSON.stringify(await saveFile({ ...input, id: input.fileId || undefined })) }], details: {} }) },
     ] }, streamFn: io.streamFn, toolExecution: 'sequential',
   });
   const detach = io.attach(agent), stopObserve = observeWorkspaceAgent(agent, onEvent);

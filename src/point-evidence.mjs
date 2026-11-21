@@ -55,6 +55,13 @@ export function checkItemCoverage(raw,frozen) {
   if(missing.length)throw Object.assign(Error(`Incomplete compact submission; missing items: ${JSON.stringify(missing)}`),{itemIds:missing});
 }
 
+export function validatePointOutcome(relation, score) {
+  if (relation === 'uncertain' && score !== null) throw Error('Uncertain point requires null, review and no asserted exception');
+  if (relation === 'unmet' && score !== 0) throw Error('Unmet point cannot receive credit');
+  if ((relation === 'met' || relation === 'exception') && !(typeof score === 'number' && score > 0))
+    throw Error('Positive relation requires positive award');
+}
+
 export function expandPointEvidence(raw,frozen,student) {
   if (frozen.artifact.version!==2) throw Error('Point evidence protocol requires a structured rubric');
   exactKeys(raw,['items','review_notes']);
@@ -76,12 +83,12 @@ export function expandPointEvidence(raw,frozen,student) {
       if (typeof evidence!=='string'||!evidence.trim()||typeof reason!=='string'||!reason.trim()||typeof rule_ref!=='string') throw Error('Missing point evidence, reason or rule ref');
       checkPages(student_pages,student);
       for (const page of point.source_pages) sourcePages.add(page);
+      validatePointOutcome(relation, score);
       if (relation==='uncertain') {
-        if (score!==null || !row.review || rule_ref) throw Error('Uncertain point requires null, review and no asserted exception');
+        if (!row.review || rule_ref) throw Error('Uncertain point requires null, review and no asserted exception');
       } else if (relation==='unmet') {
-        if (score!==0 || rule_ref) throw Error('Unmet point cannot receive credit');
+        if (rule_ref) throw Error('Unmet point cannot receive credit');
       } else {
-        if (!(typeof score==='number'&&score>0)) throw Error('Positive relation requires positive award');
         if (relation==='met' && (error_origin!=='none'||rule_ref)) throw Error('Contradictory positive award: establish a source exception or mark unmet/uncertain');
         if (relation==='exception') {
           const rule=rule_ref==='P' ? {text:point.condition,source_pages:point.source_pages} : rules.find(rule=>rule.rule_id===rule_ref);

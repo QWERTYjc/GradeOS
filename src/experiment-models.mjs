@@ -2,9 +2,12 @@
 // Source: public /models/google/gemini-4-{carbon,hydrogen}/endpoints, 2026-11-17.
 export const HYDROGEN_ID = 'google/gemini-4-hydrogen';
 export const CARBON_ID = 'google/gemini-4-carbon';
+export const HY4_FLASH_ID = 'tencent/hy4-flash';
+export const QWEN_PLUS_ID = 'qwen/qwen3.7-plus';
 export const DEFAULT_MAIN_MODEL_ID = 'openai/gpt-6.1-terra';
 export const DEFAULT_WORKER_MODEL_ID = 'openai/gpt-6-luna';
 const googleModels = {
+  'google/gemini-4-neon': {name:'Neon',cost:{input:3,output:15,cacheRead:0.15,cacheWrite:0.0833333333333333}},
   [HYDROGEN_ID]: {name:'Hydrogen',cost:{input:1.5,output:7.5,cacheRead:0.075,cacheWrite:0.0833333333333333}},
   [CARBON_ID]: {name:'Carbon',cost:{input:2,output:10,cacheRead:0.1,cacheWrite:0.1875}},
 };
@@ -12,6 +15,22 @@ const SOL_62_ID = 'openai/gpt-6.2-sol';
 const openaiIds = [SOL_62_ID, 'openai/gpt-6.1-terra', 'openai/gpt-6.1-sol', 'openai/gpt-6-luna'];
 
 export function experimentModel(models, id) {
+  if (id === QWEN_PLUS_ID) {
+    const model = models.getModel('openrouter', id);
+    if (!model) throw Error('Qwen3.7 Plus is absent from the Pi catalog');
+    return { ...model, compat: { ...model.compat, maxTokensField: 'max_tokens' } };
+  }
+  if (id === HY4_FLASH_ID) {
+    // OpenRouter Tencent FP8 endpoint metadata, verified 2026-11-18.
+    return {
+      type: 'chat', id, name: 'Tencent: Hy4 flash', provider: 'openrouter',
+      api: 'openai-completions', baseUrl: 'https://openrouter.ai/api/v1',
+      reasoning: true, input: ['text', 'image'],
+      cost: {input: 0.035, output: 0.1405, cacheRead: 0.0015, cacheWrite: 0},
+      contextWindow: 1048576, maxTokens: 65536,
+      compat: {supportsDeveloperRole: false, thinkingFormat: 'openrouter', supportsStrictMode: true},
+    };
+  }
   if (id === 'qwen/qwen4-max' || id === 'qwen/qwen3.8-flash') {
     const flash = models.getModel('openrouter', 'qwen/qwen3.8-flash');
     if (!flash) throw Error('Qwen OpenRouter serializer is absent from the Pi catalog');
@@ -50,7 +69,11 @@ export function experimentModel(models, id) {
 }
 
 export function experimentProvider(id) {
-  const qwen = id === 'qwen/qwen4-max' || id === 'qwen/qwen3.8-flash';
+  if (id === HY4_FLASH_ID) return {
+    only: ['tencent/fp8'], allow_fallbacks: false, require_parameters: true,
+    data_collection: 'deny', zdr: true,
+  };
+  const qwen = id === 'qwen/qwen4-max' || id === 'qwen/qwen3.8-flash' || id === QWEN_PLUS_ID;
   if (!qwen && !googleModels[id] && !openaiIds.includes(id)) throw Error('Model has no declared provider route');
   return {only: [qwen ? 'alibaba' : googleModels[id] ? 'google-vertex/global' : 'openai'],
     allow_fallbacks: false, require_parameters: true, data_collection: 'deny'};

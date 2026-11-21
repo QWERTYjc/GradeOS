@@ -5,7 +5,6 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { readSelectionImage } from './workspace/canvas-context.mjs';
 import { createInitialSystemMessage, toToolDeclaration } from '@earendil-works/pi-ai';
 import { markingGuideMarkdown, validateGuideApproval } from './marking-guide.mjs';
-import { guideWireText } from './guide-wire.mjs';
 import { MEDIUM_IMAGE_MAX_SIDE } from './cohort-runtime.mjs';
 import { digest } from './core.mjs';
 
@@ -36,7 +35,7 @@ export class TeacherInteraction {
     await mkdir(join(this.directory, 'answers'), { recursive: true });
     return this;
   }
-  async publishGuide(frozen, implementation, { body = null } = {}) {
+  async publishGuide(frozen, implementation, { body = null, studentHasScopedPlan = false } = {}) {
     const requirements = await this.requireCompatibleRequirements();
     const control = await readJSON(join(this.directory, 'control.json'), {});
     const proposal = { id: randomUUID(), title: '评分实施.md', rubricHash: frozen.hash, sourceHash: frozen.artifact.source_sha256,
@@ -52,6 +51,7 @@ export class TeacherInteraction {
         const approval = await readJSON(join(this.directory, 'guide-approval.json'));
         if (approval) {
           this.guide = validateGuideApproval(approval, proposal);
+          this.scopedPlanGuideHash = studentHasScopedPlan && this.guide.body === proposal.body ? this.guide.hash : null;
           await atomicJSON(join(this.directory, 'guide-proposal.json'), { ...proposal, status: 'approved', approvedRevision: approval.revision, documentId: approval.documentId });
           await this.log({ type: 'guide_approved', label: `${approval.method === 'automatic' ? '按自动模式采用' : '老师已确认'}评分实施.md · v${approval.revision}`, lane: 'main', hash: approval.hash });
           return this.guide;
@@ -160,14 +160,10 @@ export class TeacherInteraction {
   noteContext(lane, note) {
     const allowed = new Set([...this.schemePages, ...this.questionPages, ...(this.students.get(this.owner(lane)) || [])].map(page => page.workspace_page_id || page.id));
     return { teacher: note.text, sourceSelections: (note.selections || []).filter(target => allowed.has(target.pageId)),
-      documentReferences: (note.references || []).filter(ref => ref.target.kind === 'text' ? ref.target.sourcePageIds.every(id => allowed.has(id)) : allowed.has(ref.target.pageId)), applyTo: note.groupIds || [] };
+      documentReferences: (note.references || []).filter(ref => ref.target.kind === 'text' ? ref.target.sourcePageIds.every(id => allowed.has(id)) : allowed.has(ref.target.pageId)), applyTo: this.owner(lane) && note.groupIds?.length ? [this.owner(lane)] : note.groupIds || [] };
   }
-  attach(agent, lane, { interactiveTools = true, singlePass = false, guideRubric = null } = {}) {
+  attach(agent, lane, { interactiveTools = true, singlePass = false } = {}) {
     this.agents.set(agent, lane);
-    if (singlePass && guideRubric) {
-      this.guideRubrics ||= new WeakMap();
-      this.guideRubrics.set(agent, guideRubric);
-    }
     this.singlePassAgents ||= new WeakSet();
     if(singlePass)this.singlePassAgents.add(agent);else this.singlePassAgents.delete(agent);
     if (lane === 'main' && interactiveTools) {
@@ -246,15 +242,16 @@ export class TeacherInteraction {
     const notes = (control.notes || []).filter(note => this.applies(lane, note));
     const guide = this.guide && lane !== 'ms-review' ? this.guide : null;
     const requirements = await this.requirements();
+    const guideText = guide && guide.hash === this.scopedPlanGuideHash && lane.startsWith('student-')
+      ? 'The approved document uses the frozen plan supplied for this student. Apply those scoped rules and the agreed requirements above.'
+      : guide?.body;
     const requirementText = lane === 'main' && requirements.original
       ? `Optional teacher requirements (not yet accepted unless the review is compatible):\n${JSON.stringify(requirements)}\nRead the sources and call review_grading_requirements. No extra confirmation is needed for compatible requirements.`
       : requirements.review?.status === 'compatible' && lane !== 'ms-review' ? `Agreed supplemental grading requirements:\n${requirements.review.effectiveInstructions}` : '';
     if (!answered.length && !notes.length && !guide && !requirementText) return prompt;
     for (const note of notes) this.queued?.get(agent)?.add(note.id);
     const original = typeof prompt === 'string' ? { role: 'user', timestamp: Date.now(), content: [{ type: 'text', text: prompt }] } : prompt;
-    const guideRubric = this.guideRubrics?.get(agent);
-    if (guide && guideRubric && guide.rubricHash !== guideRubric.hash) throw Error('Approved guide and rubric differ');
-    const teacherContext={ role: 'user', timestamp: Date.now(), content: [{ type: 'text', text: `${requirementText}\nRecorded teacher source clarifications (original source and fixed award bounds still apply):\n${JSON.stringify(answered.map(row => ({ question: row.question, answer: row.answer, references: row.references, selections: row.selections, documentReferences: row.documentReferences })))}\n${notes.map(note => `[teacher-note:${note.id}]\n${JSON.stringify(this.noteContext(lane, note))}`).join('\n')}${guide && guideRubric ? '\n' + guideWireText(guide, guideRubric) : guide ? `\n${guide.method === 'automatic' ? 'Teacher-authorized automatic-mode' : 'Teacher-confirmed'} execution document v${guide.revision}, hash ${guide.hash}:\n${guide.body}\nApply this document. If it conflicts with source meaning or fixed award bounds, retain unresolved judgments for teacher review; never silently override the source.` : ''}` }] };
+    const teacherContext={ role: 'user', timestamp: Date.now(), content: [{ type: 'text', text: `${requirementText}\nRecorded teacher source clarifications (original source and fixed award bounds still apply):\n${JSON.stringify(answered.map(row => ({ question: row.question, answer: row.answer, references: row.references, selections: row.selections, documentReferences: row.documentReferences })))}\n${notes.map(note => `[teacher-note:${note.id}]\n${JSON.stringify(this.noteContext(lane, note))}`).join('\n')}${guide ? `\n${guide.method === 'automatic' ? 'Teacher-authorized automatic-mode' : 'Teacher-confirmed'} execution document v${guide.revision}, hash ${guide.hash}:\n${guideText}\nApply this document. If it conflicts with source meaning or fixed award bounds, retain unresolved judgments for teacher review; never silently override the source.` : ''}` }] };
     const messages=Array.isArray(original)?original:[original];
     return this.singlePassAgents?.has(agent)?[...messages,teacherContext]:[teacherContext,...messages];
   }

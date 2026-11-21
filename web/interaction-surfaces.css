@@ -1,0 +1,53 @@
+/* A few widely spaced points persist towards the edge. The second, denser
+   screen shares their origin and dissolves sooner as it leaves the pointer. */
+:where([data-illuminated]) { position:relative; isolation:isolate }
+[data-illuminated] {
+  --surface-fill:rgb(112 124 140 / .07);
+  --surface-dot:rgb(68 83 102 / .29);
+  background-color:var(--surface-fill) !important;
+}
+@supports (mask-composite:intersect) {
+  [data-illuminated]::before {
+    content:"";
+    position:absolute;
+    z-index:-1;
+    inset:0;
+    pointer-events:none;
+    border-radius:inherit;
+    background-color:var(--surface-dot);
+    --point:radial-gradient(circle at 1.5px 1.5px,black .68px,transparent 1.15px);
+    mask-image:
+      radial-gradient(ellipse 143px 94px at var(--surface-x) var(--surface-y),black,rgba(0,0,0,.68) 35%,transparent 100%),
+      var(--point),
+      radial-gradient(ellipse 94px 62px at var(--surface-x) var(--surface-y),black 4%,transparent 100%),
+      var(--point),var(--point);
+    mask-size:100% 100%,14px 14px,100% 100%,7px 7px,7px 7px;
+    mask-position:0 0,0 0,0 0,0 0,3.5px 3.5px;
+    mask-repeat:no-repeat,repeat,no-repeat,repeat,repeat;
+    mask-composite:intersect,add,intersect,add;
+    animation:surface-arrive .18s ease-out both;
+  }
+}
+@keyframes surface-arrive { from { opacity:0 } to { opacity:1 } }
+:is(.primary,.send,.send-button,.station-pick,.switch[aria-checked="true"])[data-illuminated] {
+  --surface-fill:#282a2d;
+  --surface-dot:rgb(236 240 245 / .30);
+  color:white !important;
+}
+.switch[aria-checked="false"][data-illuminated] { --surface-fill:#a6a9ad; --surface-dot:rgb(53 65 79 / .24) }
+.archive-file[data-illuminated] .archive-file-open, .cohort-student[data-illuminated] .student-toggle {
+  background:transparent !important;
+}
+:where(.cohort-student,.archive-file,.skill-row,.connection-row,.staged-file) { border-radius:11px }
+.cohort-sheet .cohort-student { margin-inline:-9px; padding-inline:9px }
+.grading-history .batch-record {
+  width:calc(100% + 18px); margin-inline:-9px; padding-inline:9px;
+}
+@media (hover:none) {
+  :is(button:enabled, .work-nav a, .batch-record, .archive-toggle, summary):active { background-color:rgb(112 124 140 / .09) }
+  :is(.primary,.send,.send-button,.station-pick):active { background-color:#111213 }
+}
+@media (forced-colors:active) {
+  [data-illuminated] { outline:1px solid Highlight; outline-offset:-1px }
+  [data-illuminated]::before { display:none }
+}

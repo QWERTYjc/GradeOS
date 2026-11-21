@@ -1,0 +1,6 @@
+Google sign-in branding
+
+The Google G in web/assets/brand/google-g.png is a Google brand feature. Google retains its rights in the mark.
+Original asset: https://developers.google.com/static/identity/images/g-logo.png
+Its use on the sign-in button follows Google's Sign in with Google Branding Guidelines:
+https://developers.google.com/identity/branding-guidelines

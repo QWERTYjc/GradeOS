@@ -1,0 +1,55 @@
+name: Desktop test installers
+on: workflow_dispatch
+permissions:
+  contents: read
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: macos-15, target: darwin-arm64 }
+          - { runner: macos-15-intel, target: darwin-x64 }
+          - { runner: windows-2025, target: win32-x64 }
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.11.29'
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install nsis --yes --no-progress
+          Join-Path (${env:ProgramFiles(x86)}) 'NSIS' | Out-File -Append $env:GITHUB_PATH
+      - run: npm ci --prefix desktop --ignore-scripts --no-audit --no-fund
+      - run: npm run desktop:build -- ${{ matrix.target }}
+      - if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          mkdir "$RUNNER_TEMP/gradeos-volume"
+          hdiutil attach -readonly -nobrowse -mountpoint "$RUNNER_TEMP/gradeos-volume" dist/desktop/*.dmg
+          ditto "$RUNNER_TEMP/gradeos-volume/GradeOS.app" "$RUNNER_TEMP/GradeOS.app"
+          hdiutil detach "$RUNNER_TEMP/gradeos-volume"
+          codesign --verify --deep --strict "$RUNNER_TEMP/GradeOS.app"
+          node desktop/smoke.mjs "$RUNNER_TEMP/GradeOS.app/Contents/MacOS/GradeOS"
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $installer = (Get-ChildItem dist/desktop/*Setup.exe).FullName
+          $installed = Start-Process $installer -ArgumentList '/S' -Wait -PassThru
+          if ($installed.ExitCode -ne 0) { exit $installed.ExitCode }
+          node desktop/smoke.mjs "$env:LOCALAPPDATA\Programs\GradeOS\app\GradeOS.exe"
+      - run: npm run desktop:build -- source
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GradeOS-${{ matrix.target }}
+          path: dist/desktop/
+          if-no-files-found: error

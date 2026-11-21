@@ -29,6 +29,11 @@ const option = (value, label, selected) =>
 function pairForm() {
   return '<form id="pair" class="pair"><label>工作台配对信息<input name="pairing" type="password" autocomplete="off" required></label><p class="muted">在云端教师门户打开班级，选择「连接本地工作台」。</p><button type="submit">连接班级</button></form>';
 }
+function classForm() {
+  if (!local.user) return `<p><a href="/#settings" target="_top">登录 GradeOS Cloud</a>，从自己的班级中选择。</p><details><summary>使用已有配对码</summary>${pairForm()}</details>`;
+  if (!local.classes.length) return `<p>这个教师账号还没有班级。<a href="${esc(local.origin)}" target="_blank" rel="noreferrer">去 Cloud 创建班级</a></p>`;
+  return `<form id="account-class" class="pair"><label>接收成绩的班级<select name="classId" required>${option('','请选择班级',!local.classroom)}${local.classes.map(c=>option(c.id,c.name,c.id===local.classroom?.id)).join('')}</select></label><button type="submit">使用这个班级</button></form>`;
+}
 function savedGroup(id) {
   return exam.papers?.find((p) => p.paperId === id);
 }
@@ -51,8 +56,8 @@ async function refresh() {
   local = await api('status');
   taskId = local.tasks.some((t) => t.id === taskId) ? taskId : local.tasks[0]?.id || '';
   conn.innerHTML = local.classroom
-    ? `<p>已连接 <strong>${esc(local.classroom.name)}</strong> · <a href="${esc(local.origin)}" target="_blank" rel="noreferrer">打开云端</a></p><details><summary>更换班级连接</summary>${pairForm()}</details>`
-    : pairForm();
+    ? `<p>已连接 <strong>${esc(local.classroom.name)}</strong> · <a href="${esc(local.origin)}" target="_blank" rel="noreferrer">打开云端</a></p><details><summary>更换班级</summary>${classForm()}</details>`
+    : classForm();
   if (!local.classroom) {
     host.innerHTML = '';
     return;
@@ -128,6 +133,10 @@ document.addEventListener('submit', (event) => {
   event.preventDefault();
   const form = event.target;
   work(async () => {
+    if (form.id === 'account-class') {
+      await api('class', {id:form.elements.classId.value});
+      msg.textContent = '已选择接收成绩的班级。'; await refresh();
+    }
     if (form.id === 'pair') {
       await api('pair', { pairing: form.elements.pairing.value.trim() });
       msg.textContent = '已连接班级。';

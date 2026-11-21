@@ -1,4 +1,4 @@
-import { pythonExecutable } from './python.mjs';
+import { pythonExecutable, helperEnvironment } from './python.mjs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { writeFile } from 'node:fs/promises';
@@ -76,8 +76,8 @@ export function createReporting({ store, ensureSealed, getRubric, context, outpu
       if (analyzeOverride) computed = await analyzeOverride(bundle);
       else {
         const python = pythonExecutable();
-        const response = await execFileAsync(python, ['-m', 'scripts.python.gradeos_analysis', '--bundle', resolve(output, 'analysis-input.json')],
-          { cwd: root, env: { PATH: process.env.PATH }, timeout: 60000, maxBuffer: 16*1024*1024, signal });
+        const response = await execFileAsync(python, [resolve(root, 'gradeos_analysis.py'), '--bundle', resolve(output, 'analysis-input.json')],
+          { cwd: root, env: helperEnvironment(), timeout: 60000, maxBuffer: 16*1024*1024, signal });
         computed = JSON.parse(response.stdout);
       }
       if (computed.result_set_hash !== bundle.result_set_hash) throw Error('Analytics result set mismatch');

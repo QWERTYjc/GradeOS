@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { digest } from '../core.mjs';
 import { fail } from './store.mjs';
+import { cloudRequest } from './cloud-account.mjs';
 import { gradingResult } from '../../web/grading-result.mjs';
 
 const releasable = (task) =>
@@ -111,8 +112,9 @@ async function remote(connection, path, body) {
   return data;
 }
 export class CloudPublisher {
-  constructor(store) {
+  constructor(store, accounts) {
     this.store = store;
+    this.accounts = accounts;
     this.file = join(store.directory, 'cloud-publisher.json');
     this.queue = Promise.resolve();
   }
@@ -134,13 +136,15 @@ export class CloudPublisher {
       if (e.code !== 'ENOENT') throw e;
       saved = { connection: null, outbox: {} };
     }
-    const state = this.store.snapshot(),
-      conn = saved.connection;
+    const state = this.store.snapshot(), account = this.accounts?.cloud;
+    const conn = account ? account.classConnection : saved.connection;
     const localKey = (id) => digest([conn?.url, conn?.classroom.id, id]);
     if (method === 'GET' && path === 'status') {
       return {
+        user: account?.user || null,
+        classes: account?.classes || [],
         classroom: conn?.classroom ?? null,
-        origin: conn?.url ?? null,
+        origin: account?.origin || conn?.url || null,
         tasks: state.tasks
           .filter(releasable)
           .map((t) => ({
@@ -154,7 +158,13 @@ export class CloudPublisher {
           })),
       };
     }
+    if (method === 'POST' && path === 'class') {
+      fail(account, '请先登录 GradeOS Cloud。', 401);
+      await this.accounts.selectClass(body.id);
+      return {classroom:this.accounts.cloud.classConnection.classroom};
+    }
     if (method === 'POST' && path === 'pair') {
+      fail(!account, '请从当前教师账号选择班级。', 409);
       const setup = pairing(body.pairing),
         paired = await remote(setup, 'pair', { code: setup.code });
       fail(
@@ -167,6 +177,12 @@ export class CloudPublisher {
       return { classroom: paired.classroom };
     }
     fail(conn, '请先连接云端班级。', 409);
+    if (account) {
+      // Publication also requires the teacher's current session, even if a device token survives longer.
+      const roster = await cloudRequest(account, 'classes/' + encodeURIComponent(conn.classroom.id) + '/students');
+      if (method === 'GET' && path === 'roster') return {classroom:conn.classroom,students:roster};
+      fail(this.accounts.cloud?.session === account.session, '教师账号已变更，请重新选择班级。', 409);
+    }
     if (method === 'GET' && path === 'roster') return remote(conn, 'device/roster');
     const [action, id] = path.split('/');
     fail(

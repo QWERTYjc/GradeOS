@@ -1,15 +1,15 @@
 import { escape as e, button as b, iconButton as ib, markdown, recordScoreText, recordBasisText, statuses } from './ui.mjs';
 import { gradingAnnotations } from './grading-annotations.mjs';
+import { studentSummaryMarkdown } from './grading-library.mjs';
 
 export const resultTasks = state => state.tasks.filter(task => task.kind === 'grade' && (task.records?.length || task.artifacts?.length));
 export const reviewForRecord = (state, taskId, record) => state.reviews.findLast(review => review.taskId === taskId && review.recordId === record.id && review.originalHash === record.originalHash);
 export const recordPending = (record, review) => Boolean(record.reviewRequired && (!review || (review.score == null && record.disposition !== 'feedback_only')));
 
-export function questionRows(state, task, groupId) {
+function aggregateQuestions(records, getReview) {
   const items = new Map();
-  for (const record of task?.records || []) {
-    if (record.groupId !== groupId) continue;
-    const review = reviewForRecord(state, task.id, record), score = review ? review.score : record.score;
+  for (const record of records) {
+    const review = getReview(record), score = review ? review.score : record.score;
     if (!items.has(record.itemId)) items.set(record.itemId, { id: record.itemId, records: [], pending: false, deduction: false, unknown: false, feedbackOnly: true, hasFeedback: false, score: 0, maximum: 0, knownMaximum: true });
     const item = items.get(record.itemId);
     item.records.push(record);
@@ -28,6 +28,156 @@ export function questionRows(state, task, groupId) {
   }));
 }
 
+export function questionRows(state, task, groupId) {
+  return aggregateQuestions((task?.records || []).filter(record => record.groupId === groupId), record => reviewForRecord(state, task.id, record));
+}
+
+const unresolved = item => item.pending || item.unknown;
+const rounded = value => Number(value.toFixed(4));
+
+export function cohortResults(state, task) {
+  const reviews = new Map(), records = new Map(), reports = new Map();
+  const progress = new Map((task.progress?.students || []).map(row => [row.id, row.status]));
+  const labels = { waiting: '等待批改', grading: '批改中', feedback: '生成反馈中', failed: '批改未完成', cancelled: '已停止' };
+  for (const review of state.reviews || []) {
+    if (review.taskId === task.id) reviews.set(JSON.stringify([review.recordId, review.originalHash]), review);
+  }
+  const getReview = record => reviews.get(JSON.stringify([record.id, record.originalHash]));
+  for (const record of task.records || []) {
+    if (!records.has(record.groupId)) records.set(record.groupId, []);
+    records.get(record.groupId).push(record);
+  }
+  for (const artifact of task.artifacts || []) {
+    if (!reports.has(artifact.groupId)) reports.set(artifact.groupId, []);
+    const owned = reports.get(artifact.groupId);
+    if (artifact.groupId && artifact.id === `${task.id}-student-${artifact.groupId}`) owned.unshift(artifact);
+    else owned.push(artifact);
+  }
+  return (task.groups || []).map(group => {
+    const points = records.get(group.id) || [], items = aggregateQuestions(points, getReview);
+    const pending = items.filter(unresolved), deductions = items.filter(item => item.deduction);
+    const numeric = items.filter(item => !item.feedbackOnly);
+    const activity = progress.get(group.id);
+    let score = null, maximum = null;
+    let scoreLabel = (task.status === 'running' || ['failed', 'cancelled'].includes(activity) ? labels[activity] : '') || '暂无评分';
+    if (items.length) {
+      if (pending.length) scoreLabel = '待确认';
+      else if (!numeric.length) scoreLabel = '定性反馈';
+      else {
+        score = rounded(numeric.reduce((sum, item) => sum + item.score, 0));
+        maximum = numeric.every(item => item.knownMaximum) ? rounded(numeric.reduce((sum, item) => sum + item.maximum, 0)) : null;
+        scoreLabel = maximum === null ? `${score} 分` : `${score} / ${maximum}`;
+      }
+    }
+    for (const item of items) {
+      const representative = item.records.find(record => {
+        const review = getReview(record), score = review ? review.score : record.score;
+        if (unresolved(item)) return recordPending(record, review) || (record.disposition !== 'feedback_only' && !Number.isFinite(score));
+        return item.deduction && Number.isFinite(score) && Number.isFinite(record.maximum) && score < record.maximum;
+      }) || item.records[0];
+      item.recordId = representative.id;
+      item.excerpt = getReview(representative)?.reason || representative.uncertainties?.[0] || representative.reason || '';
+    }
+    const focus = pending[0] || deductions[0] || items[0];
+    const note = focus?.excerpt || '';
+    return {group, items, pending, deductions, score, maximum, scoreLabel, focus, note, reports: reports.get(group.id) || [],
+      tone: pending.length ? 'pending' : items.length ? 'saved' : 'unavailable'};
+  });
+}
+
+export function cohortSummary(rows, task) {
+  const unfinished = new Set((task.progress?.students || [])
+    .filter(student => ['waiting', 'grading', 'failed', 'cancelled'].includes(student.status))
+    .map(student => student.id));
+  const scored = rows.filter(row => row.score !== null && row.maximum > 0 &&
+    !unfinished.has(row.group.id) && !row.items.some(item => item.hasFeedback));
+  const maximum = scored.length && scored.every(row => row.maximum === scored[0].maximum) ? scored[0].maximum : null;
+  const mean = maximum === null ? null : rounded(scored.reduce((sum, row) => sum + row.score, 0) / scored.length);
+  const deductions = new Map();
+  for (const row of rows) {
+    for (const item of row.deductions) {
+      if (!unresolved(item) && item.knownMaximum && !item.feedbackOnly) {
+        if (!deductions.has(item.id)) deductions.set(item.id, []);
+        deductions.get(item.id).push(item.excerpt.trim());
+      }
+    }
+  }
+  let commonDeduction = null;
+  for (const [id, notes] of deductions) {
+    if (notes.length > (commonDeduction?.count ?? 1)) commonDeduction = { id, count: notes.length };
+  }
+  if (commonDeduction) {
+    const frequencies = new Map();
+    for (const note of deductions.get(commonDeduction.id)) {
+      if (!note || note.length > 80) continue;
+      const count = (frequencies.get(note) || 0) + 1;
+      frequencies.set(note, count);
+      if (count > commonDeduction.count / 2) {
+        commonDeduction.excerpt = note;
+        break;
+      }
+    }
+  }
+  return {
+    total: rows.length, recorded: rows.filter(row => row.items.length).length,
+    pending: rows.filter(row => row.pending.length).length, scored: scored.length, mean, maximum, commonDeduction,
+  };
+}
+
+const studentSummaries = new WeakMap();
+function learningSummary(reports) {
+  for (const report of reports) {
+    const source = report.currentSummary ?? report.body;
+    if (typeof source !== 'string') continue;
+    let cached = studentSummaries.get(report);
+    if (!cached || cached.source !== source) {
+      const summary = report.currentSummary ?? studentSummaryMarkdown(source);
+      cached = { source, html: summary ? markdown(summary) : '' };
+      studentSummaries.set(report, cached);
+    }
+    if (cached.html) return cached.html;
+  }
+  return '';
+}
+
+export function cohortEntries(rows, ctx) {
+  const query = (ctx.cohortQuery || '').trim().toLocaleLowerCase();
+  const filtered = rows.filter(row => (!query || row.group.label.toLocaleLowerCase().includes(query))
+    && (ctx.cohortFilter === 'pending' ? row.pending.length : ctx.cohortFilter === 'deduction' ? row.deductions.length : true));
+  if (!filtered.length) return [[null, `<div class="cohort-no-matches"><h3>${rows.length ? '没有符合条件的答卷' : '本批没有学生答卷'}</h3>${query || ctx.cohortFilter !== 'all' ? b('cohort-reset', '显示全部答卷', {className:'cohort-link'}) : ''}</div>`]];
+  return filtered.map(row => {
+    const {group, items, scoreLabel, focus, note, reports} = row;
+    const id = e(group.id), name = e(group.label);
+    const source = Boolean(items.length || group.pageIds?.length);
+    const hasDetails = source || reports.length > 0;
+    const personal = learningSummary(reports);
+    const expanded = hasDetails && Boolean(ctx.cohortReadAll && (items.length || personal)) !== Boolean(ctx.cohortExpanded?.has(group.id));
+    const student = `<span class="student-name">${name}</span><span class="student-score ${row.tone}"><strong>${e(scoreLabel)}</strong></span>`;
+    const heading = hasDetails ? b('cohort-expand', student, {
+      className:'student-toggle', attrs:`data-id="${id}" aria-expanded="${expanded}" aria-controls="cohort-detail-${id}"`,
+    }) : `<span class="student-static">${student}</span>`;
+    const summary = personal ? `<div class="cohort-summary student-learning-summary${expanded ? ' expanded' : ''}" aria-label="${name}的学习总结">${personal}</div>`
+      : !expanded && focus && note ? `<p class="cohort-summary"><span>${e(focus.id)}</span> ${e(note)}</p>` : '';
+    let details = '';
+    if (expanded) {
+      const links = [
+        source ? b('cohort-source', '查看原卷', {attrs:`data-id="${id}"`}) : '',
+        ...reports.map(report => b('cohort-report', e(reports.length === 1 ? '个人报告' : report.title || '个人报告'), {
+          attrs:`data-id="${e(report.id)}" data-group="${id}" title="${e(report.title || '个人报告')}"`,
+        })),
+      ].join('');
+      const resources = `<div class="student-actions">${links}</div>`;
+      const questions = items.map(item => {
+        const suggested = item.pending && !item.unknown && !item.feedbackOnly;
+        return b('cohort-point', `<span class="cohort-item-label">${e(item.id)}</span><span class="cohort-item-note">${e(item.excerpt)}</span><span class="cohort-item-score">${suggested ? '建议 ' : ''}${e(item.scoreLabel)}${item.feedbackOnly && item.pending ? '<small>待确认</small>' : ''}</span>`,
+          {attrs:`data-id="${e(item.recordId)}" title="查看第 ${e(item.id)} 题评分依据"`});
+      }).join('');
+      details = `${questions ? `<div class="cohort-items" aria-label="${name}的逐题评分">${questions}</div>` : ''}${ctx.cohortReadAll && (items.length || personal) ? `<details class="student-resources"><summary aria-label="${name}的原卷与报告">原卷与报告</summary>${resources}</details>` : resources}`;
+    }
+    return [group.id, `<article class="cohort-student" data-student="${id}"><h3 class="student-top">${heading}</h3>${summary}${hasDetails ? `<div id="cohort-detail-${id}"${expanded ? '' : ' hidden'}>${details}</div>` : ''}</article>`];
+  });
+}
+
 export function resultContext(ctx) {
   const tasks = resultTasks(ctx.state), task = tasks.find(row => row.id === ctx.resultTaskId) || tasks.at(-1);
   const group = task?.groups.find(row => row.id === ctx.resultGroupId) || task?.groups[0];
@@ -36,15 +186,57 @@ export function resultContext(ctx) {
   return { tasks, task, group, items, filtered };
 }
 
-export function resultsBar(ctx) {
+export function firstResultPage(state, task, group) {
+  return group?.pageIds?.find(id => {
+    const page = state.pages?.find(row => row.id === id);
+    const hash = task.pageHashes?.[id] || task.pages?.find(row => row.id === id)?.sha256;
+    const moved = state.groups?.some(row => row.id !== group.id && row.pageIds.includes(id));
+    return page && !moved && (page.active !== false || Boolean(hash)) && (!hash || page.sha256 === hash);
+  });
+}
+
+export function resultsBar(ctx, workspaceActions = '') {
   const { tasks, task, group, items } = resultContext(ctx);
   if (!task) return '';
   const partial = !['completed', 'needs_review'].includes(task.status);
-  const reports = task.artifacts.filter(artifact => !artifact.groupId || artifact.groupId === group?.id);
-  const selectedRecord = task.records.find(record => record.id === ctx.resultRecordId);
+  const currentReport = task.artifacts.find(artifact => artifact.id === ctx.resultReport);
+  const classReport = Boolean(currentReport && !currentReport.groupId);
+  const reports = task.artifacts.filter(artifact => !artifact.groupId || (!classReport && artifact.groupId === group?.id));
   const pending = task.records.filter(record => recordPending(record, reviewForRecord(ctx.state, task.id, record))).length;
-  return `<div class="results-identity"><span class="results-eyebrow">批改结果</span><select id="result-task" aria-label="批改批次">${tasks.map(row => `<option value="${e(row.id)}" ${row.id === task.id ? 'selected' : ''}>${e(row.title)}</option>`).join('')}</select><span class="result-status ${partial ? 'incomplete' : ''}">${e(statuses[task.status] || '状态未知')}${partial ? ' · 仅显示已保存结果' : ''}</span>${partial ? '' : `<a class="result-complete" href="/cloud-publish.html?task=${encodeURIComponent(task.id)}" target="_top">发布给学生</a>`}${task.status === 'needs_review' ? b('complete-review', '完成审阅', { className: 'result-complete', disabled: pending > 0, attrs: `data-id="${e(task.id)}" title="${pending ? `还有 ${pending} 个评分点需要确认` : '将这一批标记为已完成'}"` }) : ''}</div>
-    <div class="results-controls"><label class="result-student"><span>答卷</span><select id="result-group" aria-label="查看哪份答卷">${task.groups.map(row => `<option value="${e(row.id)}" ${row.id === group?.id ? 'selected' : ''}>${e(row.label)}</option>`).join('')}</select></label><span class="results-count">${items.length} 个题目</span><div class="result-view-actions">${b('result-source', '原卷批注', { className: ctx.resultReport ? 'quiet' : 'result-active', disabled: !items.length, attrs: 'aria-pressed="' + !ctx.resultReport + '"' })}${b('grading-document', '评分明细', { className: ctx.resultReport === 'grading-result' ? 'result-active' : 'quiet', disabled: !items.length })}${reports.map(artifact => b('result-report', artifact.groupId ? '个人报告' : '汇总报告', { className: ctx.resultReport === artifact.id ? 'result-active' : 'quiet', attrs: `data-task="${e(task.id)}" data-id="${e(artifact.id)}" aria-pressed="${ctx.resultReport === artifact.id}"` })).join('')}</div>${selectedRecord && !ctx.resultReport ? b('result-outline', '题目目录', { className: 'result-outline-toggle', attrs: `aria-expanded="${Boolean(ctx.resultOutline)}"` }) : ''}</div>`;
+  const noPoints = classReport || !items.length;
+  const sourceUnavailable = classReport || (!items.length && !firstResultPage(ctx.state, task, group));
+  const views = [
+    `<option value="source" ${!ctx.resultReport ? 'selected' : ''} ${sourceUnavailable ? 'disabled' : ''}>${items.length ? '原卷批注' : '原卷'}</option>`,
+    `<option value="grading-result" ${ctx.resultReport === 'grading-result' ? 'selected' : ''} ${noPoints ? 'disabled' : ''}>评分明细</option>`,
+    ...reports.map(report => {
+      const sameScope = reports.filter(row => row.groupId === report.groupId);
+      const label = sameScope.length > 1 && report.title ? report.title : report.groupId ? '个人报告' : '汇总报告';
+      return `<option value="report:${e(report.id)}" ${report.id === ctx.resultReport ? 'selected' : ''}>${e(label)}</option>`;
+    }),
+  ];
+  const groupOptions = task.groups.map(row => `<option value="${e(row.id)}" ${!classReport && row.id === group?.id ? 'selected' : ''}>${e(row.label)}</option>`);
+  if (classReport) groupOptions.unshift(`<option value="" selected disabled>全班 · ${task.groups.length} 份</option>`);
+
+  const taskOptions = tasks.map(row => `<option value="${e(row.id)}" ${row.id === task.id ? 'selected' : ''}>${e(row.title)}</option>`);
+  const completion = task.status === 'needs_review' ? b('complete-review', '完成审阅', {
+    disabled: pending > 0, attrs: `data-id="${e(task.id)}" title="${pending ? `还有 ${pending} 个评分点需要确认` : '将这一批标记为已完成'}"`,
+  }) : '';
+  const outline = !ctx.resultReport && items.length ? b('result-outline', ctx.resultOutline ? '收起题目目录' : '题目目录', {
+    className:'result-outline-toggle', attrs:`aria-expanded="${Boolean(ctx.resultOutline)}"`,
+  }) : '';
+  return `<nav class="result-reading-bar" aria-label="批改结果导航">
+    ${b('cohort-back', '全班总览', {className:'cohort-back', symbol:'left'})}
+    <select id="result-group" aria-label="查看哪份答卷">${groupOptions.join('')}</select>
+    <select id="result-view" aria-label="查看内容">${views.join('')}</select>
+    <details class="cohort-more detail-more"><summary>更多</summary><div>
+      <label class="detail-batch">批改批次<select id="result-task" aria-label="批改批次">${taskOptions.join('')}</select></label>
+      ${partial ? '' : `<span class="detail-status">${e(statuses[task.status] || '状态未知')}</span>`}
+      ${partial ? '' : `<a class="result-complete" href="/cloud-publish.html?task=${encodeURIComponent(task.id)}" target="_top">发布给学生</a>`}
+      ${completion}${outline}
+      ${b('detail-tools', ctx.detailTools ? '收起画布工具' : '画布工具', {attrs:`aria-expanded="${Boolean(ctx.detailTools)}"`})}
+      ${workspaceActions}
+    </div></details>
+  </nav>${partial ? `<p class="cohort-notice">${e(statuses[task.status] || '状态未知')} · 仅显示已保存结果</p>` : ''}`;
 }
 
 export function resultsOutline(ctx) {

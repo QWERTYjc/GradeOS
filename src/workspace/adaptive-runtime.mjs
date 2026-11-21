@@ -1,14 +1,15 @@
+import { piModelRoute } from '../pi-model-route.mjs';
 import { mkdir, appendFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createModels } from '@earendil-works/pi-ai';
 import { openrouterProvider } from '@earendil-works/pi-ai/providers/openrouter';
 import { createRuntime, freezeJson, readMediumPage } from '../cohort-runtime.mjs';
-import { experimentModel, experimentProvider } from '../experiment-models.mjs';
 import { TeacherInteraction } from '../teacher-interaction.mjs';
 import { digest } from '../core.mjs';
 import { createGradingResearch } from './grading-research.mjs';
 import { createAdaptiveCoordinator, createAdaptiveStudent } from './adaptive-agents.mjs';
 import { adaptiveGuideMarkdown } from './adaptive-contract.mjs';
+import { cohortResults, cohortSummary } from '../../web/results-view.mjs';
 import { createReferenceDeriver, createReferenceReviewer, applyReferenceReview, taskOnlyInput } from './reference-audit.mjs';
 import { fail, id, now } from './store.mjs';
 
@@ -48,6 +49,55 @@ export function adaptiveReport(group, grade, frozen, references) {
   return lines.join('\n');
 }
 
+export function adaptiveBatchReport(state, task, coverage = []) {
+  if (!['completed', 'needs_review'].includes(task.status)) return null;
+  const complete = new Set(coverage.filter(row => row.status === 'complete').map(row => row.groupId));
+  const rows = cohortResults(state, task).map(row => complete.has(row.group.id)
+    ? row : { ...row, score: null, maximum: null, scoreLabel: '题目覆盖未确定' });
+  const { total, recorded, pending, scored, mean, maximum, commonDeduction } = cohortSummary(rows, task);
+  if (!total || recorded !== total) return null;
+
+  const cell = value => String(value ?? '').replace(/[\r\n]+/g, ' ').replaceAll('|', '\\|');
+  const excerpt = value => {
+    const text = value.trim();
+    if (text.length <= 180) return text;
+    const prefix = Array.from(text).slice(0, 180).join('');
+    return prefix.match(/^[\s\S]*?(?:[。！？]|[.!?](?=\s|$))/u)?.[0] || `${prefix.trimEnd()}…`;
+  };
+  const observations = [`本批已批改 ${recorded} 份答卷。`];
+  if (mean !== null) observations.push(scored === 1 ? `1 份已确定总分，为 ${mean} / ${maximum}。` : `${scored} 份已确定总分，平均为 ${mean} / ${maximum}。`);
+  if (pending) observations.push(`${pending} 份答卷有待确认的评分或评语。`);
+  const incomplete = rows.filter(row => !complete.has(row.group.id)).length;
+  if (incomplete) observations.push(`${incomplete} 份答卷的题目覆盖范围尚未确定。`);
+  if (total === 1 && rows[0].note) {
+    observations.push(`第 ${cell(rows[0].focus.id)} 题的评语摘录为「${cell(excerpt(rows[0].note))}」。`);
+  } else if (commonDeduction) {
+    observations.push(`第 ${cell(commonDeduction.id)} 题有 ${commonDeduction.count} 份答卷失分。${commonDeduction.excerpt ? `多份评语提到「${cell(commonDeduction.excerpt)}」。` : ''}`);
+  } else if (pending) {
+    const counts = new Map();
+    for (const row of rows) for (const item of row.pending) counts.set(item.id, (counts.get(item.id) || 0) + 1);
+    const [itemId, count] = [...counts].sort((a, b) => b[1] - a[1])[0];
+    if (count > 1) observations.push(`第 ${cell(itemId)} 题有 ${count} 份答卷需复核。`);
+  }
+  const records = rows.flatMap(row => row.items.flatMap(item => item.records));
+  const bases = [...new Set(records.map(record => record.basisLabel || basisLabels[record.basis]).filter(Boolean))];
+  const lines = [`# ${cell(task.title)} · 评分汇总`, '', '> **摘要**', `> ${observations.join('')}`, '',
+    '## 答卷明细', '', '| 答卷 | 整卷评分 | 摘录题目 | 题目评分 | 评语摘录 |', '| --- | --- | --- | --- | --- |'];
+  for (const row of rows) {
+    const { focus } = row;
+    let totalLabel = row.scoreLabel;
+    if (row.items.every(item => item.feedbackOnly) && row.pending.length) totalLabel = '定性反馈 · 待确认';
+    else if (complete.has(row.group.id) && row.pending.length && row.items.every(item => !item.hasFeedback && !item.unknown && item.knownMaximum)) {
+      const sum = key => Number(row.items.reduce((value, item) => value + item[key], 0).toFixed(4));
+      totalLabel = `建议 ${sum('score')} / ${sum('maximum')} · 待确认`;
+    } else if (row.items.some(item => item.hasFeedback) && row.score !== null) totalLabel = `已确定小计 ${row.scoreLabel}，另有定性反馈`;
+    const itemLabel = focus.pending && !focus.unknown && !focus.hasFeedback ? `建议 ${focus.scoreLabel}` : focus.scoreLabel;
+    lines.push(`| ${[row.group.label, totalLabel, focus.id, itemLabel, excerpt(row.note) || '—'].map(cell).join(' | ')} |`);
+  }
+  lines.push('', '## 来源', '', `取自本批结束时保存的逐题评分记录和复核记录。每份答卷摘录一项待确认项、失分项或评分理由。${bases.length ? `本批评分依据为${bases.join('、')}。` : ''}`);
+  return { id: `${task.id}-report`, title: '评分汇总', body: lines.join('\n'), references: records.map(record => record.id) };
+}
+
 export async function runAdaptiveGrading({ store, task, input, entry, runner, models = null }) {
   await mkdir(input.output, { recursive: true });
   const pagesFor = role => task.pages.filter(page => page.role === role);
@@ -55,13 +105,14 @@ export async function runAdaptiveGrading({ store, task, input, entry, runner, mo
     schemePages: pagesFor('scheme'), questionPages: pagesFor('question'),
     students: new Map(task.groups.map(group => [group.id, group.pageIds.map(id => task.pages.find(page => page.id === id))])) }).init();
   if (!models) { models = createModels(); models.setProvider(openrouterProvider()); }
-  const config = task.modelConfig ?? runner.defaultGradingConfig;
-  const model = experimentModel(models, config.mainModel);
-  const workerModel = experimentModel(models, config.workerModel);
+  const config = entry.routes?.config ?? task.modelConfig ?? runner.defaultGradingConfig;
+  const main = entry.routes?.main, worker = entry.routes?.worker;
+  const {model,provider} = piModelRoute(models, main?.modelId ?? config.mainModel, main?.connection);
+  const {model:workerModel,provider:workerProvider} = piModelRoute(models, worker?.modelId ?? config.workerModel, worker?.connection);
   const runtime = createRuntime({ models, model, output: input.output, cap: runner.cap, controller: entry.controller,
-    maxRequests: 128, deadlineMs: 900000, structuredOutput: false,
-    studentCacheNamespace: task.id, provider: experimentProvider(model.id), mainEffort: config.mainEffort, workerEffort: config.workerEffort,
-    workerModel, workerProvider: experimentProvider(workerModel.id), mediumImages:true, interaction });
+    maxRequests: 128, deadlineMs: 900000, structuredOutput: false, mainConnection:main?.connection,workerConnection:worker?.connection??null,
+    studentCacheNamespace: task.id, provider, mainEffort: config.mainEffort, workerEffort: config.workerEffort,
+    workerModel, workerProvider, mediumImages:true, interaction });
   const research = createGradingResearch({ enabled: task.allowWebSearch, signal: entry.controller.signal,
     persist: event => appendFile(join(input.output, 'research.jsonl'), JSON.stringify(event) + '\n', { mode: 0o600 }) });
   const readPage = async page => {
@@ -69,11 +120,12 @@ export async function runAdaptiveGrading({ store, task, input, entry, runner, mo
     return readMediumPage({ absolute_path:page.path, sha256:page.sha256 });
   };
   let collecting = false, candidateNumber = 0, auditNumber = 0, failure = null, coordinator;
+  let preparationPhase = '整理批改依据';
   const sync = async () => {
     await runner.syncGuide(task);
     const interactionState = await runner.interactionSnapshot(task.id);
     const previous = store.state.tasks.find(row => row.id === task.id);
-    const phase = interactionState.guide?.status === 'awaiting_teacher' ? '请编辑并确认评分实施.md' : coordinator?.getPlan() ? '按已采用的评分依据处理答卷' : '整理批改依据';
+    const phase = interactionState.guide?.status === 'awaiting_teacher' ? '请编辑并确认评分实施.md' : coordinator?.getPlan() ? '按已采用的评分依据处理答卷' : preparationPhase;
     const usage = runtime.totals(runtime.budget.requests);
     if (JSON.stringify(previous.interaction) === JSON.stringify(interactionState) && previous.progress.phase === phase && JSON.stringify(previous.usage) === JSON.stringify(usage)) return;
     await store.mutate(null, state => {
@@ -102,6 +154,7 @@ export async function runAdaptiveGrading({ store, task, input, entry, runner, mo
       verifyPlan: async candidate => {
         fail(auditNumber < 3, '本批标准修订校核次数已达上限；保留具体问题供复核。');
         const number = ++auditNumber;
+        preparationPhase = '正在独立推导评分依据';
         const derivationIO = await runtime.io(`reference-derivation-${number}`, () => 'adaptive_reference_derivation', { isolated: true });
         await freezeJson(derivationIO.directory, 'task-only-input.json', taskOnlyInput(candidate));
         const deriver = createReferenceDeriver({ model: workerModel, streamFn: derivationIO.streamFn, candidate, log: derivationIO.log });
@@ -110,6 +163,7 @@ export async function runAdaptiveGrading({ store, task, input, entry, runner, mo
         finally { detachDeriver(); }
         const derivation = deriver.getResult(); fail(derivation, '独立推导未提交完整结果，不能发布未经核验的数值标准。');
         await freezeJson(derivationIO.directory, 'derivation.json', derivation);
+        preparationPhase = '正在对照原页核验评分依据';
         const reviewIO = await runtime.io(`reference-review-${number}`, () => 'adaptive_reference_review', { isolated: true, useMainModel:Boolean(task.scheme) });
         const reviewer = createReferenceReviewer({ model: task.scheme ? model : workerModel, streamFn: reviewIO.streamFn, candidate, derivation, pages: task.pages, readPage, log: reviewIO.log });
         const detachReviewer = reviewIO.attach(reviewer.agent);
@@ -119,19 +173,23 @@ export async function runAdaptiveGrading({ store, task, input, entry, runner, mo
         await freezeJson(reviewIO.directory, 'reference-review.json', review);
         const verified = applyReferenceReview(candidate, derivation, review);
         await freezeJson(input.output, `verified-candidate-${number}.json`, verified);
+        preparationPhase = '正在确认批次评分说明';
         return verified;
       },
       persistPlan: async (value, sourceReview) => {
         await freezeJson(input.output, 'grading-plan.json', value);
         await freezeJson(input.output, 'plan-review.json', { planHash: value.hash, sourceReview });
       },
-      publishGuide: frozen => interaction.publishGuide({ hash: frozen.hash, artifact: { source_sha256: frozen.sourceHash } }, frozen.plan.implementation, { body: adaptiveGuideMarkdown(frozen) }),
+      publishGuide: frozen => interaction.publishGuide({ hash: frozen.hash, artifact: { source_sha256: frozen.sourceHash } }, frozen.plan.implementation, { body: adaptiveGuideMarkdown(frozen), studentHasScopedPlan: true }),
       executeStudent: async (groupId, frozen, guide, competencies) => {
         runtime.allocateStudentBudgets(task.groups.map(group=>group.id));
         try {
         const group = task.groups.find(group => group.id === groupId);
         const childIO = await runtime.io(`student-${groupId}`, () => 'adaptive_student');
-        const child = createAdaptiveStudent({ model: workerModel, streamFn: childIO.streamFn, task, group, frozen, competencies, readPage, log: childIO.log,
+        const solePage = !task.question?.pageIds?.length && group.pageIds.length === 1
+          ? task.pages.find(page => page.id === group.pageIds[0] && page.role === 'student') : null;
+        const attachedPage = solePage ? { id: solePage.id, image: await readPage(solePage) } : null;
+        const child = createAdaptiveStudent({ model: workerModel, streamFn: childIO.streamFn, task, group, frozen, competencies, attachedPage, readPage, log: childIO.log,
           save: async grade => {
             entry.controller.signal.throwIfAborted();
             await freezeJson(childIO.directory, 'grading.json', grade);
@@ -160,7 +218,9 @@ export async function runAdaptiveGrading({ store, task, input, entry, runner, mo
     clearInterval(timer); while (collecting) await new Promise(resolve => setTimeout(resolve, 10));
     runtime.close(); await sync();
     const students = coordinator ? [...coordinator.registry.rows.values()] : [];
-    const summary = { status: !failure && students.every(row => row.status === 'submitted') ? 'submitted' : 'incomplete',
+    const submitted = !failure && !entry.controller.signal.aborted && students.length > 0 &&
+      students.length === task.groups.length && students.every(row => row.status === 'submitted');
+    const summary = { status: submitted ? 'submitted' : 'incomplete',
       failure: failure?.message || null, students, ...runtime.totals(runtime.budget.requests), research: research.summary() };
     await freezeJson(input.output, 'summary.json', summary);
     await store.mutate(null, state => {
@@ -169,9 +229,12 @@ export async function runAdaptiveGrading({ store, task, input, entry, runner, mo
         ? (task.after === 'review' || row.records.some(record => record.reviewRequired) ? 'needs_review' : 'completed')
         : row.records.length ? 'partial' : 'failed';
       row.finishedAt = now(); row.usage = runtime.totals(runtime.budget.requests);
-      row.progress.phase = summary.status === 'submitted' ? '本批处理完成' : '本批未完整完成';
+      const finished = ['completed', 'needs_review'].includes(row.status);
+      row.progress.phase = finished ? '本批处理完成' : '本批未完整完成';
       row.research = { enabled: task.allowWebSearch, available: research.available, searches: summary.research.searches, reads: summary.research.reads };
-      if (summary.status !== 'submitted') row.error = '部分处理未完成；已保存的评分、定性反馈和待定项均保留。';
+      if (!finished) row.error = '部分处理未完成；已保存的评分、定性反馈和待定项均保留。';
+      const report = adaptiveBatchReport(state, row, coordinator?.getPlan()?.plan.coverage);
+      if (report && !row.artifacts.some(artifact => artifact.id === report.id)) row.artifacts.unshift(report);
     });
   }
 }

@@ -49,8 +49,12 @@ export function inputContextReceipt(snapshot, request, message) {
 }
 
 export function inputContextEstimate(snapshot, estimate, receipt) {
-  const fallback = { upperBound: estimate.inputTokenReserve, fullByteImageBound: estimate.inputTokenReserve,
+  const local = estimate.terraStandardTokenEstimate ?? estimate.lunaReviewTokenEstimate ?? estimate.lunaCompactTokenEstimate;
+  const fallback = { upperBound: local ? local.text + local.images : estimate.inputTokenReserve, fullByteImageBound: estimate.inputTokenReserve,
     method: 'full_byte_image_bound', anchorRequest: null, reason: 'No matching complete provider receipt and unchanged prefix' };
+  if (local) Object.assign(fallback,{method:estimate.lunaCompactTokenEstimate?'luna_standard_compact_token_estimate':
+    estimate.lunaReviewTokenEstimate?'luna_standard_review_token_estimate':'terra_standard_local_token_estimate',
+    reason:'Bounded PNGs plus local o200k_base text estimate and framing allowance'});
   if (!snapshot || !receipt || snapshot.configurationHash !== receipt.configurationHash
     || snapshot.messageHashes.length < receipt.messageHashes.length
     || !receipt.messageHashes.every((hash, index) => snapshot.messageHashes[index] === hash)

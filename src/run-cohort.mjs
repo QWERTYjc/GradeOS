@@ -1,5 +1,5 @@
 import { gradingModel } from '../web/grading-models.mjs';
-import { pythonExecutable } from './python.mjs';
+import { pythonExecutable, helperEnvironment } from './python.mjs';
 import { createModels } from '@earendil-works/pi-ai';
 import { openrouterProvider } from '@earendil-works/pi-ai/providers/openrouter';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
@@ -11,13 +11,13 @@ import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import { digest, parseStudentBudget } from './core.mjs';
 import { createCoordinator, createStudentAgent, StudentRegistry, validateFrozenRubric, parseConcurrency, MS_PAGES_PER_TURN, MAIN_PROMPT, REPLAY_MAIN_PROMPT, studentPromptForProtocol } from './cohort-core.mjs';
-import { createRuntime, freezeJson, readImage, readImageRegion, schemeOverviewReader, readMediumPage } from './cohort-runtime.mjs';
+import { piModelRoute } from './pi-model-route.mjs';
+import { createRuntime, freezeJson, readImage, readImageRegion, schemeOverviewReader, readMediumPage, readPageOverview, MEDIUM_IMAGE_MAX_SIDE } from './cohort-runtime.mjs';
 import { requiredMsPages } from './report-context.mjs';
 import { ResultsStore } from './results-store.mjs';
 import { createReporting, REPORTING_INSTRUCTIONS, ECONOMY_REPORTING_INSTRUCTIONS, LEAN_REPORTING_INSTRUCTIONS } from './cohort-reporting.mjs';
 import { EVIDENCE_PROTOCOL_PROMPT, EVIDENCE_SUBMIT_SCHEMA } from './point-evidence.mjs';
-import { prepareAnnotationPages } from './local-annotation-pages.mjs';
-import { LUNA_PAGE_SIDE } from './luna-annotation-budget.mjs';
+import { inlineAnnotationSchema, inlineAnnotationPrompt } from './inline-annotations.mjs';
 import { MS_REVIEW_PROMPT, MS_REVIEW_SCHEMA } from './ms-review.mjs';
 import { runExceptionReview, exceptionRequests, EXCEPTION_REVIEW_PROMPT, EXCEPTION_REVIEW_SCHEMA } from './exception-review.mjs';
 import { runStudentFeedback, FEEDBACK_PROMPT, FEEDBACK_SCHEMA } from './student-feedback.mjs';
@@ -29,19 +29,29 @@ import {BRIEF_REASON_STYLE,compactPromptForReasons} from './full-credit-reasons.
 import {runIndependentSourceReview,SOURCE_REVIEW_PROMPT,SOURCE_REVIEW_SCHEMA} from './independent-source-review.mjs';
 import {PERMISSION_SUBMIT_SCHEMA,sourcePermissionPrompt} from './source-permissions.mjs';
 import {CohortProgress} from './cohort-progress.mjs';
-import {experimentModel, experimentProvider, DEFAULT_MAIN_MODEL_ID, DEFAULT_WORKER_MODEL_ID} from './experiment-models.mjs';
+import { DEFAULT_MAIN_MODEL_ID, DEFAULT_WORKER_MODEL_ID} from './experiment-models.mjs';
 import {GRADING_CORRECTION_OUTPUT_POLICY,STUDENT_SELF_REVIEW_PROMPT,localReadingPrompt} from './submission-contract.mjs';
 import {SOURCE_BOUND_FEEDBACK_PROMPT,sourceBoundFeedbackSchema} from './source-bound-feedback.mjs';
 import {sourceBoundReportingInstructions,SOURCE_BOUND_REPORT_SCHEMA} from './source-bound-report.mjs';
 import { TeacherInteraction } from './teacher-interaction.mjs';
 import { runScriptedGrading, validateReplayGuide, DEFAULT_EXECUTION_METHOD } from './scripted-grading.mjs';
 import { singlePassSchema, singlePassPrompt } from './single-pass-grading.mjs';
+import { gradingPointRowMode, VISUAL_READBACK, FULL_CREDIT_READBACK } from './point-row-wire.mjs';
 
 const { values } = parseArgs({ options: {
   manifest: { type: 'string' }, output: { type: 'string' }, env: { type: 'string' },
   execute: { type: 'boolean', default: false }, cap: { type: 'string', default: '2' },
   concurrency: { type: 'string' }, model: { type: 'string', default: DEFAULT_MAIN_MODEL_ID },
   'worker-model': { type: 'string' },
+  'main-owns-scheme': { type: 'boolean', default: false },
+  'typed-compact-student-wire': {type:'boolean',default:false},
+  'point-verdict-wire': {type:'boolean',default:false},
+  'compact-student-wire': { type: 'boolean', default: false },
+  'resolve-student-uncertainty': { type: 'boolean', default: false },
+  'review-mixed-credit': { type: 'boolean', default: false },
+  'review-method-interpretation': { type: 'boolean', default: false },
+  'review-result-evidence': { type: 'boolean', default: false },
+  'result-evidence-locations': { type: 'boolean', default: false },
   scripted: { type: 'boolean', default: false },
   'student-cap': { type:'string',default:'0.01' },
   'approved-guide': { type: 'string' },
@@ -57,12 +67,15 @@ const { values } = parseArgs({ options: {
   'lean-reports': {type:'boolean',default:false},
   'trim-white-margins': {type:'boolean',default:false},
   'initial-image-max-side': {type:'string'},
-  'annotation-grid': {type:'boolean',default:false}, // Existing CLI alias for local region annotations.
+  'student-overview-max-side': {type:'string'},
+  'visual-readback': {type:'boolean',default:false},
+  'annotation-grid': {type:'boolean',default:false},
   'main-reasoning': {type:'string'},
   'worker-reasoning': {type:'string'},
   'grading-reasoning': {type:'string',default:'low'},
   'all-ms-images': {type:'boolean',default:false},
   'local-ocr': {type:'boolean',default:false},
+  'review-optical-locations': {type:'string'},
   'inline-annotations': {type:'boolean',default:false},
   json: {type:'boolean',default:false},
 } });
@@ -86,7 +99,7 @@ const economy=values['economy-reporting'],lean=values['lean-reports'];
 if(lean&&!economy)throw Error('Lean reports require economy reporting');
 const feedbackMode=lean?'source-bound-v5':economy?'compact-v2':'detailed-v1';
 if (!Number.isFinite(cap) || cap <= 0 || cap > 5) throw Error('Invalid cohort limits');
-const requestedStudentCap = parseStudentBudget(values['student-cap'], cap);
+const studentCapUsd=parseStudentBudget(values['student-cap'],cap);
 new StudentRegistry(input.students.map(x => x.id), concurrency);
 const scheme = await loadDocument(input.scheme_input, 'scheme');
 const students = new Map(await Promise.all(input.students.map(async x => [x.id, await loadDocument(x.input, 'student')])));
@@ -107,15 +120,32 @@ const studentSelfReviewEnabled=studentProtocol==='evidence-v4'&&!values.scripted
 const requestLimit = values['max-requests'] ?? (studentSelfReviewEnabled ? 'unlimited' : '120');
 const maxRequests = requestLimit === 'unlimited' ? null : Number(requestLimit);
 if (maxRequests !== null && (!Number.isInteger(maxRequests) || maxRequests < 1 || maxRequests > 512)) throw Error('Invalid aggregate request limit');
-const inlineAnnotations=values['inline-annotations'] || values['annotation-grid'];
+const inlineAnnotations=values['inline-annotations'];
 const scripted=values.scripted;
+const compactRequested=values['compact-student-wire'];
+const typedCompactRequested=values['typed-compact-student-wire'];
+if(typedCompactRequested&&!compactRequested)throw Error('Typed compact points require compact student wire');
+if(values['point-verdict-wire']&&!typedCompactRequested)throw Error('Point verdicts require typed compact student wire');
+const resolveUncertainty=values['resolve-student-uncertainty'];
+const reviewMixedCredit=values['review-mixed-credit'];
+const reviewMethodInterpretation=values['review-method-interpretation'];
+const resultLocations=values['result-evidence-locations'];
+const reviewResultEvidence=values['review-result-evidence']||resultLocations;
+const opticalReviewLocations=values['review-optical-locations'];
+const sourceReviewScope=reviewMixedCredit?'mixed-credit':reviewMethodInterpretation?'interpretation':reviewResultEvidence?'result-evidence':'unresolved';
 // A cold workspace batch must finish source compilation and a full answer-book request.
 const deadlineSeconds = scripted && values['interaction-dir'] && !reusedRubric && scheme.pages.length > MS_PAGES_PER_TURN
   ? 1800 : 900;
 const mainEffort=values['main-reasoning'],workerEffort=values['worker-reasoning'];
-const gradingReasoning=workerEffort === 'on' ? 'low' : workerEffort ?? values['grading-reasoning'];
-if (inlineAnnotations && (!scripted || values['trim-white-margins'])) throw Error('Local region annotations require single-pass grading of complete pages');
-if (values['local-ocr'] && !scripted) throw Error('Local OCR requires scripted grading');
+const annotationGrid=values['annotation-grid'],gradingReasoning=workerEffort === 'on' ? 'low' : workerEffort ?? values['grading-reasoning'];
+if(values['local-ocr']&&(!scripted||process.platform!=='darwin'))throw Error('Local optical hints require scripted grading on macOS');
+if(opticalReviewLocations&&!reviewResultEvidence)throw Error('Review optical locations require result evidence review');
+if(annotationGrid&&!scripted)throw Error('Spatial ruler requires scripted grading');
+if(compactRequested&&(!scripted||inlineAnnotations||annotationGrid))throw Error('Compact student wire requires scripted grading without inline coordinates');
+if(resolveUncertainty&&!scripted)throw Error('Bounded uncertainty review requires scripted grading');
+if((reviewMixedCredit||reviewMethodInterpretation||reviewResultEvidence)&&!resolveUncertainty)throw Error('Extended review requires independent uncertainty review');
+if([reviewMixedCredit,reviewMethodInterpretation,reviewResultEvidence].filter(Boolean).length>1)throw Error('Select one extended review scope');
+if(resultLocations&&compactRequested&&!typedCompactRequested)throw Error('Compact result evidence locations require typed points');
 if(!['off','low','medium','high','xhigh','max'].includes(gradingReasoning))throw Error('Unsupported grading reasoning level');
 if(scripted&&studentProtocol!=='evidence-v4')throw Error('Scripted execution requires evidence-v4');
 if(values['approved-guide']&&(!scripted||!reusedRubric||values['interaction-dir']))throw Error('Approved guide replay requires scripted frozen rubric without live interaction');
@@ -129,38 +159,49 @@ if(scripted&&sourcePermissionReview)throw Error('Scripted execution defers unres
 if(sourcePermissionReview&&studentProtocol!=='evidence-v4')throw Error('Source-permission review requires evidence-v4');
 let pointPrompt=studentProtocol==='evidence-v5'?SHARED_EVIDENCE_PROMPT:studentProtocol==='evidence-v4'?compactPromptForReasons(reasonStyle):EVIDENCE_PROTOCOL_PROMPT;
 if(sourcePermissionReview)pointPrompt=sourcePermissionPrompt(pointPrompt);
+if(inlineAnnotations)pointPrompt=inlineAnnotationPrompt(pointPrompt);
 const basePointSchema=sourcePermissionReview?PERMISSION_SUBMIT_SCHEMA:studentProtocol==='evidence-v5'?SHARED_EVIDENCE_SCHEMA:studentProtocol==='evidence-v4'?COMPACT_POINTS_SCHEMA:EVIDENCE_SUBMIT_SCHEMA;
-
 const initialImageMaxSide=values['initial-image-max-side']===undefined?null:Number(values['initial-image-max-side']);
-if(initialImageMaxSide!==null&&(!Number.isSafeInteger(initialImageMaxSide)||initialImageMaxSide<=0||inlineAnnotations))throw Error('Initial image max side must be a positive integer; annotation geometry requires native images');
+if(initialImageMaxSide!==null&&(!Number.isSafeInteger(initialImageMaxSide)||initialImageMaxSide<=0||annotationGrid||inlineAnnotations))throw Error('Initial image max side must be a positive integer; annotation geometry requires native images');
+const studentOverviewMaxSide=values['student-overview-max-side']===undefined?null:Number(values['student-overview-max-side']);
+if(studentOverviewMaxSide!==null&&(!scripted||!annotationGrid||!Number.isSafeInteger(studentOverviewMaxSide)||studentOverviewMaxSide<1||studentOverviewMaxSide>MEDIUM_IMAGE_MAX_SIDE))
+  throw Error('Student overview size requires scripted grid annotations and a valid maximum side');
 if((values['trim-white-margins']||initialImageMaxSide!==null)&&!['evidence-v4','evidence-v5'].includes(studentProtocol))throw Error('Source-tracked image variants require evidence-v4 or evidence-v5');
 const models = createModels(); models.setProvider(openrouterProvider());
-const model = experimentModel(models, values.model);
-const provider = experimentProvider(model.id);
-const workerModel = experimentModel(models, values['worker-model'] ?? DEFAULT_WORKER_MODEL_ID);
-const workerProvider = experimentProvider(workerModel.id);
-const mainOwnsScheme = scripted && (Boolean(values['interaction-dir']) ||
+let connections = {};
+if (process.env.GRADEOS_CONNECTION_PIPE === '1') {
+  let packet = '';
+  for await (const chunk of process.stdin) packet += chunk;
+  connections = JSON.parse(packet);
+}
+const {model,provider} = piModelRoute(models, values.model, connections.main);
+const {model:workerModel,provider:workerProvider} = piModelRoute(models, values['worker-model'] ?? DEFAULT_WORKER_MODEL_ID, connections.worker);
+// Keep the requested scoring workflow when switching workers. Only the
+// submission format changes to the schema this route already supports.
+const compactWire = compactRequested && [DEFAULT_MAIN_MODEL_ID,'openai/gpt-6-luna'].includes(workerModel.id);
+const typedCompact = compactWire && typedCompactRequested;
+const verdictWire = typedCompact && values['point-verdict-wire'];
+const pointRowMode = scripted && !compactWire ? gradingPointRowMode(workerModel.id,workerProvider,studentOverviewMaxSide) : null;
+const selectedObservations = pointRowMode === 'selected';
+const visualReadback=values['visual-readback'];
+if (visualReadback && !selectedObservations && !compactWire && !(compactRequested && !connections.worker))
+  throw Error('Visual readback requires a supported scripted grading format');
+const fullCreditReadback=visualReadback && compactRequested;
+const pointSchema=scripted&&reusedRubric?singlePassSchema({frozen:reusedRubric,student:students.values().next().value,inlineAnnotations,annotationGrid,compactWire,typedCompact,selectedObservations,resultLocations,verdictWire}):inlineAnnotations?inlineAnnotationSchema(basePointSchema):basePointSchema;
+if (values['main-owns-scheme'] && !scripted) throw Error('Main-owned MS requires scripted grading');
+const mainOwnsScheme = scripted && (values['main-owns-scheme'] || Boolean(values['interaction-dir']) ||
   (model.id === 'qwen/qwen4-max' && workerModel.id === 'qwen/qwen3.8-flash'));
 const gradingPage = mainOwnsScheme ? readMediumPage : readImage;
+const gradingAnswerPage = studentOverviewMaxSide === null ? gradingPage : page => readPageOverview(page, studentOverviewMaxSide);
 for (const [roleModel, effort] of [[model,mainEffort],[workerModel,workerEffort]]) {
-  if (effort !== undefined && !gradingModel(roleModel.id)?.efforts.includes(effort)) throw Error('Unsupported reasoning setting for ' + roleModel.id);
+  if (effort !== undefined && !(roleModel.provider.startsWith('connection:') ? effort === 'off' : gradingModel(roleModel.id)?.efforts.includes(effort))) throw Error('Unsupported reasoning setting for ' + roleModel.id);
 }
 await mkdir(output, { recursive: false });
-const economicalLuna = inlineAnnotations && workerModel.id === 'openai/gpt-6-luna';
-const pointSchema=scripted&&reusedRubric?singlePassSchema({frozen:reusedRubric,student:students.values().next().value,inlineAnnotations,compact:economicalLuna}):basePointSchema;
-const studentCapUsd = economicalLuna ? Math.min(.01, requestedStudentCap) : requestedStudentCap;
-const preparationStarted = Date.now();
-let imageVariants = null, localObservations = null, regionCatalog = null;
-if (inlineAnnotations) {
-  const prepared = await prepareAnnotationPages({ students, output, maxSide: economicalLuna ? LUNA_PAGE_SIDE : 0 });
-  imageVariants = prepared.variants;
-  localObservations = prepared.observations;
-  regionCatalog = prepared.catalog;
-}
-if(values['trim-white-margins']||initialImageMaxSide!==null){
+let imageVariants=null;const preparationStarted=Date.now();
+if(values['trim-white-margins']||annotationGrid||initialImageMaxSide!==null){
   await freezeJson(output,'student-image-input.json',Object.fromEntries(students));
-  await promisify(execFile)(pythonExecutable(),[resolve(root,'scripts/python/student_images.py'),'--documents',resolve(output,'student-image-input.json'),'--output',resolve(output,'student-image-variants'),...(initialImageMaxSide!==null?['--max-side',String(initialImageMaxSide)]:[])],
-    {cwd:root,env:{PATH:process.env.PATH},timeout:60000,maxBuffer:1024*1024});
+  await promisify(execFile)(pythonExecutable(),[resolve(root,'student_images.py'),'--documents',resolve(output,'student-image-input.json'),'--output',resolve(output,'student-image-variants'),...(annotationGrid?['--grid']:[]),...(initialImageMaxSide!==null?['--max-side',String(initialImageMaxSide)]:[])],
+    {cwd:root,env:helperEnvironment(),timeout:60000,maxBuffer:1024*1024});
   imageVariants=JSON.parse(await readFile(resolve(output,'student-image-variants/manifest.json'),'utf8'));
   for(const [id,document] of students){
     const variant=imageVariants.documents[id];
@@ -175,31 +216,46 @@ if(values['trim-white-margins']||initialImageMaxSide!==null){
 const cropOnlyReview=studentSelfReviewEnabled&&imageVariants?.mode==='resized_overview';
 const readInitialSchemeImage=cropOnlyReview?schemeOverviewReader(resolve(output,'student-image-variants'),initialImageMaxSide):null;
 const imagePreparationSeconds=imageVariants?(Date.now()-preparationStarted)/1000:0;
-const opticalStarted=Date.now();
-if(values['local-ocr'] && !inlineAnnotations && process.platform==='darwin') {
-  await freezeJson(output,'local-observation-input.json',Object.fromEntries(students));
-  await promisify(execFile)('xcrun',['swift',resolve(root,'scripts/macos/student_ocr.swift'),resolve(output,'local-observation-input.json'),resolve(output,'student-local-observations.json')],
-    {cwd:root,env:{PATH:process.env.PATH},timeout:120000,maxBuffer:1024*1024});
-  localObservations=JSON.parse(await readFile(resolve(output,'student-local-observations.json'),'utf8'));
+const opticalStarted=Date.now();let localObservations=null;
+function checkOpticalPages(catalog) {
   for(const [id,doc]of students) {
-    const observed=localObservations.documents[id];
-    if(observed?.source_sha256!==doc.sha256||observed.pages.length!==doc.pages.length||new Set(observed.pages.map(p=>p.page)).size!==doc.pages.length)throw Error('Optical source coverage mismatch');
+    const observed=catalog.documents?.[id];
+    if(observed?.source_sha256!==doc.sha256||!Array.isArray(observed.pages)||observed.pages.length!==doc.pages.length||new Set(observed.pages.map(p=>p.page)).size!==doc.pages.length)throw Error('Optical source coverage mismatch');
+    if(observed.pages.some(page=>!doc.pages.some(original=>original.page===page.page&&original.sha256===page.source_sha256)))
+      throw Error('Optical page evidence does not match the original answer');
   }
 }
+if(values['local-ocr']) {
+  await freezeJson(output,'local-observation-input.json',Object.fromEntries(students));
+  const vision = process.env.GRADEOS_VISION_EXECUTABLE;
+  const args = vision ? [] : ['swift', resolve(root, 'student_ocr.swift')];
+  args.push(resolve(output, 'local-observation-input.json'), resolve(output, 'student-local-observations.json'));
+  await promisify(execFile)(vision || 'xcrun', args,
+    {cwd:root,env:helperEnvironment(),timeout:120000,maxBuffer:1024*1024});
+  localObservations=JSON.parse(await readFile(resolve(output,'student-local-observations.json'),'utf8'));
+  checkOpticalPages(localObservations);
+}
 const opticalPreparationSeconds=localObservations?(Date.now()-opticalStarted)/1000:0;
+let reviewOpticalObservations=null;
+if(opticalReviewLocations) {
+  reviewOpticalObservations=JSON.parse(await readFile(resolve(opticalReviewLocations),'utf8'));
+  checkOpticalPages(reviewOpticalObservations);
+  await freezeJson(output,'review-optical-observations.json',reviewOpticalObservations);
+}
 const sourceHashes = {};
-for(const path of ['scripts/python/native_pages.py','scripts/python/prepare.py','scripts/python/workspace_documents.py'])sourceHashes[path]=digest(await readFile(resolve(root,path)));
+for(const path of ['native_pages.py','prepare.py','workspace_documents.py'])sourceHashes[path]=digest(await readFile(resolve(root,path)));
 sourceHashes['src/inline-annotations.mjs']=digest(await readFile(resolve(root,'src/inline-annotations.mjs')));
 sourceHashes['src/flash-grading.mjs'] = digest(await readFile(resolve(root, 'src/flash-grading.mjs')));
+sourceHashes['src/point-row-wire.mjs'] = digest(await readFile(resolve(root, 'src/point-row-wire.mjs')));
 sourceHashes['web/grading-models.mjs'] = digest(await readFile(resolve(root, 'web/grading-models.mjs')));
 sourceHashes['src/scripted-grading.mjs']=digest(await readFile(resolve(root,'src/scripted-grading.mjs')));
 sourceHashes['src/single-pass-grading.mjs']=digest(await readFile(resolve(root,'src/single-pass-grading.mjs')));
-for(const path of ['src/local-observations.mjs','scripts/macos/student_ocr.swift','src/local-annotation-pages.mjs','src/ocr-regions.mjs','src/ocr-reference-alignment.mjs','src/luna-annotation-budget.mjs','src/guide-wire.mjs','scripts/python/local_text_regions.py','scripts/python/student_region_geometry.py','scripts/python/student_region_images.py'])sourceHashes[path]=digest(await readFile(resolve(root,path)));
-if (values['interaction-dir']) for (const path of ['src/teacher-interaction.mjs','src/marking-guide.mjs','src/workspace/editable-documents.mjs', 'src/workspace/canvas-context.mjs', 'src/workspace/documents.mjs', 'src/workspace/store.mjs', 'scripts/python/workspace_crop.py']) sourceHashes[path] = digest(await readFile(resolve(root, path)));
-for (const path of ['src/core.mjs', 'src/rubric-contract.mjs', 'src/point-evidence.mjs', 'src/compact-points.mjs', 'src/shared-evidence.mjs', 'src/full-credit-reasons.mjs', 'src/source-permissions.mjs', 'src/independent-source-review.mjs', 'scripts/python/student_images.py', 'src/report-context.mjs', 'src/ms-review.mjs', 'src/exception-review.mjs', 'src/cohort-core.mjs', 'src/cohort-runtime.mjs', 'src/input-context-estimate.mjs', 'src/output-budget.mjs', 'src/student-report-markdown.mjs', 'src/submission-contract.mjs', 'src/teacher-interaction.mjs','src/marking-guide.mjs','src/workspace/editable-documents.mjs', 'src/experiment-models.mjs', 'src/cohort-progress.mjs', 'src/run-cohort.mjs', 'src/student-feedback.mjs', 'src/source-bound-feedback.mjs', 'src/source-bound-report.mjs', 'src/compact-feedback.mjs', 'src/focused-feedback.mjs', 'src/results-store.mjs', 'src/cohort-reporting.mjs', 'src/report-markdown.mjs', 'scripts/python/analytics.py', 'src/python.mjs', 'scripts/python/gradeos_analysis.py', 'package-lock.json']) sourceHashes[path] = digest(await readFile(resolve(root, path)));
+for(const path of ['src/local-observations.mjs','student_ocr.swift'])sourceHashes[path]=digest(await readFile(resolve(root,path)));
+if (values['interaction-dir']) for (const path of ['src/teacher-interaction.mjs','src/marking-guide.mjs','src/workspace/editable-documents.mjs', 'src/workspace/canvas-context.mjs', 'src/workspace/documents.mjs', 'src/workspace/store.mjs', 'workspace_crop.py']) sourceHashes[path] = digest(await readFile(resolve(root, path)));
+for (const path of ['src/core.mjs', 'src/rubric-contract.mjs', 'src/point-evidence.mjs', 'src/compact-points.mjs', 'src/shared-evidence.mjs', 'src/full-credit-reasons.mjs', 'src/source-permissions.mjs', 'src/independent-source-review.mjs', 'src/result-evidence-locations.mjs', 'src/single-pass-grading.mjs', 'src/scripted-grading.mjs', 'student_images.py', 'src/report-context.mjs', 'src/ms-review.mjs', 'src/exception-review.mjs', 'src/cohort-core.mjs', 'src/cohort-runtime.mjs', 'src/input-context-estimate.mjs', 'src/output-budget.mjs', 'src/student-report-markdown.mjs', 'src/submission-contract.mjs', 'src/teacher-interaction.mjs','src/marking-guide.mjs','src/workspace/editable-documents.mjs', 'src/experiment-models.mjs', 'src/cohort-progress.mjs', 'src/run-cohort.mjs', 'src/student-feedback.mjs', 'src/source-bound-feedback.mjs', 'src/source-bound-report.mjs', 'src/compact-feedback.mjs', 'src/focused-feedback.mjs', 'src/results-store.mjs', 'src/cohort-reporting.mjs', 'src/report-markdown.mjs', 'analytics.py', 'src/python.mjs', 'gradeos_analysis.py', 'package-lock.json']) sourceHashes[path] = digest(await readFile(resolve(root, path)));
 const plan = { version: 2, mode: reusedRubric ? 'frozen-rubric replay' : 'full-cold fixture with shared MS compilation', created_at: new Date().toISOString(),
   source_hashes: sourceHashes, model, economy_reporting:economy, lean_reports:lean, feedback_mode:feedbackMode, main_prompt_hash: digest([reusedRubric ? REPLAY_MAIN_PROMPT : MAIN_PROMPT, lean?sourceBoundReportingInstructions(LEAN_REPORTING_INSTRUCTIONS):economy?ECONOMY_REPORTING_INSTRUCTIONS:REPORTING_INSTRUCTIONS].join('\n\n')), student_prompt_hash: digest(studentPromptForProtocol(studentProtocol,studentSelfReviewEnabled)+(!scripted&&pointProtocol&&!inlineAnnotations?'\n'+localReadingPrompt(cropOnlyReview):'')+(pointProtocol?'\n\n'+pointPrompt:'')), student_protocol:studentProtocol, point_reason_style:reasonStyle, source_permission_review:sourcePermissionReview?{enabled:true,scope:'every primary non-full/null and positive exception independently reviewed',prompt_hash:digest(SOURCE_REVIEW_PROMPT),schema_hash:digest(SOURCE_REVIEW_SCHEMA)}:false, evidence_schema_hash:pointProtocol?digest(pointSchema):null, rubric_reuse: rubricReuse,
-  ms_review: 'The main coordinator reviews its saved candidate in the same conversation, retaining original MS images and compilation history until review is submitted; no separate MS reviewer session or duplicate image/candidate packet',
+  ms_review: 'The coordinator reviews its candidate in the same conversation. Short schemes retain all delivered images. Long schemes retain the first group and two most recent deliveries, with scoped reinspection available.',
   ms_write: {protocol:'named-source-reference-v2',batching:'model plans complete-item batches within model capacity and task budget; no phase token quota',semantics:'Named fields; null condition explicitly copies complete source text. Canonical fields and validation unchanged.'},
   ms_review_prompt_hash: digest(MS_REVIEW_PROMPT), ms_review_schema_hash: digest(MS_REVIEW_SCHEMA),
   student_self_review:studentSelfReviewEnabled?{mode:'same student agent and conversation',scope:'all items and points including ordinary full credit; local revisions before final persistence',prompt_hash:digest(STUDENT_SELF_REVIEW_PROMPT),independent:false}:false,
@@ -215,10 +271,12 @@ const plan = { version: 2, mode: reusedRubric ? 'frozen-rubric replay' : 'full-c
     grading_correction_context:'request-only checkpoint: complete affected/related items, original general rules, rejected local ledgers, bound relevant images and subsequent tool turns; ambiguous bindings or prior interactive instructions retain full context',
     full_grading_restore:'reopen_grading restores original history and normal output allowance; all rejected drafts can receive local corrections; reservation uses projected wire'},
   scheme, students: Object.fromEntries(students), cap_usd: cap, host_concurrency_limit: concurrency,
-  inline_annotations: inlineAnnotations ? { version:3, regions:'local OCR region IDs', invalid_policy:'leave location unresolved; preserve grading' } : false,
-  local_region_catalog: regionCatalog ? { sha256: digest(regionCatalog), engine: regionCatalog.engine, network_requests: 0,
-    count: Object.values(regionCatalog.documents).flatMap(doc => doc.pages).reduce((n, p) => n + p.regions.length, 0) } : null,
-  local_optical_hints:localObservations?{engine:localObservations.engine,network_requests:0,preparation_elapsed_seconds:opticalPreparationSeconds,authority:'Optical guesses only; original images and unchanged source criteria remain authoritative',sha256:digest(localObservations)}:null,
+  inline_annotations: inlineAnnotations ? { version:annotationGrid?2:1, grid:annotationGrid?'10 columns by 40 rows; original page':'1000', frames:'iN initial image; oN delivered original reinspection', max_regions_per_point:annotationGrid?12:3, invalid_policy:'annotation fallback only; no grade mutation or annotation-only retry' } : false,
+  local_optical_hints:localObservations?{engine:localObservations.engine,network_requests:0,preparation_elapsed_seconds:opticalPreparationSeconds,
+    unavailable_pages:Object.values(localObservations.documents).flatMap(doc=>doc.pages).filter(page=>page.status==='unavailable').length,
+    authority:'Optical guesses only; original images and unchanged source criteria remain authoritative',sha256:digest(await readFile(resolve(output,'student-local-observations.json')))}:null,
+  ...(reviewOpticalObservations?{review_optical_locations:{sha256:digest(await readFile(resolve(output,'review-optical-observations.json'))),
+    network_requests:0,authority:'Geometry only; reviewer inspects original pixels'}}:{}),
   preparation_elapsed_seconds:imagePreparationSeconds+opticalPreparationSeconds,
   student_cache_namespace: studentCacheNamespace,
   cache_experiment: studentCacheNamespace ? 'Unique first-user namespace per student/feedback lane, after shared system/MS prefix; same namespace across turns. Verify actual cache receipts.' : 'Provider automatic caching without artificial input isolation',
@@ -233,12 +291,15 @@ const plan = { version: 2, mode: reusedRubric ? 'frozen-rubric replay' : 'full-c
   comparison: 'Count declared tasks and actual executions separately; duplicated answer books measure repeatability, not a diverse student population.' };
 if(scripted)Object.assign(plan,{execution:'scripted-single-pass',
   ...(mainOwnsScheme ? {scheme_image_owner:'main', image_quality:'medium', printed_item_inventory:true} : {}),student_cap_usd:studentCapUsd,reporting:'Deterministic scripts from immutable grading records; zero model calls',
-  student_prompt_hash:digest(singlePassPrompt({inlineAnnotations,compact:economicalLuna,mainOwnsScheme})),point_wire_protocol:economicalLuna?'compact-ocr-point-fields':inlineAnnotations?'fixed-observed-ink-local-regions':'fixed-observed-ink-v3',
+  student_overview_max_side: studentOverviewMaxSide ?? (mainOwnsScheme ? MEDIUM_IMAGE_MAX_SIDE : null),
+  ...(compactRequested ? {compact_student_wire_requested:true} : {}),
+  ...(visualReadback ? {visual_readback_hash:digest(fullCreditReadback ? [VISUAL_READBACK,FULL_CREDIT_READBACK] : VISUAL_READBACK)} : {}),
+  student_prompt_hash:digest(singlePassPrompt({inlineAnnotations,annotationGrid,mainOwnsScheme,compactWire,typedCompact,selectedObservations,resultLocations,verdictWire})),point_wire_protocol:verdictWire?(resultLocations?'typed-compact-located-verdict-v1':'typed-compact-verdict-v1'):resultLocations?(typedCompact?'typed-compact-located-result-v2':'fixed-observed-ink-located-result-v1'):typedCompact?'typed-compact-observed-ink-v2':pointRowMode==='all'?'all-point-rows-v1':selectedObservations?'selected-route-point-rows-v1':compactWire?'compact-observed-ink-v1':annotationGrid?'fixed-observed-ink-grid-v3':'fixed-observed-ink-v3',
   student_feedback:'Exact saved evidence and reasons; deterministic rendering; zero model calls',
-  exception_review:{enabled:false,policy:'Positive exception proposals withheld as null pending teacher review; raw primary preserved'},
+  exception_review:{enabled:resolveUncertainty,scope:sourceReviewScope,policy:resolveUncertainty?'Independently review selected primary points in one scoped request. Unresolved credit remains pending.':'Positive exception proposals withheld as null pending teacher review; raw primary preserved'},
   cold_cache_namespace:values['cold-cache-namespace']??null,approved_guide:replayGuide?{hash:replayGuide.hash,revision:replayGuide.revision}:null,
   image_policy:mainOwnsScheme ? 'Main alone reads MS pages. Student sees the verified rules and answer pages. Medium page images.' : values['all-ms-images']?'All MS and student pages attached once':'With an adopted guide and verified source compilation, retain visual/unresolved/general-rule MS images; otherwise all MS. Complete student book once; exact selected pages in grading-input-policy.json.',
-  attempts_per_student:1,model_roles:{main:{model,provider,phases:reusedRubric?[]:['ms_compilation','ms_verification']},worker:{model:workerModel,provider:workerProvider,phases:['student_grading']}}});
+  attempts_per_student:1,model_roles:{main:{model,provider,phases:reusedRubric?[]:['ms_compilation','ms_verification']},worker:{model:workerModel,provider:workerProvider,phases:['student_grading',...(resolveUncertainty?['source_permission_review']:[])]}}});
 if(lean&&!scripted)plan.student_feedback='Deterministic source-bound feedback from saved points; zero model calls';
 await freezeJson(output, 'plan.json', plan);
 await mkdir(resolve(output, 'source-files'));
@@ -254,7 +315,7 @@ if (values.env) {
   try {process.loadEnvFile(resolve(values.env));}
   catch {await progress.failBeforeRun('未能读取指定的凭据文件，请检查 --env 的文件路径后重试。');if(values.json)console.log(JSON.stringify({status:'not_started',reason:'credential_file_unavailable',output}));process.exit(2);}
 }
-if (!process.env.OPENROUTER_API_KEY) {
+if ((!connections.main || !connections.worker) && !process.env.OPENROUTER_API_KEY) {
   await progress.failBeforeRun('请配置 OPENROUTER_API_KEY，或通过 --env 选择已有凭据文件后重试。');
   if(values.json)console.log(JSON.stringify({status:'not_started',reason:'credential_missing',output}));
   process.exit(2);
@@ -263,8 +324,8 @@ await progress.start();
 const controller = new AbortController();
 const interaction = values['interaction-dir'] ? await new TeacherInteraction(resolve(values['interaction-dir']), { signal: controller.signal,
   schemePages: scheme.pages, students: new Map([...students].map(([id, document]) => [id, document.pages])) }).init() : null;
-const runtime = createRuntime({ models, model, workerModel, output, cap, controller, maxRequests, studentCacheNamespace, progress, interaction, structuredOutput:values.json,provider,workerProvider,mainEffort,workerEffort,
-  deadlineMs:deadlineSeconds*1000,singlePassGrading:scripted,mediumImages:mainOwnsScheme,economicalLuna,coldCacheNamespace:values['cold-cache-namespace']??null,studentCapUsd:scripted?studentCapUsd:null });
+const runtime = createRuntime({ models, model, workerModel, output, cap, controller, maxRequests, studentCacheNamespace, progress, interaction, structuredOutput:values.json,mainConnection:connections.main,workerConnection:connections.worker??null,provider,workerProvider,mainEffort,workerEffort,
+  deadlineMs:deadlineSeconds*1000,singlePassGrading:scripted,mediumImages:mainOwnsScheme,studentOverviewMaxSide,visualReadback,fullCreditReadback,compactStudentWire:compactWire,coldCacheNamespace:values['cold-cache-namespace']??null,studentCapUsd:scripted?studentCapUsd:null });
 process.once('SIGINT', () => {void progress.cancelRequested();controller.abort(Error('User cancellation'));});
 if(scripted) {
   const started=Date.now();let frozen=reusedRubric,guide=replayGuide,result=null,failure=null;
@@ -286,7 +347,8 @@ if(scripted) {
     } else if(interaction) guide=await interaction.publishGuide(frozen,DEFAULT_EXECUTION_METHOD);
     if(guide){await freezeJson(output,'marking-guide.json',guide);await writeFile(resolve(output,'评分实施.md'),guide.body,{flag:'wx'});}
     await runtime.log({type:'rubric_ready'});
-    result=await runScriptedGrading({runtime,output,frozen,guide,scheme,students,model:workerModel,concurrency,inlineAnnotations,imageVariants,interaction,gradingReasoning,mainOwnsScheme,readPage:gradingPage,allMsImages:values['all-ms-images'],localObservations});
+    result=await runScriptedGrading({runtime,output,frozen,guide,scheme,students,model:workerModel,concurrency,inlineAnnotations,imageVariants,interaction,gradingReasoning,mainOwnsScheme,compactWire,typedCompact,selectedObservations,resultLocations,verdictWire,resolveUncertainty,sourceReviewScope,readPage:gradingPage,readAnswerPage:gradingAnswerPage,allMsImages:values['all-ms-images'],
+      localObservations,reviewOpticalObservations});
   }catch(error){failure=error.message;}
   finally {
     runtime.close();progress.stop();
@@ -298,12 +360,12 @@ if(scripted) {
       elapsed_including_image_preparation_seconds:(Date.now()-started)/1000+imagePreparationSeconds,
       elapsed_including_preparation_seconds:(Date.now()-started)/1000+imagePreparationSeconds+opticalPreparationSeconds,
       students:result?.students??[],...runtime.totals(requests),requests,
-      costs_by_phase:Object.fromEntries(['ms_compilation','ms_verification','coordination','student_grading','exception_review','student_feedback','reporting'].map(phase=>[phase,runtime.totals(requests.filter(r=>r.phase===phase))])),
+      costs_by_phase:Object.fromEntries(['ms_compilation','ms_verification','coordination','student_grading','source_permission_review','exception_review','student_feedback','reporting'].map(phase=>[phase,runtime.totals(requests.filter(r=>r.phase===phase))])),
       cost_receipts_complete:requests.length>0&&requests.every(r=>r.status==='provider_reported'),active_agents_at_summary:runtime.active.size,
       admission_cap_exceeded:runtime.budget.chargedOrReserved>cap};
     await freezeJson(output,'summary.json',summary);
     await progress.finish(summary,{cancelled:controller.signal.aborted});
-    console.log(JSON.stringify({status:summary.status,output,cost_usd:summary.unknown_cost_requests ? null : summary.provider_reported_cost_usd,unknown_cost_requests:summary.unknown_cost_requests,failure}));
+    console.log(JSON.stringify({status:summary.status,output,cost_usd:summary.provider_reported_cost_usd,failure}));
     if(summary.status!=='submitted')process.exitCode=2;
   }
 } else {

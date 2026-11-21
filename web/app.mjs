@@ -1,12 +1,50 @@
-document.documentElement.classList.toggle('embedded-grading', new URLSearchParams(location.search).has('embedded'));
-import { escape as e, icon, button, iconButton, pageById, markdown } from './ui.mjs';
+import { escape as e, icon, button, iconButton, pageById, markdown, composerModelSelect, savedComposerModel, setComposerModel } from './ui.mjs';
 import { materialView, equalGroups, movedGroups } from './materials.mjs';
 import { taskView, taskForm, taskFormInput, refreshTaskSetup, artifactContent } from './tasks.mjs';
 import { reviewView, reviewItems } from './review.mjs';
 
+try {
+  if (localStorage.getItem('gradeos-interface-motion') === 'reduce') document.documentElement.dataset.motion = 'reduce';
+} catch { /* Browser storage can be unavailable in private windows. */ }
+window.addEventListener('storage', event => {
+  if (event.key === 'gradeos-interface-motion') document.documentElement.dataset.motion = event.newValue === 'reduce' ? 'reduce' : 'system';
+});
+const embedded = window !== window.parent && new URLSearchParams(location.search).has('embedded');
+document.documentElement.classList.toggle('embedded-grading', embedded);
+// Older running servers can still deliver the grading tools while their static asset list is refreshed.
+void import('./interface-motion.mjs').catch(() => {});
+if (!embedded) {
+  const field = document.createElement('workspace-field');
+  field.dataset.scene = 'grading';
+  document.body.prepend(field);
+  void import('./workspace-field.mjs').catch(() => {});
+} else if (window.frameElement) {
+  const frame = window.frameElement;
+  const parentField = frame.ownerDocument.querySelector('workspace-field');
+  const track = event => {
+    if (event.pointerType === 'touch' || parentField?.reduced) return;
+    const bounds = frame.getBoundingClientRect();
+    parentField?.trackPointer?.(bounds.left + event.clientX, bounds.top + event.clientY);
+  };
+  for (const type of ['pointermove','pointerdown']) document.addEventListener(type, track, {passive:true});
+  document.addEventListener('pointerout', event => {
+    if (!event.relatedTarget) parentField?.clearPointer?.();
+  }, {passive:true});
+  document.addEventListener('pointercancel', () => parentField?.clearPointer?.(), {passive:true});
+  document.addEventListener('scroll', event => {
+    const scroller = event.target === document ? document.scrollingElement : event.target;
+    if (scroller instanceof Element && !scroller.closest('textarea, dialog')) {
+      parentField?.trackScroll?.(scroller.scrollTop, scroller);
+    }
+  }, {capture:true, passive:true});
+}
+
 // A running pre-canvas server can keep its existing UI until its owner restarts it.
 // Avoid breaking another local grading run when the shared static files change.
-const canvasAvailable = await fetch('/api/state').then(response => response.json()).then(state => Object.hasOwn(state, 'documents')).catch(() => false);
+const canvasAvailable = await fetch('/api/state?summary=1').then(response => response.json()).then(state => {
+  if (state.motion === 'reduce' || state.motion === 'system') document.documentElement.dataset.motion = state.motion;
+  return state.canvas === true || Object.hasOwn(state, 'documents');
+}).catch(() => false);
 if (canvasAvailable) {
   for (const href of ['/canvas.css', '/workspace-canvas.css', '/document-reader.css', '/results.css']) {
     const stylesheet = document.createElement('link'); stylesheet.rel = 'stylesheet'; stylesheet.href = href;
@@ -56,14 +94,14 @@ function navigate(tab) {
 function render() {
   if (!ctx.state) return;
   const tabs = [['materials', '材料'], ['tasks', '任务'], ['review', '审阅']];
-  app.innerHTML = `<header class="app-header"><div class="brand-line"><a class="wordmark" href="#materials" aria-label="GradeOS 材料工作区">Grade<span>OS</span></a><span class="header-divider"></span>${button('rename-project', e(ctx.state.title), { className: 'project-name', attrs: 'title="修改作业名称"' })}</div>
+  app.innerHTML = `<header class="app-header"><div class="brand-line"><a class="wordmark" href="#materials" aria-label="GradeOS 材料工作区"><span class="gradeos-wordmark">Grade<span>OS</span></span></a>${button('rename-project', e(ctx.state.title), { className: 'project-name', attrs: 'title="修改作业名称"' })}</div>
     <nav aria-label="工作区">${tabs.map(([tab, label]) => `<button data-action="tab" data-tab="${tab}" class="nav-tab ${ctx.tab === tab ? 'active' : ''}" aria-current="${ctx.tab === tab ? 'page' : 'false'}">${label}</button>`).join('')}</nav>
     <div class="header-actions">${ctx.tab === 'materials' ? button('upload', '上传', { className: 'outline', symbol: 'plus' }) : ctx.tab === 'tasks' ? button('task-list', '全部任务', { className: 'text-button blue' }) : ''}${button('settings', 'GradeOS', { className: 'edition muted' })}</div></header>
     <main class="${ctx.tab === 'materials' ? 'with-dock' : ''}">${ctx.tab === 'materials' ? materialView(ctx) : ctx.tab === 'tasks' ? taskView(ctx) : reviewView(ctx)}</main>`;
 }
 function openDialog(title, content, className = '') {
   dialog.className = className;
-  dialog.innerHTML = `<div class="dialog-header"><h2>${e(title)}</h2>${iconButton('close-dialog', '关闭', 'close')}</div><div class="dialog-alert" role="alert"></div><div class="dialog-body">${content}</div>`;
+  dialog.innerHTML = `<div class="dialog-header"><h2 id="grading-dialog-title">${e(title)}</h2>${iconButton('close-dialog', '关闭', 'close')}</div><div class="dialog-alert" role="alert"></div><div class="dialog-body">${content}</div>`;
   if (!dialog.open) dialog.showModal();
 }
 function closeDialog() { dialog.close(); askingRecord = null; }
@@ -77,9 +115,9 @@ function openAssistant(initial = '', record = null) {
   openDialog('与 GradeOS 协作', `<div class="assistant-scope">${record ? `${e(record.student)} · ${e(record.itemId)}${record.pointId ? ` / ${e(record.pointId)}` : ''}` : `${agentScope.length} 份答卷`}</div>
     <div class="messages">${messages.length ? messages.map(message => `<div class="message ${message.role}">${markdown(message.text)}</div>`).join('') : '<p class="muted assistant-hint">直接说明想完成的事。任务安排会先保存为草稿。</p>'}</div>
     ${!ctx.state.agentReady ? '<p class="notice">尚未连接模型。仍可手动安排任务。</p>' : ''}
-    <form id="assistant-form"><textarea name="goal" aria-label="发送给 GradeOS 的要求" rows="4" placeholder="例如：分三批处理，每批完成后等我审阅…" maxlength="8000" required>${e(initial)}</textarea><div class="form-actions">${button('manual-task', '手动安排', { className: 'text-button' })}<button class="primary" type="submit" ${ctx.busy ? 'disabled' : ''}>发送</button></div></form>`, 'assistant-drawer');
+    <form id="assistant-form"><textarea name="goal" aria-label="发送给 GradeOS 的要求" rows="4" placeholder="例如：分三批处理，每批完成后等我审阅…" maxlength="8000" required>${e(initial)}</textarea><div class="form-actions">${button('manual-task', '手动安排', { className: 'text-button' })}${ctx.state.modelCatalog ? composerModelSelect(ctx.state, ctx.composerModelId ?? savedComposerModel(ctx.state.modelCatalog)) : ''}<button class="primary" type="submit" ${ctx.busy ? 'disabled' : ''}>发送</button></div></form>`, 'assistant-drawer');
 }
-async function askAgent(goal) {
+async function askAgent(goal, selection) {
   if (!ctx.state.agentReady) { openAssistant(goal, askingRecord); toast('模型尚未配置，可以先手动安排任务。'); return; }
   const scope = dialog.classList.contains('assistant-drawer') && dialog.open ? agentScope : [...ctx.selected];
   if (!scope.length) throw Error('先选择任务涉及的答卷。');
@@ -88,7 +126,8 @@ async function askAgent(goal) {
   if (submit) { submit.disabled = true; submit.textContent = '正在处理…'; }
   const previousIds = new Set(ctx.state.tasks.map(task => task.id));
   try {
-    await request('/api/agent', { selectedIds: scope, goal, recordId: askingRecord?.id });
+    const modelId = selection ?? ctx.composerModelId ?? savedComposerModel(ctx.state.modelCatalog);
+    await request('/api/agent', { selectedIds: scope, goal, recordId: askingRecord?.id, modelId: modelId || undefined });
     ctx.command = '';
     const added = ctx.state.tasks.filter(task => !previousIds.has(task.id));
     if (added.length) { ctx.activeTaskId = added.at(-1).id; ctx.taskList = added.length > 1; closeDialog(); navigate('tasks'); toast(`已保存 ${added.length} 个任务安排，尚未开始。`); }
@@ -193,7 +232,7 @@ const actions = {
     const url = URL.createObjectURL(new Blob([artifact.body], { type: 'text/markdown;charset=utf-8' }));
     const link = document.createElement('a'); link.href = url; link.download = `${artifact.title.replace(/[\\/:*?"<>|]/g, '-')}.md`; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
   },
-  settings: () => openDialog('Pi 尝试版本', `<div class="form"><p>${ctx.state.agentReady ? '模型已连接。' : '尚未连接模型，可先上传、划分和手动安排任务。'}</p><p class="muted">每次批改或自由任务的准入预算：$${ctx.state.runBudgetUsd}。模型费用以实际回执为准。</p><details><summary>运行设置</summary><p>在服务进程配置 OPENROUTER_API_KEY，或启动时使用 --env 指定本地凭据文件。使用 --cap 调整预算。凭据不会发送到浏览器。</p></details><p class="muted">材料、任务和审阅草稿保存在本机。此版本不发布成绩。</p></div>`),
+  settings: () => openDialog('账号与设置', `<div class="form"><p>${ctx.state.agentReady ? '模型已连接。' : '可登录 GradeOS Cloud 或使用自己的 API。'}</p><a href="/#settings" target="_top">管理账号与模型连接</a><a href="/cloud-publish.html" target="_top">发布给学生</a></div>`),
 };
 for (const [action, offset] of [['page-left', -1], ['page-right', 1]]) actions[action] = async element => {
   const pages = ctx.state.groups.flatMap(group => group.pageIds); const index = pages.indexOf(element.dataset.id);
@@ -217,6 +256,11 @@ document.addEventListener('input', event => {
   }
 });
 document.addEventListener('change', event => {
+  if (event.target.id === 'composer-model') {
+    ctx.composerModelId = event.target.value; setComposerModel(ctx.composerModelId);
+    const label = event.target.closest('.composer-model');
+    label.querySelector('span').textContent = ctx.state.modelCatalog.options.find(row => row.id === (ctx.composerModelId || ctx.state.modelCatalog.defaultId))?.name || '';
+  }
   if (event.target.closest('#task-form')) refreshTaskSetup(event.target.closest('#task-form'), ctx.state, event.target);
   if (event.target.matches('[data-group]')) { const id = event.target.dataset.group; event.target.checked ? ctx.selected.add(id) : ctx.selected.delete(id); render(); }
   if (event.target.id === 'review-task') { ctx.reviewTaskId = event.target.value; ctx.reviewIndex = 0; ctx.sourcePage = {}; render(); }
@@ -226,7 +270,7 @@ uploadInput.addEventListener('change', () => upload(uploadInput.files).catch(err
 document.addEventListener('submit', event => {
   event.preventDefault(); const form = event.target; const data = new FormData(form);
   Promise.resolve().then(async () => {
-    if (form.id === 'material-command' || form.id === 'assistant-form') return askAgent(String(data.get('goal')).trim());
+    if (form.id === 'material-command' || form.id === 'assistant-form') return askAgent(String(data.get('goal')).trim(), data.get('modelId'));
     if (form.id === 'split-form') { await savePartition(equalGroups(ctx.state.groups, Number(data.get('count')))); closeDialog(); }
     if (form.id === 'rename-group-form') { const groups = structuredClone(ctx.state.groups); groups.find(group => group.id === form.dataset.id).label = String(data.get('label')); await savePartition(groups); closeDialog(); }
     if (form.id === 'project-form') { await request('/api/project', { title: String(data.get('title')) }, 'PATCH'); closeDialog(); }
@@ -257,7 +301,7 @@ window.addEventListener('hashchange', () => { if (['materials', 'tasks', 'review
 document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh().then(render).catch(() => {}); });
 setInterval(async () => {
   if (document.hidden || !ctx.state?.tasks.some(task => task.status === 'running') || ctx.busy) return;
-  try { const revision = ctx.state.revision; await refresh(); if (revision !== ctx.state.revision && !dialog.open && !document.activeElement.matches('input, textarea, select')) render(); } catch { /* Preserve current screen during a transient disconnect. */ }
+  try { const signature = JSON.stringify([ctx.state.revision, ctx.state.modelCatalog]); await refresh(); if (signature !== JSON.stringify([ctx.state.revision, ctx.state.modelCatalog]) && !dialog.open && !document.activeElement.matches('input, textarea, select')) render(); } catch { /* Preserve current screen during a transient disconnect. */ }
 }, 2000);
 try { await refresh(); render(); } catch (error) { app.innerHTML = `<div class="empty"><h1>工作区暂时无法打开</h1><p>${e(error.message)}</p><a href="/">重新加载</a></div>`; }
 

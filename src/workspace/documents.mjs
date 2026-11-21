@@ -1,4 +1,4 @@
-import { pythonExecutable } from '../python.mjs';
+import { pythonExecutable, helperEnvironment } from '../python.mjs';
 import { mkdir, writeFile, readFile, copyFile, rm } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import { execFile } from 'node:child_process';
@@ -11,7 +11,7 @@ export const experimentRoot = fileURLToPath(new URL('../../', import.meta.url));
 export const python = pythonExecutable();
 const execute = promisify(execFile);
 
-export async function importUpload(store, { bytes, name, role, grouping = 'file' }) {
+export async function importUpload(store, { bytes, name, role, grouping = 'file' }, previousImport = Promise.resolve()) {
   fail(['student', 'scheme', 'question'].includes(role), '材料类别无效。');
   fail(bytes.length > 0 && bytes.length <= 40 * 1024 * 1024, '单个文件最多 40 MB。');
   fail(['manual', 'file'].includes(grouping), '请选择有效的分组方式。');
@@ -20,8 +20,8 @@ export async function importUpload(store, { bytes, name, role, grouping = 'file'
   const source = join(directory, 'source');
   await writeFile(source, bytes, { mode: 0o600 });
   try {
-    await execute(python, [join(experimentRoot, 'scripts/python/workspace_documents.py'), '--source', source, '--output', directory], {
-      timeout: 120000, maxBuffer: 1024 * 1024, env: { PATH: process.env.PATH },
+    await execute(python, [join(experimentRoot, 'workspace_documents.py'), '--source', source, '--output', directory], {
+      timeout: 120000, maxBuffer: 1024 * 1024, env: helperEnvironment(),
     });
     const manifest = JSON.parse(await readFile(join(directory, 'manifest.json'), 'utf8'));
     const fileName = String(name || '上传材料').replace(/[\x00-\x1f]/g, '').slice(0, 180);
@@ -30,6 +30,7 @@ export async function importUpload(store, { bytes, name, role, grouping = 'file'
       sha256: page.sha256, path: join(directory, page.path), active: true,
       size: page.size, imageToPdf: page.image_to_pdf, imageRepresentation: page.representation,
     }));
+    await previousImport;
     await store.mutate(null, state => {
       fail(state.pages.filter(page => page.active !== false).length + pages.length <= 1500, '此实验工作区最多保存 1500 页。');
       state.pages.push(...pages);

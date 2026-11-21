@@ -131,6 +131,13 @@ function validatePoints(item, scheme) {
     if (!Array.isArray(p.allowed_awards) || new Set(p.allowed_awards).size !== p.allowed_awards.length || !p.allowed_awards.includes(0) || !p.allowed_awards.includes(p.max_score) || p.allowed_awards.some(value => !Number.isFinite(value) || value < 0 || value > p.max_score)) throw Error('Invalid source-authorized point awards');
     checkPages(p.source_pages, scheme);
     if (p.source_pages.some(page => !item.source_pages.includes(page))) throw Error('Point source outside item');
+    if (p.award_levels !== undefined) {
+      const levels = p.award_levels;
+      if (!Array.isArray(levels) || !levels.length ||
+          !unique(levels.map(level => level.label)) || new Set(levels.map(level => level.score)).size !== levels.length ||
+          levels.some(level => !p.allowed_awards.includes(level.score) || !p.source_pages.includes(level.source_page) ||
+            !nonempty(level.criterion))) throw Error('Invalid source-bound award levels');
+    }
     points.set(p.point_id, p);
   }
   const routes = new Set(); const covered = new Set();
@@ -177,13 +184,28 @@ Object.assign(POINT_SUBMIT_SCHEMA.properties.items.items.properties, {
 POINT_SUBMIT_SCHEMA.properties.items.items.required.push('selected_route', 'point_decisions');
 
 // Lossless presentation only: the frozen artifact remains the scoring authority.
-export function studentRubricText(artifact){
-  return 'Omitted source_text is identical to condition. Omitted depends_on, related_item_ids and uncertainties are empty arrays. All nonempty source conditions, exceptions and dependencies are retained.\n'+
-    JSON.stringify(artifact,function(key,value){
+export function rubricPromptPresentation(artifact,{reuseItemDefaults=false}={}){
+  const owners=reuseItemDefaults?new Map(artifact.items.flatMap(item=>item.scoring_points.map(point=>[point,item]))):null;
+  const items=reuseItemDefaults?new Set(artifact.items):null;
+  const guide='Omitted source_text is identical to condition. Omitted depends_on, related_item_ids and uncertainties are empty arrays. All nonempty source conditions, exceptions and dependencies are retained.';
+  const defaults=reuseItemDefaults?' Omitted point source_pages are the containing item source_pages; omitted point max_score is the largest allowed_awards value. Omitted requires_source_image is false and omitted image_reason is empty.':'';
+  const json=JSON.stringify(artifact,function(key,value){
       if(key==='source_text'&&value===this.condition)return undefined;
       if(['depends_on','related_item_ids','uncertainties'].includes(key)&&Array.isArray(value)&&value.length===0)return undefined;
+      if(key==='max_score'&&owners?.has(this)&&value===Math.max(...this.allowed_awards))return undefined;
+      if(key==='source_pages'){
+        const shared=owners?.get(this)?.source_pages;
+        if(shared&&Array.isArray(value)&&shared.length===value.length&&shared.every((page,index)=>page===value[index]))return undefined;
+      }
+      if(items?.has(this)&&((key==='requires_source_image'&&value===false)||(key==='image_reason'&&value==='')))return undefined;
       return value;
     });
+  return {guide:guide+defaults,json};
+}
+
+export function studentRubricText(artifact,options){
+  const {guide,json}=rubricPromptPresentation(artifact,options);
+  return guide+'\n'+json;
 }
 
 export function validatePointDecisions(row, item, student) {

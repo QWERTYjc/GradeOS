@@ -4,7 +4,7 @@ import { readFile, writeFile, mkdir, rename, appendFile, open } from 'node:fs/pr
 import { resolve, dirname, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { createGrader, Budget, digest, wireEstimate, SYSTEM_PROMPT, SUBMIT_SCHEMA } from './core.mjs';
+import { createGrader, Budget, digest, wireEstimate, gradingDocumentRoles, gradingSystemPrompt, SUBMIT_SCHEMA } from './core.mjs';
 import {outputBudget} from './output-budget.mjs';
 
 const { values } = parseArgs({ options: {
@@ -16,8 +16,9 @@ if (!values.input || !values.output) throw Error('Required: --input prepared-dir
 const input = resolve(values.input);
 const output = resolve(values.output);
 const manifest = JSON.parse(await readFile(resolve(input, 'manifest.json'), 'utf8'));
-if (Object.keys(manifest.documents).sort().join(',') !== 'scheme,student') throw Error('Exactly two input roles are allowed');
-for (const doc of Object.values(manifest.documents)) {
+const roles = gradingDocumentRoles(manifest);
+for (const role of roles) {
+  const doc = manifest.documents[role];
   for (const page of doc.pages) {
     const path = resolve(input, page.path);
     if (!path.startsWith(input + sep)) throw Error('Page path outside input directory');
@@ -35,10 +36,10 @@ if (!['openai/gpt-6.1-terra', 'openai/gpt-6.1-sol'].includes(model.id)) throw Er
 await mkdir(output, { recursive: false });
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const sourceHashes = {};
-for (const path of ['src/core.mjs', 'src/output-budget.mjs', 'src/run.mjs', 'scripts/python/prepare.py', 'package-lock.json']) sourceHashes[path] = digest(await readFile(resolve(root, path)));
+for (const path of ['src/core.mjs', 'src/output-budget.mjs', 'src/run.mjs', 'prepare.py', 'package-lock.json']) sourceHashes[path] = digest(await readFile(resolve(root, path)));
 const plan = {
   mode: 'full-cold fixture', created_at: new Date().toISOString(), model,
-  source_hashes: sourceHashes, manifest, prompt_hash: digest(SYSTEM_PROMPT), schema_hash: digest(SUBMIT_SCHEMA),
+  source_hashes: sourceHashes, manifest, prompt_hash: digest(gradingSystemPrompt(manifest)), schema_hash: digest(SUBMIT_SCHEMA),
   reasoning: 'low', temperature: null, seed: null, explicit_cache: false,
   provider: { only: ['openai'], allow_fallbacks: false, require_parameters: true, data_collection: 'deny' },
   library: { core: '1.5.2', ai: '1.5.2' }, cap_usd: cap,

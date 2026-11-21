@@ -1,13 +1,15 @@
+import { batchReport, reportSummaryMarkdown } from './grading-library.mjs';
 import { gradingModel, effortLabel } from './grading-models.mjs';
-import { escape as e, icon, button as b, iconButton as ib, markdown, statuses, latestReview } from './ui.mjs';
+import { escape as e, icon, button as b, iconButton as ib, markdown, statuses } from './ui.mjs';
 import { progressMetrics } from './tasks.mjs';
-import { resultTasks, resultsBar } from './results-view.mjs';
+import { cohortSummary, resultTasks, resultsBar, recordPending, reviewForRecord } from './results-view.mjs';
 
 export const documents = state => [...state.schemes.map(row => ({ ...row, role: 'scheme' })), ...(state.questions || []).map(row => ({ ...row, role: 'question' })), ...state.groups.map(row => ({ ...row, role: 'student' }))];
 export const questions = state => state.tasks.filter(task => task.status === 'running').flatMap(task => (task.interaction?.questions || []).filter(row => row.status === 'open').map(row => ({ ...row, taskId: task.id })));
 export const pendingRecords = state => state.tasks.flatMap(task => task.records.filter(record => {
-  const review = latestReview(state, record.id);
-  return record.reviewRequired && (!review || (review.score == null && record.disposition !== 'feedback_only'));
+  const review = record.originalHash ? reviewForRecord(state, task.id, record)
+    : state.reviews.findLast(row => row.recordId === record.id && (!row.taskId || row.taskId === task.id) && !row.originalHash);
+  return recordPending(record, review);
 }).map(record => ({ ...record, taskId: task.id })));
 export const allRecords = state => state.tasks.flatMap(task => task.records.map(record => ({ ...record, taskId: task.id })));
 const attr = id => `data-id="${e(id)}"`;
@@ -27,7 +29,7 @@ export function needsGradingMaterials(state) {
     !state.tasks.some(task => task.kind === 'grade' && ['draft', 'running', 'needs_review'].includes(task.status));
 }
 export function workflowView(ctx, panels = []) {
-  if (ctx.resultsOpen) return resultsBar(ctx);
+  if (ctx.resultsOpen) return resultsBar(ctx, ctx.embedded ? workspaceControls(ctx, true) : '');
   const task = ['running', 'draft', 'needs_review'].map(status => ctx.state.tasks.findLast(row => row.kind === 'grade' && row.status === status)).find(Boolean);
   if (!task && resultTasks(ctx.state).length) return `<div class="workflow-copy"><h1>继续查看批改结果</h1><p>原卷批注、逐题依据与报告已保存在工作区。</p></div><div class="workflow-action">${b('results', '查看结果', { className: 'primary' })}${b('prepare-materials', '开始新批改', { className: 'quiet' })}</div>`;
   if (!task && !ctx.state.groups.length && ctx.state.pages.length)
@@ -58,17 +60,34 @@ export function workflowView(ctx, panels = []) {
   return `<div class="workflow-copy"><div class="workflow-path" aria-label="批改阶段">${['准备材料', '开始批改', '查看结果'].map((label, index) => `<span ${index === active ? 'aria-current="step"' : ''}>${label}</span>`).join('<i>›</i>')}${task ? `<small>${task.groupIds.length} 份 · ${modeLabel(task.executionMode)}</small>` : ''}</div><h1>${titles[stage]}</h1><p>${descriptions[stage]}</p></div><div class="workflow-action">${action}</div>`;
 }
 
+function workspaceControls(ctx, inMenu = false) {
+  const taskId = ctx.processId || (ctx.resultsOpen && ctx.resultTaskId);
+  const inScope = row => !taskId || row.taskId === taskId;
+  const pending = questions(ctx.state).filter(inScope).length + pendingRecords(ctx.state).filter(inScope).length + (ctx.state.documents || []).filter(doc => inScope(doc) && doc.proposalId && !doc.approvals.length && ctx.state.tasks.some(task => task.id === doc.taskId && task.status === 'running' && task.executionMode !== 'auto')).length;
+  const pages = ctx.state.pages.filter(page => page.active !== false).length;
+  const history = ctx.state.tasks.length || ctx.state.conversation?.length || ctx.state.chat;
+  const controls = [];
+  if (!ctx.processId && ctx.returnProcessId) controls.push(b('show-process', '返回处理过程', {attrs:attr(ctx.returnProcessId)}));
+  if (ctx.resultsOpen && !ctx.state.tasks.some(task => task.status === 'running')) controls.push(b('prepare-materials', '新批改', {className:'quiet'}));
+  if (pages) controls.push(b('materials', `材料 <span class="count">${pages}</span>`, {className:'quiet'}));
+  if (!ctx.resultsOpen && resultTasks(ctx.state).some(task => !inMenu || task.id !== ctx.processId)) controls.push(b('results', '批改结果', {className:'quiet'}));
+  if (pending || ctx.state.reviews?.length) controls.push(b('reviews', pending ? `<span class="amber-dot"></span>待确认 ${pending}` : '审阅', {className:pending ? 'review-count' : 'quiet'}));
+  if (history) controls.push(inMenu ? b('history', '对话与任务记录') : ib('history', '对话与任务记录', 'history'));
+  if (inMenu) controls.push(b('rename-project', `重命名项目 · ${e(ctx.state.title)}`));
+  return controls.join('');
+}
+
 export function header(ctx) {
-  const pending = questions(ctx.state).length + pendingRecords(ctx.state).length + (ctx.state.documents || []).filter(doc => doc.proposalId && !doc.approvals.length && ctx.state.tasks.some(task => task.id === doc.taskId && task.status === 'running' && task.executionMode !== 'auto')).length;
-  return `<div class="brand-line"><a class="canvas-wordmark" href="/" target="_top">Grade<span>OS</span></a><span class="header-divider"></span>${b('rename-project', e(ctx.state.title), { className: 'project-name' })}</div>
-    <div class="header-actions">${!ctx.processId && ctx.returnProcessId ? b('show-process', '返回处理过程', { attrs: attr(ctx.returnProcessId) }) : ''}${ctx.resultsOpen && !ctx.state.tasks.some(task => task.status === 'running') ? b('prepare-materials', '新批改', { className: 'quiet' }) : ''}${b('materials', `材料 <span class="count">${ctx.state.pages.filter(page => page.active !== false).length}</span>`, { className: 'quiet' })}${resultTasks(ctx.state).length ? b('results', '批改结果', { className: ctx.resultsOpen ? 'header-result-active' : 'quiet', attrs: `aria-pressed="${Boolean(ctx.resultsOpen)}"` }) : ''}${b('reviews', pending ? `<span class="amber-dot"></span>待确认 ${pending}` : '审阅', { className: pending ? 'review-count' : 'quiet' })}${ib('history', '对话与任务记录', 'history')}<a class="quiet" href="/#files" target="_top">工作区文件</a></div>`;
+  if (ctx.embedded && (ctx.processId || ctx.resultsOpen)) return '';
+  return `<div class="brand-line"><a class="canvas-wordmark" href="/" target="_top" aria-label="GradeOS 工作台"><span class="gradeos-wordmark">Grade<span>OS</span></span></a>${b('rename-project', e(ctx.state.title), {className:'project-name'})}</div>
+    <div class="header-actions">${workspaceControls(ctx)}<a class="quiet" href="/#files" target="_top">工作区文件</a></div>`;
 }
 export function toolbar(ctx, needsMaterials = false) {
   const tool = (mode, label, title = '') => b(mode, label, {
     className: ctx.mode === mode ? 'tool active' : 'tool',
     attrs: `aria-pressed="${ctx.mode === mode}"${title ? ` title="${title}"` : ''}`,
   });
-  return `<span class="workspace-hint">${needsMaterials ? b('prepare-materials', '返回准备材料', { className: 'quiet', symbol: 'left' }) : ctx.resultsOpen ? '点击题号查看原卷与依据' : '材料与评分说明'}</span><div class="canvas-tools" role="group" aria-label="画布工具">${tool('browse', '阅读')}${tool('lasso', `${lassoIcon}套索`, '沿内容自由画一圈，松手后点击选区')}${tool('rectangle', `${icon('select')}框选`)}</div>${b('new-document', `${icon('plus')}文档`, { className: 'compare-action new-document-action' })}${b('compare', `${icon('column-width')}并排`, { className: 'compare-action', attrs: 'aria-label="并排打开文档"' })}`;
+  return `<span class="workspace-hint">${needsMaterials ? b('prepare-materials', '返回准备材料', { className: 'quiet', symbol: 'left' }) : ctx.resultsOpen ? '点击题号查看原卷与依据' : '材料与评分说明'}</span><div class="canvas-tools" role="group" aria-label="画布工具">${tool('browse', '阅读')}${tool('lasso', `${lassoIcon}套索`, '沿内容自由画一圈，松手后点击选区')}${tool('rectangle', `${icon('select')}框选`)}</div>${b('new-document', `${icon('plus')}文档`, { className: 'compare-action new-document-action' })}${b('compare', `${icon('column-width')}并排`, { className: 'compare-action', attrs: 'aria-label="并排打开文档"' })}${ctx.resultsOpen && ctx.resultDetail ? b('detail-chat', ctx.detailChat ? '收起对话' : '提问', {className:'compare-action',symbol:'message',attrs:`aria-expanded="${Boolean(ctx.detailChat)}"`}) : ''}`;
 }
 
 function eventsView(events) {
@@ -76,30 +95,83 @@ function eventsView(events) {
   for (const event of events || []) if (event.label) latest.set(event.key || event.id || `${event.type}:${event.lane}`, event);
   return [...latest.values()].slice(-12).map(event => `<li><span class="event-dot ${event.status === 'done' ? 'done' : event.status === 'error' ? 'error' : ''}"></span><span>${e(event.label)}</span>${event.pageIds?.length ? b('event-page', '原页', { className: 'source-link', attrs: attr(event.pageIds[0]) }) : ''}<span class="event-lane">${e(event.lane?.startsWith('student-') ? '答卷' : event.lane === 'ms-review' ? 'MS' : '')}</span></li>`).join('');
 }
-export function processView(ctx, task) {
-  const running = task.status === 'running', guide = guideForTask(ctx.state, task);
-  const waiting = running && guide && !guide.approvals.length && task.executionMode === 'review';
+// Read the opening summary produced by renderReportMarkdown, before its tables and audit notes.
+function batchSummaryView(state, task, rows) {
+  const report = batchReport(task);
+  const summary = report && (report.currentSummary ?? reportSummaryMarkdown(report.body));
+  const {total, recorded, pending, scored, mean, maximum, commonDeduction} = cohortSummary(rows, task);
+  const stats = [];
+  const reviewed = report && state.reviews?.some(review => review.taskId === task.id);
+  if (mean != null) {
+    stats.push(`<span>${reviewed ? '复核后' : ''}${scored === 1 ? '总分' : '平均分'} <strong>${e(mean)} <small>/ ${e(maximum)}</small></strong></span>`);
+    if (scored < total) stats.push(`<span>${scored} / ${total} 份已确定总分</span>`);
+  } else if (recorded || !report) {
+    stats.push(recorded ? `<span>${recorded} / ${total} 份已有${rows.every(row => row.items.every(item => item.feedbackOnly)) ? '文字评语' : '评分记录'}</span>`
+      : `<span>${total ? `本批共 ${total} 份答卷，尚无逐题评分记录。` : '本批暂无学生答卷。'}</span>`);
+  }
+  if (pending) stats.push(`<span>${pending} 份待确认</span>`);
+  const observation = !report && commonDeduction ? `<p>第 ${e(commonDeduction.id)} 题有 ${commonDeduction.count} 份答卷失分。${commonDeduction.excerpt ? `多份评语提到「${e(commonDeduction.excerpt)}」。` : ''}</p>` : '';
+  return `<section class="batch-summary" aria-labelledby="batch-summary-title"><h2 id="batch-summary-title">${report ? '批改总结' : '评分概览'}</h2>
+    ${summary ? `<div class="batch-report-prose prose">${markdown(summary)}</div>` : ''}
+    ${report ? b('cohort-report', '阅读完整报告 ↗', {className:'report-read', attrs:attr(report.id)}) : ''}
+    ${stats.length ? `<div class="batch-stats" aria-label="当前评分">${stats.join('')}</div>` : ''}${observation}</section>`;
+}
+
+export function cohortHeading(ctx, task, rows, process) {
+  const incomplete = !['needs_review','completed'].includes(task.status);
+  const status = statuses[task.status] || '状态未知';
+  const batches = resultTasks(ctx.state);
+  const pending = rows.some(row => row.items.some(item => item.pending));
+  const controls = [], more = [];
+  let phase = incomplete ? '仅显示已保存结果' : '';
+  if (process) {
+    const guide = guideForTask(ctx.state, task);
+    const waiting = task.status === 'running' && guide && !guide.approvals.length && task.executionMode === 'review';
+    phase = task.progress?.phase || '';
+    if (waiting) phase = '等待老师确认评分要求';
+    if (task.status === 'running' && task.interaction?.paused) phase = '已请求暂停';
+    if (guide) controls.push(b('open-document', waiting ? '审阅评分要求' : '评分说明', {className: waiting ? 'primary' : '', attrs:attr(guide.id)}));
+    if (task.records.length || task.artifacts.length) controls.push(b('results', '查看已保存结果', {attrs:attr(task.id), className:'cohort-link'}));
+    if (task.status === 'running') {
+      controls.push(b(task.interaction?.paused ? 'resume-task':'pause-task', task.interaction?.paused ? '继续处理':'暂停', {attrs:attr(task.id), disabled:task.progress?.stopping}));
+      more.push(b('cancel-task', '停止任务', {attrs:attr(task.id), disabled:task.progress?.stopping}));
+    } else controls.push(b('prepare-materials', '返回准备材料', {attrs:attr(task.id)}));
+  } else {
+    if (batches.length > 1) more.push(`<label class="cohort-switch"><span>切换批次</span><select id="result-task" aria-label="切换批改批次">${batches.map(batch => `<option value="${e(batch.id)}" ${batch.id === task.id ? 'selected' : ''}>${e(batch.title)}</option>`).join('')}</select></label>`);
+    more.push(...task.artifacts.filter(artifact => !artifact.groupId && artifact !== batchReport(task)).map(artifact => b('cohort-report', e(artifact.title || '汇总报告'), {attrs:attr(artifact.id)})));
+    if (task.status === 'needs_review' && !pending) controls.push(b('complete-review', '完成审阅', {className:'primary', attrs:attr(task.id)}));
+  }
+  const discuss = b('cohort-discuss', ctx.cohortChat ? '收起对话' : '提问', {attrs: `aria-expanded="${Boolean(ctx.cohortChat)}"`});
+  if (ctx.embedded) more.push(workspaceControls(ctx, true));
+  if (more.length) {
+    more.push(discuss);
+    controls.push(`<details class="cohort-more"><summary>更多操作</summary><div>${more.join('')}</div></details>`);
+  } else controls.push(discuss);
+  const links = ctx.embedded ? `<nav class="batch-breadcrumbs" aria-label="批次导航"><a href="/#grading/history" target="_top">‹ 批改历史</a><a href="/#files/batch/${encodeURIComponent(task.id)}" target="_top">批次文件 ↗</a></nav>` : '';
+  return `${links}<div class="cohort-head"><div><h1>${e(task.title)}</h1>${process || incomplete ? `<p class="cohort-phase">${e([status, phase].filter(Boolean).join(' · '))}</p>` : ''}</div></div>
+    ${batchSummaryView(ctx.state, task, rows)}
+    ${task.error && process ? `<p class="cohort-notice" role="status">${e(ctx.state.failureReasons?.[task.id] || task.error)}</p>` : ''}
+    <div class="cohort-actions">${!process && !incomplete && task.records?.length ? `<a class="cohort-open-link" href="/cloud-publish.html?task=${encodeURIComponent(task.id)}" target="_top">发布给学生</a>` : ''}${controls.join('')}</div>`;
+}
+
+export function cohortTools(ctx, rows) {
+  const filters = [['all','全部答卷',rows.length], ['pending','待确认',rows.filter(row => row.pending.length).length], ['deduction','有失分',rows.filter(row => row.deductions.length).length]];
+  return `<select id="cohort-filter" aria-label="筛选全班答卷">${filters.map(([key,label,count]) => `<option value="${key}" ${(ctx.cohortFilter || 'all') === key ? 'selected' : ''}>${label} · ${count}</option>`).join('')}</select>${rows.some(row => row.items.length) ? b('cohort-read-all', ctx.cohortReadAll ? '收起通读' : '逐题通读', {className:'cohort-read-all', attrs:`aria-pressed="${Boolean(ctx.cohortReadAll)}"`}) : ''}`;
+}
+
+export function processDetails(ctx, task) {
   const events = [...(task.interaction?.events || []), ...(ctx.state.liveTasks?.[task.id]?.events || [])];
-  const completed = task.progress?.completed ?? 0, total = task.groups.length;
-  const title = waiting ? '等待确认评分要求' : running ? task.progress?.phase || '正在准备批改' : statuses[task.status] || '任务状态未知';
-  const phase = !running && task.progress?.phase ? `<p>最后处理到：${e(task.progress.phase)}</p>` : '';
-  return `<article class="process-sheet"><div class="process-caption">批改处理过程</div><h1>${e(title)}</h1>
-    <p>${e(task.title)} · ${total} 份答卷</p>
-    ${task.modelConfig ? `<p class="process-models">主模型 ${e(gradingModel(task.modelConfig.mainModel)?.name)}（${e(effortLabel(task.modelConfig.mainModel, task.modelConfig.mainEffort))}） · 子模型 ${e(gradingModel(task.modelConfig.workerModel)?.name)}（${e(effortLabel(task.modelConfig.workerModel, task.modelConfig.workerEffort))}）</p>` : ''}
-    <div class="process-meter"><strong>已保存评分</strong><span>${completed} / ${total} 份</span></div>
-    <progress value="${completed}" max="${Math.max(1,total)}" aria-label="已保存评分的答卷"></progress>
-    ${phase}${task.error ? `<p role="status" class="small-notice">${e(ctx.state.failureReasons?.[task.id] || task.error)}</p>` : ''}${progressMetrics(task.progress)}
-    ${events.length ? `<h2>最近活动</h2><ol class="activity-list">${eventsView(events)}</ol>` : ''}
-    <div class="process-actions">${guide ? b('open-document', waiting ? '审阅评分要求' : '查看评分说明', {className:waiting ? 'primary' : 'quiet', attrs:attr(guide.id)}) : ''}
-    ${task.records.length || task.artifacts.length ? b('results','查看已保存结果',{className:'primary',attrs:attr(task.id)}) : ''}
-    ${running ? b('cancel-task','停止任务',{attrs:attr(task.id),disabled:task.progress?.stopping}) : b('prepare-materials','返回准备材料',{className:'outline'})}</div></article>`;
+  const model = task.modelConfig;
+  const metrics = progressMetrics(task.progress);
+  if (!events.length && !metrics && !model) return '';
+  return `<details class="cohort-activity"><summary>处理记录与用量</summary>${events.length ? `<ol class="activity-list">${eventsView(events)}</ol>` : ''}${metrics}${model ? `<p class="muted">主模型 ${e(gradingModel(model.mainModel, ctx.state.modelCatalog)?.name || model.mainModel)} · ${e(effortLabel(model.mainModel, model.mainEffort))}　子模型 ${e(gradingModel(model.workerModel, ctx.state.modelCatalog)?.name || model.workerModel)} · ${e(effortLabel(model.workerModel, model.workerEffort))}</p>` : ''}</details>`;
 }
 export function taskCard(task, ctx) {
   const stale = task.status === 'draft' && task.materialRevision !== ctx.state.materialRevision;
   const stage = task.kind === 'grade' ? gradingStage(ctx.state, task) : null;
   const status = task.interaction?.paused && task.status === 'running' ? '暂停已请求' : ({ prepare: '整理评分要求', align: task.executionMode === 'auto' ? '准备继续' : '等待确认要求', grading: '批改中' }[stage] || statuses[task.status]);
   const events = [...(task.interaction?.events || []), ...(ctx.state.liveTasks?.[task.id]?.events || [])];
-  return `<article class="conversation-task"><div class="task-card-heading"><strong>${e(task.title)}</strong><span class="muted">${e(status)}</span></div>
+  return `<article class="conversation-task" data-history-task="${e(task.id)}"><div class="task-card-heading"><strong>${e(task.title)}</strong><span class="muted">${e(status)}</span></div>
     <p class="muted">${task.groupIds.length} 份答卷${task.kind === 'grade' ? ` · ${modeLabel(task.executionMode)}` : ''}${task.scheme ? ` · ${e(task.scheme.label)}` : ''}${task.question ? ` · ${e(task.question.label)}` : ''}${task.kind === 'grade' && !task.scheme ? ' · 按现有材料批改' : ''}</p>
     ${task.status === 'running' ? `<p class="task-phase">${e(stage === 'prepare' ? '阅读材料并整理评分要求' : stage === 'align' ? '评分实施已就绪，答卷尚未批改' : task.progress?.phase || '正在处理')}${stage === 'grading' ? ` · 已保存 ${task.progress?.completed || 0}/${task.groupIds.length} 份` : ''}</p>` : ''}
     ${events.length ? `<details class="activity-details"><summary>查看处理过程</summary><ol class="activity-list">${eventsView(events)}</ol>${progressMetrics(task.progress)}</details>` : ''}

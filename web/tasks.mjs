@@ -1,5 +1,5 @@
-import { gradingModels, gradingModel, gradingPresets, effortLabel } from './grading-models.mjs';
-import { escape as e, icon, button, statuses, empty, markdown } from './ui.mjs';
+import { gradingModel, gradingPresets, gradingConfigForModel, effortLabel } from './grading-models.mjs';
+import { escape as e, icon, button, statuses, empty, markdown, savedComposerModel, groupedModelOptions } from './ui.mjs';
 
 const finite = value => typeof value === 'number' && Number.isFinite(value) && value >= 0;
 export function progressMetrics(progress) {
@@ -44,23 +44,24 @@ export function taskView(ctx) {
 function presetIndex(config) {
   return gradingPresets.findIndex(preset => Object.keys(preset).every(key => preset[key] === config[key]));
 }
-function effortOptions(modelId, selected) {
-  return gradingModel(modelId).efforts.map(effort => `<option value="${effort}" ${effort === selected ? 'selected' : ''}>${effortLabel(modelId, effort)}</option>`).join('');
+function effortOptions(modelId, selected, catalog) {
+  return (gradingModel(modelId, catalog)?.efforts ?? []).map(effort => `<option value="${effort}" ${effort === selected ? 'selected' : ''}>${effortLabel(modelId, effort)}</option>`).join('');
 }
-function gradingModelFields(config) {
+function gradingModelFields(config, catalog) {
   const preset = presetIndex(config);
   const roleFields = (role, label) => {
     const id = config[role + 'Model'];
-    return `<div class="model-role"><label>${label}<select name="${role}Model">${gradingModels.map(model => `<option value="${model.id}" ${model.id === id ? 'selected' : ''}>${model.name}</option>`).join('')}</select></label>
-      <label>思考强度<select aria-label="${label}思考强度" name="${role}Effort">${effortOptions(id, config[role + 'Effort'])}</select></label></div>`;
+    const missing = gradingModel(id, catalog) ? '' : `<option value="${e(id)}" selected disabled>原模型连接已不可用</option>`;
+    return `<div class="model-role"><label>${label}<select name="${role}Model">${missing}${groupedModelOptions(catalog, id)}</select></label>
+      <label>思考强度<select aria-label="${label}思考强度" name="${role}Effort">${effortOptions(id, config[role + 'Effort'], catalog)}</select></label></div>`;
   };
-  return `<section class="model-settings"><label>模型搭配<select name="modelPreset">${gradingPresets.map((pair,index) => `<option value="${index}" ${index === preset ? 'selected' : ''}>${gradingModel(pair.mainModel).name} + ${gradingModel(pair.workerModel).name}</option>`).join('')}<option value="custom" ${preset < 0 ? 'selected' : ''}>自定义搭配</option></select></label>
+  return `<section class="model-settings"><label>模型搭配<select name="modelPreset">${gradingPresets.map((pair,index) => gradingModel(pair.mainModel,catalog) && gradingModel(pair.workerModel,catalog) ? `<option value="${index}" ${index === preset ? 'selected' : ''}>${gradingModel(pair.mainModel).name} + ${gradingModel(pair.workerModel).name}</option>` : '').join('')}<option value="custom" ${preset < 0 || !gradingModel(config.mainModel,catalog) || !gradingModel(config.workerModel,catalog) ? 'selected' : ''}>自定义搭配</option></select></label>
     <details class="model-details" ${preset < 0 ? 'open' : ''}><summary>调整模型与思考强度</summary>${roleFields('main','主模型 · 整理评分要求')}${roleFields('worker','子模型 · 逐份批改')}</details></section>`;
 }
 function readModelConfig(data) {
   return Object.fromEntries(['mainModel','mainEffort','workerModel','workerEffort'].map(key => [key, data.get(key)]));
 }
-function changeModelSelection(form, field) {
+function changeModelSelection(form, field, catalog) {
   const preset = form.elements.modelPreset;
   if (!preset || !field) return;
   if (field === preset) {
@@ -68,28 +69,37 @@ function changeModelSelection(form, field) {
     const pair = gradingPresets[Number(preset.value)];
     for (const role of ['main','worker']) {
       form.elements[role+'Model'].value = pair[role+'Model'];
-      form.elements[role+'Effort'].innerHTML = effortOptions(pair[role+'Model'], pair[role+'Effort']);
+      form.elements[role+'Effort'].innerHTML = effortOptions(pair[role+'Model'], pair[role+'Effort'], catalog);
     }
     return;
   }
   if (!['mainModel','mainEffort','workerModel','workerEffort'].includes(field.name)) return;
   if (field.name.endsWith('Model')) {
-    const strength = form.elements[field.name.replace('Model','Effort')], levels = gradingModel(field.value).efforts;
-    strength.innerHTML = effortOptions(field.value, levels.includes(strength.value) ? strength.value : levels.includes('medium') ? 'medium' : 'high');
+    const strength = form.elements[field.name.replace('Model','Effort')], levels = gradingModel(field.value, catalog).efforts;
+    strength.innerHTML = effortOptions(field.value, levels.includes(strength.value) ? strength.value : levels.includes('medium') ? 'medium' : levels[0], catalog);
   }
   const matched = presetIndex(readModelConfig(new FormData(form)));
   preset.value = matched < 0 ? 'custom' : String(matched);
 }
 
-export function taskForm(ctx, task = null, { allowStart = false } = {}) {
+function gradingReady(config, state) {
+  return [config.mainModel, config.workerModel].every(id => {
+    const model = gradingModel(id, state.modelCatalog);
+    return Boolean(model && (model.ready ?? state.agentReady));
+  });
+}
+
+export function taskForm(ctx, task = null, { allowStart = false, scheme = ctx.state.schemes[0], question = ctx.state.questions?.[0] } = {}) {
   const selected = new Set(task?.groupIds || [...ctx.selected]);
   const mode = task ? task.executionMode || 'review' : 'auto';
   const supplement = task ? task.supplementalInstructions ?? task.goal ?? '' : ctx.command || '';
-  const schemeId = task ? task.schemeId : ctx.state.schemes[0]?.id;
-  const questionId = task ? task.questionId : ctx.state.questions?.[0]?.id;
+  const schemeId = task ? task.schemeId : scheme?.id;
+  const questionId = task ? task.questionId : question?.id;
   const selectedGroups = ctx.state.groups.filter(group => selected.has(group.id));
-  const config = task?.modelConfig ?? ctx.state.defaultGradingConfig ?? gradingPresets[0];
+  const catalog = ctx.state.modelCatalog;
+  const config = task?.modelConfig ?? gradingConfigForModel(task ? null : ctx.composerModelId ?? savedComposerModel(catalog), catalog, ctx.state.defaultGradingConfig);
   const canStart = allowStart && task?.kind !== 'assist';
+  const ready = gradingReady(config, ctx.state);
   return `<form id="task-form" class="form task-setup"><input type="hidden" name="kind" value="${task?.kind === 'assist' ? 'assist' : 'grade'}">
     ${task?.title ? `<input type="hidden" name="title" value="${e(task.title)}">` : ''}
     <details class="setup-materials" ${selectedGroups.length ? '' : 'open'}><summary><span><strong data-setup-count>${selectedGroups.length} 份答卷 · ${selectedGroups.reduce((sum, group) => sum + group.pageIds.length, 0)} 页</strong><small data-setup-materials>题目：${e((ctx.state.questions || []).find(row => row.id === questionId)?.label || '无')} · MS：${e(ctx.state.schemes.find(row => row.id === schemeId)?.label || '无')}</small></span><span class="setup-edit">调整材料与范围</span></summary>
@@ -98,27 +108,30 @@ export function taskForm(ctx, task = null, { allowStart = false } = {}) {
     <label>Marking scheme（可选）<select name="schemeId"><option value="">无</option>${ctx.state.schemes.map(scheme => `<option value="${e(scheme.id)}" ${schemeId === scheme.id ? 'selected' : ''}>${e(scheme.label)}</option>`).join('')}</select></label></div></div></details>
     ${task?.kind === 'assist' ? `<label>任务说明<textarea name="goal" required maxlength="8000" rows="3">${e(task.goal)}</textarea></label>` : ''}
     <label>补充批改要求（可选）<textarea name="supplementalInstructions" maxlength="8000" rows="3" placeholder="例如：高中数学，DSE；用中文解释失分原因。留空也可以。">${e(supplement)}</textarea></label>
-    ${task?.kind === 'assist' ? '' : gradingModelFields(config)}
+    ${task?.kind === 'assist' ? '' : gradingModelFields(config, catalog)}
     <details class="setup-options"><summary>更多设置<span>${mode === 'auto' ? '自动继续' : '先确认再批改'}${task?.allowWebSearch ? ' · 可联网' : ''}</span></summary><div class="setup-option-fields">
     ${task?.gradingContext ? `<label>已有学科与考试信息<textarea name="gradingContext" maxlength="4000" rows="2">${e(task.gradingContext)}</textarea></label>` : ''}
     <label>批改方式<select name="executionMode"><option value="review" ${mode === 'review' ? 'selected' : ''}>先让我确认评分要求，再批改</option><option value="auto" ${mode === 'auto' ? 'selected' : ''}>自动继续批改</option></select></label>
     <label class="research-option"><input type="checkbox" name="allowWebSearch" ${task?.allowWebSearch ? 'checked' : ''}>允许联网查阅参考资料</label>${ctx.state.researchAvailable ? '' : '<p class="muted">当前未连接检索服务。</p>'}
     <label>完成后<select name="after"><option value="review" ${task?.after !== 'stop' ? 'selected' : ''}>等我审阅结果</option><option value="stop" ${task?.after === 'stop' ? 'selected' : ''}>保存结果</option></select></label></div></details>
-    <div class="setup-footer"><p class="setup-mode-hint" data-setup-mode>${taskModeHint(mode)}</p>${canStart && !ctx.state.agentReady ? '<p class="setup-connection-note">模型尚未连接，可以先保存草稿。</p>' : ''}
-    <div class="form-actions">${canStart ? `<button type="submit" name="intent" value="save" class="quiet" ${selectedGroups.length ? '' : 'disabled'}>保存草稿</button><button type="submit" name="intent" value="start" class="primary" ${selectedGroups.length && ctx.state.agentReady ? '' : 'disabled'}>开始批改</button>` : `<button class="primary" type="submit" name="intent" value="save" ${selectedGroups.length ? '' : 'disabled'}>保存安排</button>`}</div></div></form>`;
+    <div class="setup-footer"><p class="setup-mode-hint" data-setup-mode>${taskModeHint(mode)}</p>${canStart ? `<p class="setup-connection-note" ${ready ? 'hidden' : ''}>所选模型尚未连接，可以先保存草稿。 ${ctx.embedded ? '<a href="/#settings" target="_top">配置模型连接 ↗</a>' : ''}</p>` : ''}
+    <div class="form-actions">${canStart ? `<button type="submit" name="intent" value="save" class="quiet" ${selectedGroups.length ? '' : 'disabled'}>保存草稿</button><button type="submit" name="intent" value="start" class="primary" ${selectedGroups.length && ready ? '' : 'disabled'}>开始批改</button>` : `<button class="primary" type="submit" name="intent" value="save" ${selectedGroups.length ? '' : 'disabled'}>保存安排</button>`}</div></div></form>`;
 }
 
 export const taskModeHint = mode => mode === 'auto' ? '准备好评分要求后自动批改；有具体疑问时会询问你。' : '先准备评分要求，等你确认后再批改答卷。';
 
 export function refreshTaskSetup(form, state, field) {
-  changeModelSelection(form, field);
+  changeModelSelection(form, field, state.modelCatalog);
   const input = taskFormInput(new FormData(form));
   const groups = state.groups.filter(group => input.groupIds.includes(group.id));
   form.querySelector('[data-setup-count]').textContent = `${groups.length} 份答卷 · ${groups.reduce((sum, group) => sum + group.pageIds.length, 0)} 页`;
   form.querySelector('[data-setup-materials]').textContent = `题目：${(state.questions || []).find(row => row.id === input.questionId)?.label || '无'} · MS：${state.schemes.find(row => row.id === input.schemeId)?.label || '无'}`;
   form.querySelector('[data-setup-mode]').textContent = taskModeHint(input.executionMode);
   form.querySelector('.setup-options summary span').textContent = `${input.executionMode === 'auto' ? '自动继续' : '先确认再批改'}${input.allowWebSearch ? ' · 可联网' : ''}`;
-  for (const submit of form.querySelectorAll('[type="submit"]')) submit.disabled = !groups.length || (submit.value === 'start' && !state.agentReady);
+  const ready = input.modelConfig && gradingReady(input.modelConfig, state);
+  const connectionNote = form.querySelector('.setup-connection-note');
+  if (connectionNote) connectionNote.hidden = Boolean(ready);
+  for (const submit of form.querySelectorAll('[type="submit"]')) submit.disabled = !groups.length || (submit.value === 'start' && !ready);
 }
 
 export function taskFormInput(data) {
@@ -135,7 +148,7 @@ export function taskFormInput(data) {
 export async function submitTaskSetup({ request, input, taskId = null, start = false, onSaved = () => {} }) {
   const saved = await request(taskId ? `/api/tasks/${taskId}` : '/api/tasks', input, taskId ? 'PATCH' : 'POST');
   const savedId = taskId || saved.createdTaskId;
-  if (!savedId) throw Error('批改草稿已保存，请从任务记录中打开后继续。');
+  if (!savedId) throw Error('批改草稿已保存，请从批改历史打开后继续。');
   onSaved(savedId);
   if (start) await request(`/api/tasks/${savedId}/start`);
   return savedId;

@@ -1,4 +1,5 @@
-import { modelConfigError } from '../../web/grading-models.mjs';
+import { batchReport, reportSummaryMarkdown, studentSummaryMarkdown } from '../../web/grading-library.mjs';
+import { gradingConfigForModel, gradingModel, modelConfigError } from '../../web/grading-models.mjs';
 import { mkdir, readFile, writeFile, rename } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -78,13 +79,18 @@ export function replacePartition(state, groups, unassignedPageIds = []) {
   state.materialRevision++;
 }
 
-export function taskDraft(state, input) {
+export function taskDraft(state, input, {catalog, modelId, defaults} = {}) {
   const kind = input.kind ?? 'grade';
   let modelConfig;
-  if (input.modelConfig !== undefined) {
-    const error = modelConfigError(input.modelConfig);
+  const selection = modelId ?? input.modelId;
+  if (selection != null) fail(gradingModel(selection, catalog), '请选择有效的模型。');
+  const assistModel = kind === 'assist' ? selection ?? catalog?.defaultId : null;
+  const requested = input.modelConfig === undefined && kind === 'grade' && catalog
+    ? gradingConfigForModel(selection, catalog, defaults) : input.modelConfig;
+  if (requested !== undefined) {
+    const error = modelConfigError(requested, catalog);
     fail(kind === 'grade' && !error, error || '仅批改任务支持模型搭配。');
-    const { mainModel, mainEffort, workerModel, workerEffort } = input.modelConfig;
+    const { mainModel, mainEffort, workerModel, workerEffort } = requested;
     modelConfig = { mainModel, mainEffort, workerModel, workerEffort };
   }
   fail(['grade', 'assist'].includes(kind), '任务类型无效。');
@@ -107,7 +113,7 @@ export function taskDraft(state, input) {
   return {
     id: id(), title: (typeof input.title === 'string' && input.title.trim() ? input.title : kind === 'grade' ? `批改 ${groups.length} 份答卷` : goal).trim().slice(0, 120), goal,
     supplementalInstructions: supplementalInstructions.trim(),
-    ...(modelConfig ? { modelConfig } : {}), kind, groupIds: [...input.groupIds], schemeId: scheme?.id ?? null, after: input.after,
+    ...(modelConfig ? { modelConfig } : {}), ...(assistModel ? {modelId:assistModel} : {}), kind, groupIds: [...input.groupIds], schemeId: scheme?.id ?? null, after: input.after,
     questionId: question?.id ?? null, question: structuredClone(question),
     gradingContext: input.gradingContext?.trim() || '', allowWebSearch: input.allowWebSearch === true,
     executionMode: executionMode(input.executionMode ?? state.executionMode),
@@ -151,11 +157,31 @@ export function saveReview(state, input) {
 
 export function publicState(state, configured, runtime = {}) {
   const copy = structuredClone(state);
+  const tasks = new Map(copy.tasks.map(task => [task.id, task]));
+  for (const doc of copy.documents || []) {
+    if (!doc.artifactId || !(doc.revision > 1)) continue;
+    const task = tasks.get(doc.taskId);
+    if (!task) continue;
+    const batch = batchReport(task);
+    if (doc.groupId == null && batch && batch.id === doc.artifactId) {
+      batch.currentSummary = reportSummaryMarkdown(doc.body);
+      continue;
+    }
+    const matches = (task.artifacts || []).filter(artifact => artifact.id === doc.artifactId && (doc.groupId === undefined || doc.groupId === artifact.groupId));
+    if (matches.length !== 1 || !matches[0].groupId) continue;
+    const group = task.groups.find(group => group.id === matches[0].groupId);
+    if (!group) continue;
+    // Older editable copies store their source pages but omit the student ID.
+    const pages = new Set([...(group.pageIds || []), ...(task.scheme?.pageIds || []), ...(task.question?.pageIds || [])]);
+    if (doc.sourcePageIds?.some(id => !pages.has(id))) continue;
+    matches[0].currentSummary = studentSummaryMarkdown(doc.body);
+  }
   copy.documents = (copy.documents || []).map(({ body, history, ...document }) => ({ ...document, versionCount: history.length }));
   copy.pages = copy.pages.map(({ path, ...page }) => ({ ...page, url: `/api/pages/${page.id}` }));
   copy.tasks = copy.tasks.map(task => {
     const { pages, guideDraft, ...visible } = task;
-    return { ...visible, pageHashes: Object.fromEntries((pages || []).map(page => [page.id, page.sha256])),
+    const guideReference = guideDraft && { documentId:guideDraft.documentId, revision:guideDraft.revision, hash:guideDraft.hash, title:guideDraft.title };
+    return { ...visible, ...(guideReference ? {guideReference} : {}), pageHashes: Object.fromEntries((pages || []).map(page => [page.id, page.sha256])),
       pageCount: task.groups.reduce((sum, group) => sum + group.pageIds.length, 0) };
   });
   return { ...copy, agentReady: configured, ...runtime };
@@ -167,7 +193,6 @@ export function makeRecord(task, group, item, point, rule, gradeHash, rubricHash
   const annotationRegions=annotationCurrent?(annotation.regions||[]).flatMap(region=>{
     const pageId=group.pageIds[region.page-1],page=task.pages?.find(page=>page.id===pageId);
     return page&&page.sha256===region.pageHash&&selected.student_pages.includes(region.page)?[{pageId,pageHash:page.sha256,rect:region.rect,frameId:region.frameId,
-      ...(region.precision==='ocr-regions'?{precision:region.precision,regionId:region.regionId,regionManifestHash:region.regionManifestHash}: {}),
       ...(region.precision==='grid-cells'?{precision:region.precision,contextRect:region.contextRect,contextPaddingCells:region.contextPaddingCells}: {})}]:[];
   }):[];
   const source = { task: task.id, group: group.id, item: item.item_id, point: point?.point_id ?? null, gradeHash, rubricHash };
@@ -182,7 +207,7 @@ export function makeRecord(task, group, item, point, rule, gradeHash, rubricHash
     studentPageIds: (selected.student_pages || item.student_pages || []).map(number => group.pageIds[number - 1]).filter(Boolean),
     schemePageIds: (rule?.source_pages || item.scheme_pages || []).map(number => task.scheme?.pageIds[number - 1]).filter(Boolean),
     reviewRequired: Boolean(item.review_required || selected.score == null),
-    ...(annotation?{annotationStatus:annotationCurrent?annotation.status:'stale',annotationOrigin:annotation.origin,annotationIssues:annotation.issues||[],annotationRegions}:{}),
+    ...(annotation?{annotationStatus:annotationCurrent?annotation.status:'stale',annotationRegions}:{}),
     originalHash: digest({ ...source, selected, rule }),
   };
 }

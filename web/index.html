@@ -6,13 +6,18 @@
     <meta name="color-scheme" content="light">
     <meta name="theme-color" content="#ffffff">
     <title>GradeOS · 批改</title>
+    <link rel="icon" href="/assets/icons/gradeos.svg" type="image/svg+xml">
     <link rel="stylesheet" href="/style.css">
+    <link rel="stylesheet" href="/brand.css">
+    <link rel="stylesheet" href="/file-archive.css">
+    <link rel="stylesheet" href="/model-picker.css">
+    <link rel="stylesheet" href="/interaction-surfaces.css">
     <script type="module" src="/app.mjs"></script>
   </head>
   <body>
     <div id="app"><p class="loading">正在打开工作空间…</p></div>
-    <dialog id="dialog"></dialog>
+    <dialog id="dialog" aria-labelledby="grading-dialog-title"></dialog>
     <div id="toast" role="status" aria-live="polite"></div>
-    <input id="upload-input" type="file" accept="application/pdf,image/png,image/jpeg" multiple hidden>
+    <input id="upload-input" type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.tif,.tiff,.bmp" multiple hidden>
   </body>
 </html>

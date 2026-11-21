@@ -1,3 +1,6 @@
+import { recentGradingResults, hasGradingOutput } from './recent-results.mjs';
+import { ModelConnections } from './model-connections.mjs';
+import { googleNavigation } from './google-return.mjs';
 import { createServer } from 'node:http';
 import { CloudPublisher } from './cloud-publisher.mjs';
 import { readFile } from 'node:fs/promises';
@@ -13,6 +16,7 @@ import { WorkspaceRunner } from './runner.mjs';
 import { WorkspaceChat } from './chat.mjs';
 import { addDocument, readDocument, saveDocument, addAnnotation, updateAnnotation } from './editable-documents.mjs';
 import { exportAnnotatedPdf } from './annotation-export.mjs';
+import { digest } from '../core.mjs';
 import { DEFAULT_MAIN_MODEL_ID } from '../experiment-models.mjs';
 import {gradingResult,resultMarkdown} from '../../web/grading-result.mjs';
 
@@ -22,15 +26,17 @@ const readBody = async (req, limit) => {
   for await (const chunk of req) { size += chunk.length; fail(size <= limit, '文件或请求过大。', 413); chunks.push(chunk); }
   return Buffer.concat(chunks);
 };
-export async function createWorkspaceServer({ directory, port = 4173, model, cap = 2, rubricPath = null, agent = runWorkspaceAgent, systemAgent, configured = () => Boolean(process.env.OPENROUTER_API_KEY) } = {}) {
+export async function createWorkspaceServer({ directory, port = 4173, model, cap = 2, rubricPath = null, agent = runWorkspaceAgent, systemAgent, cloudUrl, configured = () => Boolean(process.env.OPENROUTER_API_KEY) } = {}) {
   const store = await new WorkspaceStore(directory || join(experimentRoot, '.workspace')).init();
-  const runner = new WorkspaceRunner(store, { model, cap, agent, rubricPath });
-  const chat = new WorkspaceChat(store, { agent, model:model ?? DEFAULT_MAIN_MODEL_ID, configured });
-  const system = await new SystemService(store, { model:model ?? DEFAULT_MAIN_MODEL_ID, cap, configured, agent: systemAgent }).init();
-  const cloud = new CloudPublisher(store);
+  const modelConnections = await new ModelConnections(store.directory, {model, configured, cloudUrl}).init();
+  const runner = new WorkspaceRunner(store, { model, cap, agent, rubricPath, modelConnections });
+  const chat = new WorkspaceChat(store, { agent, model:model ?? DEFAULT_MAIN_MODEL_ID, configured, modelConnections, gradingDefaults:() => runner.defaultGradingConfig });
+  const system = await new SystemService(store, { model:model ?? DEFAULT_MAIN_MODEL_ID, cap, configured, modelConnections, agent: systemAgent }).init();
+  const cloud = new CloudPublisher(store, modelConnections);
   const token = randomBytes(32).toString('hex');
   let planning = false;
-  const state = () => publicState(store.snapshot(), configured(), { planning: planning || Boolean(chat.active), chat: chat.snapshot(),
+  let recentResults, recentRevision;
+  const state = () => publicState(store.snapshot(), modelConnections.catalog().options.some(row=>row.ready), { batchUploads: true, modelCatalog:modelConnections.catalog(), planning: planning || Boolean(chat.active), chat: chat.snapshot(),
     defaultGradingConfig: runner.defaultGradingConfig,
     failureReasons: runner.failureReasons, liveTasks: Object.fromEntries([...runner.active].map(([id, entry]) => [id, { events: entry.events?.slice(-120) || [] }])), runBudgetUsd: cap, researchAvailable: Boolean(process.env.BRAVE_SEARCH_API_KEY) });
   const send = (res, status, data) => { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(data)); };
@@ -44,9 +50,14 @@ export async function createWorkspaceServer({ directory, port = 4173, model, cap
       const actualPort = typeof address === 'object' ? address.port : port;
       const allowedHosts = [`127.0.0.1:${actualPort}`, `localhost:${actualPort}`];
       fail(allowedHosts.includes(req.headers.host), '主机无效。', 403);
-      fail(!req.headers['sec-fetch-site'] || ['same-origin', 'none'].includes(req.headers['sec-fetch-site']), '请从本地工作区打开。', 403);
       const url = new URL(req.url, `http://${req.headers.host}`);
-      if(req.method==='GET'&&url.pathname==='/favicon.ico'){res.writeHead(204);res.end();return;}
+      if (url.pathname.startsWith('/auth/google/') && await googleNavigation({url,req,res,port:actualPort,connections:modelConnections,
+        complete:async () => { await system.store.mutate(()=>{}); server.emit('workspace-signed-in'); }})) return;
+      fail(!req.headers['sec-fetch-site'] || ['same-origin', 'none'].includes(req.headers['sec-fetch-site']), '请从本地工作区打开。', 403);
+      if (['GET','HEAD'].includes(req.method) && url.pathname === '/favicon.ico') {
+        res.writeHead(302, { Location:'/assets/icons/gradeos.svg' });
+        return res.end();
+      }
       if (!['GET', 'HEAD'].includes(req.method)) {
         const submitted = Buffer.from(String(req.headers['x-workspace-token'] || ''));
         fail(submitted.length === token.length && timingSafeEqual(submitted, Buffer.from(token)), '请刷新工作区后重试。', 403);
@@ -66,7 +77,32 @@ export async function createWorkspaceServer({ directory, port = 4173, model, cap
         const body=resultMarkdown(result,snapshot.pages);
         res.writeHead(200,{'Content-Type':'text/markdown; charset=utf-8','Content-Disposition':`attachment; filename*=UTF-8''${encodeURIComponent('评分结果.md')}`});res.end(body);return;
       }
-      if (req.method === 'GET' && url.pathname === '/api/state') return send(res, 200, { ...state(), token });
+      if (req.method === 'GET' && /^\/api\/tasks\/[\w-]+\/guide-draft$/.test(url.pathname)) {
+        const guide = store.state.tasks.find(task => task.id === url.pathname.split('/')[3])?.guideDraft;
+        fail(guide && typeof guide.body === 'string', '此批次没有保存这份评分说明。', 404);
+        fail(Number(url.searchParams.get('revision')) === guide.revision && url.searchParams.get('hash') === guide.hash && digest(guide.body) === guide.hash,
+          '评分说明与批次保存的版本不一致。', 409);
+        if (!url.searchParams.has('download')) return send(res, 200, {body:guide.body, revision:guide.revision, hash:guide.hash});
+        res.writeHead(200, {'Content-Type':'text/markdown; charset=utf-8', 'Content-Disposition':`attachment; filename*=UTF-8''${encodeURIComponent(guide.title || '评分说明.md')}`});
+        return res.end(guide.body);
+      }
+      if (req.method === 'GET' && url.pathname === '/api/state') {
+        if (url.searchParams.get('summary') === '1') {
+          const { revision, groups, tasks } = store.state;
+          if (recentRevision !== revision || !recentResults) {
+            recentResults = recentGradingResults(store.state);
+            recentRevision = revision;
+          }
+          return send(res, 200, { token, revision, recentResults, canvas: true, motion: system.store.state.preferences.motion, groupCount: groups.length, tasks: tasks.map(
+            task => {
+              const { id, title, kind, status, createdAt, updatedAt, startedAt, finishedAt, completedAt, groups, groupIds } = task;
+              return { id, title, kind, status, createdAt, updatedAt, startedAt, completedAt: finishedAt ?? completedAt, submissionCount: groups?.length ?? groupIds?.length,
+                hasResult: kind === 'grade' && ['completed','needs_review'].includes(status) && Boolean(hasGradingOutput(task)) };
+            }
+          ) });
+        }
+        return send(res, 200, { ...state(), token });
+      }
       if(req.method==='GET'&&/^\/api\/tasks\/[\w-]+\/annotated\.pdf$/.test(url.pathname)) {
         const result=await exportAnnotatedPdf(store,url.pathname.split('/')[3],url.searchParams.get('groupId'));
         res.writeHead(200,{'Content-Type':'application/pdf','Content-Disposition':`${url.searchParams.has('download')?'attachment':'inline'}; filename*=UTF-8''${encodeURIComponent(result.name)}`});
@@ -83,13 +119,32 @@ export async function createWorkspaceServer({ directory, port = 4173, model, cap
       if (req.method === 'GET' && /^\/api\/pages\/[\w-]+$/.test(url.pathname)) {
         const page = store.state.pages.find(item => item.id === url.pathname.split('/').at(-1));
         fail(page, '页面不存在。', 404);
+        fail(!url.searchParams.has('hash') || url.searchParams.get('hash') === page.sha256, '这页与批次保留的原件不一致。', 409);
         const bytes = await readFile(page.path);
+        if (url.searchParams.has('hash')) fail(digest(bytes) === page.sha256, '原件内容已发生变化。', 409);
         res.writeHead(200, { 'Content-Type': 'image/png' }); return res.end(bytes);
+      }
+      if (req.method === 'POST' && url.pathname === '/api/uploads/batch') {
+        const body = await readBody(req, 7 * 1024 * 1024);
+        const form = await new Response(body, { headers: { 'content-type': req.headers['content-type'] } }).formData();
+        const files = form.getAll('files');
+        fail(files.length > 0 && files.length <= 3 && files.every(file => typeof file.arrayBuffer === 'function'), '每组最多导入三个文件。');
+        // Decode in parallel, but commit in selection order even if a file fails.
+        let previous = Promise.resolve();
+        const jobs = files.map(file => {
+          const turn = previous;
+          const job = file.arrayBuffer().then(buffer => importUpload(store, {
+            bytes: Buffer.from(buffer), name: file.name, role: url.searchParams.get('role'), grouping: url.searchParams.get('grouping') ?? 'file',
+          }, turn)).then(() => ({ name: file.name }), error => ({ name: file.name, message: error.message }));
+          previous = Promise.all([turn, job]);
+          return job;
+        });
+        return send(res, 201, { results: await Promise.all(jobs) });
       }
       if (req.method === 'POST' && url.pathname === '/api/uploads') {
         const bytes = await readBody(req, 40 * 1024 * 1024);
-        await importUpload(store, { bytes, role: url.searchParams.get('role'), name: url.searchParams.get('name'), grouping: url.searchParams.get('grouping') ?? 'file' });
-        return send(res, 201, state());
+        const receipt = await importUpload(store, { bytes, role: url.searchParams.get('role'), name: url.searchParams.get('name'), grouping: url.searchParams.get('grouping') ?? 'file' });
+        return send(res, 201, url.searchParams.has('receipt') ? receipt : state());
       }
       if (url.pathname.startsWith('/api/') && req.method !== 'GET') {
         const body = JSON.parse((await readBody(req, 512 * 1024)).toString() || '{}');
@@ -102,7 +157,8 @@ export async function createWorkspaceServer({ directory, port = 4173, model, cap
               if (existing) return readDocument(snapshot, existing.id);
               const added = addDocument(snapshot, { title: artifact.title, body: artifact.body, taskId: task.id,
                 sourcePageIds: [...task.groups.filter(group => !artifact.groupId || group.id === artifact.groupId).flatMap(group => group.pageIds), ...(task.scheme?.pageIds || []), ...(task.question?.pageIds || [])] }, 'agent');
-              snapshot.documents.find(row => row.id === added.id).artifactId = artifact.id; return added;
+              Object.assign(snapshot.documents.find(row => row.id === added.id), { artifactId: artifact.id, groupId: artifact.groupId ?? null });
+              return added;
             }
             const scheme = body.schemeId ? snapshot.schemes.find(row => row.id === body.schemeId) : null;
             fail(!body.schemeId || scheme, '评分标准不存在。');
@@ -150,14 +206,16 @@ export async function createWorkspaceServer({ directory, port = 4173, model, cap
           });
         } else if (req.method === 'POST' && url.pathname === '/api/tasks') {
           const createdTaskId = await store.mutate(body.revision, snapshot => {
-            const task = taskDraft(snapshot, body); snapshot.tasks.push(task); return task.id;
+            const task = taskDraft(snapshot, body, {catalog:modelConnections.catalog(), defaults:runner.defaultGradingConfig});
+            snapshot.tasks.push(task); return task.id;
           });
           return send(res, 200, { ...state(), createdTaskId });
         } else if (req.method === 'PATCH' && /^\/api\/tasks\/[\w-]+$/.test(url.pathname)) {
           await store.mutate(body.revision, snapshot => {
             const existing = snapshot.tasks.find(task => task.id === url.pathname.split('/').at(-1));
             fail(existing?.status === 'draft', '只能修改尚未开始的任务。', 409);
-            const updated = taskDraft(snapshot, body);
+            const updated = taskDraft(snapshot, {...body, modelConfig:body.modelConfig ?? existing.modelConfig, modelId:body.modelId ?? existing.modelId},
+              {catalog:modelConnections.catalog(), defaults:runner.defaultGradingConfig});
             Object.assign(existing, updated, { id: existing.id, createdAt: existing.createdAt });
           });
         } else if (req.method === 'POST' && /^\/api\/tasks\/[\w-]+\/start$/.test(url.pathname)) {
@@ -181,6 +239,9 @@ export async function createWorkspaceServer({ directory, port = 4173, model, cap
           fail(!planning && !chat.active, 'Agent 正在处理上一条要求。', 409);
           fail(typeof body.goal === 'string' && body.goal.trim().length > 0 && body.goal.length <= 8000, '请填写任务要求。');
           const snapshot = store.snapshot();
+          const route = modelConnections.resolve(body.modelId), catalog = modelConnections.catalog();
+          const draftOptions = { catalog, modelId:body.modelId ?? catalog.defaultId, defaults:runner.defaultGradingConfig };
+          fail(route.ready, route.reason || '所选模型尚未连接，请在账号设置中配置。', 424);
           fail(body.revision === snapshot.revision, '材料已有更新，请重试。', 409);
           fail(Array.isArray(body.selectedIds) && body.selectedIds.length > 0 && body.selectedIds.every(value => snapshot.groups.some(group => group.id === value)), '请选择任务涉及的答卷。');
           planning = true;
@@ -194,10 +255,10 @@ export async function createWorkspaceServer({ directory, port = 4173, model, cap
               fail(JSON.stringify(owner?.pageIds) === JSON.stringify(selected?.pageIds), '答卷划分已改变。请对照这条记录的原页复核，或按当前材料另建任务。', 409);
             }
             const result = await agent({ store, state: snapshot, selectedIds: body.selectedIds,
-              goal: `${context.length ? `Previous visible conversation:\n${JSON.stringify(context)}\n` : ''}${record ? `Current review record:\n${JSON.stringify(record)}\n` : ''}${body.goal}`, modelId: model });
+              goal: `${context.length ? `Previous visible conversation:\n${JSON.stringify(context)}\n` : ''}${record ? `Current review record:\n${JSON.stringify(record)}\n` : ''}${body.goal}`, modelId:route.modelId, connection:route.connection });
             await store.mutate(null, next => {
               fail(snapshot.materialRevision === next.materialRevision, '材料已改变，本次安排未保存，请重新提出要求。', 409);
-              for (const draft of result.proposals) next.tasks.push(taskDraft(next, draft));
+              for (const draft of result.proposals) next.tasks.push(taskDraft(next, draft, draftOptions));
               next.conversation.push({ role: 'user', text: body.goal, selectedIds: body.selectedIds }, { role: 'assistant', text: result.text, selectedIds: body.selectedIds });
               next.conversation = next.conversation.slice(-40);
             });
@@ -208,14 +269,18 @@ export async function createWorkspaceServer({ directory, port = 4173, model, cap
         return send(res, 200, state());
       }
       fail(req.method === 'GET' || req.method === 'HEAD', '方法不支持。', 405);
-      const files = new Set(['cloud-publish.html', 'cloud-publish.css', 'cloud-publish.mjs', 'index.html', 'app.mjs', 'ui.mjs', 'materials.mjs', 'grading-library.mjs', 'grading-models.mjs', 'tasks.mjs', 'review.mjs', 'style.css', 'canvas-app.mjs', 'canvas-view.mjs', 'canvas-selection.mjs', 'canvas.css', 'workspace-canvas.mjs', 'document-editor.mjs', 'workspace-canvas.css', 'document-reader.mjs', 'document-reader.css', 'report-math.mjs', 'math-text-parser.mjs', 'results-view.mjs', 'results.css']);
-      for (const file of ['system.html', 'system-app.mjs', 'system-view.mjs', 'system.css']) files.add(file);
+      const files = new Set(['cloud-publish.html', 'cloud-publish.css', 'cloud-publish.mjs', 'index.html', 'app.mjs', 'ui.mjs', 'materials.mjs', 'grading-library.mjs', 'grading-models.mjs', 'model-picker.css', 'tasks.mjs', 'review.mjs', 'style.css', 'canvas-app.mjs', 'canvas-view.mjs', 'canvas-selection.mjs', 'canvas.css', 'workspace-canvas.mjs', 'document-editor.mjs', 'workspace-canvas.css', 'document-reader.mjs', 'document-reader.css', 'report-math.mjs', 'math-text-parser.mjs', 'results-view.mjs', 'results.css']);
+      for (const file of ['system.html', 'system-app.mjs', 'system-view.mjs', 'workspace-field.mjs', 'interface-motion.mjs', 'batch-previews.mjs', 'interaction-surfaces.css', 'file-archive.css', 'system.css']) files.add(file);
       const relative = url.pathname === '/' ? 'system.html' : url.pathname === '/grading' ? 'index.html' : url.pathname.slice(1);
+      files.add('brand.css');
+      files.add('account-login.css');
+      files.add('assets/brand/google-g.png');
+      files.add('assets/brand/inter-tight-latin-wght-normal.woff2');
       let file;
       if (['grading-annotations.mjs','annotation-layout.mjs','annotation-card.mjs','grading-result.mjs','page-stream.mjs'].includes(relative)) file = join(experimentRoot, 'web', relative);
       else if (relative === 'node_modules/katex/dist/katex.mjs') file = join(experimentRoot, relative);
       else if (files.has(relative)) file = join(experimentRoot, 'web', relative);
-      else if (/^assets\/icons\/(down|swap|undo|upload|plus|edit|form|message|left|right|column-width|zoom-in|file-text|close|arrow-up|pause|play|stop|select|history|check|minus)\.svg$/.test(relative)) file = join(experimentRoot, 'web', relative);
+      else if (/^assets\/icons\/(gradeos|down|swap|undo|upload|plus|edit|form|message|left|right|column-width|zoom-in|file-text|close|arrow-up|pause|play|stop|select|history|check|minus)\.svg$/.test(relative)) file = join(experimentRoot, 'web', relative);
       else throw Object.assign(new Error('页面不存在。'), { status: 404 });
       const content = await readFile(file);
       res.writeHead(200, { 'Content-Type': mime[extname(file)] || 'application/octet-stream' });

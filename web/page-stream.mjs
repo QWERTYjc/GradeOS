@@ -26,7 +26,7 @@ export class PageStream {
     },{passive:true});
   }
   update() {
-    const {owner,panel}=this,width=Math.max(340,Math.min(960,panel.root.querySelector('.pane-content').clientWidth-24))*panel.zoom;
+    const {owner,panel}=this,width=Math.max(100,Math.min(960,this.scroll.clientWidth-24))*panel.zoom;
     const anchor=this.views.get(panel.pageId)?.root.querySelector('.canvas-paper');
     const before=anchor?.getBoundingClientRect(),readingY=this.scroll.getBoundingClientRect().top+Math.min(140,this.scroll.clientHeight*.3);
     const offset=this.width&&this.width!==width&&before?.height?(readingY-before.top)/before.height:null;

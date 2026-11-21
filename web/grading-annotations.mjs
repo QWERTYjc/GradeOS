@@ -37,7 +37,7 @@ export function gradingAnnotations(state, taskId, groupId, pageId = null) {
     const schemePageIds = [...new Set(record.schemePageIds || [])].filter(id => task.scheme?.pageIds.includes(id) && validPage(id));
     const questionPageIds = [...new Set(record.questionPageIds || [])].filter(id => task.question?.pageIds.includes(id) && validPage(id));
     const page = pages.get(pageId && studentPageIds.includes(pageId) ? pageId : studentPageIds[0]);
-    const anchor = record.annotationOrigin !== 'local-ocr-regions' && page && state.gradingAnchors?.findLast(row => row.taskId === taskId && row.recordId === record.id
+    const anchor = page && state.gradingAnchors?.findLast(row => row.taskId === taskId && row.recordId === record.id
       && row.originalHash === record.originalHash && row.target.pageId === page.id && row.target.pageHash === page.sha256);
     const inlineRegions=page?(record.annotationRegions||[]).filter(region=>region.pageId===page.id&&region.pageHash===page.sha256&&validAnnotationRect(region.rect)):[];
     const rectangles=anchor&&validAnnotationRect(anchor.target.rect)?[anchor.target.rect]:inlineRegions.map(region=>validAnnotationRect(region.contextRect)?region.contextRect:region.rect);

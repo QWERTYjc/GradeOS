@@ -1,4 +1,4 @@
-import { escape as e, icon } from './ui.mjs';
+import { escape as e, icon, prefersReducedMotion } from './ui.mjs';
 import { documents, needsGradingMaterials } from './canvas-view.mjs';
 import { bindSelection } from './canvas-selection.mjs';
 import { DocumentEditor } from './document-editor.mjs';
@@ -67,7 +67,7 @@ export class WorkspaceCanvas {
   allSurfaces(){return this.panels.flatMap(p=>p.stream?[...p.stream.views.values()]:[p]);}
   eventSurface(node){const panel=this.panels.find(p=>p.id===node.closest('[data-pane]')?.dataset.pane);return panel?.stream?.views.get(node.closest('[data-page-surface]')?.dataset.pageSurface)||panel;}
   hoverResult(id){for(const view of this.allSurfaces()){view.hoveredId=id;view.selection?.draw();}}
-  async showResults(taskId,groupId){
+  async showResults(taskId,groupId,beside=true){
     const active=this.panels.find(p=>p.id===this.activeId),state=this.getState();
     const answer=state.groups.some(g=>g.pageIds.includes(active?.pageId))?active:this.panels.find(p=>state.groups.some(g=>g.pageIds.includes(p.pageId)));
     const task=state.tasks.find(t=>t.id===(taskId||active?.resultTaskId))||state.tasks.findLast(t=>t.kind==='grade'&&t.records?.length&&t.groups?.some(g=>g.pageIds.includes(answer?.pageId)))||state.tasks.findLast(t=>t.kind==='grade'&&t.records?.length);
@@ -76,8 +76,8 @@ export class WorkspaceCanvas {
     this.onResultDocument();
     const existing=this.panels.find(p=>p.resultTaskId===task.id&&p.resultGroupId===group.id);
     if(existing){this.activeId=existing.id;existing.root.scrollIntoView({block:'nearest',inline:'nearest'});return;}
-    const comparison=this.panels.findLast(p=>!group.pageIds.includes(p.pageId));
-    if(comparison&&this.panels.length>1){
+    const comparison=beside ? this.panels.length>1 && this.panels.findLast(p=>!group.pageIds.includes(p.pageId)) : active || this.panels[0];
+    if(comparison){
       if(comparison.editor?.dirty)await comparison.editor.save();
       Object.assign(comparison,{pageId:null,documentId:null,resultTaskId:task.id,resultGroupId:group.id});this.closeNote();this.activeId=comparison.id;this.update();return;
     }
@@ -200,7 +200,7 @@ export class WorkspaceCanvas {
     view.focusedPointId=note.id;view.selection?.draw();
     const scroll=panel.stream.scroll,paper=view.root.querySelector('.canvas-paper'),box=paper.getBoundingClientRect();
     const local=note.location==='region'?Math.min(...note.regions.map(region=>region.rect.y))*box.height:0;
-    scroll.scrollTo({top:Math.max(0,scroll.scrollTop+box.top-scroll.getBoundingClientRect().top+local-scroll.clientHeight*.25),behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth'});
+    scroll.scrollTo({top:Math.max(0,scroll.scrollTop+box.top-scroll.getBoundingClientRect().top+local-scroll.clientHeight*.25),behavior:prefersReducedMotion() ? 'instant' : 'smooth'});
   }
   setMode(mode) { this.allSurfaces().forEach(panel => panel.selection?.cancel()); this.closeNote(); this.mode = this.mode === mode ? 'browse' : mode; this.update(); }
   annotations(panel) {
@@ -373,8 +373,9 @@ export class WorkspaceCanvas {
     const leaders=panel.root.querySelector('.grading-leaders'),selected=this.note?.panel===panel?this.note.row:null;
     if(leaders&&paper?.width&&paper.height){
       leaders.setAttribute('viewBox',`0 0 ${paper.width} ${paper.height}`);
-      const links=[...commentPlacements,...(panel.symbolLayout||[])].filter(p=>p.sourceRect).map(place=>({place,line:gradingConnection(panel.inkMask,place,paper.width,paper.height)})).filter(row=>row.line);
-      leaders.innerHTML=links.map(({place,line})=>`<path class="${place.mark.tone} ${place.id===selected?.id?'is-active':''}" data-point-id="${e(place.id)}" data-distance="${line.distance}" d="${line.points.map(([x,y],i)=>`${i?'L':'M'}${x*paper.width} ${y*paper.height}`).join(' ')}"/>`).join('');
+      const pointId = selected?.id || panel.focusedPointId;
+      const links=[...commentPlacements,...(panel.symbolLayout||[])].filter(p=>p.sourceRect && p.id === pointId).map(place=>({place,line:gradingConnection(panel.inkMask,place,paper.width,paper.height)})).filter(row=>row.line);
+      leaders.innerHTML=links.map(({place,line})=>`<path class="${place.mark.tone} ${place.id===pointId?'is-active':''}" data-point-id="${e(place.id)}" data-distance="${line.distance}" d="${line.points.map(([x,y],i)=>`${i?'L':'M'}${x*paper.width} ${y*paper.height}`).join(' ')}"/>`).join('');
     }
     panel.selection?.draw();if(this.note?.panel===panel)this.positionNote();
   }
@@ -471,7 +472,7 @@ export class WorkspaceCanvas {
     if(action==='result-point'){await this.showPoint(id);return;}
     if(action==='result-source'){await this.showPage(id,true);return;}
     if(action==='result-review'){this.onReview(id);return;}
-    if(action==='result-item'){panel.root.querySelector(`[data-item="${CSS.escape(id)}"]`)?.scrollIntoView({block:'start',behavior:'smooth'});return;}
+    if(action==='result-item'){panel.root.querySelector(`[data-item="${CSS.escape(id)}"]`)?.scrollIntoView({block:'start',behavior:prefersReducedMotion() ? 'instant' : 'smooth'});return;}
     if((action==='note'||action==='remove-note')&&panel.stream)panel=panel.stream.views.get(panel.pageId)||panel;
     const rows = this.annotations(panel), row = rows.find(row => row.id === id);
     if (action === 'note' && row) {

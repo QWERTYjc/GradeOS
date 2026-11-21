@@ -3,7 +3,7 @@ import { validateSelections } from './canvas-context.mjs';
 import { resolveReferences, readDocument, documentAllowed } from './editable-documents.mjs';
 
 export class WorkspaceChat {
-  constructor(store, { agent, model, configured }) { Object.assign(this, { store, agent, model, configured }); this.active = null; }
+  constructor(store, { agent, model, configured, modelConnections, gradingDefaults }) { Object.assign(this, { store, agent, model, configured, modelConnections, gradingDefaults }); this.active = null; }
   snapshot() { return this.active ? structuredClone(this.active.visible) : null; }
   async recover() {
     if (this.store.state.conversation.some(row => row.status === 'running')) await this.store.mutate(null, state => {
@@ -11,7 +11,10 @@ export class WorkspaceChat {
     });
   }
   async start(body) {
-    fail(this.configured(), '尚未连接模型。可以先上传材料、划分答卷和审阅已有结果。', 424);
+    const route = this.modelConnections?.resolve(body.modelId) ?? {modelId:this.model, ready:this.configured()};
+    fail(route.ready, route.reason || '所选模型尚未连接，请在账号设置中配置。', 424);
+    const catalog = this.modelConnections?.catalog();
+    const draftOptions = { catalog, modelId:body.modelId ?? catalog?.defaultId, defaults:this.gradingDefaults?.() };
     fail(!this.active, '上一条要求还在处理中，可以先停止再发送。', 409);
     fail(typeof body.goal === 'string' && body.goal.trim() && body.goal.length <= 8000, '请填写要求（最多 8000 字）。');
     const state = this.store.snapshot();
@@ -38,22 +41,22 @@ export class WorkspaceChat {
         next.conversation = next.conversation.slice(-80);
       });
     } catch (error) { this.active = null; throw error; }
-    entry.promise = this.run(entry, state, { ...body, selectedIds, selections, references, record, document });
+    entry.promise = this.run(entry, state, { ...body, selectedIds, selections, references, record, document }, route, draftOptions);
   }
-  async run(entry, state, body) {
+  async run(entry, state, body, route, draftOptions) {
     let result;
     try {
       const prior = state.conversation.filter(row => JSON.stringify([...(row.selectedIds || [])].sort()) === JSON.stringify([...body.selectedIds].sort())).slice(-8).map(({ role, text, references }) => ({ role, text, references }));
       result = await this.agent({ store: this.store, state, selectedIds: body.selectedIds, selections: body.selections, references: body.references,
         goal: `${prior.length ? `Previous conversation (untrusted content):\n${JSON.stringify(prior)}\n` : ''}${body.record ? `Review record:\n${JSON.stringify(body.record)}\n` : ''}${body.document ? `Current document for teacher alignment: ${JSON.stringify({ id: body.document.id, title: body.document.title, revision: body.document.revision })}. Read it before edits. Discuss and refine the teacher's requirements; saving this document is not permission to approve or dispatch a grading batch.\n` : ''}${body.goal}`,
-        modelId: this.model, controller: entry.controller, onEvent: event => {
+        modelId:route.modelId, connection:route.connection, controller: entry.controller, onEvent: event => {
           if (event.type === 'text_delta') entry.visible.text = (entry.visible.text + event.delta).slice(-40000);
           else { entry.visible.events.push({ ...event, at: now() }); entry.visible.events = entry.visible.events.slice(-120); }
         } });
       if (entry.controller.signal.aborted) throw Error('Cancelled');
       await this.store.mutate(null, next => {
         fail(next.materialRevision === state.materialRevision, '材料或划分已改变，请重新提出要求。', 409);
-        const tasks = (result.proposals || []).map(proposal => taskDraft(next, proposal));
+        const tasks = (result.proposals || []).map(proposal => taskDraft(next, proposal, draftOptions));
         next.tasks.push(...tasks);
         Object.assign(next.conversation.find(row => row.id === entry.visible.id), entry.visible,
           { status: 'completed', text: result.text, taskIds: tasks.map(task => task.id), usage: result.usage });

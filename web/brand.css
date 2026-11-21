@@ -1,0 +1,18 @@
+/* Wordmark from GradeOS/frontend/src/components/brand/GradeOSLogo.tsx.
+   The favicon in assets/icons/gradeos.svg is the project's frontend/public/gradeos-app-icon.svg.
+   The Inter Tight Latin font is licensed in THIRD_PARTY_LICENSES/Inter-Tight-OFL.txt. */
+@font-face {
+  font-family: "Inter Tight Variable";
+  src: url("/assets/brand/inter-tight-latin-wght-normal.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+}
+.gradeos-wordmark {
+  display: inline-flex;
+  color: #09101f;
+  font: 600 1em/1 "Inter Tight Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  letter-spacing: -.065em;
+  white-space: nowrap;
+}
+.gradeos-wordmark > span { color: #1766e8 }

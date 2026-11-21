@@ -1,9 +1,46 @@
 import { mathParts, renderMath } from './report-math.mjs';
+import { gradingModel, gradingPresets, modelOptions, recommendedChatIds } from './grading-models.mjs';
+
+export const composerModelKey = 'gradeos-composer-model-v1';
+export function savedComposerModel(catalog) {
+  try {
+    const id = localStorage.getItem(composerModelKey);
+    return (catalog?.chatIds || recommendedChatIds).includes(id) ? id : '';
+  } catch { return ''; }
+}
+export function setComposerModel(id) {
+  try {
+    if (id) localStorage.setItem(composerModelKey, id);
+    else localStorage.removeItem(composerModelKey);
+  } catch { /* The selection still applies to the open composer. */ }
+}
+export function groupedModelOptions(catalog, selected) {
+  const groups = new Map();
+  for (const item of modelOptions(catalog)) {
+    const provider = item.provider || 'OpenRouter';
+    if (!groups.has(provider)) groups.set(provider, []);
+    groups.get(provider).push(`<option value="${escape(item.id)}" ${selected === item.id ? 'selected' : ''}>${escape(item.name)}</option>`);
+  }
+  return [...groups].map(([provider, rows]) => `<optgroup label="${escape(provider)}">${rows.join('')}</optgroup>`).join('');
+}
+export function composerModelSelect(state, selection, frozenId = null) {
+  const catalog = state.modelCatalog;
+  const defaultId = catalog?.defaultId || state.defaultGradingConfig?.mainModel || state.connection?.model || gradingPresets[0].mainModel;
+  const ids = frozenId ? [frozenId] : catalog?.chatIds || recommendedChatIds;
+  const selected = ids.includes(selection) ? selection : ids.includes(defaultId) ? defaultId : ids[0];
+  const model = gradingModel(selected, catalog) || gradingModel(selected);
+  const name = model?.name || (frozenId ? '批次主模型' : defaultId);
+  const disabled = frozenId ? 'disabled' : '';
+  const title = frozenId ? '此批次的补充说明使用已确定的主模型' : '选择模型';
+  return `<label class="composer-model" title="${escape(title)} · ${escape(name)}"><span aria-hidden="true">${escape(name)}</span><select id="composer-model" name="modelId" aria-label="${escape(title)}" ${disabled}>
+    ${ids.map(id => `<option value="${escape(id)}" ${id === selected ? 'selected' : ''}>${escape(gradingModel(id,catalog)?.name || gradingModel(id)?.name || id)}</option>`).join('')}</select></label>`;
+}
 
 export const escape = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
 export const icon = name => `<img class="icon" src="/assets/icons/${name}.svg" alt="" aria-hidden="true">`;
 export const button = (action, label, { className = '', attrs = '', symbol = '', disabled = false } = {}) => `<button type="button" class="${className}" data-action="${action}" ${attrs} ${disabled ? 'disabled' : ''}>${symbol ? icon(symbol) : ''}${label}</button>`;
 export const iconButton = (action, label, symbol, attrs = '') => button(action, '', { className: 'icon-button', symbol, attrs: `aria-label="${escape(label)}" title="${escape(label)}" ${attrs}` });
+export const prefersReducedMotion = () => document.documentElement.dataset.motion === 'reduce' || matchMedia('(prefers-reduced-motion: reduce)').matches;
 export const scoreText = value => typeof value === 'number' && Number.isFinite(value) ? `${value} 分` : '待判定';
 export const recordScoreText = (record, score = record.score) => typeof score === 'number' && Number.isFinite(score)
   ? `${score}${Number.isFinite(record.maximum) ? ` / ${record.maximum}` : ''} 分`

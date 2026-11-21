@@ -9,10 +9,9 @@ import {BRIEF_REASON_STYLE,compactPromptForReasons,expandBriefFullCredit,BriefRe
 import {conciseValidationContext,completeGradingSchema,gradingCorrectionTools,gradingCorrectionContext,gradingCorrectionSchema,mergeGradingCorrection,STUDENT_DRAFT_PROMPT,STUDENT_SELF_REVIEW_PROMPT,localReadingPrompt,studentSelfReviewOrder,studentSelfReviewSchema,validateSelfReviewRevisions,mergeSelfReviewCorrection} from './submission-contract.mjs';
 import {INSPECT_SCORING_SOURCES_SCHEMA,PERMISSION_SUBMIT_SCHEMA,sourcePermissionPrompt,inspectSourceTargets,validateSourceAssessments} from './source-permissions.mjs';
 import {MS_REVIEW_SCHEMA,MS_REVIEW_PROMPT,applyMSReview} from './ms-review.mjs';
-import { splitInlineAnnotations, annotationFrame, attachInlineAnnotations } from './inline-annotations.mjs';
+import { inlineAnnotationSchema, inlineAnnotationPrompt, splitInlineAnnotations, annotationFrame, attachInlineAnnotations } from './inline-annotations.mjs';
 import { singlePassSchema, singlePassPrompt, decodeSinglePassSubmission } from './single-pass-grading.mjs';
-import { ocrRegionIndex, ocrRegionTexts } from './ocr-regions.mjs';
-import { guideWireText, rubricWireText } from './guide-wire.mjs';
+import { bindResultLocations } from './result-evidence-locations.mjs';
 import { localObservationHint } from './local-observations.mjs';
 export { RUBRIC_SCHEMA, freezeRubric, validateFrozenRubric } from './rubric-contract.mjs';
 
@@ -22,6 +21,7 @@ const strings = { type: 'array', items: str };
 const pages = { type: 'array', items: { type: 'integer', minimum: 1 }, uniqueItems: true };
 const readSchema = obj({ pages: { ...pages, minItems: 1, maxItems: 8 } });
 export const MS_PAGES_PER_TURN = 3;
+const MS_COMPLETE_CONTEXT_PAGES = 24;
 export const MAIN_PROMPT = `You coordinate grading for a cohort using a shared marking scheme (MS).
 Inspect every MS page, including instructions and continuations. Work through the pages in order, staging the complete items visible in each group before requesting the next group. If an item continues across pages, reopen its source page when needed. You cannot read student answers.
 Build the candidate with write_rubric_items, batching complete items within the model response capacity rather than a fixed item count. Then call prepare_ms_review with the general instructions and unresolved notes. Review it yourself in this same conversation before submit_ms_review freezes the rules and allows student dispatch. Transcribe mathematical expressions carefully.
@@ -184,14 +184,13 @@ export function validateSourceIssue(raw,frozen,scheme,seen,index=0) {
 
 export function createStudentAgent({ model, streamFn, frozen, scheme, student, readImage, persist, log, protocol = 'legacy', persistSubmission,
   readInitialStudentImage=readImage,readInitialSchemeImage=null,readStudentRegion=null,readSourceRegion=readStudentRegion,initialStudentImageMode='original',reasonStyle='detailed',sourcePermissionReview=false,
-  inlineAnnotations=false, initialStudentGeometry=[], singlePass=false, mainOwnsScheme=false, markingGuide=null, gradingReasoning='low', localObservations=[], selfReview=false, persistPrimary }) {
+  inlineAnnotations=false, initialStudentGeometry=[], singlePass=false, compactWire=false, typedCompact=false, selectedObservations=false, resultLocations=false, verdictWire=false, deferConflicts=false, mainOwnsScheme=false, markingGuide=null, gradingReasoning='low', localObservations=[], selfReview=false, persistPrimary }) {
   if (mainOwnsScheme && !singlePass) throw Error('Compiled-only scheme delivery requires single-pass grading');
+  if (compactWire && (!singlePass || inlineAnnotations)) throw Error('Compact wire requires single-pass grading without inline coordinates');
   if(selfReview&&(protocol!=='evidence-v4'||singlePass||sourcePermissionReview||typeof persistPrimary!=='function'))throw Error('Self-review requires normal evidence-v4 grading and durable primary persistence');
   if (!['off', 'low', 'medium', 'high', 'xhigh', 'max'].includes(gradingReasoning)) throw Error('Unsupported grading reasoning');
-  if (!['original', 'source_regions', 'exact_white_margin_trim', 'resized_overview'].includes(initialStudentImageMode)) throw Error('Unsupported answer image representation');
-  if (inlineAnnotations && (!singlePass || initialStudentImageMode !== 'source_regions')) throw Error('Annotations require single-pass local OCR regions');
-  const labelledPages = initialStudentImageMode === 'source_regions';
-  const compactWire = singlePass && labelledPages && model.id === 'openai/gpt-6-luna';
+  if (!['original', 'source_grid', 'exact_white_margin_trim', 'resized_overview'].includes(initialStudentImageMode)) throw Error('Unsupported answer image representation');
+  const annotationGrid = initialStudentImageMode === 'source_grid';
   const localOnly=selfReview&&initialStudentImageMode==='resized_overview';
   if(localOnly&&(!readSourceRegion||inlineAnnotations))throw Error('Resized self-review requires a native region reader');
   if (!['legacy','evidence-v3','evidence-v4','evidence-v5'].includes(protocol) || (protocol !== 'legacy' && frozen.artifact.version !== 2)) throw Error('Unsupported student protocol');
@@ -206,9 +205,8 @@ export function createStudentAgent({ model, streamFn, frozen, scheme, student, r
   const studentReturned=optimized?new Set():studentSeen,schemeReturned=optimized?new Set():schemeSeen;
   const preparedBindings=new Map(),deliveredBindings=new Map(),annotationFrames=new Map();let exposedBindings=[];
   if(inlineAnnotations)for(const page of student.pages) {
-    const geometry = initialStudentGeometry.find(row => row.page === page.page);
-    annotationFrames.set(`i${page.page}`, { ...annotationFrame(page, initialStudentImageMode, geometry),
-      ocrTexts: ocrRegionTexts(page, geometry, localObservations.find(row => row.page === page.page)) });
+    annotationFrames.set(`i${page.page}`,annotationFrame(page,initialStudentImageMode,initialStudentGeometry.find(row=>row.page===page.page)));
+    annotationFrames.set(`o${page.page}`,annotationFrame(page,'original'));
   }
   const trackedImage=(role,load,representation='original',framePrefix=null)=>async page=>{
     const image=await load(page);
@@ -216,7 +214,6 @@ export function createStudentAgent({ model, streamFn, frozen, scheme, student, r
     if(!optimized)return image;
     const binding={role,page:page.page,representation,original_sha256:page.sha256??null,image_hash:digest(image.data??image.text),
       ...(inlineAnnotations&&framePrefix?{annotation_frame:`${framePrefix}${page.page}`}:{})};
-    if (inlineAnnotations && representation === 'source_regions') binding.region_manifest_sha256 = annotationFrames.get(`i${page.page}`).regionManifestHash;
     const key=digest(binding);preparedBindings.set(key,binding);
     return {...image,source_delivery:{key,...binding}};
   };
@@ -253,11 +250,13 @@ export function createStudentAgent({ model, streamFn, frozen, scheme, student, r
         sourceIssues.push(issue); await log({type:'ms_source_issue',issue});
         return {content:[{type:'text',text:JSON.stringify(issue)}],details:{}};
       } },
-    { name: 'submit_grading', label: 'Submit student', description: selfReview ? 'Save the complete primary draft in your first response. Page requests can accompany this call for subsequent self-review.' : 'Freeze every rubric item after reading the complete student answer book.', parameters: singlePass?singlePassSchema({frozen,student,inlineAnnotations,compact:compactWire}):protocol==='evidence-v4'?completeGradingSchema(gradingSchema,frozen):gradingSchema, executionMode: 'sequential',
+    { name: 'submit_grading', label: 'Submit student', description: selfReview ? 'Save the complete primary draft in your first response. Page requests can accompany this call for subsequent self-review.' : 'Freeze every rubric item after reading the complete student answer book.', parameters: singlePass?singlePassSchema({frozen,student,inlineAnnotations,annotationGrid,compactWire,typedCompact,selectedObservations,resultLocations,verdictWire}):protocol==='evidence-v4'?completeGradingSchema(inlineAnnotations?inlineAnnotationSchema(gradingSchema):gradingSchema,frozen):gradingSchema, executionMode: 'sequential',
       execute: async (_id, raw) => {
         if (result) throw Error('Student result already frozen');
         const submission = structuredClone(raw);
-        if(singlePass)raw=decodeSinglePassSubmission(raw,{inlineAnnotations,student,frozen,compact:compactWire});
+        const checkedAbsences=[];
+        if(singlePass)raw=decodeSinglePassSubmission(raw,{inlineAnnotations,student,compactWire,typedCompact,deferConflicts,frozen,selectedObservations,resultLocations,verdictWire,
+          onCheckedAbsence:observation=>checkedAbsences.push(observation)});
         const annotationSubmission = inlineAnnotations ? splitInlineAnnotations(raw) : null;
         if(annotationSubmission) raw=annotationSubmission.grading;
         if(sourcePermissionReview){const {source_assessments,...gradingFields}=raw;raw=gradingFields;}
@@ -301,7 +300,13 @@ export function createStudentAgent({ model, streamFn, frozen, scheme, student, r
         for (const page of scheme.pages) coverage.add(`scheme:${page.page}`);
         const checked = validateGrade(raw, { documents: { scheme, student } }, coverage);
         if(annotationSubmission)attachInlineAnnotations(checked,annotationSubmission.annotations,student,annotationFrames,deliveredBindings);
-        const final = { ...checked, protocol, submission_hash: digest(submission), ...(singlePass?compactWire ? {point_ledger_hash:digest(submission.items)} : {observation_ledger_hash:digest(submission.observations)}:{}), source_issues: structuredClone(stagedIssues), rubric_hash: frozen.hash, source_image_pages_delivered: [...schemeSeen].sort((a,b) => a-b), student_pages_delivered: [...studentSeen].sort((a,b) => a-b),
+        const observationLedger = compactWire ? submission.items.map(item => [item.id,item.p.map(point =>
+          typedCompact ? [point.id,point.p,point.t,...(Object.hasOwn(point,'f') ? [point.f] : []),...(resultLocations ? [point.v??null] : [])] : point.slice(0,3))]) : submission.observations;
+        const resultBands = resultLocations
+          ? bindResultLocations(submission,checked,frozen,student,initialStudentGeometry,deliveredBindings.values()) : [];
+        const final = { ...checked, protocol, submission_hash: digest(submission), ...(singlePass?{observation_ledger_hash:digest(observationLedger)}:{}), source_issues: structuredClone(stagedIssues), rubric_hash: frozen.hash, source_image_pages_delivered: [...schemeSeen].sort((a,b) => a-b), student_pages_delivered: [...studentSeen].sort((a,b) => a-b),
+          ...(checkedAbsences.length?{primary_checked_absences:checkedAbsences}:{}),
+          ...(resultBands.length?{primary_result_locations:resultBands}:{}),
           ...(optimized?{image_delivery_receipts:[...deliveredBindings.values()],initial_student_image_mode:initialStudentImageMode}:{} ),
           ...(reasonStyle!== 'detailed'?{reason_style:reasonStyle}:{}),
           ...(sourcePermissionReview?{source_permission_review:{coverage:'all primary non-full/unknown points',checks:sourceChecks,independent:false}}:{}) };
@@ -376,12 +381,13 @@ export function createStudentAgent({ model, streamFn, frozen, scheme, student, r
   }
   let protocolPrompt=shared?SHARED_EVIDENCE_PROMPT:optimized?compactPromptForReasons(reasonStyle):EVIDENCE_PROTOCOL_PROMPT;
   if(sourcePermissionReview)protocolPrompt=sourcePermissionPrompt(protocolPrompt);
-  const studentPrompt=(singlePass ? singlePassPrompt({inlineAnnotations,compact:compactWire,mainOwnsScheme}) : studentPromptForProtocol(protocol,selfReview))+(studentRegion?'\n'+localReadingPrompt(localOnly):'');
+  if(inlineAnnotations)protocolPrompt=inlineAnnotationPrompt(protocolPrompt);
+  const studentPrompt=(singlePass ? singlePassPrompt({inlineAnnotations,annotationGrid,mainOwnsScheme,compactWire,typedCompact,selectedObservations,resultLocations,verdictWire}) : studentPromptForProtocol(protocol,selfReview))+(studentRegion?'\n'+localReadingPrompt(localOnly):'');
   const allTools=optimized?tools.filter(t=>t.name!=='report_ms_issue'):tools;
   const normalTools=allTools.filter(t=>singlePass?t.name==='submit_grading':!['correct_grading','reopen_grading'].includes(t.name));
   const studentStream=(selected,context,options)=>streamFn(selected,context,{...options,
     ...(pendingCorrection?{gradingCorrectionRequest:{kind:'grading_correction',submission_hash:digest(pendingCorrection.raw),point_count:Math.max(1,frozen.artifact.items.filter(i=>!pendingCorrection.targets.length||pendingCorrection.targets.some(t=>t.item_id===i.item_id)).reduce((sum,i)=>sum+i.scoring_points.length,0))}}:{})});
-  const rubricText=`Frozen rubric (${frozen.hash}):\n${compactWire?rubricWireText(frozen.artifact):compact&&!singlePass?studentRubricText(frozen.artifact):JSON.stringify(frozen.artifact)}${compact ? '\nGeneral rule IDs: G1, G2, ... refer in order to general_instructions above; all source text and pages are retained there.' : ''}`;
+  const rubricText=`Frozen rubric (${frozen.hash}):\n${compact?studentRubricText(frozen.artifact,{reuseItemDefaults:verdictWire}):JSON.stringify(frozen.artifact)}${compact ? '\nGeneral rule IDs: G1, G2, ... refer in order to general_instructions above; all source text and pages are retained there.' : ''}`;
   const ctl = controlledAgent({ model, streamFn:studentStream, prompt: `${studentPrompt}${compact&&!singlePass ? '\n\n'+protocolPrompt : ''}${singlePass?'':'\n\n'+rubricText}`,
     tools:normalTools, finished: () => result !== null, log, singlePass, thinkingLevel: gradingReasoning,
     prepareNextTurnWithContext:({context})=>{
@@ -419,21 +425,18 @@ export function createStudentAgent({ model, streamFn, frozen, scheme, student, r
     const appendMarkingSources=async()=>{
       if(singlePass)content.push({type:'text',text:rubricText});
       if(readInitialSchemeImage)content.push({type:'text',text:'For a formal MS source issue, inspect the relevant native crop first. You can flag the uncertainty in the draft and request that crop alongside it.'});
-      if(markingGuide)content.push({type:'text',text:labelledPages ? guideWireText(markingGuide, frozen) : `Teacher-confirmed execution document v${markingGuide.revision}, hash ${markingGuide.hash}:\n${markingGuide.body}\nApply this exact version. Conflicts with source meaning or award bounds remain unresolved and require teacher review.`});
+      if(markingGuide)content.push({type:'text',text:`Teacher-confirmed execution document v${markingGuide.revision}, hash ${markingGuide.hash}:\n${markingGuide.body}\nApply this exact version. Conflicts with source meaning or award bounds remain unresolved and require teacher review.`});
       for (const n of seedPages) { content.push({ type: 'text', text: `scheme physical PDF page ${n}${readInitialSchemeImage?' (resized entire page)':''}` }, await initialSchemeImage(scheme.pages.find(p => p.page === n))); schemeReturned.add(n); }
       if (seedPages.length) await log({ type: 'page_delivery', document: 'scheme', pages: seedPages, source: 'parent_selection' });
     };
     if(!singlePass)await appendMarkingSources();
     if (compact) {
       content.push({type:'text',text:singlePass?'The complete answer book follows in physical page order. Observe each decisive step before judging it. Record every visible cited step with its location when requested.':'The complete answer book follows in physical page order. This is the initial evidence, not a preview or index. Inspect every supplied image; use read_student_pages only for a concrete unresolved visual question.'});
-      if (inlineAnnotations) content.push({type:'text', text:'Blue margin numbers identify local optical lines. The complete source page lies between the gutters. Use the original writing to judge credit even where OCR is wrong or missing.'});
-      else if (labelledPages) content.push({type:'text',text:'No local text regions available for this answer book. Grade the complete images as usual.'});
+      if(annotationGrid)content.push({type:'text',text:'Each answer page includes only an added external ruler (columns A-J, rows 1-40). The complete page and its ruler share the same frame. The ruler is presentation metadata, not student work or grading evidence.'});
       else if(optimized&&initialStudentImageMode!=='original')content.push({type:'text',text:(initialStudentImageMode==='resized_overview'?'Initial images are proportionally resized views of every page after removing exactly white outer padding. Small symbols or writing may be unclear; do not infer missing strokes from the resized view.':'Initial images remove only exactly white outer padding. Every nonwhite source pixel is retained at its original resolution, with page identity unchanged.')+(singlePass||localOnly?'':' read_student_pages returns the complete original page including margins whenever needed.')});
       for (const page of student.pages) {
         content.push({type:'text',text:`student physical PDF page ${page.page}${inlineAnnotations?`; annotation frame i${page.page}`:''}`},await initialImage(page));
-        const observations=localObservations.find(row=>row.page===page.page);
-        const hint = inlineAnnotations ? ocrRegionIndex(page, initialStudentGeometry.find(row=>row.page===page.page), observations)
-          : labelledPages ? null : localObservationHint(page, observations);
+        const hint=localObservationHint(page,localObservations.find(row=>row.page===page.page),annotationGrid&&inlineAnnotations);
         if(hint)content.push({type:'text',text:hint});
         studentReturned.add(page.page);
       }
@@ -452,7 +455,7 @@ export function createCoordinator({ model, streamFn, scheme, studentIds, concurr
   const views=reporting?.views ?? createReportContext();
   let markingGuide = null;
   const pagesPerTurn = MS_PAGES_PER_TURN;
-  const windowed = scheme.pages.length > pagesPerTurn;
+  const rolling = scheme.pages.length > MS_COMPLETE_CONTEXT_PAGES;
   const inspected = new Set();
   let inventory = [], owners = new Map();
   const inventoryTool = {
@@ -474,6 +477,11 @@ export function createCoordinator({ model, streamFn, scheme, studentIds, concurr
     },
   };
   let imageTurn = -1, imagesThisTurn = 0;
+  const deliveries = new Map();
+  const visibleTurns = () => {
+    const turns = [...deliveries.keys()];
+    return rolling ? new Set([...turns.slice(0, 1), ...turns.slice(-2)]) : new Set(turns);
+  };
   const tools = [
     (() => {
       const tool = pageTool('read_ms_pages', 'Before freezing only: inspect every original MS page for compilation. After verification use scoped inspect_ms for specific unresolved source questions.', scheme, 'scheme', readImage, seen, log);
@@ -482,14 +490,19 @@ export function createCoordinator({ model, streamFn, scheme, studentIds, concurr
         if (frozen) throw Error('MS already frozen. Use inspect_ms for a specific unresolved item question.');
         checkPages(args.pages, scheme);
         if (imageTurn !== modelTurns) { imageTurn = modelTurns; imagesThisTurn = 0; }
-        const available = windowed ? pagesPerTurn - imagesThisTurn : args.pages.length;
-        if (available === 0) throw Error('Inspect the returned pages and stage complete items before requesting more pages next turn.');
-        const pages = args.pages.slice(0, available);
+        const visible = new Set([...visibleTurns()].flatMap(turn => deliveries.get(turn)));
+        const missing = args.pages.filter(page => !visible.has(page));
+        const available = pagesPerTurn - imagesThisTurn;
+        const pages = missing.slice(0, available);
+        if (!pages.length) return {content:[{type:'text',text:missing.length
+          ? 'Image limit reached for this turn. Use the delivered pages before requesting more.'
+          : 'These images are already visible. Use them to stage the remaining items, checkpoint the draft, or submit the review.'}],details:{}};
         const result = await execute(id, { ...args, pages }, ...rest);
         imagesThisTurn += pages.length;
+        deliveries.set(imageTurn, [...(deliveries.get(imageTurn) ?? []), ...pages]);
         Object.assign(result.details, { ms_stage: 'compilation', imageTurn });
-        if (windowed) result.content.push({type:'text', text:
-          `Images returned: ${pages.join(', ')}. Unread physical pages: ${scheme.pages.filter(page=>!seen.has(page.page)).map(page=>page.page).join(', ') || 'none'}. Stage complete items now, then read the next group. Reopen earlier pages by number as needed.`});
+        result.content.push({type:'text', text:
+          `Images returned: ${pages.join(', ')}. Requested but deferred: ${missing.slice(pages.length).join(', ') || 'none'}. Unread physical pages: ${scheme.pages.filter(page=>!seen.has(page.page)).map(page=>page.page).join(', ') || 'none'}.`});
         return result;
       };
       return tool;
@@ -502,7 +515,7 @@ export function createCoordinator({ model, streamFn, scheme, studentIds, concurr
         const items=expandMSItems(args);
         if (new Set(items.map(item=>item.item_id)).size !== items.length) throw Error('Invalid draft batch');
         for (const item of items) {
-          if (item.source_pages.some(page=>!(windowed ? inspected : seen).has(page))) throw Error('Read item source pages before staging');
+          if (item.source_pages.some(page=>!inspected.has(page))) throw Error('Inspect item source pages in a model turn before staging');
           if (mainOwnsScheme) checkSourceItem(item, owners);
           // Cross-item relations are checked against the complete inventory at publication.
           freezeRubric({general_instructions:[],unresolved_notes:[],items:[{...item,related_item_ids:[]}]},scheme,new Set(scheme.pages.map(page=>page.page)));
@@ -514,7 +527,7 @@ export function createCoordinator({ model, streamFn, scheme, studentIds, concurr
     { name: 'prepare_ms_review', label: 'Checkpoint MS for self-review', description: 'Save the complete staged candidate and begin review in this same conversation. Retains original images/history; does not freeze or delegate. Next review the latest staged items and submit_ms_review with item checks and corrections.', parameters: obj({general_instructions:GENERAL_SCHEMA,unresolved_notes:strings}), executionMode: 'sequential',
       execute: async (_id, raw) => {
         if (frozen || candidate) throw Error('Rubric draft already submitted');
-        const prepared = freezeRubric({...raw,...(mainOwnsScheme ? {source_inventory:inventory} : {}),items:[...stagedItems.values()]}, scheme, windowed ? inspected : seen);
+        const prepared = freezeRubric({...raw,...(mainOwnsScheme ? {source_inventory:inventory} : {}),items:[...stagedItems.values()]}, scheme, inspected);
         if (prepared.artifact.version !== 2 || !persistReview || !persistCandidate) throw Error('Structured points and persisted MS review are required');
         await persistCandidate(prepared); candidate = prepared; candidateTurn = modelTurns;
         return {content:[{type:'text',text:JSON.stringify({candidate_hash:candidate.hash,item_ids:[...stagedItems.keys()],source_pages:[...seen],message:'Candidate saved, not frozen. Review the latest staged items against the original images already in this conversation; submit_ms_review in your next turn. Do not resend the full candidate or reread all pages.'})}],details:{}};
@@ -575,9 +588,12 @@ export function createCoordinator({ model, streamFn, scheme, studentIds, concurr
   const availableTools = [...tools.filter(tool => !(prepareOnly && ['grade_students','finish_cohort'].includes(tool.name)) && !(reusedRubric && ['prepare_ms_review','submit_ms_review','write_rubric_items','read_ms_pages'].includes(tool.name)) && !(reporting?.economy && tool.name==='finish_cohort')),
     createSourceInspection({getRubric:()=>frozen,scheme,readImage,views,log}), ...(gradingReview?.tools??[]), ...reportTools];
   const basePrompt=reusedRubric ? REPLAY_MAIN_PROMPT : MAIN_PROMPT;
-  const readingInstructions = windowed && !reusedRubric
-    ? `Read up to ${pagesPerTurn} original pages per turn. Only the latest page group remains visible. Stage complete items while their source is visible. Record global instructions as you read. Earlier pages can be reopened for continuations and review.`
-    : null;
+  const readingInstructions = !reusedRubric ? [
+    `Read up to ${pagesPerTurn} source pages per turn. ${rolling
+      ? 'The first group and the two most recent deliveries stay visible. Reopen an older page only to resolve a specific question.'
+      : 'All delivered images stay visible through the candidate review. Request each page once.'}`,
+    'Use sequential tools in the same response: record the visible inventory if required, stage the complete items, then request the next unread pages. Once all pages have been inspected, finish any remaining items and checkpoint the draft with the general instructions. Use the images already supplied.',
+  ].join(' ') : null;
   const prompt = [gradingReview ? basePrompt.replace(/You cannot read student answers\./g,'You review primary grading before final persistence and can inspect original answers on demand.') : basePrompt, readingInstructions, reporting?.instructions, gradingReview?.instructions,
     mainOwnsScheme ? 'Only you see the marking scheme images. After reading each group, call record_ms_inventory BEFORE write_rubric_items, ideally in the same response. Start with the printed assessment hierarchy, independently of your draft. Record the deepest independently marked subpart as its own item using its full printed path with original parentheses. Keep individual method/accuracy marks and alternative routes inside that item. A shared parent subtotal does not merge separately scored children. If the source genuinely gives one indivisible joint award, keep it together. Record every inspected page, including pages with no new items. Reconcile the final inventory against the source on review; correct both inventory and items if necessary. Explicitly transcribe diagram relationships, table cells, shared brackets and alternative award conditions into the relevant rubric points. Check them against the cited pages. Record anything the source cannot resolve in uncertainties; do not clear a visual dependency to finish.' : null,
     prepareOnly ? 'Your scope ends when the verified MS and teacher implementation guide are ready. The host dispatches grading and renders reports deterministically; do not plan batches, grade answers or write reports.' : null,
@@ -586,9 +602,10 @@ export function createCoordinator({ model, streamFn, scheme, studentIds, concurr
     onModelResponse:()=>{for (const page of seen) inspected.add(page);modelTurns++;if (reporting) reporting.onModelResponse();else views.confirmDelivery();},
     transformContext: async messages => {
       if (!frozen) {
-        if (!windowed) return messages;
+        if (!rolling) return messages;
+        const visible = visibleTurns();
         return messages.map(message => message.role === 'toolResult' && message.details?.ms_stage === 'compilation'
-          && message.details.imageTurn !== imageTurn
+          && !visible.has(message.details.imageTurn)
           ? {...message, content:message.content.filter(part=>part.type !== 'image')}
           : message);
       }

@@ -6,7 +6,13 @@
   <meta name="theme-color" content="#ffffff">
   <meta name="color-scheme" content="light">
   <title>GradeOS</title>
+  <link rel="icon" href="/assets/icons/gradeos.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/system.css">
+  <link rel="stylesheet" href="/brand.css">
+  <link rel="stylesheet" href="/account-login.css">
+    <link rel="stylesheet" href="/file-archive.css">
+    <link rel="stylesheet" href="/model-picker.css">
+    <link rel="stylesheet" href="/interaction-surfaces.css">
   <script type="module" src="/system-app.mjs"></script>
 </head>
 <body>
@@ -14,7 +20,7 @@
   <div id="system-app"><p class="boot">正在打开 GradeOS…</p></div>
   <dialog id="system-dialog" aria-labelledby="dialog-title"></dialog>
   <div id="system-toast" role="status" aria-live="polite"></div>
-  <input id="system-upload" type="file" accept=".md,.txt,.csv,.json,.html,.js,.mjs,.ts,.py,.css,.sql" multiple hidden>
+  <input id="system-upload" type="file" multiple hidden>
   <input id="skill-upload" type="file" accept=".md" hidden>
 </body>
 </html>

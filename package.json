@@ -1,17 +1,18 @@
 {
   "name": "gradeos-pi",
-  "version": "0.1.0",
+  "version": "0.1.4",
   "private": true,
   "type": "module",
   "engines": {
     "node": ">=22.19"
   },
   "scripts": {
+    "desktop:build": "node desktop/build.mjs",
     "dev": "node --env-file-if-exists=.env src/workspace/server.mjs",
     "test:workspace": "node --test test/workspace*.test.mjs",
     "test": "node --test test/*.test.mjs",
     "grade": "node src/run.mjs",
-    "grade:cohort": "node src/run-cohort.mjs --scripted --grading-reasoning medium --inline-annotations",
+    "grade:cohort": "node src/run-cohort.mjs --scripted --grading-reasoning medium --annotation-grid --inline-annotations",
     "grade:cohort:self-review": "node src/run-cohort.mjs --student-protocol evidence-v4 --reason-style brief-full-credit --economy-reporting --lean-reports --trim-white-margins --isolate-student-cache",
     "start": "node --env-file-if-exists=.env src/workspace/server.mjs",
     "doctor": "node --env-file-if-exists=.env scripts/doctor.mjs",
@@ -20,11 +21,9 @@
     "fixtures:prepare": "node scripts/python.mjs scripts/fixtures.py prepare",
     "fixtures:evaluate": "node scripts/python.mjs scripts/fixtures.py evaluate",
     "fixtures:workspace": "node scripts/import-fixture.mjs",
-    "check": "npm test && npm run test:python",
-    "grade:cohort:macos": "node src/run-cohort.mjs --scripted --grading-reasoning medium --inline-annotations --local-ocr",
-    "medly:prepare": "node scripts/python.mjs scripts/medly.py",
-    "check:public": "npm test && npm run test:python",
-    "export:public": "node scripts/export-public.mjs"
+    "check": "npm test && npm run test:python && npm run fixtures:check",
+    "grade:cohort:macos": "node src/run-cohort.mjs --scripted --grading-reasoning medium --annotation-grid --inline-annotations --local-ocr",
+    "medly:prepare": "node scripts/python.mjs scripts/medly.py"
   },
   "dependencies": {
     "@earendil-works/pi-agent-core": "1.5.2",

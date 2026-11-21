@@ -1,3 +1,4 @@
+import { helperEnvironment } from '../python.mjs';
 import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -89,12 +90,12 @@ export async function exportAnnotatedPdf(store,taskId,groupId) {
   try {
     const input=join(directory,'annotations.json'),output=join(directory,'annotated.pdf'),occupancy=join(directory,'occupancy.json');
     await writeFile(input,JSON.stringify(packet),{mode:0o600});
-    await promisify(execFile)(python,['-m','scripts.python.annotation_space','--input',input,'--output',occupancy],
-      {cwd:experimentRoot,timeout:120000,maxBuffer:1024*1024,env:{PATH:process.env.PATH}});
+    await promisify(execFile)(python,[join(experimentRoot,'annotation_space.py'),'--input',input,'--output',occupancy],
+      {timeout:120000,maxBuffer:1024*1024,env:helperEnvironment()});
     placeExportMarks(packet,JSON.parse(await readFile(occupancy,'utf8')));
     await writeFile(input,JSON.stringify(packet),{mode:0o600});
-    await promisify(execFile)(python,[join(experimentRoot,'scripts/python/annotation_pdf.py'),'--input',input,'--output',output],
-      {timeout:120000,maxBuffer:1024*1024,env:{PATH:process.env.PATH}});
+    await promisify(execFile)(python,[join(experimentRoot,'annotation_pdf.py'),'--input',input,'--output',output],
+      {timeout:120000,maxBuffer:1024*1024,env:helperEnvironment()});
     return {bytes:await readFile(output),name:`${packet.student||'答卷'}-批改批注.pdf`};
   } finally { await rm(directory,{recursive:true,force:true}); }
 }
